@@ -1390,8 +1390,6 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     }
   }
 
-  @override
-
   void _splitSelectedClip() {
     if (_clips.isEmpty) return;
     final clip = _clips[_selected];

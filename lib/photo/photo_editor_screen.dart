@@ -308,8 +308,6 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     }
   }
 
-  @override
-
   Widget _photoRailButton(String key, String label, IconData icon) {
     final selected = _activePhotoTool == key;
     return Padding(
@@ -619,14 +617,7 @@ Row(
                       : Container(
             color: Colors.black12,
             constraints: const BoxConstraints(maxHeight: 420),
-            child: file == null
-                ? const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(48),
-                      child: Text('No photo selected'),
-                    ),
-                  )
-                : LayoutBuilder(
+            child: LayoutBuilder(
                     builder: (context, constraints) {
                       final w = constraints.maxWidth;
                       return Stack(
