@@ -2671,7 +2671,6 @@ if (clip != null) ...[
       data: ThemeData.dark().copyWith(
         colorScheme: ColorScheme.fromSeed(
             seedColor: Colors.teal, brightness: Brightness.dark),
-        useMaterial3: true,
       ),
       child: Scaffold(
         backgroundColor: const Color(0xFF121212),

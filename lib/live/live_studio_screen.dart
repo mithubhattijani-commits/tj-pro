@@ -170,7 +170,7 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
         width: 64,
         height: 64,
         fit: BoxFit.contain,
-        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+        errorBuilder: (_, _, _) => const SizedBox.shrink(),
       );
       logo = _template.logoRotate
           ? RotationTransition(turns: _logoSpinCtrl, child: img)
@@ -266,7 +266,7 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
               alignment: Alignment.centerLeft,
               child: AnimatedBuilder(
                 animation: _tickerCtrl,
-                builder: (_, __) {
+                builder: (_, _) {
                   final offset =
                       w - _tickerCtrl.value * (w + 600);
                   return Transform.translate(
@@ -321,7 +321,7 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
           // Status row.
           ValueListenableBuilder<String>(
             valueListenable: _service.status,
-            builder: (_, status, __) => Row(
+            builder: (_, status, _) => Row(
               children: [
                 Container(
                   padding: const EdgeInsets.symmetric(
@@ -347,7 +347,7 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
           ),
           ValueListenableBuilder<String>(
             valueListenable: _service.statsLine,
-            builder: (_, stats, __) =>
+            builder: (_, stats, _) =>
                 stats.isEmpty ? const SizedBox.shrink() : Text(stats),
           ),
           const SizedBox(height: 12),
@@ -502,7 +502,7 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
           ),
           ValueListenableBuilder<Map<String, LiveDestinationState>>(
             valueListenable: _service.destinations,
-            builder: (_, states, __) {
+            builder: (_, states, _) {
               if (states.isEmpty) return const SizedBox.shrink();
               return Column(
                 children: states.entries.map((e) {

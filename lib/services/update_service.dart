@@ -148,7 +148,7 @@ class UpdateService {
       barrierDismissible: false,
       builder: (_) => ValueListenableBuilder<double>(
         valueListenable: progress,
-        builder: (_, value, __) => AlertDialog(
+        builder: (_, value, _) => AlertDialog(
           title: const Text('Update download ho raha hai'),
           content: Column(
             mainAxisSize: MainAxisSize.min,

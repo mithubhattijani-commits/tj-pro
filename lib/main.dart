@@ -29,7 +29,6 @@ class PhotoVideoEditorApp extends StatelessWidget {
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
             seedColor: Colors.teal, brightness: Brightness.dark),
-        useMaterial3: true,
       ),
       home: const HomeScreen(),
     );
@@ -191,10 +190,11 @@ class _PremiumUnlockCardState extends State<_PremiumUnlockCard> {
             : TextButton(
                 onPressed: () async {
                   setState(() => _busy = true);
+                  final messenger = ScaffoldMessenger.of(context);
                   final ok = await AdService.showRewarded();
                   if (mounted) {
                     setState(() => _busy = false);
-                    ScaffoldMessenger.of(context).showSnackBar(
+                    messenger.showSnackBar(
                       SnackBar(
                         content: Text(
                           ok

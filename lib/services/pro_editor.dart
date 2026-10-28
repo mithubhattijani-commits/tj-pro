@@ -62,6 +62,8 @@
 ///      [stabilizeCommands]); the deshake fallback covers a build
 ///      without vidstab entirely.
 
+library;
+
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -426,7 +428,7 @@ class KeyframeTrack {
 /// ramping linearly to 1 across it, holding 1 after it.
 String _lerpFactor(String tVar, double t0, double dur) {
   if (dur <= 0) return '1';
-  return 'clip((${tVar}-${_num(t0)})/${_num(dur)},0,1)';
+  return 'clip(($tVar-${_num(t0)})/${_num(dur)},0,1)';
 }
 
 /// Linear lerp expression between [a] and [b] over the track window,
