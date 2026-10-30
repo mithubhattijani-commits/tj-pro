@@ -146,21 +146,15 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   String? _waveformPath;
   bool _waveformBusy = false;
 
-  // FX Pack v2.2.0 (CapCut/VN/KineMaster/Alight parity). All default off.
   VoiceFx _fxVoice = VoiceFx.none;
-  double _fxFadeIn = 0;
-  double _fxFadeOut = 0;
+  double _fxFadeIn = 0.0;
+  double _fxFadeOut = 0.0;
   bool _fxReverse = false;
-  bool _fxFreeze = false;
-  double _fxFreezeAt = 1.0;
-  double _fxFreezeHold = 2.0;
   bool _fxSilenceRemove = false;
   bool _fxPip = false;
-  String? _fxPipVideo;
-  PipPosition _fxPipPos = PipPosition.bottomRight;
-  double _fxPipScale = 0.3;
+  String _fxPipVideo = '';
   ShakeFx _fxShake = ShakeFx.none;
-  ExportQuality _fxQuality = ExportQuality.p720;
+  int _fxQuality = 0;
 
   bool get _gradeActive =>
       _proLut.isNotEmpty ||
@@ -643,36 +637,34 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       final dir = await _workDir();
       final stamp = DateTime.now().millisecondsSinceEpoch;
       var out = p.join(dir.path, 'pve_export_$stamp.mp4');
-
-      // FX pre-passes on selected clip (guarded).
       if (_clips.isNotEmpty) {
-        final idx = _selected < _clips.length ? _selected : 0;
-        var clip = _clips[idx];
+        final int idx = _selected < _clips.length ? _selected : 0;
+        VideoClip clip = _clips[idx];
         if (_fxReverse) {
-          final revOut = p.join(dir.path, 'fx_rev_$stamp.mp4');
-          final r = await FfmpegService.run(
+          final String revOut = p.join(dir.path, 'fx_rev_$stamp.mp4');
+          final FfmpegResult r = await FfmpegService.run(
             reverseCommand(input: clip.file.path, output: revOut),
           );
           if (r.ok) {
-            final nc = VideoClip(File(revOut), clip.duration, clip.aspectRatio);
+            final VideoClip nc =
+                VideoClip(File(revOut), clip.duration, clip.aspectRatio);
             nc.trimStart = clip.trimStart;
             nc.trimEnd = clip.trimEnd;
-            clip = nc;
-            _clips[idx] = clip;
+            _clips[idx] = nc;
           }
         }
         if (_fxSilenceRemove) {
-          final silOut = p.join(dir.path, 'fx_sil_$stamp.mp4');
-          final r = await FfmpegService.run(
-            silenceRemoveCommand(input: clip.file.path, output: silOut),
+          final String silOut = p.join(dir.path, 'fx_sil_$stamp.mp4');
+          final VideoClip cur = _clips[idx];
+          final FfmpegResult r = await FfmpegService.run(
+            silenceRemoveCommand(input: cur.file.path, output: silOut),
           );
           if (r.ok) {
-            clip = VideoClip(File(silOut), clip.duration, clip.aspectRatio);
-            _clips[idx] = clip;
+            _clips[idx] =
+                VideoClip(File(silOut), cur.duration, cur.aspectRatio);
           }
         }
       }
-
       _fontFile ??= FfmpegService.findFontFile();
       final hasText = _text.trim().isNotEmpty;
       if (hasText && _fontFile == null) {
@@ -831,50 +823,52 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           clips.fold<double>(0.0, (a, c) => a + c.effectiveDuration);
       final rampSegs =
           hasRamp ? rampSegments(rampPreset, exportDurSec) : <RampSegment>[];
-      final extraParts = <String>[];
+      final List<String> extraParts = <String>[];
       if (gradeStr.isNotEmpty) extraParts.add(gradeStr);
       if (hasRamp) extraParts.add(rampSetpts(rampSegs));
-      final shakeStr = shakeFilter(_fxShake);
+      final String shakeStr = shakeFilter(_fxShake);
       if (shakeStr.isNotEmpty) extraParts.add(shakeStr);
-      final extraVideoFilter =
+      final String? extraVideoFilter =
           extraParts.isEmpty ? null : extraParts.join(',');
       // Ramp replaces the fixed speed: the video timing comes from the
       // ramp setpts, and the audio filter from the ramp (music exports
       // keep the music track untouched, so the ramp audio filter only
       // applies when no music is picked).
       final effectiveSpeed = hasRamp ? 1.0 : _speed;
-      final rampAudio =
+      final String? rampAudio =
           (hasRamp && _musicPath == null) ? rampAudioFilter(rampSegs) : null;
-      // FX voice + fade (simple -af chain, applied when no complex ramp).
-      String? fxAf;
-      {
-        final parts = <String>[];
-        final vs = voiceFxFilter(_fxVoice);
-        if (vs.isNotEmpty) parts.add(vs);
-        final fs = audioFadeFilter(
-          fadeInSec: _fxFadeIn,
-          fadeOutSec: _fxFadeOut,
-          durationSec: exportDurSec,
-        );
-        if (fs.isNotEmpty) parts.add(fs);
-        if (parts.isNotEmpty) fxAf = parts.join(',');
+      final String voiceStr = voiceFxFilter(_fxVoice);
+      final String fadeStr = audioFadeFilter(
+        fadeInSec: _fxFadeIn,
+        fadeOutSec: _fxFadeOut,
+        durationSec: exportDurSec,
+      );
+      String fxAudioFilter = '';
+      if (voiceStr.isNotEmpty) {
+        fxAudioFilter = voiceStr;
       }
-      // Combined audio filter for the final pass.
-      String? combinedAf;
-      final isComplexRamp =
+      if (fadeStr.isNotEmpty) {
+        if (fxAudioFilter.isNotEmpty) {
+          fxAudioFilter = '$fxAudioFilter,$fadeStr';
+        } else {
+          fxAudioFilter = fadeStr;
+        }
+      }
+      String? finalAudioFilter;
+      final bool isComplex =
           rampAudio != null && rampAudio.contains('[0:a]');
-      if (isComplexRamp) {
-        combinedAf = rampAudio;
+      if (isComplex) {
+        finalAudioFilter = rampAudio;
       } else {
-        final aparts = <String>[];
+        final List<String> afParts = <String>[];
         if (effectiveSpeed != 1.0 && _musicPath == null) {
-          aparts.add('atempo=$effectiveSpeed');
+          afParts.add('atempo=$effectiveSpeed');
         }
-        if (fxAf != null && fxAf.isNotEmpty) {
-          aparts.add(fxAf);
+        if (fxAudioFilter.isNotEmpty) {
+          afParts.add(fxAudioFilter);
         }
-        if (aparts.isNotEmpty) {
-          combinedAf = aparts.join(',');
+        if (afParts.isNotEmpty) {
+          finalAudioFilter = afParts.join(',');
         }
       }
 
@@ -902,7 +896,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           textAtTop: useCaptions,
           musicPath: _musicPath,
           extraVideoFilter: extraVideoFilter,
-          audioFilter: combinedAf,
+          audioFilter: finalAudioFilter,
           output: out,
         );
         final totalMs =
@@ -950,11 +944,16 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       } else {
         // Step 1: normalize every clip (trim + common size/fps/codec).
         // Orientation comes from the FIRST clip's real aspect ratio.
-        // FX: export quality sets target size.
-        final portrait = clips.first.aspectRatio < 1.0;
-        final qDims = exportDims(_fxQuality, portrait);
-        final w = qDims.$1;
-        final h = qDims.$2;
+        final bool portrait = clips.first.aspectRatio < 1.0;
+        int w;
+        int h;
+        if (_fxQuality == 1) {
+          w = portrait ? 1080 : 1920;
+          h = portrait ? 1920 : 1080;
+        } else {
+          w = portrait ? 720 : 1280;
+          h = portrait ? 1280 : 720;
+        }
         final normFiles = <String>[];
         final normDurMs = <int>[];
         for (var i = 0; i < clips.length; i++) {
@@ -1028,7 +1027,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           textAtTop: useCaptions,
           musicPath: _musicPath,
           extraVideoFilter: extraVideoFilter,
-          audioFilter: combinedAf,
+          audioFilter: finalAudioFilter,
           output: out,
         );
         final res = await FfmpegService.run(
@@ -1218,25 +1217,26 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         }
       }
 
-      // FX PIP post-pass (guarded).
-      if (_fxPip && _fxPipVideo != null) {
-        final pipOut = p.join(dir.path, 'pve_export_pip_$stamp.mp4');
-        final snippet = pipOverlayFilter(
+      if (_fxPip && _fxPipVideo.isNotEmpty) {
+        final String pipOut = p.join(dir.path, 'pve_export_pip_$stamp.mp4');
+        final String snippet = pipOverlayFilter(
           pipLabel: '[1:v]',
-          position: _fxPipPos,
-          pipScale: _fxPipScale,
+          position: PipPosition.bottomRight,
+          pipScale: 0.3,
           margin: 24,
           outLabel: '[vout]',
         );
-        final pb = StringBuffer();
-        pb.write('-y -i ${FfmpegService.q(out)} ');
-        pb.write('-i ${FfmpegService.q(_fxPipVideo!)} ');
-        pb.write(
-          '-filter_complex "$snippet" -map "[vout]" -map 0:a? '
-          '-c:v libx264 -preset veryfast -crf 23 -c:a copy '
-          '-movflags +faststart ${FfmpegService.q(pipOut)}',
-        );
-        final pr = await FfmpegService.run(pb.toString());
+        final StringBuffer pb = StringBuffer();
+        pb.write('-y -i ');
+        pb.write(FfmpegService.q(out));
+        pb.write(' -i ');
+        pb.write(FfmpegService.q(_fxPipVideo));
+        pb.write(' -filter_complex "');
+        pb.write(snippet);
+        pb.write('" -map "[vout]" -map 0:a? -c:v libx264 -preset veryfast ');
+        pb.write('-crf 23 -c:a copy -movflags +faststart ');
+        pb.write(FfmpegService.q(pipOut));
+        final FfmpegResult pr = await FfmpegService.run(pb.toString());
         if (pr.ok) {
           out = pipOut;
         }
@@ -1761,11 +1761,17 @@ TextField(
           DropdownButtonFormField<ShakeFx>(
             initialValue: _fxShake,
             decoration: const InputDecoration(labelText: 'Shake intensity'),
-            items: [
-              for (var v in ShakeFx.values)
-                DropdownMenuItem(value: v, child: Text(shakeFxLabels[v.index])),
+            items: const [
+              DropdownMenuItem(value: ShakeFx.none, child: Text('None')),
+              DropdownMenuItem(value: ShakeFx.light, child: Text('Light')),
+              DropdownMenuItem(value: ShakeFx.medium, child: Text('Medium')),
+              DropdownMenuItem(value: ShakeFx.strong, child: Text('Strong')),
             ],
-            onChanged: (v) => setState(() => _fxShake = v ?? ShakeFx.none),
+            onChanged: (ShakeFx? v) {
+              setState(() {
+                _fxShake = v ?? ShakeFx.none;
+              });
+            },
           ),
           const SizedBox(height: 8),
         ];
@@ -1815,14 +1821,18 @@ TextField(
             ],
           ),
           const SizedBox(height: 8),
-          DropdownButtonFormField<ExportQuality>(
+          DropdownButtonFormField<int>(
             initialValue: _fxQuality,
             decoration: const InputDecoration(labelText: 'Export quality'),
-            items: [
-              for (var q in ExportQuality.values)
-                DropdownMenuItem(value: q, child: Text(exportQualityLabels[q.index])),
+            items: const [
+              DropdownMenuItem(value: 0, child: Text('720p HD (fast)')),
+              DropdownMenuItem(value: 1, child: Text('1080p Full HD')),
             ],
-            onChanged: (v) => setState(() => _fxQuality = v ?? ExportQuality.p720),
+            onChanged: (int? v) {
+              setState(() {
+                _fxQuality = v ?? 0;
+              });
+            },
           ),
         ];
       case 'audio':
@@ -1886,11 +1896,18 @@ TextField(
           DropdownButtonFormField<VoiceFx>(
             initialValue: _fxVoice,
             decoration: const InputDecoration(labelText: 'Voice effect'),
-            items: [
-              for (var v in VoiceFx.values)
-                DropdownMenuItem(value: v, child: Text(voiceFxLabels[v.index])),
+            items: const [
+              DropdownMenuItem(value: VoiceFx.none, child: Text('None')),
+              DropdownMenuItem(value: VoiceFx.chipmunk, child: Text('Chipmunk')),
+              DropdownMenuItem(value: VoiceFx.deepVoice, child: Text('Deep voice')),
+              DropdownMenuItem(value: VoiceFx.robot, child: Text('Robot')),
+              DropdownMenuItem(value: VoiceFx.echo, child: Text('Echo')),
             ],
-            onChanged: (v) => setState(() => _fxVoice = v ?? VoiceFx.none),
+            onChanged: (VoiceFx? v) {
+              setState(() {
+                _fxVoice = v ?? VoiceFx.none;
+              });
+            },
           ),
           _ProSlider(
             label: 'Fade in (s)',
@@ -1898,7 +1915,11 @@ TextField(
             min: 0,
             max: 3,
             divisions: 30,
-            onChanged: (v) => setState(() => _fxFadeIn = v),
+            onChanged: (double v) {
+              setState(() {
+                _fxFadeIn = v;
+              });
+            },
           ),
           _ProSlider(
             label: 'Fade out (s)',
@@ -1906,7 +1927,11 @@ TextField(
             min: 0,
             max: 3,
             divisions: 30,
-            onChanged: (v) => setState(() => _fxFadeOut = v),
+            onChanged: (double v) {
+              setState(() {
+                _fxFadeOut = v;
+              });
+            },
           ),
           const SizedBox(height: 8),
         ];
@@ -1982,17 +2007,20 @@ TextField(
           SwitchListTile(
             title: const Text('Reverse video'),
             value: _fxReverse,
-            onChanged: (v) => setState(() => _fxReverse = v),
-          ),
-          SwitchListTile(
-            title: const Text('Freeze frame'),
-            value: _fxFreeze,
-            onChanged: (v) => setState(() => _fxFreeze = v),
+            onChanged: (bool v) {
+              setState(() {
+                _fxReverse = v;
+              });
+            },
           ),
           SwitchListTile(
             title: const Text('Silence remover'),
             value: _fxSilenceRemove,
-            onChanged: (v) => setState(() => _fxSilenceRemove = v),
+            onChanged: (bool v) {
+              setState(() {
+                _fxSilenceRemove = v;
+              });
+            },
           ),
           const Divider(height: 32),
         ];
@@ -2191,21 +2219,27 @@ if (AppConfig.crossfadeEnabled)
           SwitchListTile(
             title: const Text('PIP video overlay'),
             value: _fxPip,
-            onChanged: (v) => setState(() => _fxPip = v),
+            onChanged: (bool v) {
+              setState(() {
+                _fxPip = v;
+              });
+            },
           ),
           if (_fxPip)
             ElevatedButton.icon(
               onPressed: () async {
-                final picked =
+                final XFile? picked =
                     await _picker.pickVideo(source: ImageSource.gallery);
                 if (picked != null) {
-                  setState(() => _fxPipVideo = picked.path);
+                  setState(() {
+                    _fxPipVideo = picked.path;
+                  });
                 }
               },
               icon: const Icon(Icons.video_library),
-              label: Text(_fxPipVideo == null
+              label: Text(_fxPipVideo.isEmpty
                   ? 'Choose PIP video'
-                  : p.basename(_fxPipVideo!)),
+                  : p.basename(_fxPipVideo)),
             ),
           const Divider(height: 32),
         ];
