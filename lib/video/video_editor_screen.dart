@@ -2772,7 +2772,7 @@ const Text('Auto Captions (CapCut-style)',
           ),
           const SizedBox(height: 6),
           SizedBox(
-            height: 64,
+            height: 88,
             child: _clips.isEmpty
                 ? const Center(
                     child: Text('Timeline khaali hai',
@@ -2791,7 +2791,7 @@ const Text('Auto Captions (CapCut-style)',
                           },
                           child: Container(
                             width: 128,
-                            height: 64,
+                            height: 88,
                             margin: const EdgeInsets.only(right: 8),
                             padding: const EdgeInsets.all(8),
                             decoration: BoxDecoration(
@@ -3041,8 +3041,10 @@ Row(
             ),
             // ONE single horizontal tool row (scrollable) — never a grid,
             // never two rows. Every tool from the old screen is here.
+            // Height 88: fits icon (24) + gap (4) + 2-line label (~28)
+            // + button padding (16) + container padding (12) with margin.
             Container(
-              height: 76,
+              height: 88,
               color: const Color(0xFF1B1B1B),
               padding: const EdgeInsets.symmetric(vertical: 6),
               child: ListView(
