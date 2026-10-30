@@ -3079,24 +3079,45 @@ Row(
                       ),
                     ),
                     Expanded(
-                      child: _activeTool == null
-                          // No tool selected: hint to pick one from the rail.
-                          ? const Center(
-                              child: Text(
-                                'Neeche se koi tool select karein',
-                                style: TextStyle(
-                                    color: Colors.grey, fontSize: 14),
-                              ),
-                            )
-                          // Tool open: CapCut-style header (Back/Done)
-                          // + that tool's options only.
-                          : ListView(
-                              padding: const EdgeInsets.only(top: 8),
-                              children: [
-                                _toolPanelHeader(_activeTool!),
-                                ..._toolPanelChildren(),
-                              ],
+                      // InShot-style smooth transitions between tools
+                      // (Jaani 31 Oct 2026: "aur smooth").
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 250),
+                        transitionBuilder:
+                            (Widget child, Animation<double> animation) {
+                          return FadeTransition(
+                            opacity: animation,
+                            child: SlideTransition(
+                              position: Tween<Offset>(
+                                begin: const Offset(0, 0.08),
+                                end: Offset.zero,
+                              ).animate(animation),
+                              child: child,
                             ),
+                          );
+                        },
+                        child: _activeTool == null
+                            // No tool selected: hint to pick one from the rail.
+                            ? const Center(
+                                key: ValueKey<String>('video-hint'),
+                                child: Text(
+                                  'Neeche se koi tool select karein',
+                                  style: TextStyle(
+                                      color: Colors.grey, fontSize: 14),
+                                ),
+                              )
+                            // Tool open: CapCut-style header (Back/Done)
+                            // + that tool's options only.
+                            : ListView(
+                                key: ValueKey<String>(
+                                    'video-tool-${_activeTool!}'),
+                                padding: const EdgeInsets.only(top: 8),
+                                children: [
+                                  _toolPanelHeader(_activeTool!),
+                                  ..._toolPanelChildren(),
+                                ],
+                              ),
+                      ),
                     ),
                   ],
                 ),
