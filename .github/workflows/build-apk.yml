@@ -88,11 +88,11 @@ jobs:
           grep -F "Signer #1 certificate SHA-256 digest: $EXPECTED_SIGNER_SHA256" certs.txt
           echo "VERIFY OK: package/version/label/SDKs/signer all match TJ Pro day-1 key"
       - name: Upload APK to Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: latest
-          name: Latest Build
-          files: build/app/outputs/flutter-apk/app-debug.apk
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create latest --title "Latest Build" --notes "Automated build from ${{ github.sha }}" 2>/dev/null || true
+          gh release upload latest build/app/outputs/flutter-apk/app-debug.apk --clobber
           name: tj-pro-debug-apk
           path: build/app/outputs/flutter-apk/app-debug.apk
           if-no-files-found: error
