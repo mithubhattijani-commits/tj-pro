@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'photo/photo_editor_screen.dart';
 import 'app_config.dart';
 import 'services/ad_service.dart';
+import 'services/unity_ads_service.dart';
 import 'services/update_service.dart';
 import 'video/video_editor_screen.dart';
 import 'live/live_studio_screen.dart';
@@ -15,6 +16,7 @@ import 'widgets/native_ad_widget.dart';
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   AdService.init();
+  UnityAdsService.init();
   runApp(const PhotoVideoEditorApp());
 }
 
