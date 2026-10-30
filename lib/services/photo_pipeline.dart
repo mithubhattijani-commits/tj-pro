@@ -25,6 +25,11 @@ class PhotoEditParams {
     this.textSize = 48.0,
     this.textOffsetX = 0.5, // normalized center of the text box
     this.textOffsetY = 0.85,
+    // CapCut-style text effects (Jaani 31 Oct 2026).
+    this.textShadow = true,
+    this.textGlow = false,
+    this.textBg = false,
+    this.textBgArgb = 0x8A000000,
   });
 
   final PhotoFilter filter;
@@ -36,6 +41,10 @@ class PhotoEditParams {
   final double textSize;
   final double textOffsetX;
   final double textOffsetY;
+  final bool textShadow;
+  final bool textGlow;
+  final bool textBg;
+  final int textBgArgb;
 }
 
 // ---------------------------------------------------------------------------
@@ -647,11 +656,33 @@ Future<img.Image> applySegmentationMask(
 
 /// Rasterize overlay text to PNG bytes. MUST run on the main isolate
 /// (dart:ui). [argb] is a Flutter Color value.
+/// Supports CapCut-style effects: shadow, glow, background ribbon
+/// (Jaani 31 Oct 2026). Custom fonts are preview-only; export uses
+/// the system font (Google Fonts loading in the export isolate is
+/// not yet supported).
 Future<Uint8List> rasterizeText({
   required String text,
   required int argb,
   required double size,
+  bool shadow = true,
+  bool glow = false,
+  bool bg = false,
+  int bgArgb = 0x8A000000,
 }) async {
+  final List<ui.Shadow> shadows = [];
+  if (glow) {
+    shadows.add(ui.Shadow(
+      color: ui.Color(argb).withOpacity(0.9),
+      blurRadius: 16,
+    ));
+  }
+  if (shadow) {
+    shadows.add(const ui.Shadow(
+      color: ui.Color(0xDD000000),
+      offset: ui.Offset(2, 3),
+      blurRadius: 6,
+    ));
+  }
   final builder = ui.ParagraphBuilder(
     ui.ParagraphStyle(
       textDirection: ui.TextDirection.ltr,
@@ -663,16 +694,31 @@ Future<Uint8List> rasterizeText({
         color: ui.Color(argb),
         fontSize: size,
         fontWeight: ui.FontWeight.bold,
+        shadows: shadows,
       ),
     )
     ..addText(text);
   final paragraph = builder.build()
     ..layout(const ui.ParagraphConstraints(width: 4000));
-  final w = paragraph.longestLine.ceil() + 32;
-  final h = paragraph.height.ceil() + 24;
+  final tw = paragraph.longestLine.ceil();
+  final th = paragraph.height.ceil();
+  final pad = 32;
+  final w = tw + pad * 2;
+  final h = th + pad * 2;
   final recorder = ui.PictureRecorder();
   final canvas = ui.Canvas(recorder);
-  canvas.drawParagraph(paragraph, const ui.Offset(16, 12));
+  if (bg) {
+    // Ribbon: rounded rect behind the text.
+    final bgPaint = ui.Paint()..color = ui.Color(bgArgb);
+    canvas.drawRRect(
+      ui.RRect.fromRectAndRadius(
+        ui.Rect.fromLTWH(8, 8, w - 16.0, h - 16.0),
+        const ui.Radius.circular(16),
+      ),
+      bgPaint,
+    );
+  }
+  canvas.drawParagraph(paragraph, ui.Offset(pad.toDouble(), pad.toDouble()));
   final picture = recorder.endRecording();
   final image = await picture.toImage(w, h);
   final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
@@ -720,6 +766,10 @@ Future<File> exportPhoto({
       text: params.text,
       argb: params.textArgb,
       size: params.textSize,
+      shadow: params.textShadow,
+      glow: params.textGlow,
+      bg: params.textBg,
+      bgArgb: params.textBgArgb,
     );
     image = compositeText(
       image,

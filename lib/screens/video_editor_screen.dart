@@ -13,6 +13,7 @@ import 'dart:math' as math;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:gal/gal.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -58,6 +59,12 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   String _aspect = 'Original';
   bool _crossfade = false;
   String _text = '';
+  // Text styling (Jaani 31 Oct 2026 — CapCut-style text editor).
+  String _textFont = 'default';
+  Color _textColor = Colors.white;
+  double _textSize = 22.0;
+  bool _textShadow = true;
+  bool _textGlow = false;
   String? _musicPath;
   String? _fontFile;
   List<CaptionSegment> _captions = [];
@@ -1551,6 +1558,61 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     );
   }
 
+  /// Font style for video text overlay (Google Fonts, offline fallback).
+  TextStyle _vFontStyle(String fontKey,
+      {required Color color, required double fontSize}) {
+    final List<Shadow> shadows = [];
+    if (_textGlow) {
+      shadows.add(Shadow(
+          color: color.withOpacity(0.9), blurRadius: 16));
+    }
+    if (_textShadow) {
+      shadows.add(const Shadow(
+          color: Colors.black, offset: Offset(2, 3), blurRadius: 6));
+    }
+    final base =
+        TextStyle(color: color, fontSize: fontSize, shadows: shadows);
+    try {
+      switch (fontKey) {
+        case 'nastaliq':
+          return GoogleFonts.notoNastaliqUrdu(textStyle: base);
+        case 'naskh':
+          return GoogleFonts.notoNaskhArabic(textStyle: base);
+        case 'kufi':
+          return GoogleFonts.notoKufiArabic(textStyle: base);
+        case 'gulzar':
+          return GoogleFonts.gulzar(textStyle: base);
+        case 'roboto':
+          return GoogleFonts.roboto(textStyle: base);
+        case 'merriweather':
+          return GoogleFonts.merriweather(textStyle: base);
+        case 'dancing':
+          return GoogleFonts.dancingScript(textStyle: base);
+        case 'bebas':
+          return GoogleFonts.bebasNeue(textStyle: base);
+        case 'pacifico':
+          return GoogleFonts.pacifico(textStyle: base);
+        default:
+          return base.copyWith(fontWeight: FontWeight.bold);
+      }
+    } catch (_) {
+      return base;
+    }
+  }
+
+  /// Font selection chip for the video text panel.
+  Widget _vFontChip(String key, String label) {
+    final bool selected = _textFont == key;
+    return ChoiceChip(
+      label: Text(
+        label,
+        style: _vFontStyle(key, color: Colors.white, fontSize: 13),
+      ),
+      selected: selected,
+      onSelected: (_) => setState(() => _textFont = key),
+    );
+  }
+
   /// Display name for a tool key (used in the panel header).
   String _toolDisplayName(String key) {
     const Map<String, String> names = <String, String>{
@@ -2766,17 +2828,96 @@ const Text('Auto Captions (CapCut-style)',
         ];
       case 'text':
       default:
+        // CapCut-style text editor (Jaani 31 Oct 2026): fonts + colors +
+        // size + shadow/glow. Same as Photo Editor.
         return [
           const Text('Text overlay',
-              style: TextStyle(fontWeight: FontWeight.bold)),
+              style: TextStyle(
+                  fontWeight: FontWeight.bold, color: Colors.white)),
           const SizedBox(height: 8),
-// Text overlay
           TextField(
             decoration: const InputDecoration(
               labelText: 'Text overlay (single line)',
               border: OutlineInputBorder(),
             ),
             onChanged: (v) => setState(() => _text = v),
+          ),
+          const SizedBox(height: 12),
+          const Text('Font',
+              style: TextStyle(
+                  fontWeight: FontWeight.bold, color: Colors.white)),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _vFontChip('default', 'Default'),
+              _vFontChip('nastaliq', 'Nastaliq'),
+              _vFontChip('naskh', 'Naskh'),
+              _vFontChip('kufi', 'Kufi'),
+              _vFontChip('gulzar', 'Gulzar'),
+              _vFontChip('roboto', 'Roboto'),
+              _vFontChip('merriweather', 'Serif'),
+              _vFontChip('dancing', 'Script'),
+              _vFontChip('bebas', 'Display'),
+              _vFontChip('pacifico', 'Pacifico'),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              const Text('Color:',
+                  style: TextStyle(
+                      fontWeight: FontWeight.bold, color: Colors.white)),
+              const SizedBox(width: 8),
+              ...[
+                Colors.white,
+                Colors.black,
+                Colors.red,
+                Colors.yellow,
+                Colors.green,
+                Colors.blue
+              ].map((c) => GestureDetector(
+                    onTap: () => setState(() => _textColor = c),
+                    child: Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 3),
+                      width: 28,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        color: c,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: _textColor == c
+                              ? Colors.tealAccent
+                              : Colors.grey,
+                          width: _textColor == c ? 3 : 1,
+                        ),
+                      ),
+                    ),
+                  )),
+            ],
+          ),
+          _ProSlider(
+            label: 'Text size',
+            value: _textSize,
+            min: 14,
+            max: 48,
+            onChanged: (v) => setState(() => _textSize = v),
+          ),
+          Wrap(
+            spacing: 8,
+            children: [
+              FilterChip(
+                label: const Text('Shadow'),
+                selected: _textShadow,
+                onSelected: (v) => setState(() => _textShadow = v),
+              ),
+              FilterChip(
+                label: const Text('Glow'),
+                selected: _textGlow,
+                onSelected: (v) => setState(() => _textGlow = v),
+              ),
+            ],
           ),
           const SizedBox(height: 12),
           const Divider(height: 32),
@@ -3014,15 +3155,10 @@ if (clip != null) ...[
                                           const EdgeInsets.only(bottom: 24),
                                       child: Text(
                                         _text,
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 22,
-                                          fontWeight: FontWeight.bold,
-                                          shadows: [
-                                            Shadow(
-                                                color: Colors.black,
-                                                blurRadius: 6),
-                                          ],
+                                        style: _vFontStyle(
+                                          _textFont,
+                                          color: _textColor,
+                                          fontSize: _textSize,
                                         ),
                                       ),
                                     ),
