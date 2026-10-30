@@ -859,6 +859,24 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         if (fs.isNotEmpty) parts.add(fs);
         if (parts.isNotEmpty) fxAf = parts.join(',');
       }
+      // Combined audio filter for the final pass.
+      String? combinedAf;
+      final isComplexRamp =
+          rampAudio != null && rampAudio.contains('[0:a]');
+      if (isComplexRamp) {
+        combinedAf = rampAudio;
+      } else {
+        final aparts = <String>[];
+        if (effectiveSpeed != 1.0 && _musicPath == null) {
+          aparts.add('atempo=$effectiveSpeed');
+        }
+        if (fxAf != null && fxAf.isNotEmpty) {
+          aparts.add(fxAf);
+        }
+        if (aparts.isNotEmpty) {
+          combinedAf = aparts.join(',');
+        }
+      }
 
       double progress = 0;
       void onProgress(double v) {
@@ -884,18 +902,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           textAtTop: useCaptions,
           musicPath: _musicPath,
           extraVideoFilter: extraVideoFilter,
-          audioFilter: (rampAudio != null && rampAudio.contains('[0:a]'))
-              ? rampAudio
-              : (() {
-                final parts = <String>[];
-                if (effectiveSpeed != 1.0 && _musicPath == null) {
-                  parts.add('atempo=$effectiveSpeed');
-                }
-                if (fxAf != null && fxAf.isNotEmpty) {
-                  parts.add(fxAf);
-                }
-                return parts.isEmpty ? null : parts.join(',');
-              })(),
+          audioFilter: combinedAf,
           output: out,
         );
         final totalMs =
@@ -1021,18 +1028,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           textAtTop: useCaptions,
           musicPath: _musicPath,
           extraVideoFilter: extraVideoFilter,
-          audioFilter: (rampAudio != null && rampAudio.contains('[0:a]'))
-              ? rampAudio
-              : (() {
-                final parts = <String>[];
-                if (effectiveSpeed != 1.0 && _musicPath == null) {
-                  parts.add('atempo=$effectiveSpeed');
-                }
-                if (fxAf != null && fxAf.isNotEmpty) {
-                  parts.add(fxAf);
-                }
-                return parts.isEmpty ? null : parts.join(',');
-              })(),
+          audioFilter: combinedAf,
           output: out,
         );
         final res = await FfmpegService.run(
