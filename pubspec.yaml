@@ -38,6 +38,7 @@ dependencies:
   # also drops the Kotlin Gradle Plugin application that AGP 9
   # rejects. Fresh install here, so no v9 cipher migration concern.
   flutter_secure_storage: ^10.0.0
+  google_fonts: ^6.3.1
 
 dev_dependencies:
   flutter_test:
