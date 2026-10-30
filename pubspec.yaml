@@ -22,6 +22,7 @@ dependencies:
   google_mlkit_subject_segmentation: ^0.2.1
   google_mlkit_selfie_segmentation: ^0.12.1
   google_mobile_ads: ^7.0.0
+  unity_ads_plugin: ^0.5.0
   whisper_ggml_plus: ^1.5.0
   package_info_plus: ^10.2.2
   open_filex: ^4.0.0
