@@ -320,6 +320,85 @@ Uint8List _denoiseJob(List<dynamic> args) {
   return out;
 }
 
+/// InShot-style HSL: per-color Hue/Saturation/Lightness adjustment.
+/// [adjustments] is a list of 8x3 doubles: for each color range
+/// (Red, Orange, Yellow, Green, Cyan, Blue, Purple, Magenta),
+/// [hueShift (-180..180), satScale (0..2), lightOffset (-100..100)].
+/// Pixels are weighted by how close their hue is to each range center.
+Uint8List _hslJob(List<dynamic> args) {
+  final bytes = args[0] as Uint8List;
+  final adj = args[1] as List<dynamic>; // 8 x List<double>(3)
+  final out = Uint8List.fromList(bytes);
+  // Hue range centers in degrees (0-360).
+  const centers = [0.0, 30.0, 60.0, 120.0, 180.0, 240.0, 280.0, 320.0];
+  for (var i = 0; i < bytes.length; i += 4) {
+    final r = bytes[i] / 255.0;
+    final g = bytes[i + 1] / 255.0;
+    final b = bytes[i + 2] / 255.0;
+    final hsl = _rgbToHsl(r, g, b);
+    var h = hsl[0], s = hsl[1], l = hsl[2];
+    // Find the two nearest color ranges and blend.
+    for (var c = 0; c < 8; c++) {
+      var dh = (h - centers[c]).abs();
+      if (dh > 180) dh = 360 - dh;
+      // Weight falls off over 45 degrees.
+      final w = (1.0 - dh / 45.0).clamp(0.0, 1.0);
+      if (w <= 0) continue;
+      final a = adj[c] as List<dynamic>;
+      final hShift = (a[0] as num).toDouble();
+      final sScale = (a[1] as num).toDouble();
+      final lOff = (a[2] as num).toDouble();
+      h = (h + hShift * w) % 360;
+      if (h < 0) h += 360;
+      s = (s * (1 + (sScale - 1) * w)).clamp(0.0, 1.0);
+      l = (l + (lOff / 100) * w).clamp(0.0, 1.0);
+    }
+    final rgb = _hslToRgb(h, s, l);
+    out[i] = (rgb[0] * 255).clamp(0, 255).round();
+    out[i + 1] = (rgb[1] * 255).clamp(0, 255).round();
+    out[i + 2] = (rgb[2] * 255).clamp(0, 255).round();
+  }
+  return out;
+}
+
+List<double> _rgbToHsl(double r, double g, double b) {
+  final maxC = [r, g, b].reduce((a, v) => a > v ? a : v);
+  final minC = [r, g, b].reduce((a, v) => a < v ? a : v);
+  final l = (maxC + minC) / 2;
+  if (maxC == minC) return [0.0, 0.0, l];
+  final d = maxC - minC;
+  final s = l > 0.5 ? d / (2 - maxC - minC) : d / (maxC + minC);
+  double h;
+  if (maxC == r) {
+    h = (g - b) / d + (g < b ? 6 : 0);
+  } else if (maxC == g) {
+    h = (b - r) / d + 2;
+  } else {
+    h = (r - g) / d + 4;
+  }
+  return [h * 60, s, l];
+}
+
+List<double> _hslToRgb(double h, double s, double l) {
+  h = h % 360;
+  if (h < 0) h += 360;
+  if (s == 0) return [l, l, l];
+  double q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  double p = 2 * l - q;
+  double hk = h / 360;
+  double tr = (hk + 1 / 3) % 1;
+  double tg = hk % 1;
+  double tb = (hk - 1 / 3) % 1;
+  if (tb < 0) tb += 1;
+  double conv(double t) {
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
+  }
+  return [conv(tr), conv(tg), conv(tb)];
+}
+
 /// Gray-world white balance + per-channel levels stretch.
 /// Fixes color casts (too yellow/blue) and dull contrast.
 Uint8List _colorFixJob(List<dynamic> args) {
@@ -481,6 +560,27 @@ Future<img.Image> colorFixImage(img.Image src) async {
   final rgba = src.convert(numChannels: 4);
   final bytes = rgba.getBytes(order: img.ChannelOrder.rgba);
   final out = await compute(_colorFixJob, [bytes]);
+  return img.Image.fromBytes(
+    width: src.width,
+    height: src.height,
+    bytes: out.buffer,
+    numChannels: 4,
+    order: img.ChannelOrder.rgba,
+  );
+}
+
+/// InShot-style HSL: per-color Hue/Saturation/Lightness.
+/// [adjustments]: 8 colors (Red, Orange, Yellow, Green, Cyan, Blue,
+/// Purple, Magenta) × [hueShift (-180..180), satScale (0..2),
+/// lightOffset (-100..100)]. Algorithmic, on-device, FREE.
+Future<img.Image> adjustHSL(
+  img.Image src,
+  List<List<double>> adjustments,
+) async {
+  assert(adjustments.length == 8);
+  final rgba = src.convert(numChannels: 4);
+  final bytes = rgba.getBytes(order: img.ChannelOrder.rgba);
+  final out = await compute(_hslJob, [bytes, adjustments]);
   return img.Image.fromBytes(
     width: src.width,
     height: src.height,
