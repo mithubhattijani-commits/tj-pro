@@ -1,5 +1,10 @@
 /// Home feed native ad card. Shows nothing at all when the ad fails to
 /// load, so the home screen never shows a broken ad slot.
+///
+/// FIX (30 Oct 2026): same root cause as the banner widget — AdWidget was
+/// built before the NativeAd finished loading (load() is async), which
+/// caused "Ad with the following id could not be found". The widget now
+/// waits for onAdLoaded before inserting AdWidget into the tree.
 library;
 
 import 'package:flutter/material.dart';
@@ -16,6 +21,7 @@ class NativeAdWidget extends StatefulWidget {
 
 class _NativeAdWidgetState extends State<NativeAdWidget> {
   NativeAd? _ad;
+  bool _isLoaded = false;
 
   @override
   void initState() {
@@ -25,9 +31,21 @@ class _NativeAdWidgetState extends State<NativeAdWidget> {
         adUnitId: AppConfig.nativeAdUnitId,
         request: const AdRequest(),
         listener: NativeAdListener(
-          onAdFailedToLoad: (ad, _) {
+          onAdLoaded: (Ad ad) {
+            if (mounted) {
+              setState(() {
+                _isLoaded = true;
+              });
+            }
+          },
+          onAdFailedToLoad: (Ad ad, LoadAdError _) {
             ad.dispose();
-            if (mounted) setState(() => _ad = null);
+            if (mounted) {
+              setState(() {
+                _ad = null;
+                _isLoaded = false;
+              });
+            }
           },
         ),
         nativeTemplateStyle: NativeTemplateStyle(
@@ -36,12 +54,14 @@ class _NativeAdWidgetState extends State<NativeAdWidget> {
       )..load();
     } catch (_) {
       _ad = null;
+      _isLoaded = false;
     }
   }
 
   @override
   void dispose() {
     _ad?.dispose();
+    _ad = null;
     super.dispose();
   }
 
@@ -50,8 +70,9 @@ class _NativeAdWidgetState extends State<NativeAdWidget> {
     if (!AppConfig.adsEnabled || !AppConfig.nativeAdEnabled) {
       return const SizedBox.shrink();
     }
-    final ad = _ad;
-    if (ad == null) return const SizedBox.shrink();
+    final NativeAd? ad = _ad;
+    // Only build AdWidget after the ad has actually loaded.
+    if (ad == null || !_isLoaded) return const SizedBox.shrink();
     return SizedBox(
       height: 300,
       child: AdWidget(ad: ad),
