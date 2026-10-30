@@ -714,7 +714,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       // ---- FX Pack pre-passes (guarded: failure keeps original clip).
       // Applied to the SELECTED clip before the main pipeline.
       if (_clips.isNotEmpty) {
-        final selIdx = _selected.clamp(0, _clips.length - 1);
+        final selIdx = _selected.clamp(0, _clips.length - 1).toInt();
         var selClip = _clips[selIdx];
         // (a) Reverse.
         if (_fxReverse) {
@@ -746,7 +746,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
             _setStatus('Freeze frame laga rahe hain…');
             final cmds = freezeFrameCommands(
               input: selClip.file.path,
-              freezeAtSec: _fxFreezeAt.clamp(0.5, selClip.effectiveDuration - 0.5),
+              freezeAtSec: _fxFreezeAt.clamp(0.5, selClip.effectiveDuration - 0.5).toDouble(),
               holdSec: _fxFreezeHold,
               workDir: dir.path,
               stamp: stamp,
