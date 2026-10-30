@@ -259,6 +259,59 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     });
   }
 
+  /// Runs a FREE enhance job (not Premium — no ad gate). Shows busy state.
+  /// Remini-style Priority 1 tools (Jaani 31 Oct 2026): Sharpen, Denoise,
+  /// Enlarge, Color Fix. All algorithmic, on-device.
+  Future<void> _runEnhance(
+      String label, Future<void> Function() job) async {
+    final file = _workingFile;
+    if (file == null || _busy) return;
+    setState(() {
+      _busy = true;
+      _status = '$label… (on-device)';
+    });
+    try {
+      await job();
+      _setStatus('$label done.');
+    } catch (e) {
+      _setStatus('$label failed: $e');
+    } finally {
+      setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _sharpen() async {
+    await _runEnhance('Sharpening', () async {
+      final image = await _decodeWorking();
+      final out = await sharpenImage(image, amount: 0.8);
+      await _replaceWorking(out);
+    });
+  }
+
+  Future<void> _denoise() async {
+    await _runEnhance('Denoising', () async {
+      final image = await _decodeWorking();
+      final out = await denoiseImage(image, strength: 0.6);
+      await _replaceWorking(out);
+    });
+  }
+
+  Future<void> _enlarge() async {
+    await _runEnhance('Enlarging to 2x', () async {
+      final image = await _decodeWorking();
+      final out = await enlargeImage(image, scale: 2.0);
+      await _replaceWorking(out);
+    });
+  }
+
+  Future<void> _colorFix() async {
+    await _runEnhance('Fixing colors', () async {
+      final image = await _decodeWorking();
+      final out = await colorFixImage(image);
+      await _replaceWorking(out);
+    });
+  }
+
   Future<void> _export() async {
     final file = _workingFile;
     if (file == null || _busy) return;
@@ -353,6 +406,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
       'text': 'Text',
       'ai': 'AI Tools',
       'bgremover': 'BG Remover',
+      'enhance': 'Enhance',
       'save': 'Save',
     };
     return names[key] ?? key;
@@ -587,6 +641,50 @@ SizedBox(
             style: TextStyle(color: Colors.grey),
           ),
         ];
+      case 'enhance':
+        // Remini-style Enhance section (Jaani 31 Oct 2026, Priority 1).
+        // All FREE, on-device, one-tap: Sharpen, Denoise, Enlarge, Color Fix.
+        return [
+          const Text('Enhance',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          const SizedBox(height: 8),
+          const Text(
+            'One-tap photo improvements — 100% on-device, no upload. FREE.',
+            style: TextStyle(color: Colors.grey),
+          ),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              ElevatedButton.icon(
+                onPressed: file == null || _busy ? null : _sharpen,
+                icon: const Icon(Icons.blur_off),
+                label: const Text('Sharpen'),
+              ),
+              ElevatedButton.icon(
+                onPressed: file == null || _busy ? null : _denoise,
+                icon: const Icon(Icons.grain),
+                label: const Text('Denoise'),
+              ),
+              ElevatedButton.icon(
+                onPressed: file == null || _busy ? null : _enlarge,
+                icon: const Icon(Icons.zoom_out_map),
+                label: const Text('Enlarge 2x'),
+              ),
+              ElevatedButton.icon(
+                onPressed: file == null || _busy ? null : _colorFix,
+                icon: const Icon(Icons.color_lens),
+                label: const Text('Color Fix'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'Tip: Denoise pehle, phir Sharpen — behtareen result ke liye.',
+            style: TextStyle(color: Colors.grey, fontSize: 12),
+          ),
+        ];
       case 'bgremover':
         // Dedicated BG Remover panel (Jaani 31 Oct 2026): prominent,
         // one-tap background removal. Uses the same on-device
@@ -784,24 +882,45 @@ const Text('Filters', style: TextStyle(fontWeight: FontWeight.bold)),
               child: Container(
                 color: const Color(0xFF121212),
                 padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-                child: _activePhotoTool == null
-                    // No tool selected: hint to pick one from the rail.
-                    ? const Center(
-                        child: Text(
-                          'Neeche se koi tool select karein',
-                          style:
-                              TextStyle(color: Colors.grey, fontSize: 14),
-                        ),
-                      )
-                    // Tool open: CapCut-style header (Back/Done)
-                    // + that tool's options only.
-                    : ListView(
-                        padding: const EdgeInsets.only(top: 4),
-                        children: [
-                          _photoPanelHeader(_activePhotoTool!),
-                          ..._photoPanelChildren(),
-                        ],
+                // InShot-style smooth transitions between tools (Jaani 31 Oct
+                // 2026: "aur smooth"). AnimatedSwitcher fades/slides panels.
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 250),
+                  transitionBuilder:
+                      (Widget child, Animation<double> animation) {
+                    return FadeTransition(
+                      opacity: animation,
+                      child: SlideTransition(
+                        position: Tween<Offset>(
+                          begin: const Offset(0, 0.08),
+                          end: Offset.zero,
+                        ).animate(animation),
+                        child: child,
                       ),
+                    );
+                  },
+                  child: _activePhotoTool == null
+                      // No tool selected: hint to pick one from the rail.
+                      ? const Center(
+                          key: ValueKey<String>('photo-hint'),
+                          child: Text(
+                            'Neeche se koi tool select karein',
+                            style:
+                                TextStyle(color: Colors.grey, fontSize: 14),
+                          ),
+                        )
+                      // Tool open: CapCut-style header (Back/Done)
+                      // + that tool's options only.
+                      : ListView(
+                          key: ValueKey<String>(
+                              'photo-tool-${_activePhotoTool!}'),
+                          padding: const EdgeInsets.only(top: 4),
+                          children: [
+                            _photoPanelHeader(_activePhotoTool!),
+                            ..._photoPanelChildren(),
+                          ],
+                        ),
+                ),
               ),
             ),
             Padding(
@@ -836,7 +955,9 @@ const Text('Filters', style: TextStyle(fontWeight: FontWeight.bold)),
                     _photoRailButton('text', 'Text', Icons.text_fields),
                     _photoRailButton(
                         'bgremover', 'BG Remover', Icons.person_off),
-                    _photoRailButton('ai', 'AI Tools', Icons.auto_fix_high),
+                    _photoRailButton(
+                        'enhance', 'Enhance', Icons.auto_fix_high),
+                    _photoRailButton('ai', 'AI Tools', Icons.psychology),
                     _photoRailButton('save', 'Save', Icons.save),
                   ],
                 ),
