@@ -68,7 +68,9 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   // CapCut-style UI state: which single-row tool rail item is open.
   // The panel above the rail shows only this tool's controls; every
   // tool from the old screen is reachable through the rail.
-  String _activeTool = 'text';
+  // CapCut-style tool selection (Jaani 31 Oct 2026): null = tool grid
+  // visible, no panel open. Non-null = that tool's panel open, grid hidden.
+  String? _activeTool;
 
   // ---- PRO tools (v2.1.0) state. Defaults = today's behaviour: every
   // pro switch/dropdown off or neutral, so an untouched export is
@@ -1549,6 +1551,60 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     );
   }
 
+  /// Display name for a tool key (used in the panel header).
+  String _toolDisplayName(String key) {
+    const Map<String, String> names = <String, String>{
+      'text': 'Text',
+      'stickers': 'Stickers',
+      'effects': 'Effects',
+      'filters': 'Filters',
+      'audio': 'Audio',
+      'speed': 'Speed',
+      'transitions': 'Transitions',
+      'overlays': 'Overlays',
+      'captions': 'Captions',
+      'stabilization': 'Stabilization',
+      'chroma': 'Chromakey/BG remover',
+      'tracking': 'Tracking',
+      'beats': 'Beat sync',
+      'grading': 'Grading/LUTs',
+      'live': 'Live Studio',
+    };
+    return names[key] ?? key;
+  }
+
+  /// Header for the open tool panel: Back button + tool name + Done button.
+  /// CapCut-style: Back/Done closes the panel and returns to the tool grid.
+  Widget _toolPanelHeader(String toolKey) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          IconButton(
+            tooltip: 'Back to tools',
+            onPressed: () => setState(() => _activeTool = null),
+            icon: const Icon(Icons.arrow_back, color: Colors.white),
+          ),
+          Expanded(
+            child: Text(
+              _toolDisplayName(toolKey),
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          TextButton(
+            onPressed: () => setState(() => _activeTool = null),
+            child: const Text('Done'),
+          ),
+        ],
+      ),
+    );
+  }
+
   List<Widget> _toolPanelChildren() {
     switch (_activeTool) {
       case 'stickers':
@@ -3023,10 +3079,24 @@ Row(
                       ),
                     ),
                     Expanded(
-                      child: ListView(
-                        padding: const EdgeInsets.only(top: 8),
-                        children: _toolPanelChildren(),
-                      ),
+                      child: _activeTool == null
+                          // No tool selected: hint to pick one from the rail.
+                          ? const Center(
+                              child: Text(
+                                'Neeche se koi tool select karein',
+                                style: TextStyle(
+                                    color: Colors.grey, fontSize: 14),
+                              ),
+                            )
+                          // Tool open: CapCut-style header (Back/Done)
+                          // + that tool's options only.
+                          : ListView(
+                              padding: const EdgeInsets.only(top: 8),
+                              children: [
+                                _toolPanelHeader(_activeTool!),
+                                ..._toolPanelChildren(),
+                              ],
+                            ),
                     ),
                   ],
                 ),
@@ -3043,32 +3113,38 @@ Row(
             // never two rows. Every tool from the old screen is here.
             // Height 88: fits icon (24) + gap (4) + 2-line label (~28)
             // + button padding (16) + container padding (12) with margin.
-            Container(
-              height: 88,
-              color: const Color(0xFF1B1B1B),
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                children: [
-                  _railButton('text', 'Text', Icons.text_fields),
-                  _railButton('stickers', 'Stickers', Icons.emoji_emotions),
-                  _railButton('effects', 'Effects', Icons.auto_awesome),
-                  _railButton('filters', 'Filters', Icons.filter_vintage),
-                  _railButton('audio', 'Audio', Icons.music_note),
-                  _railButton('speed', 'Speed', Icons.speed),
-                  _railButton('transitions', 'Transitions', Icons.swap_horiz),
-                  _railButton('overlays', 'Overlays', Icons.layers),
-                  _railButton('captions', 'Captions', Icons.closed_caption),
-                  _railButton('stabilization', 'Stabilization', Icons.videocam),
-                  _railButton('chroma', 'Chromakey/BG remover', Icons.person_off),
-                  _railButton('tracking', 'Tracking', Icons.my_location),
-                  _railButton('beats', 'Beat sync', Icons.graphic_eq),
-                  _railButton('grading', 'Grading/LUTs', Icons.tune),
-                  _railButton('live', 'Live Studio', Icons.live_tv),
-                ],
+            // CapCut-style (Jaani 31 Oct 2026): hidden while a tool's
+            // panel is open — only that tool's options show, with
+            // Back/Done in the panel header to return here.
+            if (_activeTool == null)
+              Container(
+                height: 88,
+                color: const Color(0xFF1B1B1B),
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  children: [
+                    _railButton('text', 'Text', Icons.text_fields),
+                    _railButton('stickers', 'Stickers', Icons.emoji_emotions),
+                    _railButton('effects', 'Effects', Icons.auto_awesome),
+                    _railButton('filters', 'Filters', Icons.filter_vintage),
+                    _railButton('audio', 'Audio', Icons.music_note),
+                    _railButton('speed', 'Speed', Icons.speed),
+                    _railButton('transitions', 'Transitions', Icons.swap_horiz),
+                    _railButton('overlays', 'Overlays', Icons.layers),
+                    _railButton('captions', 'Captions', Icons.closed_caption),
+                    _railButton(
+                        'stabilization', 'Stabilization', Icons.videocam),
+                    _railButton(
+                        'chroma', 'Chromakey/BG remover', Icons.person_off),
+                    _railButton('tracking', 'Tracking', Icons.my_location),
+                    _railButton('beats', 'Beat sync', Icons.graphic_eq),
+                    _railButton('grading', 'Grading/LUTs', Icons.tune),
+                    _railButton('live', 'Live Studio', Icons.live_tv),
+                  ],
+                ),
               ),
-            ),
           ],
         ),
       ),
