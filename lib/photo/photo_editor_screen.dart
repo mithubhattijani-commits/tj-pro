@@ -60,6 +60,11 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
   // CapCut-style UI state (Jaani 31 Oct 2026): null = tool grid visible,
   // no panel open. Non-null = that tool's panel open, grid hidden.
   String? _activePhotoTool;
+  // InShot-style HSL state (Jaani 31 Oct 2026): 8 colors × [hue, sat, light].
+  // Colors: Red, Orange, Yellow, Green, Cyan, Blue, Purple, Magenta.
+  List<List<double>> _hslAdjustments =
+      List.generate(8, (_) => [0.0, 1.0, 0.0]);
+  int _hslSelectedColor = 0;
 
 
   void _setStatus(String s) => setState(() => _status = s);
@@ -312,6 +317,24 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     });
   }
 
+  /// InShot-style HSL apply (Jaani 31 Oct 2026). Applies the current
+  /// per-color adjustments. FREE, on-device.
+  Future<void> _applyHSL() async {
+    await _runEnhance('Applying HSL', () async {
+      final image = await _decodeWorking();
+      final out = await adjustHSL(image, _hslAdjustments);
+      await _replaceWorking(out);
+    });
+  }
+
+  /// Reset all HSL adjustments to neutral.
+  void _resetHSL() {
+    setState(() {
+      _hslAdjustments = List.generate(8, (_) => [0.0, 1.0, 0.0]);
+      _hslSelectedColor = 0;
+    });
+  }
+
   Future<void> _export() async {
     final file = _workingFile;
     if (file == null || _busy) return;
@@ -407,6 +430,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
       'ai': 'AI Tools',
       'bgremover': 'BG Remover',
       'enhance': 'Enhance',
+      'hsl': 'HSL',
       'save': 'Save',
     };
     return names[key] ?? key;
@@ -438,6 +462,43 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
           TextButton(
             onPressed: () => setState(() => _activePhotoTool = null),
             child: const Text('Done'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Single H/S/L slider row for the HSL panel.
+  Widget _hslSlider({
+    required String label,
+    required double value,
+    required double min,
+    required double max,
+    required ValueChanged<double> onChanged,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 90,
+            child: Text(label, style: const TextStyle(fontSize: 13)),
+          ),
+          Expanded(
+            child: Slider(
+              value: value.clamp(min, max),
+              min: min,
+              max: max,
+              onChanged: onChanged,
+            ),
+          ),
+          SizedBox(
+            width: 52,
+            child: Text(
+              value.toStringAsFixed(1),
+              textAlign: TextAlign.end,
+              style: const TextStyle(fontSize: 12, color: Colors.grey),
+            ),
           ),
         ],
       ),
@@ -683,6 +744,118 @@ SizedBox(
           const Text(
             'Tip: Denoise pehle, phir Sharpen — behtareen result ke liye.',
             style: TextStyle(color: Colors.grey, fontSize: 12),
+          ),
+        ];
+      case 'hsl':
+        // InShot-style HSL panel (Jaani 31 Oct 2026): per-color
+        // Hue/Saturation/Lightness. 8 colors, 3 sliders each.
+        return [
+          Row(
+            children: [
+              const Text('HSL',
+                  style:
+                      TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              const Spacer(),
+              TextButton(
+                onPressed: _resetHSL,
+                child: const Text('Reset'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Rang select karein, phir Hue / Saturation / Lightness adjust karein.',
+            style: TextStyle(color: Colors.grey, fontSize: 12),
+          ),
+          const SizedBox(height: 12),
+          // Color selector chips.
+          Builder(
+            builder: (BuildContext context) {
+              const List<String> colorNames = <String>[
+                'Red', 'Orange', 'Yellow', 'Green',
+                'Cyan', 'Blue', 'Purple', 'Magenta',
+              ];
+              const List<Color> colorDots = <Color>[
+                Colors.red, Colors.orange, Colors.yellow, Colors.green,
+                Colors.cyan, Colors.blue, Colors.purple, Colors.pink,
+              ];
+              return Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: List<Widget>.generate(8, (int i) {
+                  final bool selected = _hslSelectedColor == i;
+                  return ChoiceChip(
+                    label: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 12,
+                          height: 12,
+                          decoration: BoxDecoration(
+                            color: colorDots[i],
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(colorNames[i],
+                            style: const TextStyle(fontSize: 12)),
+                      ],
+                    ),
+                    selected: selected,
+                    onSelected: (_) =>
+                        setState(() => _hslSelectedColor = i),
+                  );
+                }),
+              );
+            },
+          ),
+          const SizedBox(height: 16),
+          // H/S/L sliders for the selected color.
+          Builder(
+            builder: (BuildContext context) {
+              final List<double> adj =
+                  _hslAdjustments[_hslSelectedColor];
+              return Column(
+                children: [
+                  _hslSlider(
+                    label: 'Hue',
+                    value: adj[0],
+                    min: -180,
+                    max: 180,
+                    onChanged: (double v) => setState(
+                        () => _hslAdjustments[_hslSelectedColor][0] = v),
+                  ),
+                  _hslSlider(
+                    label: 'Saturation',
+                    value: adj[1],
+                    min: 0,
+                    max: 2,
+                    onChanged: (double v) => setState(
+                        () => _hslAdjustments[_hslSelectedColor][1] = v),
+                  ),
+                  _hslSlider(
+                    label: 'Lightness',
+                    value: adj[2],
+                    min: -100,
+                    max: 100,
+                    onChanged: (double v) => setState(
+                        () => _hslAdjustments[_hslSelectedColor][2] = v),
+                  ),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: file == null || _busy ? null : _applyHSL,
+              icon: const Icon(Icons.check),
+              label: const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: Text('Apply HSL', style: TextStyle(fontSize: 16)),
+              ),
+            ),
           ),
         ];
       case 'bgremover':
@@ -957,6 +1130,7 @@ const Text('Filters', style: TextStyle(fontWeight: FontWeight.bold)),
                         'bgremover', 'BG Remover', Icons.person_off),
                     _photoRailButton(
                         'enhance', 'Enhance', Icons.auto_fix_high),
+                    _photoRailButton('hsl', 'HSL', Icons.palette),
                     _photoRailButton('ai', 'AI Tools', Icons.psychology),
                     _photoRailButton('save', 'Save', Icons.save),
                   ],
