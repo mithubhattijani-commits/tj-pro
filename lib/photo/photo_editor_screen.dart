@@ -57,8 +57,9 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
   bool _busy = false;
   bool _hasTransparency = false;
   String _status = 'Pick a photo to start.';
-  // CapCut-style UI state: which single-row tool rail item is open.
-  String _activePhotoTool = 'filters';
+  // CapCut-style UI state (Jaani 31 Oct 2026): null = tool grid visible,
+  // no panel open. Non-null = that tool's panel open, grid hidden.
+  String? _activePhotoTool;
 
 
   void _setStatus(String s) => setState(() => _status = s);
@@ -341,6 +342,54 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     );
   }
 
+  /// Display name for a photo tool key (used in the panel header).
+  String _photoToolDisplayName(String key) {
+    const Map<String, String> names = <String, String>{
+      'pick': 'Pick Photo',
+      'crop': 'Crop',
+      'rotate': 'Rotate',
+      'filters': 'Filters',
+      'adjust': 'Adjust',
+      'text': 'Text',
+      'ai': 'AI Tools',
+      'bgremover': 'BG Remover',
+      'save': 'Save',
+    };
+    return names[key] ?? key;
+  }
+
+  /// Header for the open photo tool panel: Back + tool name + Done.
+  /// CapCut-style: Back/Done closes the panel and returns to the tool grid.
+  Widget _photoPanelHeader(String toolKey) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          IconButton(
+            tooltip: 'Back to tools',
+            onPressed: () => setState(() => _activePhotoTool = null),
+            icon: const Icon(Icons.arrow_back, color: Colors.white),
+          ),
+          Expanded(
+            child: Text(
+              _photoToolDisplayName(toolKey),
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          TextButton(
+            onPressed: () => setState(() => _activePhotoTool = null),
+            child: const Text('Done'),
+          ),
+        ],
+      ),
+    );
+  }
+
   List<Widget> _photoPanelChildren() {
     final file = _workingFile;
     switch (_activePhotoTool) {
@@ -538,6 +587,38 @@ SizedBox(
             style: TextStyle(color: Colors.grey),
           ),
         ];
+      case 'bgremover':
+        // Dedicated BG Remover panel (Jaani 31 Oct 2026): prominent,
+        // one-tap background removal. Uses the same on-device
+        // _removeBackground() as the AI Tools section.
+        return [
+          const Text('Background Remover',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          const SizedBox(height: 8),
+          const Text(
+            'Ek tap mein photo ka background hataein. '
+            '100% on-device — koi upload nahi.',
+            style: TextStyle(color: Colors.grey),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: file == null || _busy ? null : _removeBackground,
+              icon: const Icon(Icons.person_off, size: 28),
+              label: const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: Text('Remove Background', style: TextStyle(fontSize: 16)),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          if (_hasTransparency)
+            const Text(
+              'Background hata diya gaya hai — ab Save karein.',
+              style: TextStyle(color: Colors.tealAccent),
+            ),
+        ];
       case 'pick':
       default:
         return [
@@ -703,10 +784,24 @@ const Text('Filters', style: TextStyle(fontWeight: FontWeight.bold)),
               child: Container(
                 color: const Color(0xFF121212),
                 padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-                child: ListView(
-                  padding: const EdgeInsets.only(top: 4),
-                  children: _photoPanelChildren(),
-                ),
+                child: _activePhotoTool == null
+                    // No tool selected: hint to pick one from the rail.
+                    ? const Center(
+                        child: Text(
+                          'Neeche se koi tool select karein',
+                          style:
+                              TextStyle(color: Colors.grey, fontSize: 14),
+                        ),
+                      )
+                    // Tool open: CapCut-style header (Back/Done)
+                    // + that tool's options only.
+                    : ListView(
+                        padding: const EdgeInsets.only(top: 4),
+                        children: [
+                          _photoPanelHeader(_activePhotoTool!),
+                          ..._photoPanelChildren(),
+                        ],
+                      ),
               ),
             ),
             Padding(
@@ -718,25 +813,34 @@ const Text('Filters', style: TextStyle(fontWeight: FontWeight.bold)),
             ),
             // ONE single horizontal tool row (scrollable) — never a grid,
             // never two rows.
-            Container(
-              height: 76,
-              color: const Color(0xFF1B1B1B),
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                children: [
-                  _photoRailButton('pick', 'Pick', Icons.photo_library),
-                  _photoRailButton('crop', 'Crop', Icons.crop),
-                  _photoRailButton('rotate', 'Rotate', Icons.rotate_right),
-                  _photoRailButton('filters', 'Filters', Icons.filter_vintage),
-                  _photoRailButton('adjust', 'Adjust', Icons.tune),
-                  _photoRailButton('text', 'Text', Icons.text_fields),
-                  _photoRailButton('ai', 'AI Tools', Icons.auto_fix_high),
-                  _photoRailButton('save', 'Save', Icons.save),
-                ],
+            // CapCut-style (Jaani 31 Oct 2026): hidden while a tool's
+            // panel is open — only that tool's options show, with
+            // Back/Done in the panel header to return here.
+            // Height 88: fits icon (24) + gap (4) + 2-line label (~28)
+            // + button padding (16) + container padding (12) with margin.
+            if (_activePhotoTool == null)
+              Container(
+                height: 88,
+                color: const Color(0xFF1B1B1B),
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  children: [
+                    _photoRailButton('pick', 'Pick', Icons.photo_library),
+                    _photoRailButton('crop', 'Crop', Icons.crop),
+                    _photoRailButton('rotate', 'Rotate', Icons.rotate_right),
+                    _photoRailButton(
+                        'filters', 'Filters', Icons.filter_vintage),
+                    _photoRailButton('adjust', 'Adjust', Icons.tune),
+                    _photoRailButton('text', 'Text', Icons.text_fields),
+                    _photoRailButton(
+                        'bgremover', 'BG Remover', Icons.person_off),
+                    _photoRailButton('ai', 'AI Tools', Icons.auto_fix_high),
+                    _photoRailButton('save', 'Save', Icons.save),
+                  ],
+                ),
               ),
-            ),
           ],
         ),
       ),
