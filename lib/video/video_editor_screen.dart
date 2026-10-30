@@ -649,7 +649,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     if (_busy) return;
     final quality = await showDialog<ExportQuality>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (dialogCtx) => AlertDialog(
         title: const Text('Export quality'),
         content: StatefulBuilder(
           builder: (ctx, setDialogState) => Column(
@@ -669,11 +669,11 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
+            onPressed: () => Navigator.of(dialogCtx).pop(),
             child: const Text('Cancel'),
           ),
           ElevatedButton(
-            onPressed: () => Navigator.of(ctx).pop(_fxQuality),
+            onPressed: () => Navigator.of(dialogCtx).pop(_fxQuality),
             child: const Text('Export'),
           ),
         ],
@@ -725,10 +725,13 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
               reverseCommand(input: selClip.file.path, output: revOut),
             );
             if (res.ok) {
-              selClip = VideoClip(
-                File(revOut), selClip.duration, selClip.aspectRatio,
-              )..trimStart = selClip.trimStart
-               ..trimEnd = selClip.trimEnd;
+              final oldClip = selClip;
+              final newClip = VideoClip(
+                File(revOut), oldClip.duration, oldClip.aspectRatio,
+              );
+              newClip.trimStart = oldClip.trimStart;
+              newClip.trimEnd = oldClip.trimEnd;
+              selClip = newClip;
               _clips[selIdx] = selClip;
             } else {
               _setStatus('Note: reverse fail ho gaya, original clip use ho rahi hai.');
@@ -1077,7 +1080,9 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         // Orientation comes from the FIRST clip's real aspect ratio.
         // FX Pack: export quality (720p/1080p) sets the target size.
         final portrait = clips.first.aspectRatio < 1.0;
-        final (w, h) = exportDims(_fxQuality, portrait);
+        final dims = exportDims(_fxQuality, portrait);
+        final w = dims.$1;
+        final h = dims.$2;
         final normFiles = <String>[];
         final normDurMs = <int>[];
         for (var i = 0; i < clips.length; i++) {

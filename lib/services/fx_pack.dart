@@ -197,18 +197,21 @@ String pipOverlayFilter({
   required String outLabel,
 }) {
   final s = pipScale.clamp(0.15, 0.5);
-  final xExpr = switch (position) {
-    PipPosition.topLeft => '$margin',
-    PipPosition.topRight => 'W-w-$margin',
-    PipPosition.bottomLeft => '$margin',
-    PipPosition.bottomRight => 'W-w-$margin',
-  };
-  final yExpr = switch (position) {
-    PipPosition.topLeft => '$margin',
-    PipPosition.topRight => '$margin',
-    PipPosition.bottomLeft => 'H-h-$margin',
-    PipPosition.bottomRight => 'H-h-$margin',
-  };
+  String xExpr;
+  String yExpr;
+  if (position == PipPosition.topLeft) {
+    xExpr = '$margin';
+    yExpr = '$margin';
+  } else if (position == PipPosition.topRight) {
+    xExpr = 'W-w-$margin';
+    yExpr = '$margin';
+  } else if (position == PipPosition.bottomLeft) {
+    xExpr = '$margin';
+    yExpr = 'H-h-$margin';
+  } else {
+    xExpr = 'W-w-$margin';
+    yExpr = 'H-h-$margin';
+  }
   return '$pipLabel scale=iw*$s:ih*$s[pip];'
       '[0:v][pip]overlay=x=\'$xExpr\':y=\'$yExpr\'$outLabel';
 }
