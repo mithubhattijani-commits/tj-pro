@@ -67,6 +67,16 @@ class AppConfig {
   static const String appOpenAdUnitId =
       'ca-app-pub-3940256099942544/9257395921';
 
+  // UNITY ADS (Game ID 800418048, Android "TJ Pro" project).
+  // Test mode is ON in UnityAdsService — flip testMode to false for
+  // production. These switches gate Unity ads independently of AdMob.
+  static const bool unityAdsEnabled = true;
+  static const bool unityRewardedEnabled = true;
+  static const bool unityInterstitialEnabled = true;
+  static const String unityGameId = '800418048';
+  static const String unityRewardedPlacementId = 'BP_Rewarded_Android';
+  static const String unityInterstitialPlacementId = 'BP_Interstitial_Android';
+
   // Backwards-compatible alias used by older code paths.
   static const bool useTestAds = true;
 }
