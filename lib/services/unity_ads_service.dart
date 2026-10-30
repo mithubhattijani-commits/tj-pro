@@ -20,7 +20,7 @@ import '../app_config.dart';
 /// production builds.
 class UnityAdsService {
   /// Keep true while testing. Production builds set this to false.
-  static const bool testMode = true;
+  static const bool testMode = false;
 
   /// Minimum seconds between interstitial shows (frequency capping).
   static const int interstitialMinIntervalSec = 120;
