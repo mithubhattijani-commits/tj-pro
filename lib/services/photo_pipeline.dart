@@ -285,8 +285,7 @@ double _featherWeight(int dNear, int dFar, int feather) {
 /// Reduces blur/softness. amount 0.5 is a safe default.
 Uint8List _sharpenJob(List<dynamic> args) {
   final bytes = args[0] as Uint8List;
-  final w = args[1] as int;
-  final h = args[2] as int;
+  // Note: args[1] (w) and args[2] (h) intentionally unused.
   final amount = (args[3] as num).toDouble();
   final src = img.decodeImage(bytes);
   if (src == null) return bytes;
