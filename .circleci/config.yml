@@ -16,6 +16,17 @@ jobs:
     steps:
       - checkout
       - run:
+          name: Install Flutter (stable channel)
+          command: |
+            if [ ! -d "$HOME/flutter" ]; then
+              git clone --depth 1 -b stable https://github.com/flutter/flutter.git "$HOME/flutter"
+            fi
+            echo 'export PATH="$HOME/flutter/bin:$PATH"' >> "$BASH_ENV"
+            export PATH="$HOME/flutter/bin:$PATH"
+            flutter --version
+            flutter precache --android
+          no_output_timeout: 20m
+      - run:
           name: Install JDK 21 (Temurin)
           command: |
             if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo"; fi
@@ -34,17 +45,6 @@ jobs:
             FLUTTER_BIN="$(command -v flutter)"
             FLUTTER_ROOT="$(dirname "$(dirname "$FLUTTER_BIN")")"
             printf 'flutter.sdk=%s\n' "$FLUTTER_ROOT" > android/local.properties
-      - run:
-          name: Install Flutter (stable channel)
-          command: |
-            if [ ! -d "$HOME/flutter" ]; then
-              git clone --depth 1 -b stable https://github.com/flutter/flutter.git "$HOME/flutter"
-            fi
-            echo 'export PATH="$HOME/flutter/bin:$PATH"' >> "$BASH_ENV"
-            export PATH="$HOME/flutter/bin:$PATH"
-            flutter --version
-            flutter precache --android
-          no_output_timeout: 20m
       - run:
           name: Flutter pub get
           command: flutter pub get
