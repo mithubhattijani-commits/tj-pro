@@ -55,7 +55,9 @@ jobs:
           name: Install NDK 29 for whisper_ggml_plus
           command: |
             SDK="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
-            SDKMANAGER=$(ls "$SDK"/cmdline-tools/*/bin/sdkmanager | head -1)
+            SDKMANAGER=""
+            for f in "$SDK"/cmdline-tools/*/bin/sdkmanager; do SDKMANAGER="$f"; break; done
+            [ -n "$SDKMANAGER" ] || { echo "sdkmanager not found"; exit 1; }
             yes | "$SDKMANAGER" --licenses > /dev/null
             "$SDKMANAGER" "ndk;29.0.13113456"
             "$SDKMANAGER" "platforms;android-37" || echo "NOTE: platforms;android-37 not in sdkmanager repo; Gradle will try auto-download"
