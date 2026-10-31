@@ -2,6 +2,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'photo/photo_editor_screen.dart';
 import 'app_config.dart';
@@ -142,6 +143,21 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               trailing: const Icon(Icons.arrow_forward_ios, size: 18),
               onTap: () => UpdateService.checkManually(context),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.support_agent),
+              title: const Text('مدد اور سپورٹ'),
+              subtitle: const Text('Jaani Bhatti — 03090808180'),
+              trailing: const Icon(Icons.chat),
+              onTap: () async {
+                final uri = Uri.parse('https://wa.me/923090808180');
+                if (await canLaunchUrl(uri)) {
+                  await launchUrl(uri, mode: LaunchMode.externalApplication);
+                }
+              },
             ),
           ),
           const SizedBox(height: 16),
