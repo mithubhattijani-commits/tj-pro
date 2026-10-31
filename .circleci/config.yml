@@ -1,3 +1,4 @@
+# retrigger 31 Oct 14:50 PKT: retry past transient Gradle daemon OOM
 # CircleCI — free APK builds for tj-pro (GitHub Actions minutes exhausted).
 # Mirrors .github/workflows/build-apk.yml. DEBUG, uncompressed, universal APK.
 # NOTE: tj-pro needs JDK 21 (JDK 17 hits the Android v1 embedding failure),
