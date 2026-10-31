@@ -1,0 +1,107 @@
+# CircleCI — free APK builds for tj-pro (GitHub Actions minutes exhausted).
+# Mirrors .github/workflows/build-apk.yml. DEBUG, uncompressed, universal APK.
+# NOTE: tj-pro needs JDK 21 (JDK 17 hits the Android v1 embedding failure),
+# so Temurin 21 is installed explicitly. Also installs NDK 29.0.13113456
+# (for whisper_ggml_plus) and tries the android-37 platform.
+# Triggers on push to main.
+# Required CircleCI project env vars: KEYSTORE_BASE64, KEYSTORE_STORE_PASSWORD,
+# KEYSTORE_KEY_PASSWORD, GH_TOKEN.
+version: 2.1
+
+jobs:
+  build-apk:
+    docker:
+      - image: cirrusci/flutter:stable
+    working_directory: ~/repo
+    steps:
+      - checkout
+      - run:
+          name: Install JDK 21 (Temurin)
+          command: |
+            if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo"; fi
+            $SUDO apt-get update -qq
+            $SUDO apt-get install -y -qq wget gnupg
+            wget -O - https://packages.adoptium.net/artifactory/api/gpg/key/public | $SUDO gpg --dearmor -o /usr/share/keyrings/adoptium.gpg
+            echo "deb [signed-by=/usr/share/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb $(. /etc/os-release && echo $VERSION_CODENAME) main" | $SUDO tee /etc/apt/sources.list.d/adoptium.list > /dev/null
+            $SUDO apt-get update -qq
+            $SUDO apt-get install -y -qq temurin-21-jdk
+            echo 'export JAVA_HOME=/usr/lib/jvm/temurin-21-jdk-amd64' >> $BASH_ENV
+            echo 'export PATH=$JAVA_HOME/bin:$PATH' >> $BASH_ENV
+            /usr/lib/jvm/temurin-21-jdk-amd64/bin/java -version
+      - run:
+          name: Prepare Android local properties
+          command: |
+            FLUTTER_BIN="$(command -v flutter)"
+            FLUTTER_ROOT="$(dirname "$(dirname "$FLUTTER_BIN")")"
+            printf 'flutter.sdk=%s\n' "$FLUTTER_ROOT" > android/local.properties
+      - run:
+          name: Flutter pub get
+          command: flutter pub get
+      - run:
+          name: Analyze
+          command: flutter analyze
+      - run:
+          name: Install NDK 29 for whisper_ggml_plus
+          command: |
+            SDK="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+            SDKMANAGER=$(ls "$SDK"/cmdline-tools/*/bin/sdkmanager | head -1)
+            yes | "$SDKMANAGER" --licenses > /dev/null
+            "$SDKMANAGER" "ndk;29.0.13113456"
+            "$SDKMANAGER" "platforms;android-37" || echo "NOTE: platforms;android-37 not in sdkmanager repo; Gradle will try auto-download"
+            "$SDKMANAGER" --list_installed | grep -E "platforms;android-3[4567]|ndk;" || true
+          no_output_timeout: 20m
+      - run:
+          name: Decode signing keystore
+          command: |
+            echo "$KEYSTORE_BASE64" | base64 -d > android/app/tjpro.keystore
+            ls -lh android/app/tjpro.keystore
+      - run:
+          name: Build debug APK (keystore-signed, uncompressed)
+          command: flutter build apk --debug
+          no_output_timeout: 30m
+      - run:
+          name: Verify APK
+          environment:
+            EXPECTED_SIGNER_SHA256: "1bdc8c53ba6e5bbb0ea3d6063475ab7e07550bbadbcbd51de19b879604589b37"
+          command: |
+            set -e
+            APK=build/app/outputs/flutter-apk/app-debug.apk
+            ls -la "$APK"
+            md5sum "$APK"
+            unzip -t "$APK" | tail -3
+            SDK="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+            AAPT2=$(ls "$SDK"/build-tools/*/aapt2 | head -1)
+            APKSIGNER=$(ls "$SDK"/build-tools/*/apksigner | head -1)
+            "$AAPT2" dump badging "$APK" > badging.txt
+            cat badging.txt
+            grep -F "package: name='com.tjpro.app' versionCode='1' versionName='1.0.0'" badging.txt
+            grep -F "sdkVersion:'24'" badging.txt
+            grep -F "targetSdkVersion:'36'" badging.txt
+            grep -F "application-label:'TJ Pro'" badging.txt
+            "$APKSIGNER" verify --print-certs "$APK" | tee certs.txt
+            grep -F "Signer #1 certificate SHA-256 digest: $EXPECTED_SIGNER_SHA256" certs.txt
+            echo "VERIFY OK: package/version/label/SDKs/signer all match TJ Pro day-1 key"
+      - run:
+          name: Install GitHub CLI
+          command: |
+            if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo"; fi
+            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | $SUDO dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+            $SUDO chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | $SUDO tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+            $SUDO apt-get update -qq
+            $SUDO apt-get install -y -qq gh
+      - run:
+          name: Upload APK to GitHub Release
+          command: |
+            gh release create latest --title "Latest Build" --notes "Automated CircleCI build from $CIRCLE_SHA1" --repo mithubhattijani-commits/tj-pro 2>/dev/null || true
+            gh release upload latest build/app/outputs/flutter-apk/app-debug.apk --clobber --repo mithubhattijani-commits/tj-pro
+      - store_artifacts:
+          path: build/app/outputs/flutter-apk/app-debug.apk
+
+workflows:
+  build-on-main:
+    jobs:
+      - build-apk:
+          filters:
+            branches:
+              only: main
