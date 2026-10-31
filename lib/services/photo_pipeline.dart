@@ -674,7 +674,7 @@ Future<Uint8List> rasterizeText({
   final List<ui.Shadow> shadows = [];
   if (glow) {
     shadows.add(ui.Shadow(
-      color: ui.Color(argb).withOpacity(0.9),
+      color: ui.Color(argb).withValues(alpha: 0.9),
       blurRadius: 16,
     ));
   }

@@ -1564,7 +1564,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     final List<Shadow> shadows = [];
     if (_textGlow) {
       shadows.add(Shadow(
-          color: color.withOpacity(0.9), blurRadius: 16));
+          color: color.withValues(alpha: 0.9), blurRadius: 16));
     }
     if (_textShadow) {
       shadows.add(const Shadow(

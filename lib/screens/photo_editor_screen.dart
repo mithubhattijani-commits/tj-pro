@@ -535,7 +535,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
   TextStyle _fontStyle(String fontKey,
       {required Color color, required double fontSize}) {
     final base = TextStyle(
-      color: color.withOpacity(_textOpacity),
+      color: color.withValues(alpha: _textOpacity),
       fontSize: fontSize,
       fontWeight: _textBold ? FontWeight.bold : FontWeight.normal,
       fontStyle: _textItalic ? FontStyle.italic : FontStyle.normal,
@@ -639,11 +639,11 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     final List<Shadow> shadows = [];
     if (_textGlow) {
       shadows.add(Shadow(
-        color: _textColor.withOpacity(0.9),
+        color: _textColor.withValues(alpha: 0.9),
         blurRadius: 16,
       ));
       shadows.add(Shadow(
-        color: _textColor.withOpacity(0.6),
+        color: _textColor.withValues(alpha: 0.6),
         blurRadius: 32,
       ));
     }
