@@ -7,6 +7,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:gal/gal.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:image/image.dart' as img;
 import 'package:image_cropper/image_cropper.dart';
 import 'package:image_picker/image_picker.dart';
@@ -54,6 +55,25 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
   Color _textColor = Colors.white;
   double _textSize = 42;
   Offset _textOffset = const Offset(0.5, 0.8);
+  // Text fonts & CapCut-style effects (Jaani 31 Oct 2026).
+  // Font keys: 'default', 'nastaliq', 'naskh', 'kufi', 'gulzar',
+  // 'roboto', 'merriweather', 'dancing', 'bebas', 'pacifico'.
+  String _textFont = 'default';
+  bool _textShadow = true; // subtle drop shadow by default
+  bool _textGlow = false;
+  bool _textOutline = false;
+  Color _textOutlineColor = Colors.black;
+  double _textOutlineWidth = 2.0;
+  bool _textBg = false; // ribbon/background behind text
+  Color _textBgColor = Colors.black54;
+  // CapCut-style text extras (Jaani 31 Oct 2026, full delegation).
+  bool _textBold = false;
+  bool _textItalic = false;
+  double _textOpacity = 1.0; // 0..1
+  double _textLetterSpacing = 0.0; // -2..10
+  TextAlign _textAlign = TextAlign.center;
+  // Daily upgrade 2026-10-31: line spacing for multi-line text.
+  double _textLineSpacing = 1.0; // 0.8..2.0
   bool _busy = false;
   bool _hasTransparency = false;
   String _status = 'Pick a photo to start.';
@@ -364,6 +384,11 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
         textSize: _textSize,
         textOffsetX: _textOffset.dx,
         textOffsetY: _textOffset.dy,
+        textShadow: _textShadow,
+        textGlow: _textGlow,
+        textBg: _textBg,
+        textBgArgb: _textBgColor.toARGB32(),
+        textLineHeight: _textLineSpacing,
       );
       final outFile = await exportPhoto(
         workingFile: file,
@@ -505,6 +530,213 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     );
   }
 
+  /// Returns a TextStyle for the selected font key, with the given
+  /// color/size. Uses google_fonts; falls back to default on error.
+  /// Urdu fonts: nastaliq (traditional), naskh (clean), kufi (geometric),
+  /// gulzar (decorative). English: roboto, merriweather (serif),
+  /// dancing (script), bebas (display), pacifico (script).
+  TextStyle _fontStyle(String fontKey,
+      {required Color color, required double fontSize}) {
+    final TextStyle base = TextStyle(
+      color: color.withOpacity(_textOpacity),
+      fontSize: fontSize,
+      height: _textLineSpacing,
+      fontWeight: _textBold ? FontWeight.bold : FontWeight.normal,
+      fontStyle: _textItalic ? FontStyle.italic : FontStyle.normal,
+      letterSpacing: _textLetterSpacing,
+      shadows: _textShadows(),
+    );
+    try {
+      switch (fontKey) {
+        case 'nastaliq':
+          return GoogleFonts.notoNastaliqUrdu(textStyle: base);
+        case 'naskh':
+          return GoogleFonts.notoNaskhArabic(textStyle: base);
+        case 'kufi':
+          return GoogleFonts.notoKufiArabic(textStyle: base);
+        case 'gulzar':
+          return GoogleFonts.gulzar(textStyle: base);
+        case 'roboto':
+          return GoogleFonts.roboto(textStyle: base);
+        case 'merriweather':
+          return GoogleFonts.merriweather(textStyle: base);
+        case 'dancing':
+          return GoogleFonts.dancingScript(textStyle: base);
+        case 'bebas':
+          return GoogleFonts.bebasNeue(textStyle: base);
+        case 'pacifico':
+          return GoogleFonts.pacifico(textStyle: base);
+        default:
+          return base;
+      }
+    } catch (_) {
+      return base; // offline or font not cached yet
+    }
+  }
+
+  /// Font selection chip with a live preview of the font style.
+  Widget _fontChip(String key, String label) {
+    final bool selected = _textFont == key;
+    return ChoiceChip(
+      label: Text(
+        label,
+        style: _fontStyle(key, color: Colors.white, fontSize: 13),
+      ),
+      selected: selected,
+      onSelected: (_) => setState(() => _textFont = key),
+    );
+  }
+
+  /// One-tap text style templates (daily upgrade 2026-10-31). Each template
+  /// sets the font, color, weight and effect combo; the user can fine-tune
+  /// afterwards. Pure state change — safe by construction.
+  void _applyTextTemplate(String key) {
+    setState(() {
+      switch (key) {
+        case 'classic':
+          _textFont = 'default';
+          _textColor = Colors.white;
+          _textBold = true;
+          _textItalic = false;
+          _textShadow = true;
+          _textGlow = false;
+          _textOutline = false;
+          _textBg = false;
+          _textLetterSpacing = 0.0;
+          _textOpacity = 1.0;
+        case 'neon':
+          _textFont = 'bebas';
+          _textColor = Colors.cyanAccent;
+          _textBold = true;
+          _textItalic = false;
+          _textShadow = false;
+          _textGlow = true;
+          _textOutline = false;
+          _textBg = false;
+          _textLetterSpacing = 2.0;
+          _textOpacity = 1.0;
+        case 'breaking':
+          _textFont = 'roboto';
+          _textColor = Colors.yellow;
+          _textBold = true;
+          _textItalic = false;
+          _textShadow = true;
+          _textGlow = false;
+          _textOutline = false;
+          _textBg = true;
+          _textBgColor = Colors.red;
+          _textLetterSpacing = 1.0;
+          _textOpacity = 1.0;
+        case 'elegant':
+          _textFont = 'merriweather';
+          _textColor = Colors.white;
+          _textBold = false;
+          _textItalic = true;
+          _textShadow = true;
+          _textGlow = false;
+          _textOutline = false;
+          _textBg = false;
+          _textLetterSpacing = 0.5;
+          _textOpacity = 1.0;
+        case 'urdu':
+          _textFont = 'nastaliq';
+          _textColor = const Color(0xFFFFD54F);
+          _textBold = false;
+          _textItalic = false;
+          _textShadow = true;
+          _textGlow = false;
+          _textOutline = false;
+          _textBg = false;
+          _textLetterSpacing = 0.0;
+          _textOpacity = 1.0;
+        case 'script':
+          _textFont = 'dancing';
+          _textColor = Colors.pinkAccent;
+          _textBold = false;
+          _textItalic = false;
+          _textShadow = false;
+          _textGlow = true;
+          _textOutline = false;
+          _textBg = false;
+          _textLetterSpacing = 1.0;
+          _textOpacity = 1.0;
+      }
+    });
+  }
+
+  /// Builds the preview text widget with all current style settings:
+  /// font, shadow/glow, outline (stroked layer behind), ribbon background,
+  /// alignment. Used in the photo preview.
+  Widget _buildPreviewText() {
+    final TextStyle style = _fontStyle(
+      _textFont,
+      color: _textColor,
+      fontSize: _textSize * 0.6,
+    );
+    Widget textWidget;
+    if (_textOutline) {
+      // Outline: stroked text behind the filled text.
+      textWidget = Stack(
+        alignment: Alignment.center,
+        children: [
+          Text(
+            _text,
+            textAlign: _textAlign,
+            style: style.copyWith(
+              foreground: Paint()
+                ..style = PaintingStyle.stroke
+                ..strokeWidth = _textOutlineWidth
+                ..color = _textOutlineColor,
+              shadows: [],
+            ),
+          ),
+          Text(_text, textAlign: _textAlign, style: style),
+        ],
+      );
+    } else {
+      textWidget = Text(_text, textAlign: _textAlign, style: style);
+    }
+    if (_textBg) {
+      // Ribbon: rounded background behind the text.
+      textWidget = Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: _textBgColor,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: textWidget,
+      );
+    }
+    return Container(
+      width: 220,
+      alignment: Alignment.center,
+      child: textWidget,
+    );
+  }
+
+  /// Builds the list of shadows for the current text effect settings.
+  List<Shadow> _textShadows() {
+    final List<Shadow> shadows = [];
+    if (_textGlow) {
+      shadows.add(Shadow(
+        color: _textColor.withOpacity(0.9),
+        blurRadius: 16,
+      ));
+      shadows.add(Shadow(
+        color: _textColor.withOpacity(0.6),
+        blurRadius: 32,
+      ));
+    }
+    if (_textShadow) {
+      shadows.add(const Shadow(
+        color: Colors.black87,
+        offset: Offset(2, 3),
+        blurRadius: 6,
+      ));
+    }
+    return shadows;
+  }
+
   List<Widget> _photoPanelChildren() {
     final file = _workingFile;
     switch (_activePhotoTool) {
@@ -600,9 +832,12 @@ _SliderRow(
           const Divider(height: 32),
         ];
       case 'text':
+        // Full CapCut-style text editor (Jaani 31 Oct 2026, full delegation):
+        // fonts (Urdu + English), shadow/glow/outline/ribbon, spacing,
+        // bold/italic, opacity, alignment.
         return [
-const Text('Text overlay (drag it on the photo)',
-              style: TextStyle(fontWeight: FontWeight.bold)),
+          const Text('Text overlay (drag it on the photo)',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
           const SizedBox(height: 8),
           TextField(
             decoration: const InputDecoration(
@@ -611,33 +846,115 @@ const Text('Text overlay (drag it on the photo)',
             ),
             onChanged: (v) => setState(() => _text = v),
           ),
-          const SizedBox(height: 8),
-          Row(
+          const SizedBox(height: 12),
+          // ---- One-tap style templates (daily upgrade 2026-10-31) ----
+          const Text('Templates',
+              style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: [
-              const Text('Color:'),
-              const SizedBox(width: 8),
-              ..._textColors.map((c) {
-                return GestureDetector(
-                  onTap: () => setState(() => _textColor = c),
-                  child: Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 3),
-                    width: 28,
-                    height: 28,
-                    decoration: BoxDecoration(
-                      color: c,
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: _textColor == c
-                            ? Theme.of(context).colorScheme.primary
-                            : Colors.grey,
-                        width: _textColor == c ? 3 : 1,
-                      ),
-                    ),
-                  ),
-                );
-              }),
+              ChoiceChip(
+                label: const Text('Classic'),
+                selected: false,
+                onSelected: (_) => _applyTextTemplate('classic'),
+              ),
+              ChoiceChip(
+                label: const Text('Neon'),
+                selected: false,
+                onSelected: (_) => _applyTextTemplate('neon'),
+              ),
+              ChoiceChip(
+                label: const Text('Breaking'),
+                selected: false,
+                onSelected: (_) => _applyTextTemplate('breaking'),
+              ),
+              ChoiceChip(
+                label: const Text('Elegant'),
+                selected: false,
+                onSelected: (_) => _applyTextTemplate('elegant'),
+              ),
+              ChoiceChip(
+                label: const Text('Urdu'),
+                selected: false,
+                onSelected: (_) => _applyTextTemplate('urdu'),
+              ),
+              ChoiceChip(
+                label: const Text('Script'),
+                selected: false,
+                onSelected: (_) => _applyTextTemplate('script'),
+              ),
             ],
           ),
+          const SizedBox(height: 12),
+          // ---- Font picker ----
+          const Text('Font', style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          const Text('Urdu',
+              style: TextStyle(color: Colors.grey, fontSize: 12)),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _fontChip('default', 'Default'),
+              _fontChip('nastaliq', 'Nastaliq'),
+              _fontChip('naskh', 'Naskh'),
+              _fontChip('kufi', 'Kufi'),
+              _fontChip('gulzar', 'Gulzar'),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Text('English',
+              style: TextStyle(color: Colors.grey, fontSize: 12)),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _fontChip('roboto', 'Roboto'),
+              _fontChip('merriweather', 'Serif'),
+              _fontChip('dancing', 'Script'),
+              _fontChip('bebas', 'Display'),
+              _fontChip('pacifico', 'Pacifico'),
+            ],
+          ),
+          const SizedBox(height: 12),
+          // ---- Color ----
+          Row(
+            children: [
+              const Text('Color:',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Wrap(
+                  spacing: 2,
+                  children: _textColors.map((c) {
+                    return GestureDetector(
+                      onTap: () => setState(() => _textColor = c),
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(horizontal: 3),
+                        width: 28,
+                        height: 28,
+                        decoration: BoxDecoration(
+                          color: c,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: _textColor == c
+                                ? Theme.of(context).colorScheme.primary
+                                : Colors.grey,
+                            width: _textColor == c ? 3 : 1,
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
           _SliderRow(
             label: 'Text size',
             value: _textSize,
@@ -645,6 +962,170 @@ const Text('Text overlay (drag it on the photo)',
             max: 110,
             onChanged: (v) => setState(() => _textSize = v),
           ),
+          // ---- Bold / Italic / Alignment ----
+          Row(
+            children: [
+              FilterChip(
+                label: const Text('B',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+                selected: _textBold,
+                onSelected: (v) => setState(() => _textBold = v),
+              ),
+              const SizedBox(width: 8),
+              FilterChip(
+                label: const Text('I',
+                    style: TextStyle(fontStyle: FontStyle.italic)),
+                selected: _textItalic,
+                onSelected: (v) => setState(() => _textItalic = v),
+              ),
+              const SizedBox(width: 8),
+              const Text('Align:'),
+              IconButton(
+                tooltip: 'Left',
+                onPressed: () => setState(() => _textAlign = TextAlign.left),
+                icon: Icon(Icons.format_align_left,
+                    color: _textAlign == TextAlign.left
+                        ? Colors.tealAccent
+                        : Colors.grey),
+              ),
+              IconButton(
+                tooltip: 'Center',
+                onPressed: () => setState(() => _textAlign = TextAlign.center),
+                icon: Icon(Icons.format_align_center,
+                    color: _textAlign == TextAlign.center
+                        ? Colors.tealAccent
+                        : Colors.grey),
+              ),
+              IconButton(
+                tooltip: 'Right',
+                onPressed: () => setState(() => _textAlign = TextAlign.right),
+                icon: Icon(Icons.format_align_right,
+                    color: _textAlign == TextAlign.right
+                        ? Colors.tealAccent
+                        : Colors.grey),
+              ),
+            ],
+          ),
+          _SliderRow(
+            label: 'Opacity',
+            value: _textOpacity,
+            min: 0.1,
+            max: 1.0,
+            onChanged: (v) => setState(() => _textOpacity = v),
+          ),
+          _SliderRow(
+            label: 'Letter spacing',
+            value: _textLetterSpacing,
+            min: -2,
+            max: 10,
+            onChanged: (v) => setState(() => _textLetterSpacing = v),
+          ),
+          _SliderRow(
+            label: 'Line spacing',
+            value: _textLineSpacing,
+            min: 0.8,
+            max: 2.0,
+            onChanged: (v) => setState(() => _textLineSpacing = v),
+          ),
+          const Divider(height: 24),
+          // ---- Effects: Shadow / Glow / Outline / Ribbon ----
+          const Text('Effects', style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              FilterChip(
+                label: const Text('Shadow'),
+                selected: _textShadow,
+                onSelected: (v) => setState(() => _textShadow = v),
+              ),
+              FilterChip(
+                label: const Text('Glow'),
+                selected: _textGlow,
+                onSelected: (v) => setState(() => _textGlow = v),
+              ),
+              FilterChip(
+                label: const Text('Outline'),
+                selected: _textOutline,
+                onSelected: (v) => setState(() => _textOutline = v),
+              ),
+              FilterChip(
+                label: const Text('Ribbon'),
+                selected: _textBg,
+                onSelected: (v) => setState(() => _textBg = v),
+              ),
+            ],
+          ),
+          if (_textOutline) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Text('Outline color:'),
+                const SizedBox(width: 8),
+                ...[Colors.black, Colors.white, Colors.red, Colors.blue]
+                    .map((c) => GestureDetector(
+                          onTap: () => setState(() => _textOutlineColor = c),
+                          child: Container(
+                            margin: const EdgeInsets.symmetric(horizontal: 3),
+                            width: 24,
+                            height: 24,
+                            decoration: BoxDecoration(
+                              color: c,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: _textOutlineColor == c
+                                    ? Colors.tealAccent
+                                    : Colors.grey,
+                                width: _textOutlineColor == c ? 3 : 1,
+                              ),
+                            ),
+                          ),
+                        )),
+              ],
+            ),
+            _SliderRow(
+              label: 'Outline width',
+              value: _textOutlineWidth,
+              min: 1,
+              max: 8,
+              onChanged: (v) => setState(() => _textOutlineWidth = v),
+            ),
+          ],
+          if (_textBg) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Text('Ribbon color:'),
+                const SizedBox(width: 8),
+                ...[
+                  Colors.black54,
+                  Colors.red,
+                  Colors.blue,
+                  Colors.green,
+                  Colors.orange
+                ]
+                    .map((c) => GestureDetector(
+                          onTap: () => setState(() => _textBgColor = c),
+                          child: Container(
+                            margin: const EdgeInsets.symmetric(horizontal: 3),
+                            width: 24,
+                            height: 24,
+                            decoration: BoxDecoration(
+                              color: c,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: _textBgColor == c
+                                    ? Colors.tealAccent
+                                    : Colors.grey,
+                                width: _textBgColor == c ? 3 : 1,
+                              ),
+                            ),
+                          ),
+                        )),
+              ],
+            ),
+          ],
         ];
       case 'ai':
         return [
@@ -993,25 +1474,7 @@ Row(
                                     );
                                   });
                                 },
-                                child: Container(
-                                  width: 200,
-                                  alignment: Alignment.center,
-                                  child: Text(
-                                    _text,
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                      color: _textColor,
-                                      fontSize: _textSize * 0.6,
-                                      fontWeight: FontWeight.bold,
-                                      shadows: const [
-                                        Shadow(
-                                          color: Colors.black,
-                                          blurRadius: 6,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
+                                child: _buildPreviewText(),
                               ),
                             ),
                         ],

@@ -30,6 +30,7 @@ class PhotoEditParams {
     this.textGlow = false,
     this.textBg = false,
     this.textBgArgb = 0x8A000000,
+    this.textLineHeight = 1.0, // line spacing multiplier (daily 2026-10-31)
   });
 
   final PhotoFilter filter;
@@ -45,6 +46,7 @@ class PhotoEditParams {
   final bool textGlow;
   final bool textBg;
   final int textBgArgb;
+  final double textLineHeight;
 }
 
 // ---------------------------------------------------------------------------
@@ -667,6 +669,7 @@ Future<Uint8List> rasterizeText({
   bool glow = false,
   bool bg = false,
   int bgArgb = 0x8A000000,
+  double height = 1.0, // line spacing multiplier (daily upgrade 2026-10-31)
 }) async {
   final List<ui.Shadow> shadows = [];
   if (glow) {
@@ -686,6 +689,7 @@ Future<Uint8List> rasterizeText({
     ui.ParagraphStyle(
       textDirection: ui.TextDirection.ltr,
       textAlign: ui.TextAlign.center,
+      height: height,
     ),
   )
     ..pushStyle(
@@ -769,6 +773,7 @@ Future<File> exportPhoto({
       glow: params.textGlow,
       bg: params.textBg,
       bgArgb: params.textBgArgb,
+      height: params.textLineHeight,
     );
     image = compositeText(
       image,
