@@ -59,6 +59,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   bool _crossfade = false;
   String _text = '';
   String? _musicPath;
+  // Music track gain (1.0 = unchanged); applied to the music audio only.
+  double _musicVolume = 1.0;
   String? _fontFile;
   List<CaptionSegment> _captions = [];
   String _captionLocale = 'ur';
@@ -868,6 +870,11 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         }
         if (fxAudioFilter.isNotEmpty) {
           afParts.add(fxAudioFilter);
+        }
+        // Music track gain: with music picked, the output audio stream is
+        // the music track, so volume= here adjusts music only.
+        if (_musicPath != null && _musicVolume != 1.0) {
+          afParts.add('volume=${_musicVolume.toStringAsFixed(2)}');
         }
         if (afParts.isNotEmpty) {
           finalAudioFilter = afParts.join(',');
@@ -1917,6 +1924,21 @@ TextField(
                 ),
             ],
           ),
+          // CapCut-style music track gain: silent BGM mixing made common by
+          // CapCut/VN's 2026 audio panels; applied to the music audio only.
+          if (_musicPath != null)
+            _ProSlider(
+              label: 'Music volume',
+              value: _musicVolume,
+              min: 0,
+              max: 1.5,
+              divisions: 30,
+              onChanged: (double v) {
+                setState(() {
+                  _musicVolume = v;
+                });
+              },
+            ),
           const SizedBox(height: 12),
 // Waveform.
               const Text('Waveform',
@@ -2354,6 +2376,7 @@ const Text('Auto Captions (CapCut-style)',
                     CaptionStyle.gold => 'gold',
                     CaptionStyle.clean => 'clean',
                     CaptionStyle.pop => 'pop',
+                    CaptionStyle.boxed => 'boxed',
                   },
                   decoration:
                       const InputDecoration(labelText: 'Caption style'),
@@ -2370,6 +2393,9 @@ const Text('Auto Captions (CapCut-style)',
                     DropdownMenuItem(
                         value: 'pop',
                         child: Text('Pop (word by word)')),
+                    DropdownMenuItem(
+                        value: 'boxed',
+                        child: Text('Boxed (white on black)')),
                   ],
                   onChanged: (v) => setState(() {
                     _captionStyle = switch (v) {
@@ -2377,6 +2403,7 @@ const Text('Auto Captions (CapCut-style)',
                       'gold' => CaptionStyle.gold,
                       'clean' => CaptionStyle.clean,
                       'pop' => CaptionStyle.pop,
+                      'boxed' => CaptionStyle.boxed,
                       _ => CaptionStyle.standard,
                     };
                   }),

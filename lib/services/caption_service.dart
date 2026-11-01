@@ -56,7 +56,7 @@ class CaptionSegment {
 
 /// Caption look. `standard` is the long-standing default and stays the
 /// default; the rest are opt-in presets.
-enum CaptionStyle { standard, highlight, gold, clean, pop }
+enum CaptionStyle { standard, highlight, gold, clean, pop, boxed }
 
 class CaptionService {
   /// Arabic-script range (Urdu, Arabic, Persian).
@@ -140,6 +140,8 @@ class CaptionService {
         return arabic ? 'CleanUrdu' : 'Clean';
       case CaptionStyle.pop:
         return arabic ? 'PopUrdu' : 'Pop';
+      case CaptionStyle.boxed:
+        return arabic ? 'BoxedUrdu' : 'Boxed';
     }
   }
 
@@ -246,6 +248,15 @@ class CaptionService {
         bold = -1;
         borderStyle = 1;
         outline = 2;
+      case CaptionStyle.boxed:
+        // TikTok/meme look: white bold text on an opaque black box.
+        primary = '&H00FFFFFF';
+        secondary = '&H00FFFFFF';
+        outlineColour = '&HFF000000';
+        back = '&H00000000';
+        bold = -1;
+        borderStyle = 3;
+        outline = 0;
     }
     final buf = StringBuffer();
     buf.writeln('[Script Info]');
