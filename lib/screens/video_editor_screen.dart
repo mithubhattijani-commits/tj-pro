@@ -2416,6 +2416,7 @@ const Text('Auto Captions (CapCut-style)',
                     CaptionStyle.gold => 'gold',
                     CaptionStyle.clean => 'clean',
                     CaptionStyle.pop => 'pop',
+                    CaptionStyle.boxed => 'boxed',
                   },
                   decoration:
                       const InputDecoration(labelText: 'Caption style'),
@@ -2432,6 +2433,9 @@ const Text('Auto Captions (CapCut-style)',
                     DropdownMenuItem(
                         value: 'pop',
                         child: Text('Pop (word by word)')),
+                    DropdownMenuItem(
+                        value: 'boxed',
+                        child: Text('Boxed (white on black)')),
                   ],
                   onChanged: (v) => setState(() {
                     _captionStyle = switch (v) {
@@ -2439,6 +2443,7 @@ const Text('Auto Captions (CapCut-style)',
                       'gold' => CaptionStyle.gold,
                       'clean' => CaptionStyle.clean,
                       'pop' => CaptionStyle.pop,
+                      'boxed' => CaptionStyle.boxed,
                       _ => CaptionStyle.standard,
                     };
                   }),
