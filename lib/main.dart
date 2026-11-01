@@ -4,6 +4,8 @@ library;
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'theme.dart';
+
 import 'photo/photo_editor_screen.dart';
 import 'app_config.dart';
 import 'services/ad_service.dart';
@@ -31,7 +33,7 @@ class PhotoVideoEditorApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
-            seedColor: Colors.teal, brightness: Brightness.dark),
+            seedColor: TjProTheme.gold, brightness: Brightness.dark),
       ),
       home: const HomeScreen(),
     );

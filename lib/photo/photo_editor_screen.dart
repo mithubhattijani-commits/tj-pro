@@ -15,6 +15,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../app_config.dart';
+import '../theme.dart';
 import '../services/ad_service.dart';
 import '../services/ai_service.dart';
 import '../services/photo_pipeline.dart';
@@ -421,7 +422,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
           width: 76,
           padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
           decoration: BoxDecoration(
-            color: selected ? Colors.teal.shade700 : const Color(0xFF232323),
+            color: selected ? TjProTheme.goldDeep : const Color(0xFF232323),
             borderRadius: BorderRadius.circular(12),
           ),
           child: Column(
@@ -985,7 +986,7 @@ _SliderRow(
                 onPressed: () => setState(() => _textAlign = TextAlign.left),
                 icon: Icon(Icons.format_align_left,
                     color: _textAlign == TextAlign.left
-                        ? Colors.tealAccent
+                        ? TjProTheme.gold
                         : Colors.grey),
               ),
               IconButton(
@@ -993,7 +994,7 @@ _SliderRow(
                 onPressed: () => setState(() => _textAlign = TextAlign.center),
                 icon: Icon(Icons.format_align_center,
                     color: _textAlign == TextAlign.center
-                        ? Colors.tealAccent
+                        ? TjProTheme.gold
                         : Colors.grey),
               ),
               IconButton(
@@ -1001,7 +1002,7 @@ _SliderRow(
                 onPressed: () => setState(() => _textAlign = TextAlign.right),
                 icon: Icon(Icons.format_align_right,
                     color: _textAlign == TextAlign.right
-                        ? Colors.tealAccent
+                        ? TjProTheme.gold
                         : Colors.grey),
               ),
             ],
@@ -1075,7 +1076,7 @@ _SliderRow(
                               shape: BoxShape.circle,
                               border: Border.all(
                                 color: _textOutlineColor == c
-                                    ? Colors.tealAccent
+                                    ? TjProTheme.gold
                                     : Colors.grey,
                                 width: _textOutlineColor == c ? 3 : 1,
                               ),
@@ -1116,7 +1117,7 @@ _SliderRow(
                               shape: BoxShape.circle,
                               border: Border.all(
                                 color: _textBgColor == c
-                                    ? Colors.tealAccent
+                                    ? TjProTheme.gold
                                     : Colors.grey,
                                 width: _textBgColor == c ? 3 : 1,
                               ),
@@ -1368,7 +1369,7 @@ SizedBox(
           if (_hasTransparency)
             const Text(
               'Background hata diya gaya hai — ab Save karein.',
-              style: TextStyle(color: Colors.tealAccent),
+              style: TextStyle(color: TjProTheme.gold),
             ),
         ];
       case 'pick':
@@ -1417,7 +1418,7 @@ Row(
     return Theme(
       data: ThemeData.dark().copyWith(
         colorScheme: ColorScheme.fromSeed(
-            seedColor: Colors.teal, brightness: Brightness.dark),
+            seedColor: TjProTheme.gold, brightness: Brightness.dark),
       ),
       child: Scaffold(
         backgroundColor: const Color(0xFF121212),

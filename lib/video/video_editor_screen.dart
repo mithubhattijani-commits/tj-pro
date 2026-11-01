@@ -19,6 +19,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 
 import '../app_config.dart';
+import '../theme.dart';
 import '../live/news_template.dart';
 import '../live/live_studio_screen.dart';
 import '../services/ad_service.dart';
@@ -1536,7 +1537,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           width: 76,
           padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
           decoration: BoxDecoration(
-            color: selected ? Colors.teal.shade700 : const Color(0xFF232323),
+            color: selected ? TjProTheme.goldDeep : const Color(0xFF232323),
             borderRadius: BorderRadius.circular(12),
           ),
           child: Column(
@@ -2879,12 +2880,12 @@ const Text('Auto Captions (CapCut-style)',
                             padding: const EdgeInsets.all(8),
                             decoration: BoxDecoration(
                               color: selected
-                                  ? Colors.teal.shade700
+                                  ? TjProTheme.goldDeep
                                   : const Color(0xFF2E2E2E),
                               borderRadius: BorderRadius.circular(10),
                               border: Border.all(
                                 color: selected
-                                    ? Colors.tealAccent
+                                    ? TjProTheme.gold
                                     : Colors.grey.shade700,
                               ),
                             ),
@@ -2986,7 +2987,7 @@ if (clip != null) ...[
     return Theme(
       data: ThemeData.dark().copyWith(
         colorScheme: ColorScheme.fromSeed(
-            seedColor: Colors.teal, brightness: Brightness.dark),
+            seedColor: TjProTheme.gold, brightness: Brightness.dark),
       ),
       child: Scaffold(
         backgroundColor: const Color(0xFF121212),
