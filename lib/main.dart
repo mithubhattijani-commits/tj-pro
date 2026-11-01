@@ -161,8 +161,133 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           const SizedBox(height: 16),
+          const Card(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.info_outline),
+                      SizedBox(width: 8),
+                      Text(
+                        'About',
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: 8),
+                  Text(
+                    'TJ Pro by Nigraan TV — photo & video editor that '
+                    'works fully offline on your phone. No account, no '
+                    'uploads.',
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          const AdvertisingBanner(),
+          const SizedBox(height: 16),
           const Center(child: BannerAdWidget()),
         ],
+      ),
+    );
+  }
+}
+
+/// In-app advertising banner (Jaani, 2 Nov 2026): placed in the About
+/// section on the home screen. Tapping opens a WhatsApp chat with
+/// Nigraan TV for ad bookings.
+class AdvertisingBanner extends StatelessWidget {
+  const AdvertisingBanner({super.key});
+
+  static const String _waUrl = 'https://wa.me/923090808180';
+
+  Future<void> _openWhatsApp() async {
+    final Uri uri = Uri.parse(_waUrl);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      elevation: 3,
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16)),
+      child: InkWell(
+        onTap: _openWhatsApp,
+        child: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                Color(0xFF0F2027),
+                Color(0xFF203A43),
+                Color(0xFF2C5364),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+          ),
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.asset(
+                  'assets/jaani_ad_banner.jpg',
+                  width: 84,
+                  height: 112,
+                  fit: BoxFit.cover,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'For Advertising',
+                      style: TextStyle(
+                        color: Color(0xFFFFD76A),
+                        fontSize: 19,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    SizedBox(height: 6),
+                    Text(
+                      'Contact Us on WhatsApp:',
+                      style:
+                          TextStyle(color: Colors.white70, fontSize: 13),
+                    ),
+                    SizedBox(height: 2),
+                    Row(
+                      children: [
+                        Icon(Icons.chat,
+                            color: Color(0xFF25D366), size: 18),
+                        SizedBox(width: 6),
+                        Text(
+                          '03090808180',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 17,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

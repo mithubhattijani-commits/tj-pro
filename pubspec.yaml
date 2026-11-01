@@ -1,7 +1,7 @@
 name: tj_pro
 description: "TJ Pro — free offline photo and video editor for Android."
 publish_to: 'none'
-version: 1.0.1+2
+version: 1.0.2+3
 
 environment:
   sdk: ^3.13.7
@@ -54,6 +54,7 @@ flutter:
     - assets/luts/noir.cube
     - assets/luts/golden.cube
     - assets/luts/cool_night.cube
+    - assets/jaani_ad_banner.jpg
   # No bundled assets in v2: the caption model (~75 MB) used to be
   # downloaded by CI into assets/models/ and bundled, which is a big
   # part of the old size. It now downloads once on first captions use
