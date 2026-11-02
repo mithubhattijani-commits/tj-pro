@@ -1,7 +1,10 @@
 /// TJ Pro — home screen.
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'theme.dart';
@@ -9,6 +12,7 @@ import 'theme.dart';
 import 'photo/photo_editor_screen.dart';
 import 'app_config.dart';
 import 'services/ad_service.dart';
+import 'services/remote_config_service.dart';
 import 'services/unity_ads_service.dart';
 import 'services/update_service.dart';
 import 'video/video_editor_screen.dart';
@@ -16,10 +20,18 @@ import 'live/live_studio_screen.dart';
 import 'widgets/banner_ad_widget.dart';
 import 'widgets/native_ad_widget.dart';
 
-void main() {
+/// Shared Remote Config instance: fetched once at startup; the home
+/// screen listens to [RemoteConfigService.notifier] so a fresh fetch
+/// updates branding, announcements and ads without a restart.
+final RemoteConfigService remoteConfigService = RemoteConfigService();
+
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   AdService.init();
   UnityAdsService.init();
+  // Remote Config: returns fast (cache load only); the network refresh
+  // is backgrounded and never blocks startup.
+  await remoteConfigService.init();
   runApp(const PhotoVideoEditorApp());
 }
 
@@ -48,31 +60,171 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  /// Installed build number, loaded once after the first frame.
+  int _installedVersionCode = 0;
+
+  /// Last force-update min_version_code already evaluated, so a
+  /// re-armed kill-switch (raised min) is honoured on the next
+  /// config refresh.
+  int _forceUpdateCheckedMin = -1;
+
   @override
   void initState() {
     super.initState();
-    // Silent update check: shows a dialog only when a newer version
-    // exists; a missing manifest or no network means no prompt at all.
+    // Post-launch flow: load the installed build number first, then
+    // run the ad/update sequencing. Awaiting one method-channel call
+    // keeps the force-update armed-check race-free.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      // Cold-start app open ad first; the update dialog waits for the
-      // next launch when an ad was shown, so the two never stack.
-      if (!AdService.showAppOpen()) {
-        UpdateService.checkOnLaunch(context);
-      }
+      unawaited(_startPostLaunchFlow());
     });
+  }
+
+  @override
+  void dispose() {
+    remoteConfigService.notifier.removeListener(_onRemoteConfigChanged);
+    super.dispose();
+  }
+
+  Future<void> _startPostLaunchFlow() async {
+    try {
+      final PackageInfo info = await PackageInfo.fromPlatform();
+      _installedVersionCode = int.tryParse(info.buildNumber) ?? 0;
+    } catch (_) {
+      _installedVersionCode = 0;
+    }
+    if (!mounted) return;
+    // Remote Config force-update kill-switch: evaluated now (cached
+    // config) and on every background refresh, so a fresh kill-switch
+    // trips without an app restart.
+    remoteConfigService.notifier.addListener(_onRemoteConfigChanged);
+    _onRemoteConfigChanged();
+    // Silent update check: shows a dialog only when a newer version
+    // exists; a missing manifest or no network means no prompt at all.
+    // Cold-start app open ad first; the update dialog waits for the
+    // next launch when an ad was shown, so the two never stack.
+    // When the force-update kill-switch is armed, the non-dismissible
+    // force dialog handles the update instead of the normal prompt.
+    if (!AdService.showAppOpen() && !_forceUpdateArmed()) {
+      UpdateService.checkOnLaunch(context);
+    }
+  }
+
+  /// Synchronous kill-switch check against the cached config and the
+  /// installed build number. Used to prefer the non-dismissible force
+  /// dialog over the normal update prompt.
+  bool _forceUpdateArmed() {
+    final ForceUpdateConfig fu = remoteConfigService.config.forceUpdate;
+    return fu.enabled &&
+        _installedVersionCode > 0 &&
+        _installedVersionCode < fu.minVersionCode;
+  }
+
+  /// Fires on every config change so a background refresh can trip a
+  /// newly armed kill-switch while the app is running.
+  void _onRemoteConfigChanged() {
+    if (!mounted) return;
+    final ForceUpdateConfig fu = remoteConfigService.config.forceUpdate;
+    if (!fu.enabled || fu.minVersionCode == _forceUpdateCheckedMin) {
+      return;
+    }
+    if (_installedVersionCode <= 0) {
+      // Post-launch flow not finished yet; the explicit call in
+      // _startPostLaunchFlow (or the next config change) retries.
+      return;
+    }
+    _forceUpdateCheckedMin = fu.minVersionCode;
+    unawaited(_runForceUpdateCheck(fu.minVersionCode));
+  }
+
+  /// Force-update path, wired to the existing update flow: the manifest
+  /// decides whether a newer APK actually exists; when it does, a
+  /// non-dismissible dialog pushes the same background download +
+  /// system install-prompt flow. Never throws, never blocks the app.
+  Future<void> _runForceUpdateCheck(int minVersionCode) async {
+    try {
+      final int installed = _installedVersionCode;
+      if (installed <= 0 || installed >= minVersionCode) {
+        return;
+      }
+      final UpdateCheckOutcome outcome = await UpdateService.checkForUpdate();
+      if (!mounted) {
+        return;
+      }
+      final UpdateInfo? update = outcome.update;
+      if (update != null) {
+        UpdateService.showForceUpdateDialog(context, update);
+      }
+      // If the manifest has no newer version, stay fail-soft: a broken
+      // or stale manifest must never brick the app.
+    } catch (_) {
+      // A config problem must never block or crash the app.
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(AppConfig.appName)),
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(kToolbarHeight),
+        child: ValueListenableBuilder<RemoteConfig>(
+          valueListenable: remoteConfigService.notifier,
+          builder: (
+            BuildContext context,
+            RemoteConfig cfg,
+            Widget? child,
+          ) {
+            final String title = cfg.displayName.isNotEmpty
+                ? cfg.displayName
+                : AppConfig.appName;
+            return AppBar(title: Text(title));
+          },
+        ),
+      ),
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          Text(
-            AppConfig.homeHeading,
-            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+          // Remote Config header: remote logo (when set, with
+          // error-fallback to nothing), the bundled heading, and the
+          // announcement bar (only when enabled with non-empty text).
+          ValueListenableBuilder<RemoteConfig>(
+            valueListenable: remoteConfigService.notifier,
+            builder: (
+              BuildContext context,
+              RemoteConfig cfg,
+              Widget? child,
+            ) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  if (cfg.logoUrl.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Image.network(
+                        cfg.logoUrl,
+                        height: 48,
+                        errorBuilder: (
+                          BuildContext context,
+                          Object error,
+                          StackTrace? stackTrace,
+                        ) =>
+                            const SizedBox.shrink(),
+                      ),
+                    ),
+                  Text(
+                    AppConfig.homeHeading,
+                    style: const TextStyle(
+                        fontSize: 22, fontWeight: FontWeight.bold),
+                  ),
+                  if (cfg.announcement.show)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child:
+                          _AnnouncementBar(text: cfg.announcement.text),
+                    ),
+                ],
+              );
+            },
           ),
           const SizedBox(height: 20),
           if (AppConfig.photoEditorEnabled)
@@ -123,6 +275,27 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
           const SizedBox(height: 16),
+          // Remote Config sponsored ad card: shown only when the config
+          // enables it. The image hides gracefully on load failure; the
+          // tap opens the action URL in the external browser.
+          ValueListenableBuilder<RemoteConfig>(
+            valueListenable: remoteConfigService.notifier,
+            builder: (
+              BuildContext context,
+              RemoteConfig cfg,
+              Widget? child,
+            ) {
+              if (!cfg.sponsoredAd.show) {
+                return const SizedBox.shrink();
+              }
+              return Column(
+                children: <Widget>[
+                  _SponsoredAdCard(ad: cfg.sponsoredAd),
+                  const SizedBox(height: 16),
+                ],
+              );
+            },
+          ),
           const NativeAdWidget(),
           const SizedBox(height: 16),
           const _PremiumUnlockCard(),
@@ -289,6 +462,105 @@ class AdvertisingBanner extends StatelessWidget {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Slim announcement bar under the home header, driven by Remote
+/// Config. Rendered only when the config enables it with non-empty
+/// text (see [AnnouncementConfig.show]).
+class _AnnouncementBar extends StatelessWidget {
+  const _AnnouncementBar({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0x339C7A1F),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: TjProTheme.goldDeep),
+      ),
+      child: Row(
+        children: <Widget>[
+          const Icon(Icons.campaign, size: 18, color: TjProTheme.gold),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              style: const TextStyle(fontSize: 13, height: 1.4),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Sponsored ad card driven by Remote Config (nigraantv.xyz).
+/// Shows only when the config enables it with a title and action URL.
+/// The creative hides gracefully when it fails to load; the tap opens
+/// the action URL in the external browser. Never auto-opens, never
+/// blocks the app.
+class _SponsoredAdCard extends StatelessWidget {
+  const _SponsoredAdCard({required this.ad});
+
+  final SponsoredAdConfig ad;
+
+  Future<void> _openAd() async {
+    final Uri uri = Uri.parse(ad.actionUrl);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      elevation: 2,
+      child: InkWell(
+        onTap: _openAd,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            if (ad.imageUrl.isNotEmpty)
+              Image.network(
+                ad.imageUrl,
+                fit: BoxFit.cover,
+                errorBuilder: (
+                  BuildContext context,
+                  Object error,
+                  StackTrace? stackTrace,
+                ) =>
+                    const SizedBox.shrink(),
+              ),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: <Widget>[
+                  const Icon(Icons.campaign_outlined,
+                      color: TjProTheme.gold),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      ad.title,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  const Icon(Icons.open_in_new, size: 18),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );

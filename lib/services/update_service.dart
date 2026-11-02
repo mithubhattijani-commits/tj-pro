@@ -225,6 +225,43 @@ class UpdateService {
     );
   }
 
+  /// Force-update dialog for the Remote Config kill-switch.
+  /// Non-dismissible: no "Later" button, no tap-outside dismiss, and
+  /// the Android back button is blocked. The Update button runs the
+  /// SAME background download + system install-prompt flow as the
+  /// normal update dialog.
+  static void showForceUpdateDialog(BuildContext context, UpdateInfo update) {
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext dialogContext) {
+        return PopScope(
+          canPop: false,
+          child: AlertDialog(
+            title: const Text('Update zaroori hai'),
+            content: Text(
+              update.notes.isNotEmpty
+                  ? update.notes
+                  : 'Is version ko mazeed istemal karne ke liye naya '
+                      'version install karna zaroori hai. Update dabayen '
+                      '— download background me hogi, aur install ke '
+                      'liye aap ko khud Install dabana hoga.',
+            ),
+            actions: <Widget>[
+              FilledButton(
+                onPressed: () {
+                  Navigator.pop(dialogContext);
+                  downloadAndInstall(context, update);
+                },
+                child: const Text('Update karein'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   /// Downloads the APK in the BACKGROUND and fires the system install
   /// prompt when ready. Never attempts a silent install.
   ///
