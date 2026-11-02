@@ -102,6 +102,9 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   // Keyframes animate the motion title/sticker overlay (title first
   // if both are set). Times are 0 and the export duration.
   bool _proKeyframes = false;
+  // Keyframe motion curve (linear = the long-standing constant-speed
+  // motion; the ease presets reshape the FFmpeg interpolation).
+  KeyframeEasing _kfEasing = KeyframeEasing.linear;
   double _kfStartX = 0.5;
   double _kfStartY = 0.5;
   double _kfStartScale = 1;
@@ -409,11 +412,23 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     if (!hasTitle && !hasSticker && !hasTrack) return null;
     // Export dims approximated from the first clip's aspect (same
     // approximation as the multi-clip normalize step); the aspect
-    // setting can change the real frame size.
+    // setting can change the real frame size. Aligned with the
+    // Export quality setting so keyframed/title positions stay
+    // proportional at 1080p and 4K.
     final portrait =
         _clips.isEmpty ? true : _clips.first.aspectRatio < 1.0;
-    final videoW = portrait ? 720 : 1280;
-    final videoH = portrait ? 1280 : 720;
+    final int videoW;
+    final int videoH;
+    if (_fxQuality == 2) {
+      videoW = portrait ? 2160 : 3840;
+      videoH = portrait ? 3840 : 2160;
+    } else if (_fxQuality == 1) {
+      videoW = portrait ? 1080 : 1920;
+      videoH = portrait ? 1920 : 1080;
+    } else {
+      videoW = portrait ? 720 : 1280;
+      videoH = portrait ? 1280 : 720;
+    }
     final useKeyframes = _proKeyframes && (hasTitle || hasSticker);
 
     Future<ProMotionTitle> titleSpec(
@@ -515,6 +530,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
             overlayW: size.$1.toInt(),
             overlayH: size.$2.toInt(),
             outLabel: outLabel,
+            easing: _kfEasing,
           ),
         );
       } else {
@@ -907,6 +923,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           musicPath: _musicPath,
           extraVideoFilter: extraVideoFilter,
           audioFilter: finalAudioFilter,
+          exportQuality: _fxQuality,
           output: out,
         );
         final totalMs =
@@ -938,6 +955,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
             musicPath: _musicPath,
             extraVideoFilter: gradeStr.isEmpty ? null : gradeStr,
             audioFilter: null,
+            exportQuality: _fxQuality,
             output: out,
           );
           final retryRes = await FfmpegService.run(
@@ -957,7 +975,12 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         final bool portrait = clips.first.aspectRatio < 1.0;
         int w;
         int h;
-        if (_fxQuality == 1) {
+        if (_fxQuality == 2) {
+          // 2160p 4K (slow): 2026 baseline export; needs more time on
+          // low-end phones — the dropdown label says so.
+          w = portrait ? 2160 : 3840;
+          h = portrait ? 3840 : 2160;
+        } else if (_fxQuality == 1) {
           w = portrait ? 1080 : 1920;
           h = portrait ? 1920 : 1080;
         } else {
@@ -1038,6 +1061,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           musicPath: _musicPath,
           extraVideoFilter: extraVideoFilter,
           audioFilter: finalAudioFilter,
+          exportQuality: _fxQuality,
           output: out,
         );
         final res = await FfmpegService.run(
@@ -1063,6 +1087,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
             musicPath: _musicPath,
             extraVideoFilter: gradeStr.isEmpty ? null : gradeStr,
             audioFilter: null,
+            exportQuality: _fxQuality,
             output: out,
           );
           final retryRes = await FfmpegService.run(
@@ -1671,6 +1696,20 @@ TextField(
               if (_proKeyframes &&
                   (_proTitle.trim().isNotEmpty ||
                       _proSticker.trim().isNotEmpty)) ...[
+                DropdownButtonFormField<KeyframeEasing>(
+                  initialValue: _kfEasing,
+                  decoration: const InputDecoration(
+                      labelText: 'Motion easing'),
+                  items: KeyframeEasing.values
+                      .map((KeyframeEasing e) => DropdownMenuItem(
+                            value: e,
+                            child: Text(keyframeEasingLabel(e)),
+                          ))
+                      .toList(),
+                  onChanged: (KeyframeEasing? v) =>
+                      setState(() => _kfEasing = v ?? KeyframeEasing.linear),
+                ),
+                const SizedBox(height: 8),
                 const Text('Start keyframe',
                     style: TextStyle(fontWeight: FontWeight.bold)),
                 _ProSlider(
@@ -1891,6 +1930,7 @@ TextField(
             items: const [
               DropdownMenuItem(value: 0, child: Text('720p HD (fast)')),
               DropdownMenuItem(value: 1, child: Text('1080p Full HD')),
+              DropdownMenuItem(value: 2, child: Text('2160p 4K (slow)')),
             ],
             onChanged: (int? v) {
               setState(() {

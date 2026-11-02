@@ -423,6 +423,21 @@ class KeyframeTrack {
   final ProKeyframe end;
 }
 
+/// Easing curve presets for keyframe animation (CapCut/VN/Alight
+/// Motion-style). The easing reshapes the 0..1 lerp factor inside the
+/// FFmpeg filter expression, so the overlay eases between its start
+/// and end poses instead of moving at a constant speed. `linear` is
+/// the long-standing default and stays the default.
+enum KeyframeEasing { linear, easeIn, easeOut, easeInOut }
+
+/// Display labels for the keyframe easing dropdown in the editor UI.
+String keyframeEasingLabel(KeyframeEasing e) => switch (e) {
+      KeyframeEasing.linear => 'Linear (constant speed)',
+      KeyframeEasing.easeIn => 'Ease in (slow start)',
+      KeyframeEasing.easeOut => 'Ease out (slow end)',
+      KeyframeEasing.easeInOut => 'Ease in-out (smooth both ends)',
+    };
+
 /// Lerp factor expression for a filter whose time variable is [tVar]
 /// ('t' for overlay/rotate, 'time' for zoompan): 0 before the window,
 /// ramping linearly to 1 across it, holding 1 after it.
@@ -431,16 +446,37 @@ String _lerpFactor(String tVar, double t0, double dur) {
   return 'clip(($tVar-${_num(t0)})/${_num(dur)},0,1)';
 }
 
+/// Eased lerp factor: the linear [_lerpFactor] reshaped by an easing
+/// curve. All shapes are plain algebra over the linear factor so any
+/// FFmpeg expression evaluator handles them (no special functions
+/// beyond pow): ease-in squares the factor, ease-out is the mirrored
+/// curve 1-(1-f)^2, ease-in-out is the smoothstep 3f^2-2f^3.
+String _easedFactor(
+    String tVar, double t0, double dur, KeyframeEasing easing) {
+  final String f = _lerpFactor(tVar, t0, dur);
+  return switch (easing) {
+    KeyframeEasing.linear => f,
+    KeyframeEasing.easeIn => 'pow(($f),2)',
+    KeyframeEasing.easeOut => '(1-pow(1-($f),2))',
+    KeyframeEasing.easeInOut => '(($f)*($f)*(3-2*($f)))',
+  };
+}
+
 /// Linear lerp expression between [a] and [b] over the track window,
-/// using time variable [tVar].
-String _lerp(String tVar, double t0, double dur, double a, double b) {
+/// using time variable [tVar]; [easing] reshapes the interpolation
+/// curve (default linear = the long-standing behaviour).
+String _lerp(String tVar, double t0, double dur, double a, double b,
+    [KeyframeEasing easing = KeyframeEasing.linear]) {
   if (dur <= 0 || a == b) return _num(b);
-  final f = _lerpFactor(tVar, t0, dur);
+  final String f = _easedFactor(tVar, t0, dur, easing);
   return '(${_num(a)}+(${_num(b)}-${_num(a)})*$f)';
 }
 
 /// Filter_complex snippet (no -i/-map, no trailing ';') that overlays
 /// [overlayLabel] onto [baseLabel] with the track applied.
+/// [easing] selects the keyframe motion curve (default linear =
+/// constant speed; ease presets reshape the interpolation in the
+/// FFmpeg expression).
 ///
 /// Chain on the overlay input, in order:
 ///   format=rgba -> zoompan (scale lerp) -> format=rgba -> rotate
@@ -466,6 +502,7 @@ String keyframeOverlayFilter({
   required int overlayW,
   required int overlayH,
   required String outLabel,
+  KeyframeEasing easing = KeyframeEasing.linear,
 }) {
   final s = track.start;
   final e = track.end;
@@ -473,22 +510,22 @@ String keyframeOverlayFilter({
   final dur = e.timeSec - s.timeSec;
 
   // Position lerp (overlay filter, time variable 't').
-  final xLerp = _lerp('t', t0, dur, s.xNorm, e.xNorm);
-  final yLerp = _lerp('t', t0, dur, s.yNorm, e.yNorm);
+  final xLerp = _lerp('t', t0, dur, s.xNorm, e.xNorm, easing);
+  final yLerp = _lerp('t', t0, dur, s.yNorm, e.yNorm, easing);
   final xExpr = '($xLerp)*$videoW';
   final yExpr = '($yLerp)*$videoH';
 
   // Scale lerp (zoompan, time variable 'time'). zoompan keeps its
   // output footprint equal to its input size, so this animates the
   // content zoom inside the overlay box (see header note).
-  final zoomLerp = _lerp('time', t0, dur, s.scale, e.scale);
+  final zoomLerp = _lerp('time', t0, dur, s.scale, e.scale, easing);
 
   // Rotation lerp in radians (rotate filter, time variable 't').
   final rotLerp =
-      '(${_lerp('t', t0, dur, s.rotationDeg, e.rotationDeg)})*${_num(math.pi)}/180';
+      '(${_lerp('t', t0, dur, s.rotationDeg, e.rotationDeg, easing)})*${_num(math.pi)}/180';
 
   // Opacity lerp (geq, time variable 'T').
-  final opLerp = _lerp('T', t0, dur, s.opacity, e.opacity);
+  final opLerp = _lerp('T', t0, dur, s.opacity, e.opacity, easing);
 
   final buf = StringBuffer();
   buf.write(

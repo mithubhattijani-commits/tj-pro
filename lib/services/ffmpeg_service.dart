@@ -104,18 +104,44 @@ class FfmpegService {
     }
   }
 
-  /// Aspect filter: scale to cover target then center-crop (empty = original).
-  static String aspectFilter(String aspect) {
+  /// Export frame size for an aspect setting and quality preset:
+  /// quality 0 = 720p HD (fast), 1 = 1080p Full HD, 2 = 2160p 4K (slow).
+  /// Returns null for 'Original' (no scaling).
+  static (int, int)? exportDims(String aspect, int quality) {
+    final int q = quality.clamp(0, 2);
     switch (aspect) {
       case '9:16':
-        return 'scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280';
+        return q == 2
+            ? (2160, 3840)
+            : q == 1
+                ? (1080, 1920)
+                : (720, 1280);
       case '16:9':
-        return 'scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720';
+        return q == 2
+            ? (3840, 2160)
+            : q == 1
+                ? (1920, 1080)
+                : (1280, 720);
       case '1:1':
-        return 'scale=720:720:force_original_aspect_ratio=increase,crop=720:720';
+        return q == 2
+            ? (2160, 2160)
+            : q == 1
+                ? (1080, 1080)
+                : (720, 720);
       default:
-        return '';
+        return null;
     }
+  }
+
+  /// Aspect filter: scale to cover target then center-crop (empty = original).
+  /// The target size follows [exportQuality]: 0 = 720p HD (fast, the
+  /// long-standing default), 1 = 1080p Full HD, 2 = 2160p 4K (slow).
+  static String aspectFilter(String aspect, {int exportQuality = 0}) {
+    final dims = exportDims(aspect, exportQuality);
+    if (dims == null) return '';
+    final int w = dims.$1;
+    final int h = dims.$2;
+    return 'scale=$w:$h:force_original_aspect_ratio=increase,crop=$w:$h';
   }
 
   /// Build the filter graph for the final pass (speed + filter + aspect +
@@ -131,15 +157,16 @@ class FfmpegService {
     String? extraVideoFilter,
     bool textAtTop = false,
     int? videoHeight,
+    int exportQuality = 0,
   }) {
     final parts = <String>[];
     if (speed != 1.0) parts.add('setpts=PTS/$speed');
     final vf = videoFilter(filterPreset);
     if (vf.isNotEmpty) parts.add(vf);
-    final af = aspectFilter(aspect);
+    final af = aspectFilter(aspect, exportQuality: exportQuality);
     if (af.isNotEmpty) parts.add(af);
     if (text != null && text.trim().isNotEmpty && fontFile != null) {
-      final h = videoHeight ?? 720;
+      final h = videoHeight ?? exportDims(aspect, exportQuality)?.$2 ?? 720;
       final size = (h / 18).round().clamp(24, 72);
       // Position: bottom-center with margin, classic CapCut caption spot.
       parts.add(
@@ -178,6 +205,7 @@ class FfmpegService {
     bool textAtTop = false,
     String? musicPath,
     required String output,
+    int exportQuality = 0,
   }) {
     final graph = finalFilterGraph(
       speed: speed,
@@ -189,6 +217,7 @@ class FfmpegService {
       captionFilter: captionFilter,
       extraVideoFilter: extraVideoFilter,
       textAtTop: textAtTop,
+      exportQuality: exportQuality,
     );
     final buf = StringBuffer();
     buf.write('-y -ss $trimStart -to $trimEnd -i ${q(input)} ');
@@ -302,6 +331,7 @@ class FfmpegService {
     bool textAtTop = false,
     String? musicPath,
     required String output,
+    int exportQuality = 0,
   }) {
     final graph = finalFilterGraph(
       speed: speed,
@@ -313,6 +343,7 @@ class FfmpegService {
       captionFilter: captionFilter,
       extraVideoFilter: extraVideoFilter,
       textAtTop: textAtTop,
+      exportQuality: exportQuality,
     );
     final buf = StringBuffer();
     buf.write('-y -i ${q(input)} ');
