@@ -73,6 +73,11 @@ class UpdateService {
 
   static const String _apkFileName = 'tj-pro-update.apk';
 
+  /// Live background-download progress. Null when idle.
+  /// Drives the non-blocking progress UI (Jaani, 2 Nov 2026).
+  static final ValueNotifier<double?> backgroundProgress =
+      ValueNotifier<double?>(null);
+
   /// Quick connectivity probe: resolves the update host. Used by the
   /// manual check to distinguish "no internet" from other failures.
   static Future<bool> _hasInternetConnection() async {
@@ -220,35 +225,28 @@ class UpdateService {
     );
   }
 
-  /// Downloads the APK (with a progress dialog) and fires the system
-  /// install prompt. Never attempts a silent install.
+  /// Downloads the APK in the BACKGROUND and fires the system install
+  /// prompt when ready. Never attempts a silent install.
+  ///
+  /// Jaani's order (2 Nov 2026): tapping "Update" must NOT lock the app
+  /// behind a modal progress dialog. The user keeps using the app while
+  /// the download runs; the install prompt appears only when ready.
   static Future<void> downloadAndInstall(
     BuildContext context,
     UpdateInfo update,
   ) async {
-    final progress = ValueNotifier<double>(0);
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => ValueListenableBuilder<double>(
-        valueListenable: progress,
-        builder: (_, value, _) => AlertDialog(
-          title: const Text('Update download ho raha hai'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              LinearProgressIndicator(value: value > 0 ? value : null),
-              const SizedBox(height: 12),
-              Text(
-                value > 0
-                    ? '${(value * 100).toStringAsFixed(0)}% complete'
-                    : 'Download ho raha hai…',
-              ),
-            ],
+    backgroundProgress.value = 0;
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Update background me download ho rahi hai — aap app '
+            'istemal karte rahen.',
           ),
+          duration: Duration(seconds: 4),
         ),
-      ),
-    );
+      );
+    }
     try {
       final dir = await getTemporaryDirectory();
       final file = File('${dir.path}/$_apkFileName');
@@ -267,13 +265,13 @@ class UpdateService {
         await for (final chunk in response) {
           received += chunk.length;
           sink.add(chunk);
-          if (total > 0) progress.value = received / total;
+          if (total > 0) backgroundProgress.value = received / total;
         }
         await sink.close();
       } finally {
         client.close(force: true);
       }
-      if (context.mounted) Navigator.pop(context);
+      backgroundProgress.value = null;
       final result = await OpenFilex.open(file.path);
       if (result.type != ResultType.done && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -287,8 +285,8 @@ class UpdateService {
         );
       }
     } catch (_) {
+      backgroundProgress.value = null;
       if (context.mounted) {
-        Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
