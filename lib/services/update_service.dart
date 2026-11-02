@@ -297,7 +297,7 @@ class UpdateService {
         );
       }
     } finally {
-      progress.dispose();
+      backgroundProgress.value = null;
     }
   }
 }
