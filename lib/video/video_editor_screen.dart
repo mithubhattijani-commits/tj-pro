@@ -14,6 +14,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:gal/gal.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
@@ -157,6 +158,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   VoiceFx _fxVoice = VoiceFx.none;
   double _fxFadeIn = 0.0;
   double _fxFadeOut = 0.0;
+  bool _muteOriginal = false;
   bool _fxReverse = false;
   bool _fxSilenceRemove = false;
   bool _fxPip = false;
@@ -327,6 +329,88 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       _setStatus('Beat detect failed: $e');
     } finally {
       if (mounted) setState(() => _detectingBeats = false);
+    }
+  }
+
+  /// Snapshot (CapCut/VN-style): save the preview playhead frame of the
+  /// selected clip as a PNG photo into the gallery. A local FFmpeg frame
+  /// extract — it does not touch the export pipeline or the clip list.
+  Future<void> _saveFrameSnapshot() async {
+    if (_clips.isEmpty || _busy) {
+      return;
+    }
+    final VideoPlayerController? ctrl = _controller;
+    if (ctrl == null || !ctrl.value.isInitialized) {
+      _setStatus('Pehle clip ka preview load honay dein.');
+      return;
+    }
+    final int idx = _selected < _clips.length ? _selected : 0;
+    final VideoClip clip = _clips[idx];
+    final double posSec = ctrl.value.position.inMilliseconds / 1000.0;
+    final double seekSec =
+        posSec.clamp(0.0, clip.duration.inMilliseconds / 1000.0);
+    setState(() {
+      _busy = true;
+      _status = 'Frame save ho raha hai…';
+    });
+    try {
+      final Directory dir = await _workDir();
+      final int stamp = DateTime.now().millisecondsSinceEpoch;
+      final String out = p.join(dir.path, 'frame_$stamp.png');
+      final FfmpegResult r = await FfmpegService.run(
+        '-ss $seekSec -i ${FfmpegService.q(clip.file.path)} '
+        '-frames:v 1 -q:v 2 -y ${FfmpegService.q(out)}',
+      );
+      if (!r.ok) {
+        _setStatus('Frame save failed. ${r.logs}');
+        return;
+      }
+      await Gal.putImage(out);
+      _setStatus('Frame photo gallery mein save ho gaya.');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Frame saved to gallery.')),
+        );
+      }
+    } catch (e) {
+      _setStatus('Frame save failed: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// Extract audio (VN-style): save the selected clip's trimmed audio as
+  /// an .m4a file and open it, so the video's sound can be reused as a
+  /// music track elsewhere.
+  Future<void> _extractClipAudio() async {
+    if (_clips.isEmpty || _busy) {
+      return;
+    }
+    final int idx = _selected < _clips.length ? _selected : 0;
+    final VideoClip clip = _clips[idx];
+    setState(() {
+      _busy = true;
+      _status = 'Audio extract ho raha hai…';
+    });
+    try {
+      final Directory dir = await _workDir();
+      final int stamp = DateTime.now().millisecondsSinceEpoch;
+      final String out = p.join(dir.path, 'clip_audio_$stamp.m4a');
+      final FfmpegResult r = await FfmpegService.run(
+        '-ss ${clip.trimStart} -t ${clip.effectiveDuration} '
+        '-i ${FfmpegService.q(clip.file.path)} -vn -c:a aac -b:a 128k '
+        '-y ${FfmpegService.q(out)}',
+      );
+      if (!r.ok) {
+        _setStatus('Audio extract failed. ${r.logs}');
+        return;
+      }
+      _setStatus('Audio extract ho gaya.');
+      await OpenFilex.open(out);
+    } catch (e) {
+      _setStatus('Audio extract failed: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -882,6 +966,12 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         finalAudioFilter = rampAudio;
       } else {
         final List<String> afParts = <String>[];
+        // Mute original audio (CapCut/VN-style): silence the clip's own
+        // audio at export. Ignored when music is picked — music already
+        // replaces the clip audio track.
+        if (_muteOriginal && _musicPath == null) {
+          afParts.add('volume=0');
+        }
         if (effectiveSpeed != 1.0 && _musicPath == null) {
           afParts.add('atempo=$effectiveSpeed');
         }
@@ -2052,6 +2142,18 @@ TextField(
               });
             },
           ),
+          SwitchListTile(
+            title: const Text('Mute original audio'),
+            subtitle: const Text(
+              'Clip ki apni awaz band karein (music laga ho to ignore).',
+            ),
+            value: _muteOriginal,
+            onChanged: (bool v) {
+              setState(() {
+                _muteOriginal = v;
+              });
+            },
+          ),
           const SizedBox(height: 8),
         ];
       case 'speed':
@@ -2886,6 +2988,18 @@ const Text('Auto Captions (CapCut-style)',
                 icon: const Icon(Icons.content_cut, size: 18),
                 label: const Text('Split'),
               ),
+              TextButton.icon(
+                onPressed:
+                    (_clips.isEmpty || _busy) ? null : _saveFrameSnapshot,
+                icon: const Icon(Icons.camera_alt_outlined, size: 18),
+                label: const Text('Frame'),
+              ),
+              TextButton.icon(
+                onPressed:
+                    (_clips.isEmpty || _busy) ? null : _extractClipAudio,
+                icon: const Icon(Icons.audio_file_outlined, size: 18),
+                label: const Text('Audio'),
+              ),
             ],
           ),
           // Playhead marker (red) above the clip blocks.
@@ -3294,3 +3408,4 @@ class _OverlayStep {
   final bool keyframed;
   final ProMotionTitle? title;
 }
+
