@@ -2,8 +2,11 @@
 ///
 /// The app fetches a small JSON manifest from the website and compares
 /// its versionCode with the installed one. When a newer version exists,
-/// the user is offered an update; the new APK is downloaded and the
-/// system install prompt is fired. A sideloaded app can NEVER install
+/// the user is offered an update; the new APK is downloaded in the
+/// BACKGROUND via Android's DownloadManager (a system process — the
+/// download survives the app being minimized or killed, shows a
+/// persistent progress notification, and auto-resumes) and the system
+/// install prompt is fired when ready. A sideloaded app can NEVER install
 /// silently — Android always requires the user's install tap, and the
 /// UI says so honestly.
 ///
@@ -19,9 +22,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:open_filex/open_filex.dart';
+import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
-import 'package:path_provider/path_provider.dart';
 
 /// One update entry parsed from the version manifest.
 class UpdateInfo {
@@ -72,6 +74,10 @@ class UpdateService {
       'https://nigraantv.xyz/apps/tj-pro-version.json';
 
   static const String _apkFileName = 'tj-pro-update.apk';
+
+  /// Native updater channel ("tj_pro/updater"): background download via
+  /// Android DownloadManager, status polling, FileProvider install intent.
+  static const MethodChannel _channel = MethodChannel('tj_pro/updater');
 
   /// Live background-download progress. Null when idle.
   /// Drives the non-blocking progress UI (Jaani, 2 Nov 2026).
@@ -199,6 +205,9 @@ class UpdateService {
   static void showUpdateDialog(BuildContext context, UpdateInfo update) {
     showDialog<void>(
       context: context,
+      // Jaani 3 Nov 2026: the update dialog must NEVER lock the app —
+      // tapping outside dismisses it; the download runs in background.
+      barrierDismissible: true,
       builder: (dialogContext) => AlertDialog(
         title: Text('Naya version: ${update.versionName}'),
         content: Text(
@@ -268,10 +277,68 @@ class UpdateService {
   /// Jaani's order (2 Nov 2026): tapping "Update" must NOT lock the app
   /// behind a modal progress dialog. The user keeps using the app while
   /// the download runs; the install prompt appears only when ready.
+  ///
+  /// Jaani's order (3 Nov 2026): the download itself goes through
+  /// Android's DownloadManager — a system process — so it keeps going
+  /// even if the app is minimized or killed, shows a persistent system
+  /// notification with progress, and auto-resumes after interruptions.
+  /// We poll the download status, drive [backgroundProgress], and fire
+  /// the install intent on success.
   static Future<void> downloadAndInstall(
     BuildContext context,
     UpdateInfo update,
   ) async {
+    // 1. The system installer needs the "install unknown apps" grant.
+    bool canInstall = false;
+    try {
+      canInstall =
+          await _channel.invokeMethod<bool>('canInstallPackages') ?? false;
+    } catch (_) {
+      canInstall = false;
+    }
+    if (!canInstall) {
+      try {
+        await _channel.invokeMethod<void>('openInstallSettings');
+      } catch (_) {}
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Pehle Settings me TJ Pro ke liye "Install unknown apps" '
+              'allow karein, phir dobara Update dabayen.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
+    // 2. Hand the download to the system DownloadManager.
+    int? downloadId;
+    try {
+      downloadId = await _channel.invokeMethod<int>(
+        'downloadApk',
+        <String, String>{'url': update.url, 'fileName': _apkFileName},
+      );
+    } catch (_) {
+      downloadId = null;
+    }
+    if (downloadId == null) {
+      backgroundProgress.value = null;
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Update download shuru nahi ho saki. Internet check kar '
+              'ke dobara koshish karein.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
+    // 3. Tell the user, return immediately — no modal, no lock.
     backgroundProgress.value = 0;
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -284,39 +351,67 @@ class UpdateService {
         ),
       );
     }
+
+    // 4. Poll the system download for progress/completion.
     try {
-      final dir = await getTemporaryDirectory();
-      final file = File('${dir.path}/$_apkFileName');
-      if (await file.exists()) await file.delete();
-      final client = HttpClient()
-        ..connectionTimeout = const Duration(seconds: 30);
-      try {
-        final request = await client.getUrl(Uri.parse(update.url));
-        final response = await request.close();
-        if (response.statusCode != HttpStatus.ok) {
-          throw HttpException('Download failed: ${response.statusCode}');
+      for (var i = 0; i < 300; i++) {
+        await Future.delayed(const Duration(seconds: 2));
+        Map? status;
+        try {
+          status = await _channel.invokeMethod<Map>(
+            'downloadStatus',
+            <String, Object>{'downloadId': downloadId},
+          );
+        } catch (_) {
+          continue;
         }
-        final total = response.contentLength;
-        var received = 0;
-        final sink = file.openWrite();
-        await for (final chunk in response) {
-          received += chunk.length;
-          sink.add(chunk);
-          if (total > 0) backgroundProgress.value = received / total;
+        final String? state = status?['status'] as String?;
+        final int downloaded =
+            (status?['bytesDownloaded'] as int?) ?? 0;
+        final int total = (status?['bytesTotal'] as int?) ?? 0;
+        if (total > 0) {
+          backgroundProgress.value =
+              (downloaded / total).clamp(0.0, 1.0);
         }
-        await sink.close();
-      } finally {
-        client.close(force: true);
+        if (state == 'success') {
+          backgroundProgress.value = null;
+          final String uri = (status?['localUri'] as String?) ?? '';
+          final String? path = _uriToPath(uri);
+          if (path != null) {
+            try {
+              await _channel.invokeMethod<void>(
+                'installApk',
+                <String, String>{'path': path},
+              );
+            } catch (_) {}
+          }
+          return;
+        }
+        if (state == 'failed' || state == 'not_found') {
+          backgroundProgress.value = null;
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Update download nahi ho saka. Internet check kar ke '
+                  'dobara koshish karein.',
+                ),
+              ),
+            );
+          }
+          return;
+        }
+        // running / pending / paused -> keep polling; the system
+        // notification shows live progress meanwhile.
       }
+      // Timed out after ~10 minutes of polling.
       backgroundProgress.value = null;
-      final result = await OpenFilex.open(file.path);
-      if (result.type != ResultType.done && context.mounted) {
+      if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Install prompt nahi khula. Settings me TJ Pro ke liye '
-              '"Install unknown apps" allow karein, phir dobara Update '
-              'dabayen.',
+              'Update download me waqt lag raha hai — notification me '
+              'progress dekhte rahen.',
             ),
           ),
         );
@@ -333,8 +428,17 @@ class UpdateService {
           ),
         );
       }
-    } finally {
-      backgroundProgress.value = null;
     }
+  }
+
+  /// Convert a DownloadManager local URI (file://) to a path usable by
+  /// the install intent. We always download into the app's external
+  /// files dir, so this is a file:// URI.
+  static String? _uriToPath(String uri) {
+    if (uri.isEmpty) return null;
+    if (uri.startsWith('file://')) {
+      return Uri.parse(uri).toFilePath();
+    }
+    return null;
   }
 }
