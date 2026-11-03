@@ -80,7 +80,7 @@ jobs:
           APKSIGNER=$(ls "$ANDROID_SDK_ROOT"/build-tools/*/apksigner | head -1)
           "$AAPT2" dump badging "$APK" > badging.txt
           cat badging.txt
-          grep -F "package: name='com.tjpro.app' versionCode='7' versionName='1.0.6'" badging.txt
+          grep -F "package: name='com.tjpro.app' versionCode='8' versionName='1.0.7'" badging.txt
           grep -F "sdkVersion:'24'" badging.txt
           grep -F "targetSdkVersion:'36'" badging.txt
           grep -F "application-label:'TJ Pro'" badging.txt
