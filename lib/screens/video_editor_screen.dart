@@ -27,6 +27,8 @@ import '../services/ffmpeg_service.dart';
 import '../services/caption_service.dart';
 import '../services/pro_editor.dart';
 import '../services/fx_pack.dart';
+import '../services/dhamaka_tools.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 import '../services/pro_vision.dart';
 
 class VideoClip {
@@ -156,6 +158,47 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   bool _waveformBusy = false;
 
   VoiceFx _fxVoice = VoiceFx.none;
+
+  // ---- DHAMAKA tools (Jaani 3 Nov 2026 — "bara dhamaka" pack). ----
+  // Reverse / freeze.
+  bool _dhReverse = false;
+  bool _dhFreeze = false;
+  double _dhFreezeAt = 1.0;
+  double _dhFreezeHold = 2.0;
+  // Transitions (xfade types).
+  XfadeTransition _dhTransition = XfadeTransition.fade;
+  // Adjustments.
+  double _dhBrightness = 0.0;
+  double _dhContrast = 1.0;
+  double _dhSaturation = 1.0;
+  double _dhSharpness = 0.0;
+  double _dhTemperature = 0.0;
+  // Video effects.
+  VideoEffect _dhVideoEffect = VideoEffect.none;
+  // Audio tools.
+  double _dhVolume = 1.0;
+  double _dhFadeIn = 0.0;
+  double _dhFadeOut = 0.0;
+  bool _dhNormalize = false;
+  AudioEffect _dhAudioEffect = AudioEffect.none;
+  bool _dhVoiceEnhance = false;
+  bool _dhNoiseReduce = false;
+  // Caption style (dhamaka) — uses existing CaptionStyle (6 styles).
+  // Text-to-speech.
+  final FlutterTts _tts = FlutterTts();
+  String _ttsText = '';
+  String _ttsLang = 'en-US';
+  double _ttsRate = 1.0;
+  double _ttsPitch = 1.0;
+  bool _ttsBusy = false;
+  // Export options.
+  bool _dhExport4k = false;
+  bool _dhExport60fps = false;
+  bool _dhExportGif = false;
+  // PIP.
+  bool _dhPip = false;
+  String? _dhPipPath;
+  // Drag-reorder is handled by the timeline UI directly.
   double _fxFadeIn = 0.0;
   double _fxFadeOut = 0.0;
   bool _fxReverse = false;
@@ -673,6 +716,38 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
                 VideoClip(File(silOut), cur.duration, cur.aspectRatio);
           }
         }
+        // DHAMAKA: reverse video pre-pass.
+        if (_dhReverse) {
+          final String revOut = p.join(dir.path, 'dh_rev_$stamp.mp4');
+          final VideoClip cur = _clips[idx];
+          final FfmpegResult r = await FfmpegService.run(
+            DhamakaTools.reverseCommand(
+                input: cur.file.path, output: revOut),
+          );
+          if (r.ok) {
+            _clips[idx] =
+                VideoClip(File(revOut), cur.duration, cur.aspectRatio);
+          }
+        }
+        // DHAMAKA: freeze frame pre-pass.
+        if (_dhFreeze) {
+          final String frzOut = p.join(dir.path, 'dh_frz_$stamp.mp4');
+          final VideoClip cur = _clips[idx];
+          final FfmpegResult r = await FfmpegService.run(
+            DhamakaTools.freezeFrameCommand(
+              input: cur.file.path,
+              freezeAt: _dhFreezeAt,
+              holdSecs: _dhFreezeHold,
+              output: frzOut,
+            ),
+          );
+          if (r.ok) {
+            // Duration increases by hold time.
+            final newDur = cur.duration +
+                Duration(milliseconds: (_dhFreezeHold * 1000).round());
+            _clips[idx] = VideoClip(File(frzOut), newDur, cur.aspectRatio);
+          }
+        }
       }
       _fontFile ??= FfmpegService.findFontFile();
       final hasText = _text.trim().isNotEmpty;
@@ -837,6 +912,22 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       if (hasRamp) extraParts.add(rampSetpts(rampSegs));
       final String shakeStr = shakeFilter(_fxShake);
       if (shakeStr.isNotEmpty) extraParts.add(shakeStr);
+      // DHAMAKA: adjustments.
+      final String dhAdjust = DhamakaTools.adjustmentFilter(
+        brightness: _dhBrightness,
+        contrast: _dhContrast,
+        saturation: _dhSaturation,
+        sharpness: _dhSharpness,
+        temperature: _dhTemperature,
+      );
+      if (dhAdjust.isNotEmpty) extraParts.add(dhAdjust);
+      // DHAMAKA: video effect.
+      final String dhVfx = DhamakaTools.videoEffectFilter(_dhVideoEffect);
+      if (dhVfx.isNotEmpty) extraParts.add(dhVfx);
+      // DHAMAKA: 60fps.
+      if (_dhExport60fps) extraParts.add(DhamakaTools.sixtyFpsFilter());
+      // DHAMAKA: 4K upscale.
+      if (_dhExport4k) extraParts.add(DhamakaTools.upscale4kFilter());
       final String? extraVideoFilter =
           extraParts.isEmpty ? null : extraParts.join(',');
       // Ramp replaces the fixed speed: the video timing comes from the
@@ -876,6 +967,17 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         if (fxAudioFilter.isNotEmpty) {
           afParts.add(fxAudioFilter);
         }
+        // DHAMAKA: audio tools.
+        final String dhAudio = DhamakaTools.audioFilterChain(
+          volume: _dhVolume,
+          fadeInSecs: _dhFadeIn,
+          fadeOutSecs: _dhFadeOut,
+          normalize: _dhNormalize,
+          effect: _dhAudioEffect,
+        );
+        if (dhAudio.isNotEmpty) afParts.add(dhAudio);
+        if (_dhVoiceEnhance) afParts.add(DhamakaTools.voiceEnhanceFilter());
+        if (_dhNoiseReduce) afParts.add(DhamakaTools.noiseReduceFilter());
         if (afParts.isNotEmpty) {
           finalAudioFilter = afParts.join(',');
         }
@@ -1304,6 +1406,48 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           throw Exception('Gallery access was denied.');
         }
       }
+      // DHAMAKA: PIP post-pass.
+      if (_dhPip && _dhPipPath != null) {
+        final String pipOut = p.join(dir.path, 'dh_pip_$stamp.mp4');
+        final FfmpegResult pr = await FfmpegService.run(
+          DhamakaTools.pipCommand(
+            baseInput: out,
+            overlayInput: _dhPipPath!,
+            output: pipOut,
+          ),
+        );
+        if (pr.ok) {
+          out = pipOut;
+        } else {
+          _setStatus('Note: PIP pass failed, saving without PIP.');
+        }
+      }
+      // DHAMAKA: GIF export (replaces video output).
+      if (_dhExportGif && _clips.isNotEmpty) {
+        final c = _clips.first;
+        final String gifOut = p.join(dir.path, 'dh_gif_$stamp.gif');
+        final FfmpegResult gr = await FfmpegService.run(
+          DhamakaTools.gifCommand(
+            input: out,
+            trimStart: 0,
+            trimEnd: c.effectiveDuration.clamp(0.5, 15.0),
+            output: gifOut,
+          ),
+        );
+        if (gr.ok) {
+          await Gal.putImage(gifOut);
+          _setStatus('GIF saved to gallery: ${p.basename(gifOut)}');
+          AdService.showInterstitial();
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('GIF saved to gallery.')),
+            );
+          }
+          return;
+        } else {
+          _setStatus('Note: GIF export failed, saving video instead.');
+        }
+      }
       await Gal.putVideo(out);
       _setStatus('Saved to gallery: ${p.basename(out)}');
       AdService.showInterstitial();
@@ -1523,6 +1667,55 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       _selected = _selected + 1;
     });
     unawaited(_loadPreview());
+  }
+
+  /// Reorder clips via drag (timeline).
+  void _reorderClips(int oldIndex, int newIndex) {
+    setState(() {
+      if (newIndex > oldIndex) newIndex -= 1;
+      final clip = _clips.removeAt(oldIndex);
+      _clips.insert(newIndex, clip);
+      if (_selected == oldIndex) {
+        _selected = newIndex;
+      } else if (_selected > oldIndex && _selected <= newIndex) {
+        _selected -= 1;
+      } else if (_selected < oldIndex && _selected >= newIndex) {
+        _selected += 1;
+      }
+    });
+    unawaited(_loadPreview());
+  }
+
+  /// Text-to-speech preview.
+  Future<void> _speakTts() async {
+    if (_ttsText.trim().isEmpty) {
+      _setStatus('Pehle text likhein.');
+      return;
+    }
+    setState(() => _ttsBusy = true);
+    try {
+      await _tts.setLanguage(_ttsLang);
+      await _tts.setSpeechRate(_ttsRate);
+      await _tts.setPitch(_ttsPitch);
+      await _tts.speak(_ttsText.trim());
+    } catch (e) {
+      _setStatus('TTS error: $e');
+    } finally {
+      if (mounted) setState(() => _ttsBusy = false);
+    }
+  }
+
+  /// Pick overlay video for PIP.
+  Future<void> _pickPipVideo() async {
+    try {
+      final files = await FilePicker.pickFiles(type: FileType.video);
+      if (files.isNotEmpty && files.first.path != null) {
+        setState(() => _dhPipPath = files.first.path);
+        _setStatus('PIP video selected.');
+      }
+    } catch (e) {
+      _setStatus('PIP pick error: $e');
+    }
   }
 
   Widget _railButton(String key, String label, IconData icon) {
@@ -2831,6 +3024,262 @@ const Text('Auto Captions (CapCut-style)',
             ),
           ),
         ];
+      case 'reverse':
+        return [
+          const Text('Reverse / Freeze',
+              style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          SwitchListTile(
+            title: const Text('Reverse video'),
+            subtitle: const Text('Play backwards'),
+            value: _dhReverse,
+            onChanged: (v) => setState(() => _dhReverse = v),
+          ),
+          SwitchListTile(
+            title: const Text('Freeze frame'),
+            subtitle: const Text('Hold a frame as still'),
+            value: _dhFreeze,
+            onChanged: (v) => setState(() => _dhFreeze = v),
+          ),
+          if (_dhFreeze) ...[
+            _ProSlider(
+              label: 'Freeze at (sec)',
+              value: _dhFreezeAt,
+              min: 0,
+              max: 60,
+              onChanged: (v) => setState(() => _dhFreezeAt = v),
+            ),
+            _ProSlider(
+              label: 'Hold (sec)',
+              value: _dhFreezeHold,
+              min: 0.5,
+              max: 10,
+              onChanged: (v) => setState(() => _dhFreezeHold = v),
+            ),
+          ],
+        ];
+      case 'adjust':
+        return [
+          const Text('Adjust',
+              style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          _ProSlider(
+            label: 'Brightness',
+            value: _dhBrightness,
+            min: -1,
+            max: 1,
+            onChanged: (v) => setState(() => _dhBrightness = v),
+          ),
+          _ProSlider(
+            label: 'Contrast',
+            value: _dhContrast,
+            min: 0.5,
+            max: 2,
+            onChanged: (v) => setState(() => _dhContrast = v),
+          ),
+          _ProSlider(
+            label: 'Saturation',
+            value: _dhSaturation,
+            min: 0,
+            max: 3,
+            onChanged: (v) => setState(() => _dhSaturation = v),
+          ),
+          _ProSlider(
+            label: 'Sharpness',
+            value: _dhSharpness,
+            min: 0,
+            max: 2,
+            onChanged: (v) => setState(() => _dhSharpness = v),
+          ),
+          _ProSlider(
+            label: 'Temperature',
+            value: _dhTemperature,
+            min: -1,
+            max: 1,
+            onChanged: (v) => setState(() => _dhTemperature = v),
+          ),
+        ];
+      case 'veffects':
+        return [
+          const Text('Video Effects',
+              style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          DropdownButtonFormField<VideoEffect>(
+            initialValue: _dhVideoEffect,
+            decoration: const InputDecoration(labelText: 'Effect'),
+            items: VideoEffect.values
+                .map((e) => DropdownMenuItem(
+                      value: e,
+                      child: Text(videoEffectLabels[e]!),
+                    ))
+                .toList(),
+            onChanged: (v) => setState(() => _dhVideoEffect = v ?? VideoEffect.none),
+          ),
+          const SizedBox(height: 8),
+          const Text('Transition type',
+              style: TextStyle(fontWeight: FontWeight.bold)),
+          DropdownButtonFormField<XfadeTransition>(
+            initialValue: _dhTransition,
+            decoration: const InputDecoration(labelText: 'Transition'),
+            items: XfadeTransition.values
+                .map((e) => DropdownMenuItem(
+                      value: e,
+                      child: Text(xfadeLabels[e]!),
+                    ))
+                .toList(),
+            onChanged: (v) =>
+                setState(() => _dhTransition = v ?? XfadeTransition.fade),
+          ),
+        ];
+      case 'aefx':
+        return [
+          const Text('Audio FX',
+              style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          _ProSlider(
+            label: 'Volume',
+            value: _dhVolume,
+            min: 0,
+            max: 3,
+            onChanged: (v) => setState(() => _dhVolume = v),
+          ),
+          _ProSlider(
+            label: 'Fade in (sec)',
+            value: _dhFadeIn,
+            min: 0,
+            max: 10,
+            onChanged: (v) => setState(() => _dhFadeIn = v),
+          ),
+          _ProSlider(
+            label: 'Fade out (sec)',
+            value: _dhFadeOut,
+            min: 0,
+            max: 10,
+            onChanged: (v) => setState(() => _dhFadeOut = v),
+          ),
+          SwitchListTile(
+            title: const Text('Normalize volume'),
+            value: _dhNormalize,
+            onChanged: (v) => setState(() => _dhNormalize = v),
+          ),
+          SwitchListTile(
+            title: const Text('Voice enhance'),
+            subtitle: const Text('EQ + compression'),
+            value: _dhVoiceEnhance,
+            onChanged: (v) => setState(() => _dhVoiceEnhance = v),
+          ),
+          SwitchListTile(
+            title: const Text('Noise reduction'),
+            value: _dhNoiseReduce,
+            onChanged: (v) => setState(() => _dhNoiseReduce = v),
+          ),
+          const SizedBox(height: 8),
+          DropdownButtonFormField<AudioEffect>(
+            initialValue: _dhAudioEffect,
+            decoration: const InputDecoration(labelText: 'Voice effect'),
+            items: AudioEffect.values
+                .map((e) => DropdownMenuItem(
+                      value: e,
+                      child: Text(audioEffectLabels[e]!),
+                    ))
+                .toList(),
+            onChanged: (v) =>
+                setState(() => _dhAudioEffect = v ?? AudioEffect.none),
+          ),
+        ];
+      case 'tts':
+        return [
+          const Text('Text to Speech',
+              style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          TextField(
+            decoration: const InputDecoration(
+              labelText: 'Text to speak',
+              border: OutlineInputBorder(),
+            ),
+            maxLines: 3,
+            onChanged: (v) => setState(() => _ttsText = v),
+          ),
+          const SizedBox(height: 8),
+          DropdownButtonFormField<String>(
+            initialValue: _ttsLang,
+            decoration: const InputDecoration(labelText: 'Language'),
+            items: const [
+              DropdownMenuItem(value: 'en-US', child: Text('English')),
+              DropdownMenuItem(value: 'ur-PK', child: Text('Urdu')),
+            ],
+            onChanged: (v) => setState(() => _ttsLang = v ?? 'en-US'),
+          ),
+          _ProSlider(
+            label: 'Speed',
+            value: _ttsRate,
+            min: 0.5,
+            max: 2,
+            onChanged: (v) => setState(() => _ttsRate = v),
+          ),
+          _ProSlider(
+            label: 'Pitch',
+            value: _ttsPitch,
+            min: 0.5,
+            max: 2,
+            onChanged: (v) => setState(() => _ttsPitch = v),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _ttsBusy ? null : _speakTts,
+              icon: const Icon(Icons.play_arrow),
+              label: Text(_ttsBusy ? 'Speaking…' : 'Preview voice'),
+            ),
+          ),
+        ];
+      case 'pip':
+        return [
+          const Text('Picture in Picture',
+              style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          SwitchListTile(
+            title: const Text('Enable PIP'),
+            value: _dhPip,
+            onChanged: (v) => setState(() => _dhPip = v),
+          ),
+          if (_dhPip)
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _pickPipVideo,
+                icon: const Icon(Icons.video_library),
+                label: Text(_dhPipPath == null
+                    ? 'Pick overlay video'
+                    : 'Change overlay video'),
+              ),
+            ),
+        ];
+      case 'export2':
+        return [
+          const Text('Export Options',
+              style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          SwitchListTile(
+            title: const Text('4K export (2160p)'),
+            subtitle: const Text('Slower, best quality'),
+            value: _dhExport4k,
+            onChanged: (v) => setState(() => _dhExport4k = v),
+          ),
+          SwitchListTile(
+            title: const Text('60fps'),
+            subtitle: const Text('Smooth motion'),
+            value: _dhExport60fps,
+            onChanged: (v) => setState(() => _dhExport60fps = v),
+          ),
+          SwitchListTile(
+            title: const Text('GIF export'),
+            subtitle: const Text('Animated GIF instead of video'),
+            value: _dhExportGif,
+            onChanged: (v) => setState(() => _dhExportGif = v),
+          ),
+        ];
       case 'text':
       default:
         // CapCut-style text editor (Jaani 31 Oct 2026): fonts + colors +
@@ -2979,14 +3428,15 @@ const Text('Auto Captions (CapCut-style)',
                 ? const Center(
                     child: Text('Timeline khaali hai',
                         style: TextStyle(color: Colors.grey)))
-                : SingleChildScrollView(
+                : ReorderableListView(
                     scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: _clips.asMap().entries.map((e) {
+                    onReorderItem: (oldIndex, newIndex) => _reorderClips(oldIndex, newIndex),
+                    children: _clips.asMap().entries.map((e) {
                         final i = e.key;
                         final c = e.value;
                         final selected = i == _selected;
                         return GestureDetector(
+                          key: ValueKey('clip_$i'),
                           onTap: () async {
                             setState(() => _selected = i);
                             await _loadPreview();
@@ -3058,7 +3508,6 @@ const Text('Auto Captions (CapCut-style)',
                           ),
                         );
                       }).toList(),
-                    ),
                   ),
           ),
           if (_clips.isNotEmpty) ...[
@@ -3126,7 +3575,7 @@ if (clip != null) ...[
         body: Column(
           children: [
             Expanded(
-              flex: 5,
+              flex: 7,
               child: Container(
                 color: Colors.black,
                 padding: const EdgeInsets.all(8),
@@ -3304,6 +3753,13 @@ Row(
                     _railButton('beats', 'Beat sync', Icons.graphic_eq),
                     _railButton('grading', 'Grading/LUTs', Icons.tune),
                     _railButton('live', 'Live Studio', Icons.live_tv),
+                    _railButton('reverse', 'Reverse', Icons.flip_camera_android),
+                    _railButton('adjust', 'Adjust', Icons.brightness_6),
+                    _railButton('veffects', 'VFX', Icons.blur_on),
+                    _railButton('aefx', 'Audio FX', Icons.graphic_eq),
+                    _railButton('tts', 'Text→Speech', Icons.record_voice_over),
+                    _railButton('pip', 'PIP', Icons.picture_in_picture),
+                    _railButton('export2', 'Export+', Icons.high_quality),
                   ],
                 ),
               ),

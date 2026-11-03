@@ -44,6 +44,13 @@ android {
         minSdk = 24
         // TJ Pro fixed: targetSdk 36 (do not change without a new release plan).
         targetSdk = 36
+        // DHAMAKA (Jaani 3 Nov 2026): arm64-v8a only — cuts APK size
+        // significantly (ffmpeg native libs are the bulk). All phones
+        // from 2017+ are arm64; armeabi-v7a/x86_64 are obsolete.
+        // This is SAFE (unlike R8 shrinking which crashed on 28 Oct).
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
         // Uses the version code from pubspec.yaml. When using split APKs, 1000 * ABI_VERSION
         // is added automatically by Flutter. (https://developer.android.com/studio/build/configure-apk-splits#configure-APK-versions)
         // You can force using the value of versionCode by specifying the `-P force-version-code-ignoring-abi=true`

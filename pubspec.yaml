@@ -1,7 +1,7 @@
 name: tj_pro
 description: "TJ Pro — free offline photo and video editor for Android."
 publish_to: 'none'
-version: 1.0.6+7
+version: 1.0.7+8
 
 environment:
   sdk: ^3.13.7
@@ -40,6 +40,7 @@ dependencies:
   # rejects. Fresh install here, so no v9 cipher migration concern.
   flutter_secure_storage: ^10.0.0
   google_fonts: ^6.3.1
+  flutter_tts: ^4.2.3
 
 dev_dependencies:
   flutter_test:
