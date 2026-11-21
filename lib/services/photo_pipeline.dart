@@ -17,9 +17,27 @@ enum PhotoFilter { normal, warm, cool, blackWhite, vivid, sepia }
 class PhotoEditParams {
   const PhotoEditParams({
     this.filter = PhotoFilter.normal,
+    // Round-2 (21 Nov 2026): filter strength 0..1 (1 = full filter).
+    this.filterIntensity = 1.0,
+    // Round-2: selected .cube LUT ('' / null table = none). [lutTable] is
+    // the parsed RGB table from [parseCubeLut], [lutSize] its edge size.
+    this.lutName = '',
+    this.lutSize = 0,
+    this.lutTable,
     this.brightness = 0, // -100..100
     this.contrast = 1.0, // 0..2
     this.saturation = 1.0, // 0..2
+    // Round-2 Adjust panel (12 sliders): the 9 controls beyond the
+    // original Brightness/Contrast/Saturation trio.
+    this.exposure = 0, // -100..100 (gain = 2^(v/100))
+    this.highlights = 0, // -100..100, luminance-masked (bright end)
+    this.shadows = 0, // -100..100, luminance-masked (dark end)
+    this.vibrance = 0, // -100..100, gentle saturation move
+    this.temperature = 0, // -100 (cool) .. 100 (warm)
+    this.tint = 0, // -100 (magenta) .. 100 (green)
+    this.sharpenDetail = 0, // 0..100, unsharp amount = v/100
+    this.vignette = 0, // 0..100, radial edge darkening
+    this.fade = 0, // 0..100, lifted blacks + reduced contrast
     this.text = '',
     this.textArgb = 0xFFFFFFFF,
     this.textSize = 48.0,
@@ -31,12 +49,37 @@ class PhotoEditParams {
     this.textBg = false,
     this.textBgArgb = 0x8A000000,
     this.textLineHeight = 1.0, // line spacing multiplier (daily 2026-10-31)
+    // Round-2 export fix (P9): EVERY Text panel setting now reaches the
+    // export — previously font/bold/italic/opacity/spacing/outline/align
+    // were preview-only and silently dropped here.
+    this.textFont = 'default', // font key, see _fontFamilyForKey
+    this.textBold = false,
+    this.textItalic = false,
+    this.textOpacity = 1.0, // 0..1
+    this.textLetterSpacing = 0.0,
+    this.textOutline = false,
+    this.textOutlineArgb = 0xFF000000,
+    this.textOutlineWidth = 2.0,
+    this.textAlignIndex = 1, // 0 = left, 1 = center, 2 = right
   });
 
   final PhotoFilter filter;
+  final double filterIntensity;
+  final String lutName;
+  final int lutSize;
+  final List<double>? lutTable;
   final double brightness;
   final double contrast;
   final double saturation;
+  final double exposure;
+  final double highlights;
+  final double shadows;
+  final double vibrance;
+  final double temperature;
+  final double tint;
+  final double sharpenDetail;
+  final double vignette;
+  final double fade;
   final String text;
   final int textArgb;
   final double textSize;
@@ -47,6 +90,19 @@ class PhotoEditParams {
   final bool textBg;
   final int textBgArgb;
   final double textLineHeight;
+  final String textFont;
+  final bool textBold;
+  final bool textItalic;
+  final double textOpacity;
+  final double textLetterSpacing;
+  final bool textOutline;
+  final int textOutlineArgb;
+  final double textOutlineWidth;
+  final int textAlignIndex;
+
+  /// True when any non-matrix Adjust control needs the per-pixel pass.
+  bool get needsPixelAdjust =>
+      highlights != 0 || shadows != 0 || vignette != 0 || sharpenDetail != 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -132,27 +188,76 @@ List<double> _filterMatrix(PhotoFilter f) {
   }
 }
 
+/// Blend two matrices element-wise: [t] = 0 gives [a], 1 gives [b].
+/// Used for filter intensity (identity <-> filter look).
+List<double> _lerpMatrix(List<double> a, List<double> b, double t) {
+  final out = List<double>.filled(20, 0);
+  for (var i = 0; i < 20; i++) {
+    out[i] = a[i] + (b[i] - a[i]) * t;
+  }
+  return out;
+}
+
 /// Single matrix for preview (ColorFilter.matrix) AND export.
+///
+/// Round-2: also carries the matrix-expressible Adjust controls —
+/// [exposure] (power-of-two gain), [temperature] / [tint] (channel
+/// gains), [vibrance] (gentle saturation move, same approximation as
+/// the video grader) and [fade] (contrast scale-down + black lift).
+/// Highlights/Shadows/Vignette/Sharpen are NOT linear and live in
+/// [applyAdjustments] instead; [filterIntensity] blends the chosen
+/// filter look with the untouched photo.
 List<double> buildColorMatrix({
   required PhotoFilter filter,
   required double brightness, // -100..100
   required double contrast, // 0..2
   required double saturation, // 0..2
+  double filterIntensity = 1.0, // 0..1
+  double exposure = 0, // -100..100
+  double temperature = 0, // -100 (cool) .. 100 (warm)
+  double tint = 0, // -100 (magenta) .. 100 (green)
+  double vibrance = 0, // -100..100
+  double fade = 0, // 0..100
 }) {
-  final f = _filterMatrix(filter);
-  final sat = _saturationMatrix(saturation);
+  final f = _lerpMatrix(
+    _identity(),
+    _filterMatrix(filter),
+    filterIntensity.clamp(0.0, 1.0),
+  );
+  // Vibrance rides on the saturation matrix at half strength (it must
+  // stay a matrix for the live preview; the approximation is the same
+  // one the video ProGrade documents).
+  final vibFactor = 1 + (vibrance.clamp(-100, 100) / 100) * 0.5;
+  final satEff = (saturation * vibFactor).clamp(0.0, 3.0);
+  final sat = _saturationMatrix(satEff);
+  // Exposure + temperature + tint as one channel-gain matrix.
+  final gain = math.pow(2, exposure.clamp(-100, 100) / 100).toDouble();
+  final t = temperature.clamp(-100, 100) / 100;
+  final ti = tint.clamp(-100, 100) / 100;
+  final gains = _diag(
+    gain * (1 + 0.15 * t) * (1 - 0.06 * ti),
+    gain * (1 + 0.12 * ti),
+    gain * (1 - 0.15 * t) * (1 - 0.06 * ti),
+  );
   final con = _diag(contrast, contrast, contrast);
   final off = 128 * (1 - contrast);
   con[4] = off;
   con[9] = off;
   con[14] = off;
+  // Fade: pull contrast toward 1.0-ish flatness and lift the blacks.
+  final fd = fade.clamp(0, 100) / 100;
+  final fadeM = _diag(1 - 0.25 * fd, 1 - 0.25 * fd, 1 - 0.25 * fd);
+  final lift = 255 * 0.15 * fd;
+  fadeM[4] = lift;
+  fadeM[9] = lift;
+  fadeM[14] = lift;
   final bri = _identity();
   final bo = brightness * 2.55;
   bri[4] = bo;
   bri[9] = bo;
   bri[14] = bo;
-  // Apply filter -> saturation -> contrast -> brightness.
-  return _mul(bri, _mul(con, _mul(sat, f)));
+  // Apply filter -> saturation -> gains -> contrast -> fade -> brightness.
+  return _mul(bri, _mul(fadeM, _mul(con, _mul(gains, _mul(sat, f)))));
 }
 
 // ---------------------------------------------------------------------------
@@ -500,6 +605,318 @@ Future<img.Image> applyColorMatrix(
   );
 }
 
+// ---------------------------------------------------------------------------
+// Round-2 Adjust pass: the non-linear controls a 4x5 matrix cannot
+// express — Highlights / Shadows (luminance-masked), Vignette (radial).
+// Sharpen (Detail) reuses the unsharp job via [applyAdjustments].
+// ---------------------------------------------------------------------------
+
+Uint8List _adjustJob(List<dynamic> args) {
+  final bytes = args[0] as Uint8List;
+  final w = args[1] as int;
+  final h = args[2] as int;
+  final highlights = (args[3] as num).toDouble().clamp(-100, 100);
+  final shadows = (args[4] as num).toDouble().clamp(-100, 100);
+  final vignette = (args[5] as num).toDouble().clamp(0, 100);
+  final out = Uint8List.fromList(bytes);
+  final cx = (w - 1) / 2;
+  final cy = (h - 1) / 2;
+  final maxDist = math.sqrt(cx * cx + cy * cy);
+  for (var y = 0; y < h; y++) {
+    for (var x = 0; x < w; x++) {
+      final i = (y * w + x) * 4;
+      final r = bytes[i] / 255.0;
+      final g = bytes[i + 1] / 255.0;
+      final b = bytes[i + 2] / 255.0;
+      final lum = 0.299 * r + 0.587 * g + 0.114 * b;
+      // Luminance-masked: highlights move only the bright end, shadows
+      // only the dark end; mid-tones stay (nearly) untouched.
+      final hiW = lum * lum;
+      final shW = (1 - lum) * (1 - lum);
+      var delta = (highlights / 100) * 0.35 * hiW +
+          (shadows / 100) * 0.35 * shW;
+      var nr = r + delta;
+      var ng = g + delta;
+      var nb = b + delta;
+      if (vignette > 0 && maxDist > 0) {
+        final d = math.sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy)) /
+            maxDist; // 0 center .. 1 corner
+        // Start darkening past 55% of the radius, full strength at the
+        // corners; max darkening 55% at slider 100.
+        final edge = ((d - 0.55) / 0.45).clamp(0.0, 1.0);
+        final dark = 1 - (vignette / 100) * 0.55 * edge * edge;
+        nr *= dark;
+        ng *= dark;
+        nb *= dark;
+      }
+      out[i] = (nr * 255).clamp(0, 255).round();
+      out[i + 1] = (ng * 255).clamp(0, 255).round();
+      out[i + 2] = (nb * 255).clamp(0, 255).round();
+    }
+  }
+  return out;
+}
+
+/// Apply the non-linear Adjust controls. Highlights/Shadows in
+/// -100..100, Vignette 0..100, Sharpen (Detail) 0..100 mapped onto the
+/// unsharp-mask amount 0..1. Returns [src] untouched when all are 0.
+Future<img.Image> applyAdjustments(
+  img.Image src, {
+  double highlights = 0,
+  double shadows = 0,
+  double vignette = 0,
+  double sharpenDetail = 0,
+}) async {
+  var out = src;
+  if (highlights != 0 || shadows != 0 || vignette != 0) {
+    final rgba = out.convert(numChannels: 4);
+    final bytes = rgba.getBytes(order: img.ChannelOrder.rgba);
+    final res = await compute(
+      _adjustJob,
+      [bytes, src.width, src.height, highlights, shadows, vignette],
+    );
+    out = img.Image.fromBytes(
+      width: src.width,
+      height: src.height,
+      bytes: res.buffer,
+      numChannels: 4,
+      order: img.ChannelOrder.rgba,
+    );
+  }
+  if (sharpenDetail > 0) {
+    out = await sharpenImage(
+      out,
+      amount: (sharpenDetail.clamp(0, 100) / 100).toDouble(),
+    );
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Round-2 LUTs: the same 5 .cube looks the video editor ships
+// (assets/luts/*.cube, LUT_3D_SIZE 32). Minimal parser + trilinear
+// per-pixel apply — used at FULL resolution for export, never just on
+// a preview downscale.
+// ---------------------------------------------------------------------------
+
+/// The photo editor's LUT row: display name -> Flutter asset path.
+/// Mirrors ProGrade.proLuts in pro_editor.dart (same files).
+const photoLuts = [
+  {'name': 'TealOrange', 'asset': 'assets/luts/teal_orange.cube'},
+  {'name': 'Vintage', 'asset': 'assets/luts/vintage.cube'},
+  {'name': 'Noir', 'asset': 'assets/luts/noir.cube'},
+  {'name': 'Golden', 'asset': 'assets/luts/golden.cube'},
+  {'name': 'CoolNight', 'asset': 'assets/luts/cool_night.cube'},
+];
+
+/// A parsed 3D .cube LUT. [table] holds size^3 * 3 floats in .cube
+/// order (red fastest): index = ((b * size) + g) * size + r.
+class CubeLut {
+  const CubeLut(this.size, this.table);
+  final int size;
+  final List<double> table;
+}
+
+/// Parse .cube text: reads LUT_3D_SIZE and the RGB table that follows.
+/// Returns null when the file is malformed or incomplete.
+CubeLut? parseCubeLut(String source) {
+  var size = 0;
+  final values = <double>[];
+  for (final raw in source.split('\n')) {
+    final line = raw.trim();
+    if (line.isEmpty || line.startsWith('#')) continue;
+    if (line.startsWith('LUT_3D_SIZE')) {
+      size = int.tryParse(line.split(RegExp(r'\s+')).last) ?? 0;
+      continue;
+    }
+    // Skip the other header keywords (TITLE / DOMAIN_MIN / DOMAIN_MAX /
+    // LUT_1D_SIZE ...): only bare "r g b" data lines remain.
+    final first = line[0];
+    final isData = (first.codeUnitAt(0) >= 0x30 && first.codeUnitAt(0) <= 0x39) ||
+        first == '-' ||
+        first == '.';
+    if (!isData) continue;
+    final parts = line.split(RegExp(r'\s+'));
+    if (parts.length < 3) continue;
+    final r = double.tryParse(parts[0]);
+    final g = double.tryParse(parts[1]);
+    final b = double.tryParse(parts[2]);
+    if (r == null || g == null || b == null) continue;
+    values.addAll([r, g, b]);
+  }
+  if (size <= 1 || values.length != size * size * size * 3) return null;
+  return CubeLut(size, values);
+}
+
+Uint8List _lutJob(List<dynamic> args) {
+  final bytes = args[0] as Uint8List;
+  final size = args[1] as int;
+  final table = args[2] as List<double>;
+  final intensity = (args[3] as num).toDouble().clamp(0.0, 1.0);
+  final out = Uint8List(bytes.length);
+  final maxIdx = size - 1;
+  double sample(int r, int g, int b, int c) =>
+      table[(((b * size) + g) * size + r) * 3 + c];
+  for (var i = 0; i < bytes.length; i += 4) {
+    final rf = (bytes[i] / 255.0) * maxIdx;
+    final gf = (bytes[i + 1] / 255.0) * maxIdx;
+    final bf = (bytes[i + 2] / 255.0) * maxIdx;
+    final r0 = rf.floor().clamp(0, maxIdx);
+    final g0 = gf.floor().clamp(0, maxIdx);
+    final b0 = bf.floor().clamp(0, maxIdx);
+    final r1 = math.min(r0 + 1, maxIdx);
+    final g1 = math.min(g0 + 1, maxIdx);
+    final b1 = math.min(b0 + 1, maxIdx);
+    final fr = rf - r0;
+    final fg = gf - g0;
+    final fb = bf - b0;
+    for (var c = 0; c < 3; c++) {
+      // Trilinear interpolation between the 8 lattice corners.
+      final c000 = sample(r0, g0, b0, c);
+      final c100 = sample(r1, g0, b0, c);
+      final c010 = sample(r0, g1, b0, c);
+      final c110 = sample(r1, g1, b0, c);
+      final c001 = sample(r0, g0, b1, c);
+      final c101 = sample(r1, g0, b1, c);
+      final c011 = sample(r0, g1, b1, c);
+      final c111 = sample(r1, g1, b1, c);
+      final x00 = c000 + (c100 - c000) * fr;
+      final x10 = c010 + (c110 - c010) * fr;
+      final x01 = c001 + (c101 - c001) * fr;
+      final x11 = c011 + (c111 - c011) * fr;
+      final y0 = x00 + (x10 - x00) * fg;
+      final y1 = x01 + (x11 - x01) * fg;
+      final lutVal = y0 + (y1 - y0) * fb;
+      final orig = bytes[i + c] / 255.0;
+      out[i + c] =
+          ((orig + (lutVal - orig) * intensity) * 255).clamp(0, 255).round();
+    }
+    out[i + 3] = bytes[i + 3]; // keep alpha
+  }
+  return out;
+}
+
+/// Apply a parsed .cube LUT per-pixel (trilinear). [intensity] 0..1
+/// blends the look with the untouched photo.
+Future<img.Image> applyLut(
+  img.Image src,
+  CubeLut lut, {
+  double intensity = 1.0,
+}) async {
+  final rgba = src.convert(numChannels: 4);
+  final bytes = rgba.getBytes(order: img.ChannelOrder.rgba);
+  final out = await compute(
+    _lutJob,
+    [bytes, lut.size, lut.table, intensity.clamp(0.0, 1.0)],
+  );
+  return img.Image.fromBytes(
+    width: src.width,
+    height: src.height,
+    bytes: out.buffer,
+    numChannels: 4,
+    order: img.ChannelOrder.rgba,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Round-2 geometry + background-replace helpers.
+// ---------------------------------------------------------------------------
+
+/// Mirror the photo left<->right (the image package already ships the
+/// maths; this is the pipeline's named entry point for the Crop panel).
+img.Image flipHorizontalPhoto(img.Image src) => img.flipHorizontal(src);
+
+/// Straighten by a fine angle in degrees (-45..45). The image package
+/// rotates around the centre and expands the canvas; the exposed
+/// corners are filled with black (kept simple and correct on purpose).
+img.Image straightenPhoto(img.Image src, double degrees) {
+  final a = degrees.clamp(-45, 45).toDouble();
+  if (a == 0) return src;
+  return img.copyRotate(src, angle: a);
+}
+
+Uint8List _replaceBgJob(List<dynamic> args) {
+  final bytes = args[0] as Uint8List;
+  final w = args[1] as int;
+  final h = args[2] as int;
+  final mask = args[3] as List<double>;
+  final maskW = args[4] as int;
+  final maskH = args[5] as int;
+  final bgBytes = args[6] as Uint8List?; // pre-resized RGBA, w*h*4
+  final bgR = args[7] as int;
+  final bgG = args[8] as int;
+  final bgB = args[9] as int;
+  final src = img.decodeImage(bytes);
+  if (src == null) return bytes;
+  final rgba = src.convert(numChannels: 4);
+  final srcBytes = rgba.getBytes(order: img.ChannelOrder.rgba);
+  final out = Uint8List.fromList(srcBytes);
+  for (var y = 0; y < h; y++) {
+    final my = (y * maskH ~/ h).clamp(0, maskH - 1);
+    for (var x = 0; x < w; x++) {
+      final mx = (x * maskW ~/ w).clamp(0, maskW - 1);
+      final conf = mask[my * maskW + mx].clamp(0.0, 1.0);
+      // Same feather band as the cutout so edges don't stair-step.
+      final a = ((conf - 0.35) / 0.3).clamp(0.0, 1.0);
+      final idx = (y * w + x) * 4;
+      final br = bgBytes != null ? bgBytes[idx] : bgR;
+      final bg = bgBytes != null ? bgBytes[idx + 1] : bgG;
+      final bb = bgBytes != null ? bgBytes[idx + 2] : bgB;
+      out[idx] = (srcBytes[idx] * a + br * (1 - a)).round();
+      out[idx + 1] = (srcBytes[idx + 1] * a + bg * (1 - a)).round();
+      out[idx + 2] = (srcBytes[idx + 2] * a + bb * (1 - a)).round();
+      out[idx + 3] = 255; // replaced background = fully opaque photo
+    }
+  }
+  return out;
+}
+
+/// Replace everything behind the segmented subject: either a solid
+/// [bgArgb] colour or a [bgImage] (resized to cover the photo's size).
+/// The segmentation mask already supports this — it is the same
+/// confidence data the cutout/blur paths use, composited the other way.
+Future<img.Image> replaceBackground(
+  img.Image src,
+  MaskResult mask, {
+  int bgArgb = 0xFFFFFFFF,
+  img.Image? bgImage,
+}) async {
+  final rgba = src.convert(numChannels: 4);
+  final bytes = rgba.getBytes(order: img.ChannelOrder.rgba);
+  Uint8List? bgBytes;
+  if (bgImage != null) {
+    final resized = img.copyResize(
+      bgImage.convert(numChannels: 4),
+      width: src.width,
+      height: src.height,
+      interpolation: img.Interpolation.linear,
+    );
+    bgBytes = resized.getBytes(order: img.ChannelOrder.rgba);
+  }
+  final out = await compute(
+    _replaceBgJob,
+    [
+      bytes,
+      src.width,
+      src.height,
+      mask.confidences,
+      mask.width,
+      mask.height,
+      bgBytes,
+      (bgArgb >> 16) & 0xFF,
+      (bgArgb >> 8) & 0xFF,
+      bgArgb & 0xFF,
+    ],
+  );
+  return img.Image.fromBytes(
+    width: src.width,
+    height: src.height,
+    bytes: out.buffer,
+    numChannels: 4,
+    order: img.ChannelOrder.rgba,
+  );
+}
+
 /// Algorithmic auto-enhance (histogram stretch + saturation). Returns a new
 /// image; the caller writes it back to the working file.
 Future<img.Image> autoEnhance(img.Image src) async {
@@ -655,12 +1072,41 @@ Future<img.Image> applySegmentationMask(
   );
 }
 
+/// Map a Text-panel font key onto the family name the app loads via
+/// google_fonts. When that family is loaded it is used for the export;
+/// when it is not (offline first run), dart:ui falls back to the system
+/// font — the one param the rasterizer can only honor best-effort.
+String? _fontFamilyForKey(String key) {
+  switch (key) {
+    case 'nastaliq':
+      return 'Noto Nastaliq Urdu';
+    case 'naskh':
+      return 'Noto Naskh Arabic';
+    case 'kufi':
+      return 'Noto Kufi Arabic';
+    case 'gulzar':
+      return 'Gulzar';
+    case 'roboto':
+      return 'Roboto';
+    case 'merriweather':
+      return 'Merriweather';
+    case 'dancing':
+      return 'Dancing Script';
+    case 'bebas':
+      return 'Bebas Neue';
+    case 'pacifico':
+      return 'Pacifico';
+    default:
+      return null; // 'default' = system font
+  }
+}
+
 /// Rasterize overlay text to PNG bytes. MUST run on the main isolate
 /// (dart:ui). [argb] is a Flutter Color value.
 /// Supports CapCut-style effects: shadow, glow, background ribbon
-/// (Jaani 31 Oct 2026). Custom fonts are preview-only; export uses
-/// the system font (Google Fonts loading in the export isolate is
-/// not yet supported).
+/// (Jaani 31 Oct 2026). Round-2 (P9): font family, bold, italic,
+/// opacity, letter spacing, outline (multi-offset draws in the outline
+/// colour) and alignment are all honored here, so export == preview.
 Future<Uint8List> rasterizeText({
   required String text,
   required int argb,
@@ -670,11 +1116,27 @@ Future<Uint8List> rasterizeText({
   bool bg = false,
   int bgArgb = 0x8A000000,
   double height = 1.0, // line spacing multiplier (daily upgrade 2026-10-31)
+  String fontKey = 'default',
+  bool bold = true,
+  bool italic = false,
+  double opacity = 1.0, // 0..1, folded into the text colour's alpha
+  double letterSpacing = 0.0,
+  bool outline = false,
+  int outlineArgb = 0xFF000000,
+  double outlineWidth = 2.0,
+  ui.TextAlign textAlign = ui.TextAlign.center,
 }) async {
+  // Opacity: scale the colour's own alpha (ARGB int maths, no reliance
+  // on newer Color APIs).
+  final alpha = (((argb >> 24) & 0xFF) * opacity.clamp(0.0, 1.0)).round();
+  final effArgb = (argb & 0x00FFFFFF) | (alpha << 24);
+  final oAlpha = (((outlineArgb >> 24) & 0xFF) * opacity.clamp(0.0, 1.0))
+      .round();
+  final effOutlineArgb = (outlineArgb & 0x00FFFFFF) | (oAlpha << 24);
   final List<ui.Shadow> shadows = [];
   if (glow) {
     shadows.add(ui.Shadow(
-      color: ui.Color(argb).withValues(alpha: 0.9),
+      color: ui.Color(effArgb).withValues(alpha: 0.9),
       blurRadius: 16,
     ));
   }
@@ -685,27 +1147,36 @@ Future<Uint8List> rasterizeText({
       blurRadius: 6,
     ));
   }
-  final builder = ui.ParagraphBuilder(
-    ui.ParagraphStyle(
-      textDirection: ui.TextDirection.ltr,
-      textAlign: ui.TextAlign.center,
-      height: height,
-    ),
-  )
-    ..pushStyle(
-      ui.TextStyle(
-        color: ui.Color(argb),
-        fontSize: size,
-        fontWeight: ui.FontWeight.bold,
-        shadows: shadows,
+
+  ui.Paragraph buildPara(int colorArgb, {bool withShadows = true}) {
+    final builder = ui.ParagraphBuilder(
+      ui.ParagraphStyle(
+        textDirection: ui.TextDirection.ltr,
+        textAlign: textAlign,
+        height: height,
       ),
     )
-    ..addText(text);
-  final paragraph = builder.build()
-    ..layout(const ui.ParagraphConstraints(width: 4000));
+      ..pushStyle(
+        ui.TextStyle(
+          color: ui.Color(colorArgb),
+          fontSize: size,
+          fontFamily: _fontFamilyForKey(fontKey),
+          fontWeight: bold ? ui.FontWeight.bold : ui.FontWeight.normal,
+          fontStyle: italic ? ui.FontStyle.italic : ui.FontStyle.normal,
+          letterSpacing: letterSpacing,
+          shadows: withShadows ? shadows : const [],
+        ),
+      )
+      ..addText(text);
+    return builder.build()
+      ..layout(const ui.ParagraphConstraints(width: 4000));
+  }
+
+  final paragraph = buildPara(effArgb);
   final tw = paragraph.longestLine.ceil();
   final th = paragraph.height.ceil();
-  final pad = 32;
+  // Extra padding so outline strokes at max width never clip.
+  final pad = 32 + (outline ? outlineWidth.ceil() : 0);
   final w = tw + pad * 2;
   final h = th + pad * 2;
   final recorder = ui.PictureRecorder();
@@ -720,6 +1191,25 @@ Future<Uint8List> rasterizeText({
       ),
       bgPaint,
     );
+  }
+  if (outline) {
+    // Outline via multi-offset draws of the same paragraph in the
+    // outline colour (dart:ui text has no stroke fill for paragraphs):
+    // 8 compass offsets at full width + 4 diagonal at 0.7 width.
+    final outlinePara = buildPara(effOutlineArgb, withShadows: false);
+    final ow = outlineWidth.clamp(0.5, 12.0);
+    final offsets = <ui.Offset>[
+      ui.Offset(-ow, 0), ui.Offset(ow, 0),
+      ui.Offset(0, -ow), ui.Offset(0, ow),
+      ui.Offset(-ow * 0.7, -ow * 0.7), ui.Offset(ow * 0.7, -ow * 0.7),
+      ui.Offset(-ow * 0.7, ow * 0.7), ui.Offset(ow * 0.7, ow * 0.7),
+    ];
+    for (final o in offsets) {
+      canvas.drawParagraph(
+        outlinePara,
+        ui.Offset(pad + o.dx, pad + o.dy),
+      );
+    }
   }
   canvas.drawParagraph(paragraph, ui.Offset(pad.toDouble(), pad.toDouble()));
   final picture = recorder.endRecording();
@@ -762,8 +1252,31 @@ Future<File> exportPhoto({
     brightness: params.brightness,
     contrast: params.contrast,
     saturation: params.saturation,
+    filterIntensity: params.filterIntensity,
+    exposure: params.exposure,
+    temperature: params.temperature,
+    tint: params.tint,
+    vibrance: params.vibrance,
+    fade: params.fade,
   );
   image = await applyColorMatrix(image, matrix);
+  // LUT look (Round-2): applied after the corrections, like the video
+  // grader — the LUT is the final "look" layer before pixel Adjust.
+  if (params.lutTable != null && params.lutSize > 1) {
+    image = await applyLut(
+      image,
+      CubeLut(params.lutSize, params.lutTable!),
+    );
+  }
+  if (params.needsPixelAdjust) {
+    image = await applyAdjustments(
+      image,
+      highlights: params.highlights,
+      shadows: params.shadows,
+      vignette: params.vignette,
+      sharpenDetail: params.sharpenDetail,
+    );
+  }
   if (params.text.trim().isNotEmpty) {
     final textPng = await rasterizeText(
       text: params.text,
@@ -774,6 +1287,19 @@ Future<File> exportPhoto({
       bg: params.textBg,
       bgArgb: params.textBgArgb,
       height: params.textLineHeight,
+      fontKey: params.textFont,
+      bold: params.textBold,
+      italic: params.textItalic,
+      opacity: params.textOpacity,
+      letterSpacing: params.textLetterSpacing,
+      outline: params.textOutline,
+      outlineArgb: params.textOutlineArgb,
+      outlineWidth: params.textOutlineWidth,
+      textAlign: params.textAlignIndex == 0
+          ? ui.TextAlign.left
+          : params.textAlignIndex == 2
+              ? ui.TextAlign.right
+              : ui.TextAlign.center,
     );
     image = compositeText(
       image,
