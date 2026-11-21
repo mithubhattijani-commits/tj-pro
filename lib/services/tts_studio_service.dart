@@ -530,7 +530,9 @@ class TtsStudioService {
 
     final chunks = chunkText(clean, voice);
     final remaining = await _voiceService.remainingToday();
-    if (remaining < chunks.length) {
+    // -1 = admin (unlimited) — never cap-blocked (one-build defect 3:
+    // GeminiVoiceService.remainingToday returns -1 for admins).
+    if (remaining != -1 && remaining < chunks.length) {
       throw TtsStudioCapException(remaining, chunks.length);
     }
 
@@ -652,7 +654,9 @@ class TtsStudioService {
       if (bytes.isNotEmpty) return bytes;
     }
     final remaining = await _voiceService.remainingToday();
-    if (remaining < 1) throw TtsStudioCapException(remaining, 1);
+    if (remaining != -1 && remaining < 1) {
+      throw TtsStudioCapException(remaining, 1);
+    }
     final gen = await generateChunkWithFallback(
       _previewText,
       voice,
