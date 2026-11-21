@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 
 import '../services/auth_service.dart';
 import '../services/coin_service.dart';
-import '../services/supabase_service.dart';
 import '../theme.dart';
 import '../widgets/help_whatsapp_button.dart';
 
@@ -15,8 +14,6 @@ import '../widgets/help_whatsapp_button.dart';
 /// * Email + password — Login / Register switch + Forgot password.
 /// * "Coins kaise kamayein" card (1 rewarded ad = 50 coins, daily
 ///   free 50, max 20 ads/day = 1000 coins/day).
-/// * "Admins — sab kuch free" card (the 3 admin emails, display
-///   only — the free access is enforced server-side).
 /// * Note: guest coins are preserved on login (anon → linked).
 /// * "For Help" row with WhatsApp button (remote-config number).
 ///
@@ -363,13 +360,6 @@ class _LoginScreenState extends State<LoginScreen> {
                     'Max ${CoinService.maxRewardedAdsPerDay} ads/day = '
                         '${CoinService.maxAdCoinsPerDay} coins/day',
                   ],
-                ),
-                const SizedBox(height: 12),
-                // Admins card (display only — free access is server-side).
-                _InfoCard(
-                  title: 'Admins — sab kuch free, no coins, no ads',
-                  icon: Icons.admin_panel_settings_outlined,
-                  lines: SupabaseService.adminEmails,
                 ),
                 const SizedBox(height: 12),
                 const Text(

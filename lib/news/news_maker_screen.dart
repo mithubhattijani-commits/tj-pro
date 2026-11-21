@@ -670,12 +670,13 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           key: const Key('voiceStatus'),
           style: const TextStyle(color: Colors.grey, fontSize: 12),
         ),
-        if (_voiceRemaining != null)
+        // Cap line: non-admins only. Admins get -1 (unlimited)
+        // from remainingToday() and see nothing here.
+        if (_voiceRemaining != null && _voiceRemaining != -1)
           Padding(
             padding: const EdgeInsets.only(top: 2),
             child: Text(
-              'Aaj: $_voiceRemaining request(s) baaki (cap 5/day) — '
-              'same tehreer = cached, 0 nayi calls.',
+              'Aaj ki voice limit: $_voiceRemaining / 5 baaki',
               style: const TextStyle(color: Colors.grey, fontSize: 12),
             ),
           ),

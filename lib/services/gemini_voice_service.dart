@@ -205,9 +205,13 @@ class GeminiVoiceService {
     return (usage[_todayKey()] as num?)?.toInt() ?? 0;
   }
 
-  /// Proxy requests left today (unlimited for admins).
+  /// Proxy requests left today.
+  ///
+  /// Returns -1 for admins, meaning "unlimited" — callers must
+  /// check for -1 and show no cap counter in that case. Everyone
+  /// else gets the real remaining count (0–[dailyCap]).
   Future<int> remainingToday() async {
-    if (_isAdmin) return 1 << 30;
+    if (_isAdmin) return -1;
     return (dailyCap - await usedToday()).clamp(0, dailyCap);
   }
 
@@ -491,7 +495,9 @@ class GeminiVoiceService {
       final remaining = await remainingToday();
       File? result;
       var requests = 0;
-      if (remaining >= chunks.length) {
+      // -1 = admin (unlimited) — always allowed; otherwise the
+      // remaining count must cover every chunk.
+      if (remaining == -1 || remaining >= chunks.length) {
         try {
           final wavs = <File>[];
           for (var i = 0; i < chunks.length; i++) {

@@ -9,6 +9,8 @@ library;
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -24,10 +26,15 @@ import '../theme.dart';
 import '../live/news_template.dart';
 import '../live/live_studio_screen.dart';
 import '../news/breaking_templates.dart';
+import '../news/audio_tools_screen.dart';
+import '../news/caption_translator_screen.dart';
+
+part 'video_editor_panels.dart';
 import '../news/channel_preset.dart';
 import '../news/news_project.dart';
 import '../news/project_handoff.dart';
-import '../services/ad_service.dart';
+import '../services/premium_gate.dart';
+import '../services/unity_ads_service.dart';
 import '../services/ffmpeg_service.dart';
 import '../services/caption_service.dart';
 import '../services/pro_editor.dart';
@@ -114,6 +121,10 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   double _proContrast = 1;
   double _proShadows = 0;
   double _proHighlights = 0;
+  // One-build: the video grading panel had NO brightness/exposure
+  // (proposal S5.2) — added through ProGrade's eq gamma/brightness.
+  double _proBrightness = 0;
+  double _proExposure = 0;
 
   // Keyframes animate the motion title/sticker overlay (title first
   // if both are set). Times are 0 and the export duration.
@@ -141,11 +152,18 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   // Chromakey.
   bool _proChroma = false;
   String _proChromaColor = 'green';
-  double _proChromaSimilarity = 0.4;
+  double _proChromaSimilarity = 0.3;
   double _proChromaBlend = 0.1;
   String _proChromaBgKind = 'color';
   String _proChromaBgColor = '#00FF00';
   String? _proChromaBgImage;
+  // One-build chroma upgrades (addendum B.3): spill (despill),
+  // edge (alpha erode/dilate) and the live keyed-frame preview.
+  double _proChromaSpill = 0;
+  double _proChromaEdge = 0;
+  String? _chromaPreviewPath;
+  bool _chromaPreviewBusy = false;
+  Timer? _chromaPreviewTimer;
 
   // Video background remover (ML — Premium-gated like the photo
   // editor's AI tools).
@@ -208,7 +226,9 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       _proVibrance != 1 ||
       _proContrast != 1 ||
       _proShadows != 0 ||
-      _proHighlights != 0;
+      _proHighlights != 0 ||
+      _proBrightness != 0 ||
+      _proExposure != 0;
 
   RampPreset? _rampPreset() => switch (_proRamp) {
         'slowMiddle' => RampPreset.slowMiddle,
@@ -225,7 +245,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   /// proceed immediately, so the BG-remover switch can turn on and the
   /// Track button can run in the same tap.
   Future<bool> _ensurePremiumUnlocked() async {
-    if (AdService.isPremiumUnlocked) return true;
+    if (PremiumGate.isUnlocked) return true;
     _setStatus(
       'Pro ML tools are Premium. Unlock them with one short ad '
       'from the home screen, then try again.',
@@ -252,7 +272,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       ),
     );
     if (unlock == true) {
-      final ok = await AdService.showRewarded();
+      final ok = await PremiumGate.tryUnlockWithAd();
       _setStatus(
         ok
             ? 'Premium Pro unlocked.'
@@ -1057,6 +1077,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
                 contrast: _proContrast,
                 shadows: _proShadows,
                 highlights: _proHighlights,
+                brightness: _proBrightness,
+                exposure: _proExposure,
               ),
               lutFilePath: lutPath,
             )
@@ -1451,6 +1473,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
             color: _proChromaColor,
             similarity: _proChromaSimilarity,
             blend: _proChromaBlend,
+            spill: _proChromaSpill,
+            edge: _proChromaEdge,
             backgroundKind: _proChromaBgKind,
             backgroundColor: _proChromaBgColor,
             backgroundImagePath:
@@ -1624,7 +1648,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       }
       await Gal.putVideo(out);
       _setStatus('Saved to gallery: ${p.basename(out)}');
-      AdService.showInterstitial();
+      UnityAdsService.showInterstitialAd();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Video saved to gallery.')),
@@ -1644,6 +1668,28 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       return;
     }
     if (_busy) return;
+    // Export quality lives at the export step now (one-build): it
+    // used to hide inside the old Filters panel; the user confirms
+    // it here, CapCut-style, before the render starts.
+    final quality = await showDialog<int>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('Export quality'),
+        children: [
+          for (final entry in const [
+            (0, '720p HD (fast)'),
+            (1, '1080p Full HD'),
+            (2, '2160p 4K (slow)'),
+          ])
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(ctx, entry.$1),
+              child: Text(entry.$2),
+            ),
+        ],
+      ),
+    );
+    if (quality == null || !mounted) return;
+    _fxQuality = quality;
     setState(() {
       _busy = true;
       _status = 'Exporting…';
@@ -1852,6 +1898,127 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     unawaited(_loadPreview());
   }
 
+
+  /// The chroma settings exactly as the export pass will use them.
+  ProChroma _currentChroma() {
+    return ProChroma(
+      color: _proChromaColor,
+      similarity: _proChromaSimilarity,
+      blend: _proChromaBlend,
+      backgroundKind: _proChromaBgKind,
+      backgroundColor: _proChromaBgColor,
+      backgroundImagePath:
+          _proChromaBgKind == 'image' ? _proChromaBgImage : null,
+      spill: _proChromaSpill,
+      edge: _proChromaEdge,
+    );
+  }
+
+  /// Debounced live keyed preview (addendum B.3): slider/colour
+  /// changes re-render ONE frame through the exact export graph.
+  void _scheduleChromaPreview() {
+    _chromaPreviewTimer?.cancel();
+    _chromaPreviewTimer =
+        Timer(const Duration(milliseconds: 450), _refreshChromaPreview);
+  }
+
+  Future<void> _refreshChromaPreview() async {
+    if (!_proChroma || _clips.isEmpty || _chromaPreviewBusy) return;
+    _chromaPreviewBusy = true;
+    try {
+      final dir = await _workDir();
+      final out = p.join(dir.path, 'chroma_preview.png');
+      final clip = _clips[_selected < _clips.length ? _selected : 0];
+      final ctrl = _controller;
+      final posSec = (ctrl != null && ctrl.value.isInitialized)
+          ? ctrl.value.position.inMilliseconds / 1000.0
+          : 0.5;
+      final cmd = chromaPreviewFrameCommand(
+        input: clip.file.path,
+        c: _currentChroma(),
+        output: out,
+        atSec: posSec,
+      );
+      final res = await FfmpegService.run(cmd);
+      if (res.ok && mounted) {
+        setState(() => _chromaPreviewPath = out);
+      }
+    } catch (_) {
+      // Preview is best-effort; the export graph is unchanged.
+    } finally {
+      _chromaPreviewBusy = false;
+    }
+  }
+
+  /// Eyedropper (addendum B.3): grab the current frame, let the user
+  /// tap the colour to key out, store it as '#RRGGBB'.
+  Future<void> _eyedropperPick() async {
+    if (_clips.isEmpty) {
+      _setStatus('Pehle clip select karein.');
+      return;
+    }
+    final clip = _clips[_selected < _clips.length ? _selected : 0];
+    final ctrl = _controller;
+    final posSec = (ctrl != null && ctrl.value.isInitialized)
+        ? ctrl.value.position.inMilliseconds / 1000.0
+        : 0.5;
+    try {
+      final dir = await _workDir();
+      final frame = p.join(dir.path, 'chroma_eye_frame.png');
+      final r = await FfmpegService.run(
+        '-ss $posSec -i ${FfmpegService.q(clip.file.path)} '
+        '-frames:v 1 -q:v 2 -y ${FfmpegService.q(frame)}',
+      );
+      if (!r.ok) {
+        _setStatus('Frame nahi mila — video play karke dobara try karein.');
+        return;
+      }
+      if (!mounted) return;
+      final picked = await showDialog<String>(
+        context: context,
+        builder: (_) => _ChromaEyeDialog(framePath: frame),
+      );
+      if (picked != null) {
+        setState(() => _proChromaColor = picked);
+        _scheduleChromaPreview();
+      }
+    } catch (e) {
+      _setStatus('Eyedropper fail: $e');
+    }
+  }
+
+  /// Bundled backdrop chip (Newsroom / Studio Desk): materialise
+  /// the asset like the project-handoff path does, then point the
+  /// chroma background at it.
+  Future<void> _applyBackdropAsset(String asset) async {
+    try {
+      final dir = await _workDir();
+      final f = await ensureLutFile(asset, dir);
+      setState(() {
+        _proChromaBgKind = 'image';
+        _proChromaBgImage = f.path;
+      });
+      _scheduleChromaPreview();
+    } catch (e) {
+      _setStatus('Backdrop load nahi hua: $e');
+    }
+  }
+
+  /// "News anchor" preset (addendum B.3): one blessed set of values
+  /// for a lit green-screen studio shot. Similarity 0.3 is the ONE
+  /// default everywhere now (the editor used to default to 0.4
+  /// while the engine documented 0.3 — addendum V2).
+  void _applyNewsAnchorPreset() {
+    setState(() {
+      _proChromaColor = 'green';
+      _proChromaSimilarity = 0.3;
+      _proChromaBlend = 0.1;
+      _proChromaSpill = 0.5;
+      _proChromaEdge = 0;
+    });
+    _scheduleChromaPreview();
+  }
+
   Widget _railButton(String key, String label, IconData icon) {
     final selected = _activeTool == key;
     return Padding(
@@ -1863,7 +2030,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           width: 76,
           padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
           decoration: BoxDecoration(
-            color: selected ? TjProTheme.goldDeep : const Color(0xFF232323),
+            color: selected ? TjProTheme.violet : const Color(0xFF232323),
             borderRadius: BorderRadius.circular(12),
           ),
           child: Column(
@@ -1888,21 +2055,14 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   /// Display name for a tool key (used in the panel header).
   String _toolDisplayName(String key) {
     const Map<String, String> names = <String, String>{
-      'text': 'Text',
-      'stickers': 'Stickers',
-      'effects': 'Effects',
-      'filters': 'Filters',
+      'edit': 'Edit',
       'audio': 'Audio',
-      'speed': 'Speed',
+      'text': 'Text',
+      'colour': 'Colour',
+      'effects': 'Effects',
+      'overlay': 'Overlay',
       'transitions': 'Transitions',
-      'overlays': 'Overlays',
-      'captions': 'Captions',
-      'stabilization': 'Stabilization',
-      'chroma': 'Chromakey/BG remover',
-      'tracking': 'Tracking',
-      'beats': 'Beat sync',
-      'grading': 'Grading/LUTs',
-      'live': 'Live Studio',
+      'news': 'News',
     };
     return names[key] ?? key;
   }
@@ -1939,1455 +2099,6 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     );
   }
 
-  List<Widget> _toolPanelChildren() {
-    switch (_activeTool) {
-      case 'stickers':
-        return [
-          const Text('Stickers / emoji overlay',
-              style: TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-TextField(
-                decoration: const InputDecoration(
-                  labelText: 'Sticker / emoji overlay',
-                  border: OutlineInputBorder(),
-                ),
-                onChanged: (v) => setState(() => _proSticker = v),
-              ),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                initialValue: _proStickerPreset,
-                decoration: const InputDecoration(
-                  labelText: 'Sticker preset',
-                ),
-                items: const [
-                  'fadeIn',
-                  'slideLeft',
-                  'slideRight',
-                  'slideUp',
-                  'zoomPop',
-                ]
-                    .map((s) => DropdownMenuItem(value: s, child: Text(s)))
-                    .toList(),
-                onChanged: (v) =>
-                    setState(() => _proStickerPreset = v ?? 'fadeIn'),
-              ),
-              const Divider(height: 32),
-          const SizedBox(height: 12),
-          const Text(
-            'Keyframes animate the title/sticker overlay from start to end.',
-            style: TextStyle(color: Colors.grey),
-          ),
-// Keyframes.
-              SwitchListTile(
-                title: const Text('Keyframes (motion title/sticker)'),
-                subtitle: const Text(
-                  'Start se end tak overlay move/scale/fade/rotate hoga.',
-                ),
-                value: _proKeyframes,
-                onChanged: (v) => setState(() => _proKeyframes = v),
-              ),
-              if (_proKeyframes &&
-                  _proTitle.trim().isEmpty &&
-                  _proSticker.trim().isEmpty)
-                const Text(
-                  'Pehle motion title ya sticker likhein — keyframes usi '
-                  'overlay par lagenge.',
-                  style: TextStyle(color: Colors.grey),
-                ),
-              if (_proKeyframes &&
-                  (_proTitle.trim().isNotEmpty ||
-                      _proSticker.trim().isNotEmpty)) ...[
-                DropdownButtonFormField<KeyframeEasing>(
-                  initialValue: _kfEasing,
-                  decoration: const InputDecoration(
-                      labelText: 'Motion easing'),
-                  items: KeyframeEasing.values
-                      .map((KeyframeEasing e) => DropdownMenuItem(
-                            value: e,
-                            child: Text(keyframeEasingLabel(e)),
-                          ))
-                      .toList(),
-                  onChanged: (KeyframeEasing? v) =>
-                      setState(() => _kfEasing = v ?? KeyframeEasing.linear),
-                ),
-                const SizedBox(height: 8),
-                const Text('Start keyframe',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
-                _ProSlider(
-                  label: 'Start X',
-                  value: _kfStartX,
-                  min: 0,
-                  max: 1,
-                  divisions: 20,
-                  onChanged: (v) => setState(() => _kfStartX = v),
-                ),
-                _ProSlider(
-                  label: 'Start Y',
-                  value: _kfStartY,
-                  min: 0,
-                  max: 1,
-                  divisions: 20,
-                  onChanged: (v) => setState(() => _kfStartY = v),
-                ),
-                _ProSlider(
-                  label: 'Start scale',
-                  value: _kfStartScale,
-                  min: 0.5,
-                  max: 2,
-                  divisions: 30,
-                  onChanged: (v) => setState(() => _kfStartScale = v),
-                ),
-                _ProSlider(
-                  label: 'Start opacity',
-                  value: _kfStartOpacity,
-                  min: 0,
-                  max: 1,
-                  divisions: 20,
-                  onChanged: (v) => setState(() => _kfStartOpacity = v),
-                ),
-                _ProSlider(
-                  label: 'Start rotation',
-                  value: _kfStartRotation,
-                  min: -180,
-                  max: 180,
-                  divisions: 72,
-                  digits: 0,
-                  onChanged: (v) => setState(() => _kfStartRotation = v),
-                ),
-                const Text('End keyframe',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
-                _ProSlider(
-                  label: 'End X',
-                  value: _kfEndX,
-                  min: 0,
-                  max: 1,
-                  divisions: 20,
-                  onChanged: (v) => setState(() => _kfEndX = v),
-                ),
-                _ProSlider(
-                  label: 'End Y',
-                  value: _kfEndY,
-                  min: 0,
-                  max: 1,
-                  divisions: 20,
-                  onChanged: (v) => setState(() => _kfEndY = v),
-                ),
-                _ProSlider(
-                  label: 'End scale',
-                  value: _kfEndScale,
-                  min: 0.5,
-                  max: 2,
-                  divisions: 30,
-                  onChanged: (v) => setState(() => _kfEndScale = v),
-                ),
-                _ProSlider(
-                  label: 'End opacity',
-                  value: _kfEndOpacity,
-                  min: 0,
-                  max: 1,
-                  divisions: 20,
-                  onChanged: (v) => setState(() => _kfEndOpacity = v),
-                ),
-                _ProSlider(
-                  label: 'End rotation',
-                  value: _kfEndRotation,
-                  min: -180,
-                  max: 180,
-                  divisions: 72,
-                  digits: 0,
-                  onChanged: (v) => setState(() => _kfEndRotation = v),
-                ),
-              ],
-              const Divider(height: 32),
-        ];
-      case 'effects':
-        return [
-          const Text('Effects — animated motion title',
-              style: TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-// Motion titles + sticker.
-              TextField(
-                decoration: const InputDecoration(
-                  labelText: 'Motion title (PNG render, Urdu-safe)',
-                  border: OutlineInputBorder(),
-                ),
-                onChanged: (v) => setState(() => _proTitle = v),
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      initialValue: _proTitlePreset,
-                      decoration: const InputDecoration(
-                        labelText: 'Title preset',
-                      ),
-                      items: const [
-                        'fadeIn',
-                        'slideLeft',
-                        'slideRight',
-                        'slideUp',
-                        'zoomPop',
-                      ]
-                          .map((s) => DropdownMenuItem(
-                                value: s,
-                                child: Text(s),
-                              ))
-                          .toList(),
-                      onChanged: (v) =>
-                          setState(() => _proTitlePreset = v ?? 'fadeIn'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      initialValue: _proTitlePosition,
-                      decoration: const InputDecoration(
-                        labelText: 'Title position',
-                      ),
-                      items: const ['topCenter', 'center', 'bottomCenter']
-                          .map((s) => DropdownMenuItem(
-                                value: s,
-                                child: Text(s),
-                              ))
-                          .toList(),
-                      onChanged: (v) => setState(
-                        () => _proTitlePosition = v ?? 'bottomCenter',
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-          const Divider(height: 32),
-          const Text('Shake effect',
-              style: TextStyle(fontWeight: FontWeight.bold)),
-          DropdownButtonFormField<ShakeFx>(
-            initialValue: _fxShake,
-            decoration: const InputDecoration(labelText: 'Shake intensity'),
-            items: const [
-              DropdownMenuItem(value: ShakeFx.none, child: Text('None')),
-              DropdownMenuItem(value: ShakeFx.light, child: Text('Light')),
-              DropdownMenuItem(value: ShakeFx.medium, child: Text('Medium')),
-              DropdownMenuItem(value: ShakeFx.strong, child: Text('Strong')),
-            ],
-            onChanged: (ShakeFx? v) {
-              setState(() {
-                _fxShake = v ?? ShakeFx.none;
-              });
-            },
-          ),
-          const SizedBox(height: 8),
-        ];
-      case 'filters':
-        return [
-          const Text('Filters',
-              style: TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-// Speed / filter / aspect
-          Row(
-            children: [
-              Expanded(
-                child: DropdownButtonFormField<double>(
-                  initialValue: _speed,
-                  decoration: const InputDecoration(labelText: 'Speed'),
-                  items: const [0.5, 0.75, 1.0, 1.5, 2.0]
-                      .map((s) => DropdownMenuItem(
-                            value: s,
-                            child: Text('${s}x'),
-                          ))
-                      .toList(),
-                  onChanged: (v) => setState(() => _speed = v ?? 1.0),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  initialValue: _filter,
-                  decoration: const InputDecoration(labelText: 'Filter'),
-                  items: const ['Normal', 'Warm', 'Cool', 'B&W', 'Vivid', 'Sepia']
-                      .map((f) => DropdownMenuItem(value: f, child: Text(f)))
-                      .toList(),
-                  onChanged: (v) => setState(() => _filter = v ?? 'Normal'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  initialValue: _aspect,
-                  decoration: const InputDecoration(labelText: 'Aspect'),
-                  items: const ['Original', '9:16', '16:9', '1:1']
-                      .map((a) => DropdownMenuItem(value: a, child: Text(a)))
-                      .toList(),
-                  onChanged: (v) => setState(() => _aspect = v ?? 'Original'),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          DropdownButtonFormField<int>(
-            initialValue: _fxQuality,
-            decoration: const InputDecoration(labelText: 'Export quality'),
-            items: const [
-              DropdownMenuItem(value: 0, child: Text('720p HD (fast)')),
-              DropdownMenuItem(value: 1, child: Text('1080p Full HD')),
-              DropdownMenuItem(value: 2, child: Text('2160p 4K (slow)')),
-            ],
-            onChanged: (int? v) {
-              setState(() {
-                _fxQuality = v ?? 0;
-              });
-            },
-          ),
-        ];
-      case 'audio':
-        return [
-          const Text('Audio — music + waveform',
-              style: TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-// Music
-          Row(
-            children: [
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: _pickMusic,
-                  icon: const Icon(Icons.music_note),
-                  label: Text(
-                    _musicPath == null
-                        ? 'Add music'
-                        : p.basename(_musicPath!),
-                  ),
-                ),
-              ),
-              if (_musicPath != null)
-                IconButton(
-                  icon: const Icon(Icons.clear),
-                  onPressed: () => setState(() => _musicPath = null),
-                ),
-            ],
-          ),
-          // CapCut-style music track gain: silent BGM mixing made common by
-          // CapCut/VN's 2026 audio panels; applied to the music audio only.
-          if (_musicPath != null)
-            _ProSlider(
-              label: 'Music volume',
-              value: _musicVolume,
-              min: 0,
-              max: 1.5,
-              divisions: 30,
-              onChanged: (double v) {
-                setState(() {
-                  _musicVolume = v;
-                });
-              },
-            ),
-          const SizedBox(height: 12),
-// Waveform.
-              const Text('Waveform',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: (_waveformBusy || _busy || _clips.isEmpty)
-                          ? null
-                          : _showWaveform,
-                      icon: const Icon(Icons.show_chart),
-                      label: Text(
-                        _waveformBusy ? 'Generating…' : 'Show waveform',
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              if (_waveformPath != null) ...[
-                const SizedBox(height: 8),
-                Image.file(
-                  File(_waveformPath!),
-                  height: 60,
-                  width: double.infinity,
-                  fit: BoxFit.contain,
-                ),
-              ],
-              const SizedBox(height: 8),
-          const Divider(height: 32),
-          const Text('Voice changer',
-              style: TextStyle(fontWeight: FontWeight.bold)),
-          DropdownButtonFormField<VoiceFx>(
-            initialValue: _fxVoice,
-            decoration: const InputDecoration(labelText: 'Voice effect'),
-            items: const [
-              DropdownMenuItem(value: VoiceFx.none, child: Text('None')),
-              DropdownMenuItem(value: VoiceFx.chipmunk, child: Text('Chipmunk')),
-              DropdownMenuItem(value: VoiceFx.deepVoice, child: Text('Deep voice')),
-              DropdownMenuItem(value: VoiceFx.robot, child: Text('Robot')),
-              DropdownMenuItem(value: VoiceFx.echo, child: Text('Echo')),
-            ],
-            onChanged: (VoiceFx? v) {
-              setState(() {
-                _fxVoice = v ?? VoiceFx.none;
-              });
-            },
-          ),
-          _ProSlider(
-            label: 'Fade in (s)',
-            value: _fxFadeIn,
-            min: 0,
-            max: 3,
-            divisions: 30,
-            onChanged: (double v) {
-              setState(() {
-                _fxFadeIn = v;
-              });
-            },
-          ),
-          _ProSlider(
-            label: 'Fade out (s)',
-            value: _fxFadeOut,
-            min: 0,
-            max: 3,
-            divisions: 30,
-            onChanged: (double v) {
-              setState(() {
-                _fxFadeOut = v;
-              });
-            },
-          ),
-          SwitchListTile(
-            title: const Text('Mute original audio'),
-            subtitle: const Text(
-              'Clip ki apni awaz band karein (music laga ho to ignore).',
-            ),
-            value: _muteOriginal,
-            onChanged: (bool v) {
-              setState(() {
-                _muteOriginal = v;
-              });
-            },
-          ),
-          const SizedBox(height: 8),
-        ];
-      case 'speed':
-        return [
-          const Text('Speed — fixed speed + speed ramps',
-              style: TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-// Speed / filter / aspect
-          Row(
-            children: [
-              Expanded(
-                child: DropdownButtonFormField<double>(
-                  initialValue: _speed,
-                  decoration: const InputDecoration(labelText: 'Speed'),
-                  items: const [0.5, 0.75, 1.0, 1.5, 2.0]
-                      .map((s) => DropdownMenuItem(
-                            value: s,
-                            child: Text('${s}x'),
-                          ))
-                      .toList(),
-                  onChanged: (v) => setState(() => _speed = v ?? 1.0),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  initialValue: _filter,
-                  decoration: const InputDecoration(labelText: 'Filter'),
-                  items: const ['Normal', 'Warm', 'Cool', 'B&W', 'Vivid', 'Sepia']
-                      .map((f) => DropdownMenuItem(value: f, child: Text(f)))
-                      .toList(),
-                  onChanged: (v) => setState(() => _filter = v ?? 'Normal'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  initialValue: _aspect,
-                  decoration: const InputDecoration(labelText: 'Aspect'),
-                  items: const ['Original', '9:16', '16:9', '1:1']
-                      .map((a) => DropdownMenuItem(value: a, child: Text(a)))
-                      .toList(),
-                  onChanged: (v) => setState(() => _aspect = v ?? 'Original'),
-                ),
-              ),
-            ],
-          ),
-// Speed ramp.
-              const Text('Speed ramp',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              DropdownButtonFormField<String>(
-                initialValue: _proRamp,
-                decoration: const InputDecoration(labelText: 'Ramp preset'),
-                items: const [
-                  'None',
-                  'slowMiddle',
-                  'slowStart',
-                  'slowEnd',
-                  'pulse',
-                ]
-                    .map((s) => DropdownMenuItem(value: s, child: Text(s)))
-                    .toList(),
-                onChanged: (v) => setState(() => _proRamp = v ?? 'None'),
-              ),
-              const Text(
-                'Note: ramp on ho to fixed Speed dropdown ignore ho jata hai.',
-                style: TextStyle(color: Colors.grey),
-              ),
-              const Divider(height: 32),
-          const Text('Clip FX',
-              style: TextStyle(fontWeight: FontWeight.bold)),
-          SwitchListTile(
-            title: const Text('Reverse video'),
-            value: _fxReverse,
-            onChanged: (bool v) {
-              setState(() {
-                _fxReverse = v;
-              });
-            },
-          ),
-          SwitchListTile(
-            title: const Text('Silence remover'),
-            value: _fxSilenceRemove,
-            onChanged: (bool v) {
-              setState(() {
-                _fxSilenceRemove = v;
-              });
-            },
-          ),
-          const Divider(height: 32),
-        ];
-      case 'transitions':
-        return [
-          const Text('Transitions',
-              style: TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-if (AppConfig.crossfadeEnabled)
-            SwitchListTile(
-              title: const Text('Crossfade between clips'),
-            subtitle: const Text('Simple fade transition when merging'),
-            value: _crossfade,
-            onChanged: (v) => setState(() => _crossfade = v),
-          ),
-          const Divider(height: 32),
-          // ---- PRO tools (v2.1.0) ----
-// Transitions.
-              const Text('Transitions',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              DropdownButtonFormField<String>(
-                initialValue: _proTransition,
-                decoration: const InputDecoration(labelText: 'Transition'),
-                items: const [
-                  'fade',
-                  'slideleft',
-                  'slideright',
-                  'slideup',
-                  'slidedown',
-                  'wipeleft',
-                  'wiperight',
-                  'wipeup',
-                  'wipedown',
-                  'circlecrop',
-                  'dissolve',
-                  'pixelize',
-                  'smoothleft',
-                  'smoothright',
-                  'radial',
-                  'rectcrop',
-                  'hblur',
-                  'circleopen',
-                ]
-                    .map((s) => DropdownMenuItem(value: s, child: Text(s)))
-                    .toList(),
-                onChanged: (v) => setState(() => _proTransition = v ?? 'fade'),
-              ),
-              _ProSlider(
-                label: 'Transition duration (s)',
-                value: _proTransitionDur,
-                min: 0.3,
-                max: 2.0,
-                divisions: 17,
-                onChanged: (v) => setState(() => _proTransitionDur = v),
-              ),
-              const Text(
-                'Sirf tab lagega jab Crossfade between clips ON ho; '
-                'OFF par aaj ki tarah hard cuts rahenge.',
-                style: TextStyle(color: Colors.grey),
-              ),
-              const Divider(height: 32),
-        ];
-      case 'overlays':
-        return [
-          const Text('Overlays — news template (Live Studio wala)',
-              style: TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-// News template (shared with Live Studio).
-          SwitchListTile(
-            title: const Text('News Template (Live Studio wala)'),
-            subtitle: const Text(
-              'Breaking banner, lower-third, ticker, clock, logo — '
-              'export par bhi lagega.',
-            ),
-            value: _newsEnabled,
-            onChanged: (v) => setState(() => _newsEnabled = v),
-          ),
-          if (_newsEnabled) ...[
-            TextFormField(
-              initialValue: _news.breakingHeadline,
-              decoration: const InputDecoration(
-                labelText: 'Breaking headline (surkh patti)',
-                border: OutlineInputBorder(),
-              ),
-              onChanged: (v) {
-                _news.breakingHeadline = v;
-                unawaited(_news.save());
-              },
-            ),
-            const SizedBox(height: 8),
-            TextFormField(
-              initialValue: _news.lowerTitle,
-              decoration: const InputDecoration(
-                labelText: 'Lower-third title (naam)',
-                border: OutlineInputBorder(),
-              ),
-              onChanged: (v) {
-                _news.lowerTitle = v;
-                unawaited(_news.save());
-              },
-            ),
-            const SizedBox(height: 8),
-            TextFormField(
-              initialValue: _news.lowerSubtitle,
-              decoration: const InputDecoration(
-                labelText: 'Lower-third subtitle (ohda / jagah)',
-                border: OutlineInputBorder(),
-              ),
-              onChanged: (v) {
-                _news.lowerSubtitle = v;
-                unawaited(_news.save());
-              },
-            ),
-            const SizedBox(height: 8),
-            TextFormField(
-              initialValue: _news.tickerText,
-              decoration: const InputDecoration(
-                labelText: 'Ticker text (neeche chalta hua)',
-                border: OutlineInputBorder(),
-              ),
-              onChanged: (v) {
-                _news.tickerText = v;
-                unawaited(_news.save());
-              },
-            ),
-            SwitchListTile(
-              title: const Text('Live clock / date dikhayein'),
-              value: _news.showClock,
-              onChanged: (v) {
-                setState(() => _news.showClock = v);
-                unawaited(_news.save());
-              },
-            ),
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: () async {
-                      final picked = await _picker.pickImage(
-                        source: ImageSource.gallery,
-                      );
-                      if (picked == null) return;
-                      setState(() => _news.logoPath = picked.path);
-                      await _news.save();
-                    },
-                    icon: const Icon(Icons.image),
-                    label: Text(
-                      _news.logoPath == null
-                          ? 'Logo chunein'
-                          : 'Logo badlein',
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: DropdownButtonFormField<LogoPosition>(
-                    initialValue: _news.logoPosition,
-                    decoration: const InputDecoration(
-                      labelText: 'Logo jagah',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: LogoPosition.values
-                        .map((pos) => DropdownMenuItem(
-                              value: pos,
-                              child: Text(pos.label),
-                            ))
-                        .toList(),
-                    onChanged: (v) {
-                      if (v == null) return;
-                      setState(() => _news.logoPosition = v);
-                      unawaited(_news.save());
-                    },
-                  ),
-                ),
-              ],
-            ),
-            SwitchListTile(
-              title: const Text('Logo ahista ghoome (rotation)'),
-              subtitle: const Text('Sirf live me ghoomega; export me static.'),
-              value: _news.logoRotate,
-              onChanged: (v) {
-                setState(() => _news.logoRotate = v);
-                unawaited(_news.save());
-              },
-            ),
-            const Text(
-              'Note: export me ticker aur clock ek still frame honge — '
-              'scrolling ticker aur live clock sirf live me chalte hain. '
-              'Yehi template Live Studio me bhi use hota hai.',
-              style: TextStyle(color: Colors.grey),
-            ),
-          ],
-          const Divider(height: 32),
-          const Text('Picture-in-picture',
-              style: TextStyle(fontWeight: FontWeight.bold)),
-          SwitchListTile(
-            title: const Text('PIP video overlay'),
-            value: _fxPip,
-            onChanged: (bool v) {
-              setState(() {
-                _fxPip = v;
-              });
-            },
-          ),
-          if (_fxPip)
-            ElevatedButton.icon(
-              onPressed: () async {
-                final XFile? picked =
-                    await _picker.pickVideo(source: ImageSource.gallery);
-                if (picked != null) {
-                  setState(() {
-                    _fxPipVideo = picked.path;
-                  });
-                }
-              },
-              icon: const Icon(Icons.video_library),
-              label: Text(_fxPipVideo.isEmpty
-                  ? 'Choose PIP video'
-                  : p.basename(_fxPipVideo)),
-            ),
-          if (_fxPip) ...[
-            const SizedBox(height: 8),
-            DropdownButtonFormField<PipPosition>(
-              key: const Key('pipPositionDropdown'),
-              initialValue: _pipPosition,
-              decoration: const InputDecoration(
-                labelText: 'PIP position',
-              ),
-              items: PipPosition.values
-                  .map(
-                    (pos) => DropdownMenuItem(
-                      value: pos,
-                      child: Text(pos.name),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (v) {
-                if (v != null) setState(() => _pipPosition = v);
-              },
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                const Text('PIP size'),
-                Expanded(
-                  child: Slider(
-                    key: const Key('pipScaleSlider'),
-                    value: _pipScale,
-                    min: 0.15,
-                    max: 0.5,
-                    divisions: 7,
-                    label: '${(_pipScale * 100).round()}%',
-                    onChanged: (v) => setState(() => _pipScale = v),
-                  ),
-                ),
-                Text('${(_pipScale * 100).round()}%'),
-              ],
-            ),
-            if (_fxPipVideo.isEmpty)
-              const Text(
-                'PIP video chunein — bina inset video ke PIP export mein nahi lagega.',
-                style: TextStyle(color: Colors.grey, fontSize: 12),
-              ),
-          ],
-          const Divider(height: 32),
-        ];
-      case 'captions':
-        return [
-const Text('Auto Captions (CapCut-style)',
-              style: TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  initialValue: _captionLocale,
-                  decoration:
-                      const InputDecoration(labelText: 'Caption language'),
-                  items: const [
-                    DropdownMenuItem(value: 'ur', child: Text('Urdu')),
-                    DropdownMenuItem(value: 'en', child: Text('English')),
-                  ],
-                  onChanged: (v) => setState(() => _captionLocale = v ?? 'ur'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed:
-                      (_transcribing || _busy) ? null : _generateCaptions,
-                  icon: const Icon(Icons.closed_caption),
-                  label: Text(
-                    _transcribing ? 'Transcribing…' : 'Generate Auto Captions',
-                  ),
-                ),
-              ),
-            ],
-          ),
-          if (_transcribing) ...[
-            const SizedBox(height: 8),
-            const Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Video ki apni audio se captions ban rahe hain…',
-                  ),
-                ),
-              ],
-            ),
-          ],
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  initialValue: switch (_captionStyle) {
-                    CaptionStyle.standard => 'standard',
-                    CaptionStyle.highlight => 'highlight',
-                    CaptionStyle.gold => 'gold',
-                    CaptionStyle.clean => 'clean',
-                    CaptionStyle.pop => 'pop',
-                    CaptionStyle.boxed => 'boxed',
-                  },
-                  decoration:
-                      const InputDecoration(labelText: 'Caption style'),
-                  items: const [
-                    DropdownMenuItem(
-                        value: 'standard', child: Text('Default')),
-                    DropdownMenuItem(
-                        value: 'highlight',
-                        child: Text('Highlight (black on yellow)')),
-                    DropdownMenuItem(
-                        value: 'gold', child: Text('Gold')),
-                    DropdownMenuItem(
-                        value: 'clean', child: Text('Clean')),
-                    DropdownMenuItem(
-                        value: 'pop',
-                        child: Text('Pop (word by word)')),
-                    DropdownMenuItem(
-                        value: 'boxed',
-                        child: Text('Boxed (white on black)')),
-                  ],
-                  onChanged: (v) => setState(() {
-                    _captionStyle = switch (v) {
-                      'highlight' => CaptionStyle.highlight,
-                      'gold' => CaptionStyle.gold,
-                      'clean' => CaptionStyle.clean,
-                      'pop' => CaptionStyle.pop,
-                      'boxed' => CaptionStyle.boxed,
-                      _ => CaptionStyle.standard,
-                    };
-                  }),
-                ),
-              ),
-            ],
-          ),
-          if (_captions.isNotEmpty && !_transcribing) ...[
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    '${_captions.length} caption segments ready — export me video par jal jayenge.',
-                  ),
-                ),
-                TextButton(
-                  onPressed: _editCaptions,
-                  child: const Text('Edit'),
-                ),
-                TextButton(
-                  onPressed: () => setState(() => _captions = []),
-                  child: const Text('Clear'),
-                ),
-              ],
-            ),
-          ],
-          const SizedBox(height: 8),
-          const Text(
-            'Note: captions video ki apni audio se on-device banenge (whisper, Urdu/English) — mic, quiet room ya earphones ki koi pabandi nahi. Pehli dafa ~75 MB caption model download hoga (progress ke saath); us ke baad sab kuch phone par hi, offline hota hai.',
-            style: TextStyle(color: Colors.grey),
-          ),
-          const SizedBox(height: 12),
-        ];
-      case 'stabilization':
-        return [
-// Stabilization.
-              SwitchListTile(
-                title: const Text('Stabilization'),
-                subtitle: const Text(
-                  'Vidstab jab available ho, warna deshake engine use hoga.',
-                ),
-                value: _proStabilize,
-                onChanged: (v) => setState(() => _proStabilize = v),
-              ),
-              const Divider(height: 32),
-        ];
-      case 'chroma':
-        return [
-          const Text('Chromakey / BG remover',
-              style: TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-// Chromakey.
-              SwitchListTile(
-                title: const Text('Chromakey'),
-                subtitle: const Text(
-                  'Green/blue background hatakar naya background lagayein.',
-                ),
-                value: _proChroma,
-                onChanged: (v) => setState(() => _proChroma = v),
-              ),
-              if (_proChroma) ...[
-                DropdownButtonFormField<String>(
-                  initialValue: _proChromaColor,
-                  decoration: const InputDecoration(labelText: 'Key color'),
-                  items: const ['green', 'blue']
-                      .map((s) => DropdownMenuItem(value: s, child: Text(s)))
-                      .toList(),
-                  onChanged: (v) =>
-                      setState(() => _proChromaColor = v ?? 'green'),
-                ),
-                _ProSlider(
-                  label: 'Similarity',
-                  value: _proChromaSimilarity,
-                  min: 0,
-                  max: 1,
-                  divisions: 20,
-                  onChanged: (v) => setState(() => _proChromaSimilarity = v),
-                ),
-                _ProSlider(
-                  label: 'Blend',
-                  value: _proChromaBlend,
-                  min: 0,
-                  max: 1,
-                  divisions: 20,
-                  onChanged: (v) => setState(() => _proChromaBlend = v),
-                ),
-                DropdownButtonFormField<String>(
-                  initialValue: _proChromaBgKind,
-                  decoration:
-                      const InputDecoration(labelText: 'Background kind'),
-                  items: const [
-                    DropdownMenuItem(value: 'color', child: Text('Color')),
-                    DropdownMenuItem(value: 'image', child: Text('Image')),
-                  ],
-                  onChanged: (v) =>
-                      setState(() => _proChromaBgKind = v ?? 'color'),
-                ),
-                if (_proChromaBgKind == 'color')
-                  DropdownButtonFormField<String>(
-                    initialValue: _proChromaBgColor,
-                    decoration:
-                        const InputDecoration(labelText: 'Background color'),
-                    items: const {
-                      '#00FF00': 'Green',
-                      '#0000FF': 'Blue',
-                      '#000000': 'Black',
-                      '#FFFFFF': 'White',
-                    }
-                        .entries
-                        .map((e) => DropdownMenuItem(
-                              value: e.key,
-                              child: Text(e.value),
-                            ))
-                        .toList(),
-                    onChanged: (v) =>
-                        setState(() => _proChromaBgColor = v ?? '#00FF00'),
-                  ),
-                if (_proChromaBgKind == 'image')
-                  ElevatedButton.icon(
-                    onPressed: () => _pickProImage(
-                      (path) => _proChromaBgImage = path,
-                    ),
-                    icon: const Icon(Icons.image),
-                    label: Text(
-                      _proChromaBgImage == null
-                          ? 'Background image chunein'
-                          : p.basename(_proChromaBgImage!),
-                    ),
-                  ),
-              ],
-              const Divider(height: 32),
-// Video BG remover.
-              SwitchListTile(
-                title: const Text('Video background remover (ML)'),
-                subtitle: const Text(
-                  'Premium: pehle ek short ad se unlock hoga.',
-                ),
-                value: _proBgRemove,
-                onChanged: _onBgRemoverChanged,
-              ),
-              if (_proBgRemove) ...[
-                DropdownButtonFormField<String>(
-                  initialValue: _proBgKind,
-                  decoration:
-                      const InputDecoration(labelText: 'Background kind'),
-                  items: const [
-                    DropdownMenuItem(value: 'color', child: Text('Color')),
-                    DropdownMenuItem(value: 'image', child: Text('Image')),
-                  ],
-                  onChanged: (v) => setState(() => _proBgKind = v ?? 'color'),
-                ),
-                if (_proBgKind == 'color')
-                  DropdownButtonFormField<String>(
-                    initialValue: _proBgColor,
-                    decoration:
-                        const InputDecoration(labelText: 'Background color'),
-                    items: const {
-                      '#00FF00': 'Green',
-                      '#0000FF': 'Blue',
-                      '#000000': 'Black',
-                      '#FFFFFF': 'White',
-                    }
-                        .entries
-                        .map((e) => DropdownMenuItem(
-                              value: e.key,
-                              child: Text(e.value),
-                            ))
-                        .toList(),
-                    onChanged: (v) =>
-                        setState(() => _proBgColor = v ?? '#00FF00'),
-                  ),
-                if (_proBgKind == 'image')
-                  ElevatedButton.icon(
-                    onPressed: () =>
-                        _pickProImage((path) => _proBgImage = path),
-                    icon: const Icon(Icons.image),
-                    label: Text(
-                      _proBgImage == null
-                          ? 'Background image chunein'
-                          : p.basename(_proBgImage!),
-                    ),
-                  ),
-              ],
-              const Text(
-                'Note: lambi clips par minutes lag sakte hain; width '
-                'capped hai; saaf subject wali video par behtareen '
-                'result milta hai. Progress export status me dikhega.',
-                style: TextStyle(color: Colors.grey),
-              ),
-              const Divider(height: 32),
-        ];
-      case 'tracking':
-        return [
-// Motion tracking.
-              const Text('Motion tracking (ML)',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              const Text(
-                'Preview video par object ko tap karein, phir Track '
-                'dabayein. (Preview 16:9 box hai, is liye tap point '
-                'approximate hai.)',
-                style: TextStyle(color: Colors.grey),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                decoration: const InputDecoration(
-                  labelText: 'Tracked sticker text',
-                  border: OutlineInputBorder(),
-                ),
-                onChanged: (v) => setState(() => _trackSticker = v),
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: (_trackStartX == null ||
-                              _tracking ||
-                              _busy)
-                          ? null
-                          : _trackObject,
-                      icon: const Icon(Icons.my_location),
-                      label: Text(_tracking ? 'Tracking…' : 'Track object'),
-                    ),
-                  ),
-                ],
-              ),
-              if (_trackStartX != null)
-                Text(
-                  'Tapped: (${_trackStartX!.toStringAsFixed(2)}, ${_trackStartY!.toStringAsFixed(2)})',
-                ),
-              if (_trackPoints.isNotEmpty)
-                Text('${_trackPoints.length} track points ready.'),
-              const Divider(height: 32),
-        ];
-      case 'beats':
-        return [
-// Beat sync.
-              const Text('Beat sync',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: (_detectingBeats || _busy || _clips.isEmpty)
-                          ? null
-                          : _detectBeats,
-                      icon: const Icon(Icons.graphic_eq),
-                      label: Text(
-                        _detectingBeats ? 'Detecting…' : 'Detect beats',
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              if (_beats.isNotEmpty)
-                Text(
-                  '${_beats.length} beats — '
-                  '${_beats.take(5).map((b) => '${b.toStringAsFixed(1)}s').join(', ')}'
-                  '${_beats.length > 5 ? ', …' : ''}',
-                ),
-              SwitchListTile(
-                title: const Text('Beat auto-cut'),
-                subtitle: const Text(
-                  'Single clip ko beat boundaries par kaatkar jorega.',
-                ),
-                value: _beatAutoCut,
-                onChanged: (v) => setState(() => _beatAutoCut = v),
-              ),
-              if (_beatAutoCut && _clips.length > 1)
-                const Text(
-                  'Note: multi-clip me beat auto-cut nahi lagta — sirf '
-                  'markers dikhenge; cut sirf single clip par hota hai. '
-                  'Auto-cut OFF rakhein to single clip par bhi sirf '
-                  'markers rehte hain.',
-                  style: TextStyle(color: Colors.grey),
-                ),
-              const Divider(height: 32),
-        ];
-      case 'grading':
-        return [
-// Grading.
-              const Text('Grading',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                initialValue: _proLut,
-                decoration: const InputDecoration(labelText: 'LUT look'),
-                items: proLuts
-                    .map((e) => DropdownMenuItem(
-                          value: e['name'] ?? '',
-                          child: Text(
-                            (e['name'] ?? '').isEmpty ? 'None' : e['name']!,
-                          ),
-                        ))
-                    .toList(),
-                onChanged: (v) => setState(() => _proLut = v ?? ''),
-              ),
-              _ProSlider(
-                label: 'Temperature',
-                value: _proTemperature,
-                min: -100,
-                max: 100,
-                divisions: 40,
-                digits: 0,
-                onChanged: (v) => setState(() => _proTemperature = v),
-              ),
-              _ProSlider(
-                label: 'Tint',
-                value: _proTint,
-                min: -100,
-                max: 100,
-                divisions: 40,
-                digits: 0,
-                onChanged: (v) => setState(() => _proTint = v),
-              ),
-              _ProSlider(
-                label: 'Saturation',
-                value: _proSaturation,
-                min: 0,
-                max: 2,
-                divisions: 40,
-                onChanged: (v) => setState(() => _proSaturation = v),
-              ),
-              _ProSlider(
-                label: 'Vibrance',
-                value: _proVibrance,
-                min: 0,
-                max: 2,
-                divisions: 40,
-                onChanged: (v) => setState(() => _proVibrance = v),
-              ),
-              _ProSlider(
-                label: 'Contrast',
-                value: _proContrast,
-                min: 0,
-                max: 2,
-                divisions: 40,
-                onChanged: (v) => setState(() => _proContrast = v),
-              ),
-              _ProSlider(
-                label: 'Shadows',
-                value: _proShadows,
-                min: -100,
-                max: 100,
-                divisions: 40,
-                digits: 0,
-                onChanged: (v) => setState(() => _proShadows = v),
-              ),
-              _ProSlider(
-                label: 'Highlights',
-                value: _proHighlights,
-                min: -100,
-                max: 100,
-                divisions: 40,
-                digits: 0,
-                onChanged: (v) => setState(() => _proHighlights = v),
-              ),
-              const Divider(height: 32),
-        ];
-      case 'live':
-        return [
-          const Text('Live Studio',
-              style: TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          const Text(
-            'Facebook + YouTube par ek saath live — breaking news '
-            'templates ke saath. Live Studio apni screen par khulta hai.',
-            style: TextStyle(color: Colors.grey),
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const LiveStudioScreen(),
-                  ),
-                );
-              },
-              icon: const Icon(Icons.live_tv),
-              label: const Text('Open Live Studio'),
-            ),
-          ),
-        ];
-      case 'text':
-      default:
-        return [
-          const Text('Text overlay',
-              style: TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-// Text overlay
-          TextField(
-            decoration: const InputDecoration(
-              labelText: 'Text overlay (single line)',
-              border: OutlineInputBorder(),
-            ),
-            onChanged: (v) => setState(() => _text = v),
-          ),
-          const SizedBox(height: 12),
-          const Divider(height: 32),
-        ];
-    }
-  }
-
-  Widget _timelineSection(VideoClip? clip) {
-    final ctrl = _controller;
-    final pos = ctrl != null && ctrl.value.isInitialized
-        ? ctrl.value.position.inMilliseconds / 1000
-        : 0.0;
-    final dur = clip != null ? clip.duration.inMilliseconds / 1000 : 0.0;
-    final frac = dur > 0 ? (pos / dur).clamp(0.0, 1.0) : 0.0;
-    return Container(
-      color: const Color(0xFF1B1B1B),
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Text('Timeline',
-                  style: TextStyle(
-                      fontWeight: FontWeight.bold, color: Colors.white)),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  _clips.isEmpty
-                      ? 'No clips yet — Add video above'
-                      : 'Playhead ${pos.toStringAsFixed(1)}s / ${dur.toStringAsFixed(1)}s'
-                          ' • Clip ${_selected + 1} of ${_clips.length}',
-                  style: const TextStyle(color: Colors.grey, fontSize: 12),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              TextButton.icon(
-                onPressed: _clips.isEmpty ? null : _splitSelectedClip,
-                icon: const Icon(Icons.content_cut, size: 18),
-                label: const Text('Split'),
-              ),
-              TextButton.icon(
-                onPressed:
-                    (_clips.isEmpty || _busy) ? null : _saveFrameSnapshot,
-                icon: const Icon(Icons.camera_alt_outlined, size: 18),
-                label: const Text('Frame'),
-              ),
-              TextButton.icon(
-                onPressed:
-                    (_clips.isEmpty || _busy) ? null : _extractClipAudio,
-                icon: const Icon(Icons.audio_file_outlined, size: 18),
-                label: const Text('Audio'),
-              ),
-            ],
-          ),
-          // Playhead marker (red) above the clip blocks.
-          Container(
-            height: 4,
-            alignment: Alignment(frac * 2 - 1, 0),
-            child: Container(width: 28, height: 4, color: Colors.redAccent),
-          ),
-          const SizedBox(height: 6),
-          SizedBox(
-            height: 88,
-            child: _clips.isEmpty
-                ? const Center(
-                    child: Text('Timeline khaali hai',
-                        style: TextStyle(color: Colors.grey)))
-                : SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: _clips.asMap().entries.map((e) {
-                        final i = e.key;
-                        final c = e.value;
-                        final selected = i == _selected;
-                        return GestureDetector(
-                          onTap: () async {
-                            setState(() => _selected = i);
-                            await _loadPreview();
-                          },
-                          child: Container(
-                            width: 128,
-                            height: 88,
-                            margin: const EdgeInsets.only(right: 8),
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: selected
-                                  ? TjProTheme.goldDeep
-                                  : const Color(0xFF2E2E2E),
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(
-                                color: selected
-                                    ? TjProTheme.gold
-                                    : Colors.grey.shade700,
-                              ),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text('Clip ${i + 1}',
-                                          style: const TextStyle(
-                                              color: Colors.white,
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 12)),
-                                    ),
-                                    GestureDetector(
-                                      onTap: () async {
-                                        setState(() {
-                                          _clips.removeAt(i);
-                                          if (_selected >= _clips.length) {
-                                            _selected = _clips.length - 1;
-                                          }
-                                        });
-                                        if (_clips.isNotEmpty) {
-                                          await _loadPreview();
-                                        } else {
-                                          await _controller?.dispose();
-                                          setState(() => _controller = null);
-                                        }
-                                      },
-                                      child: const Icon(Icons.close,
-                                          size: 16, color: Colors.white70),
-                                    ),
-                                  ],
-                                ),
-                                Text(
-                                  p.basename(c.file.path),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                      color: Colors.white70, fontSize: 11),
-                                ),
-                                Text(
-                                  '${c.effectiveDuration.toStringAsFixed(1)}s'
-                                  ' • trim ${c.trimStart.toStringAsFixed(1)}'
-                                  '–${c.effectiveEnd.toStringAsFixed(1)}s',
-                                  style: const TextStyle(
-                                      color: Colors.white70, fontSize: 11),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      }).toList(),
-                    ),
-                  ),
-          ),
-          if (_clips.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            const Text('Trim selected clip — drag the handles',
-                style: TextStyle(color: Colors.grey, fontSize: 12)),
-if (clip != null) ...[
-              const SizedBox(height: 8),
-              Text(
-                'Trim selected clip: ${clip.trimStart.toStringAsFixed(1)}s – ${clip.effectiveEnd.toStringAsFixed(1)}s',
-              ),
-              RangeSlider(
-                values: RangeValues(
-                  clip.trimStart,
-                  clip.effectiveEnd,
-                ),
-                min: 0,
-                max: clip.duration.inMilliseconds / 1000,
-                divisions:
-                    (clip.duration.inMilliseconds / 100).round().clamp(1, 1000),
-                labels: RangeLabels(
-                  '${clip.trimStart.toStringAsFixed(1)}s',
-                  '${clip.effectiveEnd.toStringAsFixed(1)}s',
-                ),
-                onChanged: (v) {
-                  if (v.end - v.start < 0.5) return;
-                  setState(() {
-                    clip.trimStart = v.start;
-                    clip.trimEnd = v.end;
-                  });
-                },
-              ),
-            ],
-          ],
-        ],
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -3498,6 +2209,45 @@ Row(
                 ),
               ),
             ),
+            // Canvas / aspect chip row (one-build): aspect left the
+            // old Filters panel and lives here, InShot-Canvas style.
+            Container(
+              color: const Color(0xFF1B1B1B),
+              padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+              child: Row(
+                children: [
+                  const Icon(Icons.crop, size: 16, color: Colors.white70),
+                  const SizedBox(width: 6),
+                  const Text('Canvas',
+                      style: TextStyle(color: Colors.white70, fontSize: 12)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          for (final a in const [
+                            'Original',
+                            '9:16',
+                            '16:9',
+                            '1:1',
+                          ])
+                            Padding(
+                              padding: const EdgeInsets.only(right: 6),
+                              child: ChoiceChip(
+                                label: Text(a),
+                                selected: _aspect == a,
+                                onSelected: (_) =>
+                                    setState(() => _aspect = a),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
             _timelineSection(clip),
             if (_handoffProject != null)
               Container(
@@ -3603,23 +2353,14 @@ Row(
                   scrollDirection: Axis.horizontal,
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   children: [
-                    _railButton('text', 'Text', Icons.text_fields),
-                    _railButton('stickers', 'Stickers', Icons.emoji_emotions),
-                    _railButton('effects', 'Effects', Icons.auto_awesome),
-                    _railButton('filters', 'Filters', Icons.filter_vintage),
+                    _railButton('edit', 'Edit', Icons.content_cut),
                     _railButton('audio', 'Audio', Icons.music_note),
-                    _railButton('speed', 'Speed', Icons.speed),
+                    _railButton('text', 'Text', Icons.text_fields),
+                    _railButton('colour', 'Colour', Icons.palette),
+                    _railButton('effects', 'Effects', Icons.auto_awesome),
+                    _railButton('overlay', 'Overlay', Icons.layers),
                     _railButton('transitions', 'Transitions', Icons.swap_horiz),
-                    _railButton('overlays', 'Overlays', Icons.layers),
-                    _railButton('captions', 'Captions', Icons.closed_caption),
-                    _railButton(
-                        'stabilization', 'Stabilization', Icons.videocam),
-                    _railButton(
-                        'chroma', 'Chromakey/BG remover', Icons.person_off),
-                    _railButton('tracking', 'Tracking', Icons.my_location),
-                    _railButton('beats', 'Beat sync', Icons.graphic_eq),
-                    _railButton('grading', 'Grading/LUTs', Icons.tune),
-                    _railButton('live', 'Live Studio', Icons.live_tv),
+                    _railButton('news', 'News', Icons.newspaper),
                   ],
                 ),
               ),
@@ -3684,3 +2425,101 @@ class _OverlayStep {
   final ProMotionTitle? title;
 }
 
+
+/// Eyedropper dialog: shows one grabbed frame; tapping it samples
+/// the tapped pixel's colour and pops with '#RRGGBB'. The image is
+/// decoded once (raw RGBA) so sampling is exact; the tap is mapped
+/// through the same BoxFit.contain letterboxing the Image widget
+/// uses, so the sampled point is the point the user sees.
+class _ChromaEyeDialog extends StatefulWidget {
+  const _ChromaEyeDialog({required this.framePath});
+
+  final String framePath;
+
+  @override
+  State<_ChromaEyeDialog> createState() => _ChromaEyeDialogState();
+}
+
+class _ChromaEyeDialogState extends State<_ChromaEyeDialog> {
+  ui.Image? _image;
+  ByteData? _pixels;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final bytes = await File(widget.framePath).readAsBytes();
+      final codec = await ui.instantiateImageCodec(bytes);
+      final frame = await codec.getNextFrame();
+      final data = await frame.image.toByteData(
+        format: ui.ImageByteFormat.rawRgba,
+      );
+      if (!mounted) return;
+      setState(() {
+        _image = frame.image;
+        _pixels = data;
+      });
+    } catch (_) {
+      if (mounted) Navigator.pop(context);
+    }
+  }
+
+  void _onTap(TapDownDetails d, Size box) {
+    final img = _image;
+    final px = _pixels;
+    if (img == null || px == null) return;
+    // BoxFit.contain: scale to fit, centered.
+    final scale = math.min(box.width / img.width, box.height / img.height);
+    final dw = img.width * scale;
+    final dh = img.height * scale;
+    final ox = (box.width - dw) / 2;
+    final oy = (box.height - dh) / 2;
+    final lx = d.localPosition.dx - ox;
+    final ly = d.localPosition.dy - oy;
+    if (lx < 0 || ly < 0 || lx >= dw || ly >= dh) return;
+    final x = (lx / scale).floor().clamp(0, img.width - 1);
+    final y = (ly / scale).floor().clamp(0, img.height - 1);
+    final i = (y * img.width + x) * 4;
+    final r = px.getUint8(i);
+    final g = px.getUint8(i + 1);
+    final b = px.getUint8(i + 2);
+    String h(int v) => v.toRadixString(16).padLeft(2, '0').toUpperCase();
+    Navigator.pop(context, '#${h(r)}${h(g)}${h(b)}');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Rang chunein — frame par tap karein'),
+      content: SizedBox(
+        width: 320,
+        height: 320,
+        child: _image == null
+            ? const Center(child: CircularProgressIndicator())
+            : LayoutBuilder(
+                builder: (context, constraints) {
+                  final box =
+                      Size(constraints.maxWidth, constraints.maxHeight);
+                  return GestureDetector(
+                    onTapDown: (d) => _onTap(d, box),
+                    child: Image.file(
+                      File(widget.framePath),
+                      fit: BoxFit.contain,
+                    ),
+                  );
+                },
+              ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+      ],
+    );
+  }
+}

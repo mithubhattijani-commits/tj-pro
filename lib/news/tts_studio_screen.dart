@@ -13,8 +13,9 @@
 /// Economy — TJ Pro's, not Magic Box's: NO coins anywhere. Every
 /// generation costs proxy requests against the SHARED 5/day cap
 /// (same counter as the News Maker voiceover — admins exempt).
-/// The cap line on this screen always shows the live remaining
-/// count. When the cap is hit, the screen offers the on-device
+/// Non-admins see one small line with the live remaining count;
+/// admins (remaining == -1, unlimited) see nothing. When the cap
+/// is hit, the screen offers the on-device
 /// voice (robotic, but the text still gets spoken) instead of a
 /// dead end. Voice previews cost 1 request the first time per voice
 /// (cached after that) — the button says so.
@@ -346,19 +347,16 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
           key: const Key('ttsStudioList'),
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
           children: [
-            if (_remaining != null)
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Text(
-                    'Aaj: $_remaining request(s) baaki (cap 5/day — News Maker '
-                    'voiceover ke saath shared). Same text + voice = cached, '
-                    '0 nayi requests. Admins (3 emails) exempt.',
-                    style: const TextStyle(color: Colors.grey, fontSize: 12),
-                  ),
+            // Cap line: non-admins only. Admins get -1 (unlimited)
+            // from remainingToday() and see nothing here.
+            if (_remaining != null && _remaining != -1)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Text(
+                  'Aaj ki voice limit: $_remaining / 5 baaki',
+                  style: const TextStyle(color: Colors.grey, fontSize: 12),
                 ),
               ),
-            const SizedBox(height: 12),
             const Text(
               'Text',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
@@ -382,22 +380,21 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
               style: const TextStyle(color: Colors.grey, fontSize: 12),
             ),
             const SizedBox(height: 8),
-            Row(
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 ...TtsStudioService.sampleTexts.keys.map(
-                  (name) => Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: OutlinedButton(
-                      key: Key('sampleButton-$name'),
-                      onPressed: () => setState(
-                        () => _textController.text =
-                            TtsStudioService.sampleTexts[name]!,
-                      ),
-                      child: Text(name),
+                  (name) => OutlinedButton(
+                    key: Key('sampleButton-$name'),
+                    onPressed: () => setState(
+                      () => _textController.text =
+                          TtsStudioService.sampleTexts[name]!,
                     ),
+                    child: Text(name),
                   ),
                 ),
-                const Spacer(),
                 OutlinedButton.icon(
                   key: const Key('importTxtButton'),
                   onPressed: _importTxt,
@@ -407,22 +404,26 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
               ],
             ),
             const SizedBox(height: 20),
-            Row(
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const Text(
                   'Language',
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
-                const Spacer(),
-                SegmentedButton<String>(
-                  segments: const [
-                    ButtonSegment(value: 'auto', label: Text('Auto')),
-                    ButtonSegment(value: 'ur', label: Text('اردو')),
-                    ButtonSegment(value: 'en', label: Text('EN')),
-                  ],
-                  selected: {_langMode},
-                  onSelectionChanged: (s) =>
-                      setState(() => _langMode = s.first),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(value: 'auto', label: Text('Auto')),
+                      ButtonSegment(value: 'ur', label: Text('اردو')),
+                      ButtonSegment(value: 'en', label: Text('EN')),
+                    ],
+                    selected: {_langMode},
+                    onSelectionChanged: (s) =>
+                        setState(() => _langMode = s.first),
+                  ),
                 ),
               ],
             ),
@@ -529,7 +530,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
             ],
             const SizedBox(height: 20),
             const Text(
-              'Tone',
+              'Style',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
@@ -611,7 +612,12 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
               'kisi bhi app mein nahi bana).',
               style: TextStyle(color: Colors.grey, fontSize: 12),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 20),
+            const Text(
+              'Music',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
             SwitchListTile(
               key: const Key('musicSwitch'),
               title: const Text('Background music (soft pad)'),

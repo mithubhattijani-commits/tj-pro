@@ -1,10 +1,12 @@
 /// News Studio home (Phase 2).
 ///
 /// Shows the LIVE Phase 2 model state — the selected channel preset with
-/// its three ribbons, the breaking-news templates, and the Gemini
-/// voiceover allowance — so the home card and the bottom-nav tab have a
-/// real screen to open. Nothing here is a dead button: every row shows
-/// stored state, and the Help row opens the real WhatsApp chat.
+/// its three ribbons and the breaking-news templates — so the home card
+/// and the bottom-nav tab have a real screen to open. Nothing here is a
+/// dead button: every row shows stored state, and the Help row opens
+/// the real WhatsApp chat. Destinations are grouped: News banao /
+/// Studio / Voice & Captions / Publish, with Coins and Advertise as
+/// slim rows at the bottom.
 ///
 /// Phase 10 wired the login/coins track in here too (Coins tile +
 /// Advertise page) — the coins balance pill lives in the home app bar.
@@ -14,7 +16,6 @@ import 'package:flutter/material.dart';
 
 import '../services/asset_download_service.dart';
 import '../services/coin_service.dart';
-import '../services/gemini_voice_service.dart';
 import '../services/project_recovery.dart';
 import '../widgets/help_whatsapp_button.dart';
 import 'advertise_screen.dart';
@@ -25,6 +26,7 @@ import 'caption_studio_screen.dart';
 import 'channel_branding_screen.dart';
 import 'channel_preset.dart';
 import 'coins_screen.dart';
+import 'export_screen.dart';
 import 'news_maker_screen.dart';
 import 'news_project.dart';
 import 'seo_screen.dart';
@@ -60,7 +62,6 @@ class _NewsStudioScreenState extends State<NewsStudioScreen> {
     final presets = await ChannelPresetStore.loadAll();
     final selectedId = await ChannelPresetStore.loadSelectedId();
     final templates = await BreakingTemplateStore.loadAll();
-    final remaining = await GeminiVoiceService().remainingToday();
     final latestProject = await NewsProjectStore.loadLatest();
     final preset = selectedId == null
         ? presets.first
@@ -85,7 +86,6 @@ class _NewsStudioScreenState extends State<NewsStudioScreen> {
       preset: preset,
       presetCount: presets.length,
       templates: templates,
-      voiceRemaining: remaining,
       fontReady: fontReady,
       draft: findRecoverableDraft(latestProject),
     );
@@ -206,6 +206,46 @@ class _NewsStudioScreenState extends State<NewsStudioScreen> {
                           ),
               ),
               const SizedBox(height: 20),
+              const _SectionTitle('News banao'),
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.edit_note),
+                  title: const Text('News Maker'),
+                  subtitle: const Text(
+                    'Tehreer → Gemini voice → clips → template preview',
+                  ),
+                  trailing: const Icon(Icons.arrow_forward),
+                  onTap: () async {
+                    await Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const NewsMakerScreen(),
+                      ),
+                    );
+                    _reload();
+                  },
+                ),
+              ),
+              const SizedBox(height: 8),
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.auto_awesome),
+                  title: const Text('One Click AI News Maker'),
+                  subtitle: const Text(
+                    'Paste tehreer → 13 steps → voice + preview',
+                  ),
+                  trailing: const Icon(Icons.arrow_forward),
+                  onTap: () async {
+                    await Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const AiNewsMakerScreen(),
+                      ),
+                    );
+                    _reload();
+                  },
+                ),
+              ),
+              const SizedBox(height: 20),
+              const _SectionTitle('Studio'),
               Card(
                 child: ListTile(
                   leading: const Icon(Icons.tune),
@@ -248,68 +288,29 @@ class _NewsStudioScreenState extends State<NewsStudioScreen> {
                   },
                 ),
               ),
+              const SizedBox(height: 8),
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.dashboard_customize),
+                  title: const Text('Templates Library'),
+                  subtitle: Text(
+                    '${data.templates.length} breaking templates — 13 '
+                    'categories + Final 3-Ribbon + Classic + customs',
+                  ),
+                  trailing: const Icon(Icons.arrow_forward),
+                  onTap: () async {
+                    await Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const TemplatesLibraryScreen(),
+                      ),
+                    );
+                    // Templates may have changed there — reload.
+                    _reload();
+                  },
+                ),
+              ),
               const SizedBox(height: 20),
-              Card(
-                child: ListTile(
-                  leading: const Icon(Icons.edit_note),
-                  title: const Text('News Maker'),
-                  subtitle: const Text(
-                    'Tehreer → Gemini voice → clips → template preview',
-                  ),
-                  trailing: const Icon(Icons.arrow_forward),
-                  onTap: () async {
-                    await Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const NewsMakerScreen(),
-                      ),
-                    );
-                    _reload();
-                  },
-                ),
-              ),
-              const SizedBox(height: 8),
-              Card(
-                child: ListTile(
-                  leading: const Icon(Icons.auto_awesome),
-                  title: const Text('One Click AI News Maker'),
-                  subtitle: const Text(
-                    'Paste tehreer → 13 steps → voice + preview',
-                  ),
-                  trailing: const Icon(Icons.arrow_forward),
-                  onTap: () async {
-                    await Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const AiNewsMakerScreen(),
-                      ),
-                    );
-                    _reload();
-                  },
-                ),
-              ),
-              const SizedBox(height: 8),
-              Card(
-                child: ListTile(
-                  leading: const Icon(Icons.search),
-                  title: const Text('SEO'),
-                  subtitle: const Text(
-                    'Title, hashtags, keywords — latest project',
-                  ),
-                  trailing: const Icon(Icons.arrow_forward),
-                  onTap: () async {
-                    final project =
-                        await NewsProjectStore.loadLatest() ??
-                            NewsProject.create(presetId: preset.id);
-                    if (!context.mounted) return;
-                    await Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => SeoScreen(project: project),
-                      ),
-                    );
-                    _reload();
-                  },
-                ),
-              ),
-              const SizedBox(height: 8),
+              const _SectionTitle('Voice & Captions'),
               Card(
                 child: ListTile(
                   leading: const Icon(Icons.record_voice_over),
@@ -368,26 +369,6 @@ class _NewsStudioScreenState extends State<NewsStudioScreen> {
               ),
               const SizedBox(height: 20),
               const _SectionTitle('Breaking News templates'),
-              Card(
-                child: ListTile(
-                  leading: const Icon(Icons.dashboard_customize),
-                  title: const Text('Templates Library'),
-                  subtitle: Text(
-                    '${data.templates.length} breaking templates — 13 '
-                    'categories + Final 3-Ribbon + Classic + customs',
-                  ),
-                  trailing: const Icon(Icons.arrow_forward),
-                  onTap: () async {
-                    await Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const TemplatesLibraryScreen(),
-                      ),
-                    );
-                    // Templates may have changed there — reload.
-                    _reload();
-                  },
-                ),
-              ),
               ...data.templates.map(
                 (t) => Card(
                   child: ListTile(
@@ -400,6 +381,56 @@ class _NewsStudioScreenState extends State<NewsStudioScreen> {
                       style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
                   ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              const _SectionTitle('Publish'),
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.search),
+                  title: const Text('SEO'),
+                  subtitle: const Text(
+                    'Title, hashtags, keywords — latest project',
+                  ),
+                  trailing: const Icon(Icons.arrow_forward),
+                  onTap: () async {
+                    final project =
+                        await NewsProjectStore.loadLatest() ??
+                            NewsProject.create(presetId: preset.id);
+                    if (!context.mounted) return;
+                    await Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => SeoScreen(project: project),
+                      ),
+                    );
+                    _reload();
+                  },
+                ),
+              ),
+              const SizedBox(height: 8),
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.file_upload),
+                  title: const Text('Export'),
+                  subtitle: const Text(
+                    'Resolution, format, progress — latest project',
+                  ),
+                  trailing: const Icon(Icons.arrow_forward),
+                  onTap: () async {
+                    final project =
+                        await NewsProjectStore.loadLatest() ??
+                            NewsProject.create(presetId: preset.id);
+                    if (!context.mounted) return;
+                    await Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => ExportScreen(
+                          project: project,
+                          preset: preset,
+                        ),
+                      ),
+                    );
+                    _reload();
+                  },
                 ),
               ),
               const SizedBox(height: 20),
@@ -450,31 +481,9 @@ class _NewsStudioScreenState extends State<NewsStudioScreen> {
                 ),
               ),
               const SizedBox(height: 20),
-              const _SectionTitle('Gemini voiceover'),
-              Card(
-                child: ListTile(
-                  leading: const Icon(Icons.record_voice_over),
-                  title: Text(
-                    'Today: ${data.voiceRemaining} request(s) left '
-                    '(cap 5/day)',
-                  ),
-                  subtitle: const Text(
-                    'Same tehreer = cached voice, 0 new calls. '
-                    'Cap hit = device voice fallback.',
-                  ),
-                ),
-              ),
-              const SizedBox(height: 20),
               // "For Help" row (Phase 10): WhatsApp support, number
               // from remote config — the shared HelpWhatsAppRow.
               const HelpWhatsAppRow(),
-              const SizedBox(height: 12),
-              const Text(
-                'AI Voice Studio, Caption Studio aur Audio Tools Phase 5 '
-                'mein live hain. Templates Library Phase 6 mein live hai.',
-                style: TextStyle(color: Colors.grey),
-                textAlign: TextAlign.center,
-              ),
             ],
           );
         },
@@ -488,14 +497,12 @@ class _StudioData {
     required this.preset,
     required this.presetCount,
     required this.templates,
-    required this.voiceRemaining,
     required this.fontReady,
     required this.draft,
   });
   final ChannelPreset preset;
   final int presetCount;
   final List<BreakingTemplate> templates;
-  final int voiceRemaining;
 
   /// True once the Kasheeda font loaded in this process (home preview
   /// renders Urdu in Kasheeda when true, fallback font otherwise).

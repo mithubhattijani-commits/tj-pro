@@ -119,6 +119,8 @@ class ProGrade {
     this.contrast = 1,
     this.shadows = 0,
     this.highlights = 0,
+    this.brightness = 0,
+    this.exposure = 0,
   });
 
   /// '' = no LUT, otherwise one of the keys of [proLuts].
@@ -145,6 +147,16 @@ class ProGrade {
   /// -100 (darken) .. 100 (brighten). 0 = untouched.
   final double highlights;
 
+  /// -100 .. 100, 0 = untouched (one-build: the video editor's
+  /// grading panel had NO brightness control — every competitor's
+  /// Adjust panel leads with it). Applied through FFmpeg `eq`.
+  final double brightness;
+
+  /// -100 .. 100, 0 = untouched (one-build addition, see
+  /// [brightness]). Modelled as a gamma move in `eq`, the standard
+  /// cheap exposure approximation.
+  final double exposure;
+
   /// Display name -> Flutter asset path. The parent MUST ship these
   /// exact files and declare them under `flutter: assets:` in
   /// pubspec.yaml; [ensureLutFile] materialises them to disk because
@@ -165,7 +177,9 @@ class ProGrade {
       vibrance == 1 &&
       contrast == 1 &&
       shadows == 0 &&
-      highlights == 0;
+      highlights == 0 &&
+      brightness == 0 &&
+      exposure == 0;
 
   /// Build the filter chain for this grade.
   ///
@@ -220,8 +234,16 @@ class ProGrade {
     final con = _clamp(contrast, 0, 2);
     // Gentler saturation curve for vibrance (see doc above).
     final effSat = _clamp(sat * (1 + (vib - 1) * 0.5), 0, 3);
-    if (effSat != 1 || con != 1) {
-      parts.add('eq=saturation=${_num(effSat)}:contrast=${_num(con)}');
+    // Brightness/exposure ride the same eq instance: brightness maps
+    // -100..100 -> eq's -1..1 at 1/4 strength (eq brightness is very
+    // hot), exposure maps to gamma 0.5..2.0 (log-style around 1.0).
+    final bri = _clamp(brightness, -100, 100) / 400;
+    final gam = math.pow(2, -_clamp(exposure, -100, 100) / 100).toDouble();
+    if (effSat != 1 || con != 1 || bri != 0 || gam != 1) {
+      parts.add(
+        'eq=saturation=${_num(effSat)}:contrast=${_num(con)}'
+        ':brightness=${_num(bri)}:gamma=${_num(gam)}',
+      );
     }
 
     final sh = _clamp(shadows, -100, 100) / 100;
@@ -783,9 +805,16 @@ String animatedTitleFilter({
 // 5. Chromakey
 // ---------------------------------------------------------------------------
 
-/// Chromakey setup. [color] is 'green' or 'blue'; [similarity] and
+/// Chromakey setup. [color] is 'green' or 'blue' for the two
+/// presets, or ANY colour as '#RRGGBB' when it was sampled with the
+/// editor's eyedropper (one-build chroma upgrade). [similarity] and
 /// [blend] are 0..1. [backgroundKind] 'color' uses [backgroundColor]
 /// (hex like '#00FF00'); 'image' uses [backgroundImagePath].
+///
+/// One-build additions (addendum §B.3): [spill] 0..1 runs FFmpeg's
+/// `despill` after the key (green-fringe cleanup; 0 = off), [edge]
+/// -1..1 shrinks (< 0) or grows (> 0) the keyed alpha via
+/// erosion/dilation + a light alpha blur (0 = off).
 class ProChroma {
   const ProChroma({
     this.color = 'green',
@@ -794,6 +823,8 @@ class ProChroma {
     this.backgroundKind = 'color',
     this.backgroundColor = '#00FF00',
     this.backgroundImagePath,
+    this.spill = 0,
+    this.edge = 0,
   });
 
   final String color;
@@ -802,6 +833,29 @@ class ProChroma {
   final String backgroundKind;
   final String backgroundColor;
   final String? backgroundImagePath;
+
+  /// Despill strength 0..1 (0 = off). Default 0 keeps every existing
+  /// caller's graph byte-identical to before the upgrade.
+  final double spill;
+
+  /// Alpha edge adjust -1..1 (0 = off): negative erodes (shrinks)
+  /// the keyed subject edge, positive dilates (grows) it.
+  final double edge;
+}
+
+/// Resolve a [ProChroma.color] value to the 6-hex-digit string
+/// FFmpeg wants: the 'green'/'blue' presets, or a sampled '#RRGGBB'
+/// (a malformed sample falls back to green rather than breaking the
+/// graph).
+String chromaKeyHex(String color) {
+  if (color == 'blue') return '0000FF';
+  if (color.startsWith('#') && color.length == 7) {
+    final hex = color.substring(1);
+    if (RegExp(r'^[0-9A-Fa-f]{6}$').hasMatch(hex)) {
+      return hex.toUpperCase();
+    }
+  }
+  return '00FF00';
 }
 
 /// Filter_complex snippet (no -i/-map, no trailing ';') that keys out
@@ -826,14 +880,40 @@ String chromaFilterComplex({
   required ProChroma c,
   required String outLabel,
 }) {
-  final keyHex = c.color == 'blue' ? '0000FF' : '00FF00';
+  final keyHex = chromaKeyHex(c.color);
   final sim = _num(_clamp(c.similarity, 0, 1));
   final blend = _num(_clamp(c.blend, 0, 1));
   final buf = StringBuffer();
   buf.write(
     '[0:v]chromakey=color=0x$keyHex:similarity=$sim:blend=$blend,'
-    'format=yuva420p[keyed];',
+    'format=yuva420p',
   );
+  // Despill (one-build): remove the key colour's fringe from the
+  // subject's edges. `type` names the colour family the sampled key
+  // belongs to: blue-dominant samples use the blue despill, every
+  // other sample the green one (despill only ships these families).
+  final spill = _clamp(c.spill, 0, 1);
+  if (spill > 0) {
+    final keyR = int.parse(keyHex.substring(0, 2), radix: 16);
+    final keyG = int.parse(keyHex.substring(2, 4), radix: 16);
+    final keyB = int.parse(keyHex.substring(4, 6), radix: 16);
+    final despillType = (keyB > keyR && keyB > keyG) ? 'blue' : 'green';
+    buf.write(',despill=type=$despillType:mix=${_num(spill)}');
+  }
+  // Edge adjust (one-build): erode/dilate the ALPHA plane only,
+  // then a light alpha blur so the edge stays soft. Split the planes
+  // so the colour planes pass through untouched.
+  final edge = _clamp(c.edge, -1, 1);
+  if (edge != 0) {
+    final steps = math.max(1, (edge.abs() * 3).round());
+    final op = edge < 0 ? 'erosion' : 'dilation';
+    final chain = List<String>.filled(steps, op).join(',');
+    buf.write(
+      ',split[a1][a2];[a1]alphaextract,$chain,'
+      'gblur=sigma=1[alpha];[a2][alpha]alphamerge',
+    );
+  }
+  buf.write('[keyed];');
   if (c.backgroundKind == 'image') {
     buf.write('[1:v][keyed]scale2ref[bg][k2];');
   } else {
@@ -843,6 +923,31 @@ String chromaFilterComplex({
     buf.write('[bgraw][keyed]scale2ref[bg][k2];');
   }
   buf.write('[bg][k2]overlay=0:0$outLabel');
+  return buf.toString();
+}
+
+/// Single-frame chroma preview command (one-build, addendum §B.3):
+/// runs ONE frame of [input] (at [atSec]) through the EXACT export
+/// graph ([chromaFilterComplex]) and writes a PNG, so the Background
+/// panel can show the keyed result live — what you see is what the
+/// export produces. The output PNG keeps the keyed alpha over the
+/// chosen background, same as the export composite.
+String chromaPreviewFrameCommand({
+  required String input,
+  required ProChroma c,
+  required String output,
+  double atSec = 0.5,
+}) {
+  final buf = StringBuffer();
+  buf.write('-y -ss ${_num(atSec)} -i ${FfmpegService.q(input)} ');
+  if (c.backgroundKind == 'image' && c.backgroundImagePath != null) {
+    buf.write('-i ${FfmpegService.q(c.backgroundImagePath!)} ');
+  }
+  final snippet = chromaFilterComplex(c: c, outLabel: '[vout]');
+  buf.write(
+    '-filter_complex "$snippet" -map "[vout]" -frames:v 1 '
+    '${FfmpegService.q(output)}',
+  );
   return buf.toString();
 }
 

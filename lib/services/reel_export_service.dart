@@ -551,6 +551,20 @@ class ReelExportService {
         if (c != null) return c;
       }
       // --- 4. Template overlay (logo left OUT of the PNG). ---
+      // nigraanFinal still-frame contract: every other still caller
+      // of renderLiveTemplateImage (Template Studio frame export,
+      // poster export, video-editor template pass) passes
+      // tickerAtStart: true, because this is ONE static PNG
+      // (tickerPx: 0). In _renderNigraanFinalImage the non-pinned
+      // RTL branch starts the top ticker at x = width and both loop
+      // copies land outside the strip's clip rect, so with the top
+      // ribbon's default RTL direction the pasted ticker text would
+      // be INVISIBLE in the exported reel (strip + chip only).
+      // Pinning the ticker at its start makes the Final 3-Ribbon
+      // frame render in export exactly as it does in those stills.
+      // Scoped to 'nigraanFinal' ONLY: the breaking / classic call
+      // arguments are unchanged, so their frames render exactly as
+      // they do today.
       step('Template lag raha hai…', 0.58);
       final effective = effectivePresetFor(project: project, preset: preset);
       final templatePng = await renderLiveTemplateImage(
@@ -565,6 +579,7 @@ class ReelExportService {
         breakingTemplate: project.templateKind == 'breaking'
             ? BreakingTemplate.fromProject(project, effective)
             : null,
+        tickerAtStart: project.templateKind == 'nigraanFinal',
         includeLogo: false,
         fontReady: fontReady,
         includeIntroMarker: false,

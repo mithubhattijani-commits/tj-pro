@@ -629,8 +629,10 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
         ),
         const SizedBox(height: 4),
         Text(
-          'Voiceover step mein proxy request(s) lagti hain '
-          '(cap 5/day${_voiceRemaining == null ? '' : ' • aaj $_voiceRemaining baaki'})'
+          'Voiceover step mein proxy request(s) lagti hain'
+          // Cap line: non-admins only. Admins get -1 (unlimited)
+          // from remainingToday() and see no counter here.
+          '${_voiceRemaining == null || _voiceRemaining == -1 ? '' : ' — Aaj ki voice limit: $_voiceRemaining / 5 baaki'}'
           ' — cached tehreer = 0 nayi calls.',
           style: const TextStyle(color: Colors.grey, fontSize: 12),
         ),

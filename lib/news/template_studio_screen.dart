@@ -53,8 +53,13 @@ import 'templates_library_screen.dart';
 import 'widgets/breaking_preview.dart';
 import 'widgets/nigraan_final_preview.dart';
 
-/// Template picker ids. 'nigraanFinal' renders in Phase 3;
-/// 'breaking' / 'classic' render branches land in Phase 6.
+/// Template picker ids. All three kinds now render in export as
+/// well as in preview: 'nigraanFinal' renders through the Phase 3
+/// PNG branch (the nigraanFinal branch of
+/// [renderLiveTemplateImage]) and the reel export pins its ticker
+/// at the start of the static frame (`tickerAtStart` in
+/// ReelExportService); 'breaking' / 'classic' render through the
+/// Phase 6 branches in the same renderer.
 const String kTemplateFinal = 'nigraanFinal';
 const String kTemplateBreaking = 'breaking';
 const String kTemplateClassic = 'classic';
