@@ -1,23 +1,25 @@
 import 'dart:async';
 
+import 'package:flutter/material.dart';
 import 'package:unity_ads_plugin/unity_ads_plugin.dart';
 
 import '../app_config.dart';
 
-/// Unity Ads rewarded + interstitial integration for TJ Pro.
+/// Unity Ads rewarded + interstitial + banner integration for
+/// TJ Pro.
 ///
 /// - Game ID: 800418048 (Android, "TJ Pro" project)
 /// - Rewarded placement: BP_Rewarded_Android
 /// - Interstitial placement: BP_Interstitial_Android
+/// - Banner placement: BP_Banner_Android (see [AppConfig])
 ///
-/// REVENUE ads only — no coin ledger, no server calls. Mirrors the
-/// AdMob [AdService] pattern: all failures are swallowed on purpose —
-/// if an ad cannot load or show, the editors keep working and no ad
-/// is shown. A rewarded ad only unlocks Premium when Unity actually
-/// reports completion.
+/// REVENUE ads only — no coin ledger, no server calls. All failures
+/// are swallowed on purpose — if an ad cannot load or show, the
+/// editors keep working and no ad is shown. A rewarded ad only
+/// unlocks Premium when Unity actually reports completion.
 ///
-/// Test mode is ON for development. Flip [testMode] to false for
-/// production builds.
+/// Test mode is OFF (production). Unity serves test ads only while
+/// [testMode] is true in development builds.
 class UnityAdsService {
   /// Keep true while testing. Production builds set this to false.
   static const bool testMode = false;
@@ -241,4 +243,54 @@ enum UnityAdResult {
 
   /// Ad failed to load or show — no reward, show retry.
   failed,
+}
+
+/// Unity banner ad slot (one-build, defect #4) — replaces the old
+/// AdMob `BannerAdWidget` in the same Home + editor slots.
+///
+/// Renders nothing at all until Unity reports the banner loaded, so
+/// a failed or offline load never leaves a broken/empty slot on
+/// screen. The banner placement (`BP_Banner_Android`) must exist in
+/// the Unity dashboard (TJ Pro project, Game ID 800418048); until it
+/// does, Unity reports a load failure and this widget simply stays
+/// hidden — the app is fully usable either way.
+class UnityBannerAdWidget extends StatefulWidget {
+  const UnityBannerAdWidget({super.key});
+
+  @override
+  State<UnityBannerAdWidget> createState() => _UnityBannerAdWidgetState();
+}
+
+class _UnityBannerAdWidgetState extends State<UnityBannerAdWidget> {
+  bool _loaded = false;
+  bool _failed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!AppConfig.adsEnabled ||
+        !AppConfig.bannerAdEnabled ||
+        !AppConfig.unityAdsEnabled ||
+        _failed) {
+      return const SizedBox.shrink();
+    }
+    return UnityBannerAd(
+      placementId: AppConfig.unityBannerPlacementId,
+      onLoad: (placementId) {
+        if (mounted) setState(() => _loaded = true);
+      },
+      onFailed: (placementId, error, message) {
+        if (mounted) {
+          setState(() {
+            _loaded = false;
+            _failed = true;
+          });
+        }
+      },
+      onClick: (placementId) {},
+      onShown: (placementId) {},
+    );
+  }
+
+  /// Whether the banner actually loaded (kept for future layout use).
+  bool get isLoaded => _loaded;
 }
