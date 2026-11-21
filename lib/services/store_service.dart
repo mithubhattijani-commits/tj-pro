@@ -435,10 +435,10 @@ class StoreService {
       final folders = await discoverSubfolders();
       final folderId = folders[category];
       if (folderId == null || folderId.isEmpty) {
-        return cachedListing(category);
+        return await cachedListing(category);
       }
       final entries = await _listFolder(folderId, foldersOnly: false);
-      if (entries.isEmpty) return cachedListing(category);
+      if (entries.isEmpty) return await cachedListing(category);
       _lastSuccessfulRefreshAt = DateTime.now();
       final items = <StoreItem>[];
       for (final entry in entries) {
@@ -454,7 +454,7 @@ class StoreService {
           sizeBytes: entry.sizeBytes,
         ));
       }
-      if (items.isEmpty) return cachedListing(category);
+      if (items.isEmpty) return await cachedListing(category);
       items.sort(
           (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
       _listingCache[category] = items;
