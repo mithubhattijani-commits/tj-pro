@@ -13,10 +13,11 @@
 ///      APK from that run. The full steps are in EDIT-GUIDE.md.
 ///
 /// ADS:
-///   The ad IDs below are GOOGLE TEST units (all five formats + test
-///   app ID). Test ads earn nothing. Real AdMob units need a NEW AdMob
-///   app registration later (after the AdMob account approval); only
-///   then replace the test IDs below with the real ones.
+///   Unity Ads ONLY (one-build, defect #4). AdMob was removed from
+///   the app entirely — there are no AdMob unit IDs in this file any
+///   more. The Unity Game ID + placement IDs live in the UNITY ADS
+///   section below; the switches in this header gate the Unity
+///   formats (banner / interstitial / rewarded).
 library;
 
 class AppConfig {
@@ -40,10 +41,16 @@ class AppConfig {
   // the AI tools work without watching an ad.
   static const bool rewardedAdEnabled = true;
 
-  // Native ad card in the home tools feed.
+  // Native ad card in the home tools feed. NOTE: the native slot
+  // was an AdMob format and was removed with AdMob (defect #4) —
+  // Unity has no native equivalent in this setup. The switch is
+  // kept for config compatibility but no longer gates any widget.
   static const bool nativeAdEnabled = true;
 
-  // Full-screen ad on cold start, before the home screen.
+  // Full-screen ad on cold start, before the home screen. NOTE:
+  // app-open was an AdMob format; Unity has no app-open equivalent
+  // here, so cold start no longer shows an ad (defect #4). Kept for
+  // config compatibility.
   static const bool appOpenAdEnabled = true;
 
   // FEATURE SWITCHES: false hides that feature from the app.
@@ -148,28 +155,23 @@ class AppConfig {
   /// garbage. Remote config may override with `logo_mov_url`.
   static const String logoMovUrl = '';
 
-  // AdMob IDs (GOOGLE TEST units, all five formats).
-  static const String appId = 'ca-app-pub-3940256099942544~3347511713';
-  static const String bannerAdUnitId =
-      'ca-app-pub-3940256099942544/6300978111';
-  static const String interstitialAdUnitId =
-      'ca-app-pub-3940256099942544/1033173712';
-  static const String rewardedAdUnitId =
-      'ca-app-pub-3940256099942544/5224354917';
-  static const String nativeAdUnitId =
-      'ca-app-pub-3940256099942544/2247696110';
-  static const String appOpenAdUnitId =
-      'ca-app-pub-3940256099942544/9257395921';
-
   // UNITY ADS (Game ID 800418048, Android "TJ Pro" project).
-  // Test mode is ON in UnityAdsService — flip testMode to false for
-  // production. These switches gate Unity ads independently of AdMob.
+  // Test mode is OFF in UnityAdsService (production). These switches
+  // gate Unity ads.
   static const bool unityAdsEnabled = true;
   static const bool unityRewardedEnabled = true;
   static const bool unityInterstitialEnabled = true;
   static const String unityGameId = '800418048';
   static const String unityRewardedPlacementId = 'BP_Rewarded_Android';
   static const String unityInterstitialPlacementId = 'BP_Interstitial_Android';
+
+  // Unity BANNER placement (one-build, defect #4 — the banner was
+  // the one genuinely missing Unity piece). ⚠️ A banner placement
+  // with this ID must be created in the Unity dashboard (TJ Pro
+  // project, Game ID 800418048) — it cannot be created from code.
+  // Until it exists, the banner widget receives a load failure and
+  // simply stays hidden; every other ad format works regardless.
+  static const String unityBannerPlacementId = 'BP_Banner_Android';
 
   // NEWS STUDIO — LOGIN + COINS (v1, Magic Box pattern).
   //
@@ -209,9 +211,6 @@ class AppConfig {
   // from code. Until then the Watch Ads button reports the ad as
   // unavailable.
   static const String unityRewardedCoinsPlacementId = 'rewarded_coins';
-
-  // Backwards-compatible alias used by older code paths.
-  static const bool useTestAds = true;
 }
 
 
