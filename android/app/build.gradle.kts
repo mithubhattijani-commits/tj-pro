@@ -45,16 +45,17 @@ android {
         // TJ Pro fixed: targetSdk 36 (do not change without a new release plan).
         targetSdk = 36
         // APP SIZE (user order 20 Nov 2026): all three ABIs, for the
-        // SPLIT-PER-ABI build — the CI workflow builds one APK per ABI,
-        // so each APK still carries only ONE ABI's native libs and stays
-        // small, while older armeabi-v7a phones and x86_64 devices
-        // (emulators/tablets) are covered too. This REPLACES the old
-        // arm64-only rule (3 Nov 2026) — arm64-only saved size by
-        // dropping devices; split-per-ABI saves size per APK instead.
-        // (The workflow split itself is a browser step — not this file.)
-        ndk {
-            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86_64")
-        }
+        // SPLIT-PER-ABI build — the CI workflow builds one APK per ABI
+        // (armeabi-v7a, arm64-v8a, x86_64), so each APK still carries
+        // only ONE ABI's native libs and stays small, while older
+        // armeabi-v7a phones and x86_64 devices (emulators/tablets)
+        // are covered too. This REPLACES the old arm64-only rule
+        // (3 Nov 2026) — arm64-only saved size by dropping devices;
+        // split-per-ABI saves size per APK instead.
+        // NOTE: do NOT add an ndk abiFilters block here — Gradle
+        // forbids ndk abiFilters together with splits abi filters,
+        // and `flutter build apk --split-per-abi` sets the splits
+        // itself ("Conflicting configuration" build error).
         // Uses the version code from pubspec.yaml. When using split APKs, 1000 * ABI_VERSION
         // is added automatically by Flutter. (https://developer.android.com/studio/build/configure-apk-splits#configure-APK-versions)
         // You can force using the value of versionCode by specifying the `-P force-version-code-ignoring-abi=true`
