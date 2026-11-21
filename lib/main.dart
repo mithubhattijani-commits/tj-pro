@@ -379,9 +379,7 @@ class _HomeScreenState extends State<HomeScreen> {
               subtitle: ValueListenableBuilder<int>(
                 valueListenable: CoinService.instance.balance,
                 builder: (context, balance, _) => Text(
-                  AuthService.isAdmin.value
-                      ? 'Admin — sab kuch free, no coins needed.'
-                      : 'Balance: $balance coins — Watch Ads se kamayein.',
+                  'Balance: $balance coins — Watch Ads se kamayein.',
                 ),
               ),
               trailing: const Icon(Icons.arrow_forward_ios, size: 18),

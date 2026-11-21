@@ -140,20 +140,6 @@ class _CoinsScreenState extends State<CoinsScreen> {
                         );
                       },
                     ),
-                    const SizedBox(height: 8),
-                    ValueListenableBuilder<bool>(
-                      valueListenable: AuthService.isAdmin,
-                      builder: (context, isAdmin, _) {
-                        if (!isAdmin) return const SizedBox.shrink();
-                        return const Text(
-                          'Admin — sab kuch free, no coins needed.',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        );
-                      },
-                    ),
                   ],
                 ),
               ),
