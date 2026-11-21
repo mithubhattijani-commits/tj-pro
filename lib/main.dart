@@ -14,9 +14,9 @@ import 'news/coins_screen.dart';
 import 'news/login_screen.dart';
 import 'photo/photo_editor_screen.dart';
 import 'app_config.dart';
-import 'services/ad_service.dart';
 import 'services/auth_service.dart';
 import 'services/coin_service.dart';
+import 'services/premium_gate.dart';
 import 'services/remote_config_service.dart';
 import 'services/unity_ads_service.dart';
 import 'services/update_service.dart';
@@ -26,7 +26,6 @@ import 'news/news_studio_screen.dart';
 import 'widgets/banner_ad_widget.dart';
 import 'widgets/coins_pill.dart';
 import 'widgets/help_whatsapp_button.dart';
-import 'widgets/native_ad_widget.dart';
 
 /// Shared Remote Config instance: fetched once at startup; the home
 /// screen listens to [RemoteConfigService.notifier] so a fresh fetch
@@ -35,7 +34,7 @@ final RemoteConfigService remoteConfigService = RemoteConfigService();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  AdService.init();
+  // Ads are Unity-only (one-build, defect #4) — AdMob was removed.
   UnityAdsService.init();
   // Remote Config: returns fast (cache load only); the network refresh
   // is backgrounded and never blocks startup.
@@ -120,11 +119,11 @@ class _HomeScreenState extends State<HomeScreen> {
     _onRemoteConfigChanged();
     // Silent update check: shows a dialog only when a newer version
     // exists; a missing manifest or no network means no prompt at all.
-    // Cold-start app open ad first; the update dialog waits for the
-    // next launch when an ad was shown, so the two never stack.
+    // (The old AdMob app-open ad that used to run first is gone —
+    // Unity has no app-open format in this setup, defect #4.)
     // When the force-update kill-switch is armed, the non-dismissible
     // force dialog handles the update instead of the normal prompt.
-    if (!AdService.showAppOpen() && !_forceUpdateArmed()) {
+    if (!_forceUpdateArmed()) {
       UpdateService.checkOnLaunch(context);
     }
   }
@@ -341,8 +340,9 @@ class _HomeScreenState extends State<HomeScreen> {
               );
             },
           ),
-          const NativeAdWidget(),
-          const SizedBox(height: 16),
+          // (The AdMob native ad card that used to sit here was
+          // removed with AdMob — Unity has no native format in this
+          // setup, defect #4.)
           const _PremiumUnlockCard(),
           const SizedBox(height: 16),
           const Text(
@@ -682,7 +682,7 @@ class _PremiumUnlockCardState extends State<_PremiumUnlockCard> {
     if (!AppConfig.aiToolsEnabled) {
       return const SizedBox.shrink();
     }
-    if (AdService.isPremiumUnlocked) {
+    if (PremiumGate.isUnlocked) {
       return const Card(
         child: ListTile(
           leading: Icon(Icons.workspace_premium),
@@ -708,7 +708,7 @@ class _PremiumUnlockCardState extends State<_PremiumUnlockCard> {
                 onPressed: () async {
                   setState(() => _busy = true);
                   final messenger = ScaffoldMessenger.of(context);
-                  final ok = await AdService.showRewarded();
+                  final ok = await PremiumGate.tryUnlockWithAd();
                   if (mounted) {
                     setState(() => _busy = false);
                     messenger.showSnackBar(
