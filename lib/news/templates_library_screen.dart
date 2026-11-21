@@ -127,11 +127,13 @@ class _LibraryItem {
     this.breaking,
     this.preset,
     this.category,
+    this.video,
     this.isCustom = false,
     this.coinCost = 0,
   });
 
-  /// 'breaking' | 'final' | 'classic' | 'category' | 'preset'.
+  /// 'breaking' | 'final' | 'classic' | 'category' | 'preset' |
+  /// 'videoIntro' (v1.2.0 bundled video intro templates).
   final String id;
   final String name;
   final String kind;
@@ -139,11 +141,13 @@ class _LibraryItem {
   final BreakingTemplate? breaking;
   final ChannelPreset? preset;
   final CategoryTemplate? category;
+  final VideoIntroTemplate? video;
   final bool isCustom;
   final int coinCost;
 
   String get subtitle {
     if (kind == 'preset') return 'Custom channel preset';
+    if (kind == 'videoIntro') return 'Built-in video intro';
     if (kind == 'category') {
       return isCustom ? 'Custom template' : 'Category template';
     }
@@ -197,6 +201,17 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
   /// Working copy of the selected category template (edited in the
   /// panel, applied on "Use").
   CategoryTemplate? _workingCategory;
+
+  /// Selected bundled video intro template (v1.2.0) + its editor
+  /// state: ticker direction (Left/Right toggle; [_videoDirectionAuto]
+  /// = follow the language default until the user toggles) and the
+  /// chosen built-in music asset (null = none). Headline/ticker live
+  /// in [_headlineController] / [_tickerController]; everything is
+  /// written to the project (+ preset top ribbon) on "Use".
+  VideoIntroTemplate? _workingVideo;
+  RibbonDirection _videoDirection = RibbonDirection.rtl;
+  bool _videoDirectionAuto = true;
+  String? _videoMusicAsset;
 
   final _picker = ImagePicker();
   final _saveNameController = TextEditingController();
@@ -288,6 +303,21 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
         ),
       );
     }
+    // v1.2.0: the two bundled VIDEO intro templates — optional,
+    // FREE, one-tap apply (kind 'videoIntro'; see breaking_templates
+    // .dart for why they are not BreakingVariant values).
+    for (final v in VideoIntroTemplate.defaults()) {
+      items.add(
+        _LibraryItem(
+          id: 'video_${v.id}',
+          name: v.displayName,
+          kind: 'videoIntro',
+          categories: v.categories,
+          video: v,
+          coinCost: v.coinCost,
+        ),
+      );
+    }
     // One card per category (Phase 8): every one of the 13
     // categories has a real, rendering template — built-ins from
     // CategoryTemplate.defaults() + user-saved customs.
@@ -364,6 +394,25 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
 
   void _select(_LibraryItem item) {
     _selectedId = item.id;
+    if (item.kind == 'videoIntro' && item.video != null) {
+      _workingVideo = item.video;
+      _workingCategory = null;
+      _workingBreaking = null;
+      _workingPreset = null;
+      final project = _project;
+      _headlineController.text = project?.headline ?? '';
+      _tickerController.text =
+          (project != null && project.tickerText.isNotEmpty)
+              ? project.tickerText
+              : (_preset?.topRibbon.text ?? '');
+      _videoDirectionAuto = project?.tickerDirection == null;
+      _videoDirection = project?.tickerDirection != null
+          ? RibbonDirection.fromId(project!.tickerDirection)
+          : defaultTickerDirectionForText(_tickerController.text);
+      _videoMusicAsset = project?.backgroundMusicAsset;
+      return;
+    }
+    _workingVideo = null;
     if (item.kind == 'category' && item.category != null) {
       _workingCategory = item.category!.copyWith();
       _workingBreaking = null;
@@ -501,6 +550,33 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
     final working = _workingBreaking;
     final workingPreset = _workingPreset;
     final workingCategory = _workingCategory;
+    final workingVideo = _workingVideo;
+    if (workingVideo != null) {
+      // v1.2.0 video intro: headline + ticker + direction + music
+      // persist PER PROJECT; the ticker + direction also sync into
+      // the preset's top ribbon, so the existing breaking export
+      // path (BreakingTemplate.fromProject → PNG overlay) renders
+      // the same headline + ticker + direction on the reel.
+      final project = _project;
+      if (project != null) {
+        project.videoTemplateId = workingVideo.id;
+        project.headline = _headlineController.text;
+        project.tickerText = _tickerController.text;
+        project.tickerDirection = _videoDirection.id;
+        project.backgroundMusicAsset = _videoMusicAsset;
+        unawaited(NewsProjectStore.save(project));
+      }
+      preset.topRibbon.text = _tickerController.text;
+      preset.topRibbon.direction = _videoDirection;
+      unawaited(
+        ChannelPresetStore.saveAll(_presets, selectedId: preset.id),
+      );
+      _showMessage(
+        'Video intro apply ho gaya — ${workingVideo.displayName}.',
+      );
+      setState(() {});
+      return;
+    }
     if (workingCategory != null) {
       workingCategory.applyToPreset(preset);
       final project = _project;
@@ -619,6 +695,16 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
     final working = _workingBreaking;
     final workingPreset = _workingPreset;
     final workingCategory = _workingCategory;
+    if (_workingVideo != null) {
+      // Built-in video intros are not saved as customs — their
+      // headline/ticker/direction/music settings save per project
+      // via "Use template".
+      _showMessage(
+        'Video intro built-in hai — settings "Use template" se '
+        'project mein save hoti hain.',
+      );
+      return;
+    }
     if (workingCategory != null) {
       final saved = await CategoryTemplateStore.saveCustomTemplate(
         name: name,
@@ -847,6 +933,7 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
     final category = item.kind == 'category'
         ? (selected ? _workingCategory ?? item.category : item.category)
         : null;
+    final video = item.kind == 'videoIntro' ? item.video : null;
     final cardPreset = item.kind == 'preset'
         ? item.preset!
         : (selected && _workingPreset != null ? _workingPreset! : preset);
@@ -910,7 +997,13 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
               Center(
                 child: SizedBox(
                   height: 200,
-                  child: _miniPreview(item, breaking, cardPreset, category),
+                  child: _miniPreview(
+                    item,
+                    breaking,
+                    cardPreset,
+                    category,
+                    video,
+                  ),
                 ),
               ),
               // Channel handles footer (Phase 8): the selected
@@ -961,7 +1054,24 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
     BreakingTemplate? breaking,
     ChannelPreset cardPreset, [
     CategoryTemplate? category,
+    VideoIntroTemplate? video,
   ]) {
+    // v1.2.0 video intro cards: the real intro video + the live
+    // headline / ticker / direction from the editor panel (when
+    // selected) — the same trio the export renders.
+    if (item.kind == 'videoIntro' && video != null) {
+      final isSelected = item.id == _selectedId;
+      return VideoIntroPreview(
+        template: video,
+        headline: isSelected ? _headlineController.text : '',
+        tickerText: isSelected ? _tickerController.text : '',
+        direction: isSelected
+            ? _videoDirection
+            : defaultTickerDirectionForText(_tickerController.text),
+        fontReady: _fontReady,
+        height: 200,
+      );
+    }
     // Category cards render through the same Phase 6 previews +
     // PNG renderers with the category's own colours + label.
     if (item.kind == 'category' && category != null) {
@@ -1032,6 +1142,8 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
   /// the working [ChannelPreset] copy; category cards edit the
   /// working [CategoryTemplate] copy.
   Widget _editorPanel(_LibraryItem item) {
+    final video = _workingVideo;
+    if (video != null) return _videoEditorPanel(item, video);
     final category = _workingCategory;
     if (category != null) return _categoryEditorPanel(item, category);
     final breaking = _workingBreaking;
@@ -1497,6 +1609,135 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
     );
   }
 
+  /// Editor panel for a VIDEO intro card (v1.2.0 §2.2): two plain
+  /// text boxes — Headline (renders in the template's headline
+  /// zone) and Ticker (scrolls on the bottom ribbon band) — plus
+  /// the ticker DIRECTION toggle (Left / Right) next to the ticker
+  /// box, and the built-in music picker (FREE). Direction defaults
+  /// by language (Urdu → Left/RTL, English → Right/LTR) until the
+  /// user toggles; the toggle always wins. Everything applies on
+  /// "Use template" and persists per project.
+  Widget _videoEditorPanel(_LibraryItem item, VideoIntroTemplate video) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Editing: ${item.name}',
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              video.description,
+              style: const TextStyle(color: Colors.grey, fontSize: 12),
+            ),
+            const SizedBox(height: 12),
+            _textField(
+              key: const Key('videoHeadlineField'),
+              label: 'Headline',
+              controller: _headlineController,
+              onChanged: (v) {},
+            ),
+            const SizedBox(height: 12),
+            _textField(
+              key: const Key('videoTickerField'),
+              label: 'Ticker text',
+              controller: _tickerController,
+              onChanged: (v) {
+                if (_videoDirectionAuto) {
+                  _videoDirection = defaultTickerDirectionForText(v);
+                }
+              },
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                const Text('Ticker direction'),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: SegmentedButton<RibbonDirection>(
+                    key: const Key('videoTickerDirectionButton'),
+                    segments: const [
+                      ButtonSegment(
+                        value: RibbonDirection.rtl,
+                        label: Text('Left'),
+                        icon: Icon(Icons.arrow_back),
+                      ),
+                      ButtonSegment(
+                        value: RibbonDirection.ltr,
+                        label: Text('Right'),
+                        icon: Icon(Icons.arrow_forward),
+                      ),
+                    ],
+                    selected: {_videoDirection},
+                    onSelectionChanged: (selected) {
+                      setState(() {
+                        _videoDirectionAuto = false;
+                        _videoDirection = selected.first;
+                      });
+                    },
+                  ),
+                ),
+                TextButton(
+                  key: const Key('videoTickerDirectionAuto'),
+                  onPressed: () {
+                    setState(() {
+                      _videoDirectionAuto = true;
+                      _videoDirection = defaultTickerDirectionForText(
+                        _tickerController.text,
+                      );
+                    });
+                  },
+                  child: const Text('Auto'),
+                ),
+              ],
+            ),
+            const Text(
+              'Default: Urdu ticker Left ki taraf, English Right ki '
+              'taraf chalta hai — toggle dabane se aap ki choice '
+              'hamesha jeetti hai.',
+              style: TextStyle(color: Colors.grey, fontSize: 12),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Background music — built-in (FREE)',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ChoiceChip(
+                  key: const Key('videoMusic-none'),
+                  label: const Text('No music'),
+                  selected: _videoMusicAsset == null,
+                  onSelected: (_) =>
+                      setState(() => _videoMusicAsset = null),
+                ),
+                ...BuiltInNewsMusic.defaults().map((music) {
+                  return ChoiceChip(
+                    key: Key('videoMusic-${music.id}'),
+                    label: Text('${music.label} • FREE'),
+                    selected: _videoMusicAsset == music.assetPath,
+                    onSelected: (_) => setState(
+                      () => _videoMusicAsset = music.assetPath,
+                    ),
+                  );
+                }),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   /// Editor panel for a category card: category label, base kind
   /// (Final / Breaking / Classic), breaking variant when breaking,
   /// per-ribbon colours, interview plate, intro/outro. Ribbon texts
@@ -1617,6 +1858,15 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
   String _settingsSummaryText() {
     String hex(int c) =>
         '#${c.toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}';
+    final video = _workingVideo;
+    if (video != null) {
+      final music = BuiltInNewsMusic.fromAsset(_videoMusicAsset);
+      return 'Video intro: ${video.displayName} (FREE) • '
+          'Headline: ${_headlineController.text.isEmpty ? '(none)' : _headlineController.text} • '
+          'Ticker: ${_tickerController.text.isEmpty ? '(none)' : _tickerController.text} • '
+          'Direction: ${_videoDirection == RibbonDirection.rtl ? 'Left' : 'Right'}${_videoDirectionAuto ? ' (auto)' : ''} • '
+          'Music: ${music == null ? 'none' : '${music.label} (FREE)'}';
+    }
     final category = _workingCategory;
     if (category != null) {
       final kind = category.templateKind == 'breaking'

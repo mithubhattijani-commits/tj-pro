@@ -87,6 +87,13 @@ class StudioCaptionStyle {
   /// Scale of the highlighted word (Spotlight = 1.25).
   final double highlightScale;
 
+  /// Urdu font registry id (`font_registry.dart`, `UrduFonts`) this
+  /// style is designed for, or null when the style is font-agnostic
+  /// (all 11 original styles). Pickers/exporters that know the
+  /// registry use it to pair the style with its typeface; the
+  /// Caption Studio screen keeps using its own font control.
+  final String? fontId;
+
   const StudioCaptionStyle({
     required this.id,
     required this.nameEn,
@@ -104,6 +111,7 @@ class StudioCaptionStyle {
     required this.fontSizePt,
     required this.position,
     this.highlightScale = 1.0,
+    this.fontId,
   });
 }
 
@@ -118,6 +126,7 @@ class StudioCaptionStyles {
   static const int red = 0xFFEF0017; // Nigraan red
   static const int blue = 0xFF3D5AFE; // Nigraan ticker blue
   static const int cyan = 0xFF00E5FF;
+  static const int gold = 0xFFFFD76A; // TJ Pro poster gold (Urdu styles)
 
   /// Highlight colour choices offered in the style controls.
   static const List<int> highlightChoices = [
@@ -129,7 +138,8 @@ class StudioCaptionStyles {
     blue,
   ];
 
-  /// The 11 styles, in picker order. `nigraan` first = the default.
+  /// All styles, in picker order: the original 11 first, then the
+  /// v1.2.0 Urdu styles. `nigraan` first = the default.
   static const List<StudioCaptionStyle> all = [
     StudioCaptionStyle(
       id: 'nigraan',
@@ -263,6 +273,64 @@ class StudioCaptionStyles {
       fontSizePx: 14,
       fontSizePt: 36,
       position: CaptionPosition.bottom,
+    ),
+    // ---- Urdu styles (v1.2.0, plan §4) ----
+    // Built on the Urdu font registry (`font_registry.dart`): each
+    // style names its typeface in `fontId`. Appended after the
+    // original 11 — no existing id, order or default changed
+    // (`nigraan` is still first = default).
+    StudioCaptionStyle(
+      id: 'urdu_nastaleeq_classic',
+      nameEn: 'Urdu Nastaleeq Classic',
+      nameUr: 'اردو نستعلیق کلاسک',
+      animation: CaptionAnimation.karaoke,
+      textColor: white,
+      highlightColor: green,
+      shadow: true,
+      fontSizePx: 22,
+      fontSizePt: 52,
+      position: CaptionPosition.bottom,
+      fontId: 'noto_nastaliq_urdu',
+    ),
+    StudioCaptionStyle(
+      id: 'urdu_naskh_bold',
+      nameEn: 'Urdu Naskh Bold',
+      nameUr: 'اردو نسخ بولڈ',
+      animation: CaptionAnimation.karaoke,
+      textColor: white,
+      highlightColor: yellow,
+      outline: true,
+      fontSizePx: 24,
+      fontSizePt: 56,
+      position: CaptionPosition.bottom,
+      fontId: 'noto_naskh_arabic',
+    ),
+    StudioCaptionStyle(
+      id: 'urdu_kasheeda_gold',
+      nameEn: 'Urdu Kasheeda Gold',
+      nameUr: 'اردو کشیدہ گولڈ',
+      animation: CaptionAnimation.karaoke,
+      textColor: white,
+      highlightColor: gold,
+      shadow: true,
+      fontSizePx: 24,
+      fontSizePt: 56,
+      position: CaptionPosition.bottom,
+      fontId: 'jameel_kasheeda',
+    ),
+    StudioCaptionStyle(
+      id: 'urdu_gulzar_headline',
+      nameEn: 'Urdu Gulzar Headline',
+      nameUr: 'اردو گلزار ہیڈ لائن',
+      animation: CaptionAnimation.pop,
+      textColor: white,
+      highlightColor: gold,
+      outline: true,
+      shadow: true,
+      fontSizePx: 28,
+      fontSizePt: 60,
+      position: CaptionPosition.middle,
+      fontId: 'gulzar',
     ),
   ];
 
@@ -427,6 +495,38 @@ class CaptionFonts {
     isUrdu: false,
   );
 
+  // ---- Urdu registry fonts (v1.2.0, plan §4) ----
+  // Same typefaces as `UrduFonts` in `font_registry.dart` (ids match
+  // the registry). They load at runtime via the google_fonts package
+  // (download + cache); `family` is the family label the registry
+  // registers / the ASS export writes. When a family has not been
+  // loaded yet, the preview falls back to the system font — same
+  // discipline as the display fonts below.
+
+  static const CaptionFont notoNastaliq = CaptionFont(
+    id: 'noto_nastaliq_urdu',
+    nameEn: 'Noto Nastaliq Urdu',
+    nameUr: 'نوٹو نستعلیق اردو',
+    family: 'Noto Nastaliq Urdu',
+    isUrdu: true,
+  );
+
+  static const CaptionFont gulzar = CaptionFont(
+    id: 'gulzar',
+    nameEn: 'Gulzar',
+    nameUr: 'گلزار',
+    family: 'Gulzar',
+    isUrdu: true,
+  );
+
+  static const CaptionFont notoNaskh = CaptionFont(
+    id: 'noto_naskh_arabic',
+    nameEn: 'Noto Naskh Arabic',
+    nameUr: 'نوٹو نسخ عربی',
+    family: 'Noto Naskh Arabic',
+    isUrdu: true,
+  );
+
   static const List<CaptionFont> all = [
     system,
     jameelKasheeda,
@@ -434,19 +534,23 @@ class CaptionFonts {
     anton,
     montserrat,
     poppins,
+    notoNastaliq,
+    gulzar,
+    notoNaskh,
   ];
 
   static CaptionFont byId(String id) =>
       all.firstWhere((f) => f.id == id, orElse: () => system);
 
   /// Fonts offered for a language: Urdu gets Jameel Noori first
-  /// (the house font), English gets the display fonts first.
+  /// (the house font), then the registry's Nastaliq/Naskh faces,
+  /// English gets the display fonts first.
   /// Display fonts (Bebas/Anton/Montserrat/Poppins) are NOT bundled
   /// in TJ Pro — the ASS export writes the family name and the
   /// on-screen preview falls back to the system font when the family
   /// is unavailable. Kasheeda + System always work.
   static List<CaptionFont> forLang(String lang) => lang == 'ur'
-      ? const [jameelKasheeda, system]
+      ? const [jameelKasheeda, notoNastaliq, gulzar, notoNaskh, system]
       : const [system, bebas, anton, montserrat, poppins];
 }
 
@@ -528,10 +632,44 @@ class CaptionPresets {
     background: false,
   );
 
+  /// Urdu Nastaleeq Classic: karaoke Urdu captions in Noto Nastaliq,
+  /// green spoken word, bottom (v1.2.0 Urdu styles).
+  static const CaptionPreset urduNastaleeq = CaptionPreset(
+    id: 'urdu_nastaleeq',
+    nameEn: 'Urdu Nastaleeq',
+    nameUr: 'اردو نستعلیق',
+    styleId: 'urdu_nastaleeq_classic',
+    position: CaptionPosition.bottom,
+    size: CaptionSize.medium,
+    fontId: 'noto_nastaliq_urdu',
+    highlightColor: StudioCaptionStyles.green,
+    outline: false,
+    shadow: true,
+    background: false,
+  );
+
+  /// Urdu Kasheeda Gold: the house Kasheeda font with the TJ Pro
+  /// gold spoken word (v1.2.0 Urdu styles).
+  static const CaptionPreset urduKasheedaGold = CaptionPreset(
+    id: 'urdu_kasheeda_gold',
+    nameEn: 'Urdu Kasheeda Gold',
+    nameUr: 'اردو کشیدہ گولڈ',
+    styleId: 'urdu_kasheeda_gold',
+    position: CaptionPosition.bottom,
+    size: CaptionSize.medium,
+    fontId: 'jameel_kasheeda',
+    highlightColor: StudioCaptionStyles.gold,
+    outline: true,
+    shadow: true,
+    background: false,
+  );
+
   static const List<CaptionPreset> all = [
     nigraanNews,
     tiktokBold,
     clean,
+    urduNastaleeq,
+    urduKasheedaGold,
   ];
 
   static CaptionPreset byId(String id) =>

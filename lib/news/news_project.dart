@@ -28,6 +28,7 @@ import 'package:path_provider/path_provider.dart';
 import '../services/caption_styles.dart';
 import '../services/export_settings.dart';
 import '../services/gemini_voice_service.dart';
+import 'channel_preset.dart';
 import 'news_analysis.dart';
 
 /// A fact-check source the user attached. The app does NOT auto-verify
@@ -116,6 +117,9 @@ class NewsProject {
     this.templateKind = 'nigraanFinal',
     this.breakingVariant = 'breakingRedBanner',
     this.tickerText = '',
+    this.tickerDirection,
+    this.videoTemplateId = '',
+    this.backgroundMusicAsset,
     this.headline = '',
     this.summary = '',
     List<SubtitleLine>? subtitles,
@@ -180,6 +184,39 @@ class NewsProject {
 
   /// Top ticker text — paste-to-run, same contract as Phase 3.
   String tickerText;
+
+  /// Ticker scroll direction OVERRIDE (v1.2.0 §2.2): a
+  /// [RibbonDirection] id ('rtl' / 'ltr') set by the video-template
+  /// Direction toggle (Left / Right), or null = no override — the
+  /// effective direction then defaults by language (Urdu-script
+  /// ticker → rtl, English → ltr; see [effectiveTickerDirection]).
+  /// The user's override always wins. Backwards-compatible: absent
+  /// in old JSON = null.
+  String? tickerDirection;
+
+  /// Bundled video intro template applied to this project (v1.2.0
+  /// §2.1): a `VideoIntroTemplate` id ('studioBreakingNews' /
+  /// 'globeBreakingNews'), or '' = none applied. Optional and
+  /// selectable only — never forced.
+  String videoTemplateId;
+
+  /// Bundled built-in background music chosen for this project
+  /// (v1.2.0 §2.4): a `BuiltInNewsMusic` asset path
+  /// (assets/music/news_music_N.mp3, FREE), or null = none.
+  String? backgroundMusicAsset;
+
+  /// The ticker direction preview + export must use: the user's
+  /// [tickerDirection] override when set, otherwise the language
+  /// default for the current [tickerText] (Urdu script → rtl,
+  /// otherwise ltr).
+  RibbonDirection get effectiveTickerDirection {
+    if (tickerDirection != null) {
+      return RibbonDirection.fromId(tickerDirection);
+    }
+    return RegExp(r'[\u0600-\u06FF]').hasMatch(tickerText)
+        ? RibbonDirection.rtl
+        : RibbonDirection.ltr;
+  }
 
   /// Auto headline (extractive, editable) + auto summary.
   String headline;
@@ -269,6 +306,9 @@ class NewsProject {
     String? templateKind,
     String? breakingVariant,
     String? tickerText,
+    String? tickerDirection,
+    String? videoTemplateId,
+    String? backgroundMusicAsset,
     String? headline,
     String? summary,
     List<SubtitleLine>? subtitles,
@@ -301,6 +341,10 @@ class NewsProject {
       templateKind: templateKind ?? this.templateKind,
       breakingVariant: breakingVariant ?? this.breakingVariant,
       tickerText: tickerText ?? this.tickerText,
+      tickerDirection: tickerDirection ?? this.tickerDirection,
+      videoTemplateId: videoTemplateId ?? this.videoTemplateId,
+      backgroundMusicAsset:
+          backgroundMusicAsset ?? this.backgroundMusicAsset,
       headline: headline ?? this.headline,
       summary: summary ?? this.summary,
       subtitles: subtitles ?? List<SubtitleLine>.from(this.subtitles),
@@ -336,6 +380,9 @@ class NewsProject {
         'templateKind': templateKind,
         'breakingVariant': breakingVariant,
         'tickerText': tickerText,
+        'tickerDirection': tickerDirection,
+        'videoTemplateId': videoTemplateId,
+        'backgroundMusicAsset': backgroundMusicAsset,
         'headline': headline,
         'summary': summary,
         'subtitles': subtitles.map((s) => s.toJson()).toList(),
@@ -414,6 +461,9 @@ class NewsProject {
       breakingVariant:
           (json['breakingVariant'] as String?) ?? 'breakingRedBanner',
       tickerText: (json['tickerText'] as String?) ?? '',
+      tickerDirection: json['tickerDirection'] as String?,
+      videoTemplateId: (json['videoTemplateId'] as String?) ?? '',
+      backgroundMusicAsset: json['backgroundMusicAsset'] as String?,
       headline: (json['headline'] as String?) ?? '',
       summary: (json['summary'] as String?) ?? '',
       subtitles: subs,

@@ -10,6 +10,17 @@
 /// just uses what it has. UI listens to [notifier] so a fresh fetch
 /// updates the screen without a restart.
 ///
+/// ADVERTISING-BANNER OVERRIDE (v1.2.0): after the config above
+/// resolves, the service also tries the Supabase table
+/// `tjpro_admin_banner` (single row, id = 1). When that row exists
+/// with `enabled = true` and a non-empty `image_url`, it OVERRIDES
+/// `advertisingBannerImageUrl` and provides
+/// `advertisingBannerLinkUrl` — so an admin can set/change the
+/// house-ad banner (image + link) from inside the app with NO new
+/// build. Precedence: Supabase override > remote JSON > bundled
+/// defaults. Any Supabase failure silently keeps the JSON/default
+/// banner. Editor: lib/news/admin_banner_screen.dart.
+///
 /// NOTE: the reference design uses shared_preferences, but the cache
 /// lives in flutter_secure_storage (already a direct dependency, used
 /// for Live Studio stream keys) — deliberately, so the remote-config
@@ -25,6 +36,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../app_config.dart';
+import 'supabase_service.dart';
 
 class AnnouncementConfig {
   const AnnouncementConfig({this.enabled = false, this.text = ''});
@@ -97,6 +109,7 @@ class RemoteConfig {
     this.advertisingBannerEnabled = AppConfig.advertisingBannerEnabled,
     this.advertisingBannerImageUrl =
         AppConfig.advertisingBannerImageUrl,
+    this.advertisingBannerLinkUrl = '',
     this.advertisingBannerPriceCoins =
         AppConfig.advertisingBannerPriceCoins,
     this.advertisingBannerDurationHours =
@@ -130,8 +143,41 @@ class RemoteConfig {
   /// [AppConfig] defaults when absent.
   final bool advertisingBannerEnabled;
   final String advertisingBannerImageUrl;
+
+  /// Where tapping the Advertise-page banner goes. Empty (the
+  /// default) means "unset": the banner tap then keeps its original
+  /// behaviour (no action). JSON key `advertising_banner_link_url`
+  /// in tj-pro.json may set it, and the Supabase admin banner
+  /// override (see [RemoteConfigService]) replaces it when active.
+  final String advertisingBannerLinkUrl;
   final int advertisingBannerPriceCoins;
   final int advertisingBannerDurationHours;
+
+  /// Copy with ONLY the banner image + link replaced (the Supabase
+  /// admin-banner override path). Every other value is preserved
+  /// exactly, so the override can never disturb unrelated config.
+  RemoteConfig withAdvertisingBanner({
+    required String imageUrl,
+    required String linkUrl,
+  }) {
+    return RemoteConfig(
+      displayName: displayName,
+      logoUrl: logoUrl,
+      announcement: announcement,
+      sponsoredAd: sponsoredAd,
+      forceUpdate: forceUpdate,
+      supportWhatsAppNumber: supportWhatsAppNumber,
+      rewardedCoinsPlacementId: rewardedCoinsPlacementId,
+      advertisingBannerEnabled: advertisingBannerEnabled,
+      advertisingBannerImageUrl: imageUrl,
+      advertisingBannerLinkUrl: linkUrl,
+      advertisingBannerPriceCoins: advertisingBannerPriceCoins,
+      advertisingBannerDurationHours: advertisingBannerDurationHours,
+      kasheedaFontUrl: kasheedaFontUrl,
+      nigraanIntroUrl: nigraanIntroUrl,
+      logoMovUrl: logoMovUrl,
+    );
+  }
 
   /// On-demand asset URLs (Kasheeda font / Nigraan intro / rotating
   /// logo mov). JSON keys `kasheeda_font_url` / `nigraan_intro_url` /
@@ -172,6 +218,10 @@ class RemoteConfig {
         json['advertising_banner_image_url'],
         AppConfig.advertisingBannerImageUrl,
       ),
+      // Unlike the image URL there is no bundled fallback for the
+      // link: absent/empty in JSON simply means "unset".
+      advertisingBannerLinkUrl:
+          (json['advertising_banner_link_url'] ?? '').toString().trim(),
       advertisingBannerPriceCoins: _nonEmptyInt(
         json['advertising_banner_price_coins'],
         AppConfig.advertisingBannerPriceCoins,
@@ -234,6 +284,14 @@ class RemoteConfigService {
   static const String _cacheKey = 'tjpro_remote_config_json_v1';
   static const String _cacheTimeKey = 'tjpro_remote_config_time_v1';
 
+  /// Supabase single-row table holding the ADMIN house-ad banner
+  /// override (see lib/news/admin_banner_screen.dart for the one-time
+  /// CREATE TABLE + RLS SQL the owner runs in the SQL editor).
+  static const String adminBannerTable = 'tjpro_admin_banner';
+
+  /// The one config row in [adminBannerTable].
+  static const int adminBannerRowId = 1;
+
   static const FlutterSecureStorage _storage = FlutterSecureStorage();
 
   final ValueNotifier<RemoteConfig> notifier =
@@ -241,10 +299,98 @@ class RemoteConfigService {
 
   RemoteConfig get config => notifier.value;
 
+  /// Last config resolved from cache / network / bundled defaults,
+  /// WITHOUT the Supabase admin-banner override. The override is
+  /// always applied on top of this in [_publish], so a later refresh
+  /// can never lose it and clearing it restores these values exactly.
+  RemoteConfig _baseConfig = RemoteConfig.defaults;
+
+  /// Active Supabase banner override (null = no override). Set only
+  /// when the `tjpro_admin_banner` row exists with `enabled == true`
+  /// and a non-empty `image_url`.
+  String? _adminBannerImageUrl;
+  String _adminBannerLinkUrl = '';
+
+  /// Publish [base] as the current config, with the active Supabase
+  /// admin-banner override (if any) applied on top. Precedence:
+  /// Supabase override > remote JSON (network/cache) > bundled
+  /// [AppConfig] defaults.
+  void _publish(RemoteConfig base) {
+    _baseConfig = base;
+    final String? image = _adminBannerImageUrl;
+    notifier.value = image == null
+        ? base
+        : base.withAdvertisingBanner(
+            imageUrl: image,
+            linkUrl: _adminBannerLinkUrl,
+          );
+  }
+
+  /// Apply (or clear) the admin-banner override locally and
+  /// re-publish at once. Called by the admin banner editor after a
+  /// successful Supabase save, so the Advertise page reflects the new
+  /// banner without an app restart. Same rule as the server read:
+  /// only an enabled override with a non-empty image takes over;
+  /// anything else clears the override and the remote-JSON/default
+  /// banner comes back.
+  void applyAdminBannerOverride({
+    required bool enabled,
+    required String imageUrl,
+    required String linkUrl,
+  }) {
+    final String image = imageUrl.trim();
+    if (enabled && image.isNotEmpty) {
+      _adminBannerImageUrl = image;
+      _adminBannerLinkUrl = linkUrl.trim();
+    } else {
+      _adminBannerImageUrl = null;
+      _adminBannerLinkUrl = '';
+    }
+    _publish(_baseConfig);
+  }
+
+  /// Best-effort Supabase read of the admin banner override. Runs
+  /// after the remote-JSON config resolves (cache load + every
+  /// network refresh). ANY failure — Supabase not initialized, table
+  /// missing, offline, RLS denial, timeout — silently keeps the
+  /// existing remote-JSON/default values: no crash and no behaviour
+  /// change for anyone. When the read succeeds, a missing / disabled
+  /// / imageless row clears the override (Supabase is authoritative
+  /// when reachable); an enabled row with a non-empty image sets it.
+  Future<void> _fetchAdminBannerOverride() async {
+    try {
+      if (!SupabaseService.isInitialized) return;
+      final Map<String, dynamic>? row = await SupabaseService.client
+          .from(adminBannerTable)
+          .select('image_url, link_url, enabled')
+          .eq('id', adminBannerRowId)
+          .maybeSingle()
+          .timeout(fetchTimeout);
+      if (row == null) {
+        applyAdminBannerOverride(
+          enabled: false,
+          imageUrl: '',
+          linkUrl: '',
+        );
+        return;
+      }
+      applyAdminBannerOverride(
+        enabled: row['enabled'] == true,
+        imageUrl: (row['image_url'] ?? '').toString(),
+        linkUrl: (row['link_url'] ?? '').toString(),
+      );
+    } catch (_) {
+      // Fail-soft: keep the remote-JSON/default banner exactly as-is.
+    }
+  }
+
   /// Call once at startup. Returns fast: it only loads the cached
   /// JSON; the network refresh is backgrounded and never blocks.
   Future<void> init() async {
     await _loadFromCache();
+    // The cached/default config has resolved — now let the Supabase
+    // admin banner override (if any) take over the banner fields.
+    unawaited(_fetchAdminBannerOverride());
     final String? tsRaw = await _readKey(_cacheTimeKey);
     final int ts = int.tryParse(tsRaw ?? '') ?? 0;
     final int age = DateTime.now().millisecondsSinceEpoch - ts;
@@ -267,11 +413,11 @@ class RemoteConfigService {
       if (raw != null && raw.isNotEmpty) {
         final dynamic decoded = jsonDecode(raw);
         if (decoded is Map<String, dynamic>) {
-          notifier.value = RemoteConfig.fromJson(decoded);
+          _publish(RemoteConfig.fromJson(decoded));
         }
       }
     } catch (_) {
-      notifier.value = RemoteConfig.defaults;
+      _publish(RemoteConfig.defaults);
     }
   }
 
@@ -297,7 +443,10 @@ class RemoteConfigService {
         key: _cacheTimeKey,
         value: DateTime.now().millisecondsSinceEpoch.toString(),
       );
-      notifier.value = parsed;
+      _publish(parsed);
+      // The fresh remote-JSON config has resolved — re-check the
+      // Supabase admin banner override on top of it.
+      await _fetchAdminBannerOverride();
     } catch (_) {
       // Fail-soft: keep cache/defaults.
     } finally {

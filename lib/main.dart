@@ -23,9 +23,11 @@ import 'services/update_service.dart';
 import 'video/video_editor_screen.dart';
 import 'live/live_studio_screen.dart';
 import 'news/news_studio_screen.dart';
+import 'news/store_screen.dart';
 import 'widgets/banner_ad_widget.dart';
 import 'widgets/coins_pill.dart';
 import 'widgets/help_whatsapp_button.dart';
+import 'widgets/update_ui.dart';
 
 /// Shared Remote Config instance: fetched once at startup; the home
 /// screen listens to [RemoteConfigService.notifier] so a fresh fetch
@@ -117,14 +119,18 @@ class _HomeScreenState extends State<HomeScreen> {
     // trips without an app restart.
     remoteConfigService.notifier.addListener(_onRemoteConfigChanged);
     _onRemoteConfigChanged();
-    // Silent update check: shows a dialog only when a newer version
-    // exists; a missing manifest or no network means no prompt at all.
-    // (The old AdMob app-open ad that used to run first is gone —
-    // Unity has no app-open format in this setup, defect #4.)
+    // Update check (v1.2.0 UX): fetch silently; when a newer version
+    // exists, show the once-per-launch update popup (Later snoozes it
+    // for the session). The download then runs in the background with
+    // the UpdateProgressBar mounted in build(). checkOnLaunch stays
+    // available but is NOT also called, or the user gets two dialogs.
     // When the force-update kill-switch is armed, the non-dismissible
     // force dialog handles the update instead of the normal prompt.
     if (!_forceUpdateArmed()) {
-      UpdateService.checkOnLaunch(context);
+      final UpdateInfo? update = await UpdateService.fetchUpdate();
+      if (update != null && mounted) {
+        showUpdatePopupOnce(context, update);
+      }
     }
   }
 
@@ -204,9 +210,16 @@ class _HomeScreenState extends State<HomeScreen> {
           },
         ),
       ),
-      body: _tabIndex == 1 && AppConfig.newsStudioEnabled
-          ? const NewsStudioScreen()
-          : ListView(
+      // Update progress bar (v1.2.0): zero-height while idle, so the
+      // layout below is unchanged until a background update download
+      // is actually running; visible on both tabs.
+      body: Column(
+        children: [
+          const UpdateProgressBar(),
+          Expanded(
+            child: _tabIndex == 1 && AppConfig.newsStudioEnabled
+                ? const NewsStudioScreen()
+                : ListView(
         padding: const EdgeInsets.all(20),
         children: [
           // Remote Config header: remote logo (when set, with
@@ -394,6 +407,29 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           const SizedBox(height: 16),
+          // Online Store (v1.2.0): Drive-backed store — templates,
+          // music, ribbons and more; new stock appears without an app
+          // update. Entry is ad-gated inside the Store itself (§3.4);
+          // no ad is shown here on Home (§5).
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.storefront),
+              title: const Text('Online Store'),
+              subtitle: const Text(
+                'Templates, music, ribbons & more — new stock weekly',
+              ),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 18),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const StoreScreen(),
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 16),
           Card(
             child: ListTile(
               leading: const Icon(Icons.support_agent),
@@ -445,6 +481,9 @@ class _HomeScreenState extends State<HomeScreen> {
           // "For Help" row (Phase 10): WhatsApp support at the very
           // end of home, number from remote config.
           const HelpWhatsAppRow(),
+        ],
+      ),
+          ),
         ],
       ),
       // Bottom nav: Home + News Studio (Phase 2). Hidden entirely when

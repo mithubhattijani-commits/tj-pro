@@ -448,6 +448,45 @@ class FfmpegService {
     return buf.toString();
   }
 
+  /// Background-music bed pass (v1.2.0): loops [musicPath] (a built-in
+  /// news-music MP3) quietly UNDER the existing audio of [input]. The
+  /// music is cut to the video length (`duration=first` on the mix, or
+  /// `-shortest` when the video has no audio of its own). Video is
+  /// copied, not re-encoded. Callers treat any failure as "export
+  /// without the bed" — this command never gates the export.
+  static String musicBedCommand({
+    required String input,
+    required String musicPath,
+    required String output,
+    required bool hasClipAudio,
+    double musicVolume = 0.18,
+    int? audioBitrateKbps,
+  }) {
+    final vol = musicVolume.clamp(0.0, 1.0).toStringAsFixed(2);
+    final buf = StringBuffer();
+    buf.write('-y -i ${q(input)} -stream_loop -1 -i ${q(musicPath)} ');
+    if (hasClipAudio) {
+      buf.write(
+        '-filter_complex "[1:a]volume=$vol[bed];'
+        '[0:a][bed]amix=inputs=2:duration=first:'
+        'dropout_transition=0[aout]" '
+        '-map 0:v -map "[aout]" ',
+      );
+    } else {
+      buf.write(
+        '-filter_complex "[1:a]volume=$vol[aout]" '
+        '-map 0:v -map "[aout]" -shortest ',
+      );
+    }
+    final audioArgs = audioBitrateKbps == null
+        ? '-c:a aac'
+        : '-c:a aac -b:a ${audioBitrateKbps}k';
+    buf.write(
+      '-c:v copy $audioArgs -movflags +faststart ${q(output)}',
+    );
+    return buf.toString();
+  }
+
   /// Rotating-logo overlay pass (Phase 7, see
   /// `~/workspace/tj-pro-news-maker/rotation-decision.md`): overlays
   /// the 3D-rotating logo bug on [input] at the template's logo-bug

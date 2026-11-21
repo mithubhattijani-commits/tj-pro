@@ -24,6 +24,7 @@ import '../../app_config.dart';
 import '../../services/asset_download_service.dart';
 import '../../services/reel_export_service.dart';
 import '../../video/video_editor_screen.dart';
+import '../breaking_templates.dart';
 import '../channel_preset.dart';
 import '../export_screen.dart';
 import '../news_project.dart';
@@ -45,6 +46,11 @@ class ReelExportCard extends StatefulWidget {
 class _ReelExportCardState extends State<ReelExportCard> {
   int _quality = 0;
 
+  /// Built-in background music selection (v1.2.0 §2.4): a
+  /// [BuiltInNewsMusic] asset path, or null = none. Persisted on
+  /// the project the moment it changes. Built-in music is FREE.
+  String? _musicAsset;
+
   IntroAvailability? _intro;
   bool _introBusy = false;
   String _introMessage = '';
@@ -52,7 +58,14 @@ class _ReelExportCardState extends State<ReelExportCard> {
   @override
   void initState() {
     super.initState();
+    _musicAsset = widget.project.backgroundMusicAsset;
     _checkIntro();
+  }
+
+  void _selectMusic(String? assetPath) {
+    setState(() => _musicAsset = assetPath);
+    widget.project.backgroundMusicAsset = assetPath;
+    NewsProjectStore.save(widget.project);
   }
 
   Future<void> _checkIntro() async {
@@ -150,6 +163,43 @@ class _ReelExportCardState extends State<ReelExportCard> {
               ],
               selected: {_quality},
               onSelectionChanged: (s) => setState(() => _quality = s.first),
+            ),
+            if (widget.project.videoTemplateId.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Video intro: '
+                '${VideoIntroTemplate.fromId(widget.project.videoTemplateId)?.label ?? widget.project.videoTemplateId}'
+                ' • Ticker direction: '
+                '${widget.project.effectiveTickerDirection == RibbonDirection.rtl ? 'Left' : 'Right'}',
+                key: const Key('exportVideoIntroLine'),
+                style: const TextStyle(color: Colors.grey, fontSize: 12),
+              ),
+            ],
+            const SizedBox(height: 12),
+            const Text(
+              'Background music — built-in (FREE)',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ChoiceChip(
+                  key: const Key('exportMusic-none'),
+                  label: const Text('No music'),
+                  selected: _musicAsset == null,
+                  onSelected: (_) => _selectMusic(null),
+                ),
+                ...BuiltInNewsMusic.defaults().map((music) {
+                  return ChoiceChip(
+                    key: Key('exportMusic-${music.id}'),
+                    label: Text('${music.label} • FREE'),
+                    selected: _musicAsset == music.assetPath,
+                    onSelected: (_) => _selectMusic(music.assetPath),
+                  );
+                }),
+              ],
             ),
             const SizedBox(height: 12),
             Row(

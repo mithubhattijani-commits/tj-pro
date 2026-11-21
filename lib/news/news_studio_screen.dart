@@ -30,6 +30,7 @@ import 'export_screen.dart';
 import 'news_maker_screen.dart';
 import 'news_project.dart';
 import 'seo_screen.dart';
+import 'store_screen.dart';
 import 'template_studio_screen.dart';
 import 'templates_library_screen.dart';
 import 'tts_studio_screen.dart';
@@ -474,6 +475,29 @@ class _NewsStudioScreenState extends State<NewsStudioScreen> {
                     await Navigator.of(context).push(
                       MaterialPageRoute(
                         builder: (_) => const AdvertiseScreen(),
+                      ),
+                    );
+                    _reload();
+                  },
+                ),
+              ),
+              const SizedBox(height: 8),
+              // Online Store (v1.2.0): the same Drive-backed store as
+              // on Home — reachable from BOTH sides (structure rule);
+              // News Studio content stays here, store content is the
+              // shared catalogue.
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.storefront),
+                  title: const Text('Online Store'),
+                  subtitle: const Text(
+                    'Templates, music, ribbons & more — new stock weekly',
+                  ),
+                  trailing: const Icon(Icons.arrow_forward),
+                  onTap: () async {
+                    await Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const StoreScreen(),
                       ),
                     );
                     _reload();

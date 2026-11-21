@@ -70,6 +70,42 @@ class TjProTheme {
         colors: <Color>[violetBright, violet],
       );
 
+  // ---- CapCut-style design tokens (v1.2.0, additive) ----
+  // Shared by the restyled picker surfaces (Caption Studio style
+  // cards first): rounded cards, roomy chips and one section-title
+  // style, so every CapCut-style sheet lines up. Existing tokens
+  // above are unchanged.
+
+  /// Corner radius of CapCut-style cards (style cards, sheets).
+  static const double cardRadius = 16;
+
+  /// Corner radius of CapCut-style chips / category tabs.
+  static const double chipRadius = 12;
+
+  /// Padding inside a CapCut-style chip / category tab.
+  static const EdgeInsets chipPadding =
+      EdgeInsets.symmetric(horizontal: 14, vertical: 8);
+
+  /// Padding inside a CapCut-style card.
+  static const EdgeInsets cardPadding = EdgeInsets.all(12);
+
+  /// Gap between cards/chips in CapCut-style grids.
+  static const double gridGap = 10;
+
+  /// Section title style for CapCut-style sheets (e.g. the caption
+  /// style categories: Trending / Karaoke / Urdu).
+  static TextStyle get sectionTitleStyle => const TextStyle(
+        fontSize: 15,
+        fontWeight: FontWeight.w700,
+        color: Colors.white,
+      );
+
+  /// Secondary label style paired with [sectionTitleStyle].
+  static TextStyle get sectionHintStyle => const TextStyle(
+        fontSize: 12,
+        color: Colors.white54,
+      );
+
   static ThemeData get dark => ThemeData(
         colorScheme: ColorScheme.fromSeed(
           seedColor: gold,

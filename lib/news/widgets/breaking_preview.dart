@@ -15,6 +15,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:video_player/video_player.dart';
 
 import '../../live/news_template.dart';
 import '../../services/asset_download_service.dart';
@@ -607,6 +608,251 @@ class BreakingTemplatePreview extends StatelessWidget {
               frameWidth: w,
               frameHeight: h,
             ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Live preview of a bundled VIDEO intro template (v1.2.0 §2.2):
+/// the intro MP4 plays (looped, muted) as the frame, the user's
+/// headline renders in the template's headline zone (centre band,
+/// translucent backing — the zone the video leaves empty), and the
+/// user's ticker text scrolls on the bottom ribbon band in the
+/// chosen [direction] via [ScrollingTickerText] (paste-to-run, same
+/// contract as every other preview). When the asset is not bundled
+/// yet or fails to load, a dark studio placeholder shows instead —
+/// headline + ticker still render, never a crash.
+class VideoIntroPreview extends StatefulWidget {
+  const VideoIntroPreview({
+    super.key,
+    required this.template,
+    this.headline = '',
+    this.tickerText = '',
+    this.direction = RibbonDirection.rtl,
+    this.fontReady = false,
+    this.height = 320,
+  });
+
+  final VideoIntroTemplate template;
+  final String headline;
+  final String tickerText;
+  final RibbonDirection direction;
+  final bool fontReady;
+  final double height;
+
+  @override
+  State<VideoIntroPreview> createState() => _VideoIntroPreviewState();
+}
+
+class _VideoIntroPreviewState extends State<VideoIntroPreview> {
+  VideoPlayerController? _controller;
+  bool _ready = false;
+  bool _failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(VideoIntroPreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.template.assetPath != widget.template.assetPath) {
+      _controller?.dispose();
+      _controller = null;
+      _ready = false;
+      _failed = false;
+      _load();
+    }
+  }
+
+  Future<void> _load() async {
+    final controller =
+        VideoPlayerController.asset(widget.template.assetPath);
+    _controller = controller;
+    try {
+      await controller.initialize();
+      await controller.setLooping(true);
+      await controller.setVolume(0);
+      await controller.play();
+      if (!mounted) return;
+      setState(() => _ready = true);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _failed = true);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  String? _kasheeda(String text) =>
+      widget.fontReady && _hasArabic(text)
+          ? AssetDownloadService.kasheedaFamily
+          : null;
+
+  @override
+  Widget build(BuildContext context) {
+    final h = widget.height;
+    final w = h * 9 / 16;
+    final tickerH = (h * 0.055).clamp(26.0, 44.0);
+    final controller = _controller;
+    return Container(
+      key: Key('video-intro-preview-${widget.template.id}'),
+      width: w,
+      height: h,
+      decoration: BoxDecoration(
+        color: const Color(0xFF101018),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        children: [
+          // The template video itself (or the placeholder).
+          Positioned.fill(
+            child: _ready && controller != null
+                ? FittedBox(
+                    fit: BoxFit.cover,
+                    child: SizedBox(
+                      width: controller.value.size.width,
+                      height: controller.value.size.height,
+                      child: VideoPlayer(controller),
+                    ),
+                  )
+                : Container(
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Color(0xFF1B1B2F),
+                          Color(0xFF3A0D0D),
+                          Color(0xFF101018),
+                        ],
+                      ),
+                    ),
+                    child: Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.play_circle_outline,
+                            color: Colors.white24,
+                            size: 48,
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            _failed
+                                ? 'Video intro asset abhi bundle nahi hua'
+                                : 'Video intro load ho raha hai…',
+                            style: const TextStyle(
+                              color: Colors.white54,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+          ),
+          // Fixed broadcast label chip (also baked into the video).
+          Positioned(
+            top: 10,
+            left: 10,
+            child: _pill(
+              BreakingLayout.breakingChipText,
+              bg: const Color(0xFFD50000),
+            ),
+          ),
+          // Headline zone — the band the video leaves empty.
+          Positioned(
+            key: const Key('video-intro-headline'),
+            left: 12,
+            right: 12,
+            top: h * 0.38,
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 10,
+                vertical: 8,
+              ),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.55),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                widget.headline.isEmpty
+                    ? 'Headline yahan likhein…'
+                    : widget.headline,
+                style: TextStyle(
+                  color: widget.headline.isEmpty
+                      ? Colors.white70
+                      : Colors.white,
+                  fontSize: (h * 0.045).clamp(13.0, 22.0),
+                  fontWeight: FontWeight.bold,
+                  fontFamily: _kasheeda(widget.headline),
+                ),
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ),
+          // Bottom ribbon band — the scrolling ticker.
+          Positioned(
+            key: const Key('video-intro-ticker'),
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: tickerH,
+            child: Container(
+              color: const Color(0xFF01B0FF),
+              child: Row(
+                children: [
+                  Container(
+                    color: const Color(0xFFD50000),
+                    alignment: Alignment.center,
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    child: Text(
+                      NigraanFinalLayout.tickerChipText,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: tickerH * 0.45,
+                        fontWeight: FontWeight.bold,
+                        fontFamily: _kasheeda(
+                          NigraanFinalLayout.tickerChipText,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: Padding(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 8),
+                      child: ScrollingTickerText(
+                        text: widget.tickerText,
+                        speed: 1.0,
+                        direction: widget.direction,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: BreakingLayout.clampFontSize(
+                            20,
+                            tickerH,
+                          ),
+                          fontWeight: FontWeight.bold,
+                          fontFamily: _kasheeda(widget.tickerText),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );

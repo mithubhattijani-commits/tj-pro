@@ -11,7 +11,7 @@ import '../theme.dart';
 /// * Balance (updates immediately — [CoinService.balance] is a
 ///   [ValueNotifier] fed on every earn/spend).
 /// * "Watch Ads, Earn Coins" button: one tap → one Unity rewarded ad
-///   on the coins placement → 50 coins on full watch, up to 20 ads/day.
+///   on the coins placement → 50 coins on full watch, up to 50 ads/day.
 ///   HIDDEN for admins (server-confirmed admin status) — for them
 ///   everything is free and there is nothing to earn.
 /// * Daily free claim (50 coins, once per calendar day).

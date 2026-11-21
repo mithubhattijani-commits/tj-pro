@@ -40,6 +40,7 @@
 /// tests — unlike the News Studio home's FutureBuilder.
 library;
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -51,12 +52,18 @@ import '../services/export_settings.dart';
 import '../services/ffmpeg_service.dart';
 import '../services/poster_export_service.dart';
 import '../services/reel_export_service.dart';
+import '../services/unity_ads_service.dart';
 import 'channel_preset.dart';
 import 'news_project.dart';
 
 /// Maps the export quality index (0 = 720p, 1 = 1080p, 2 = 4K) to
-/// the priced [CoinFeature] (plan §15: 50 / 100 / 200 coins).
+/// the legacy priced [CoinFeature] (plan §15: 50 / 100 / 200 coins).
 /// Pure — unit-tested in test/news_studio_phase10_test.dart.
+///
+/// v1.2.0: export resolution is NO LONGER charged in coins — Unity
+/// interstitials play alongside the export instead (see
+/// [UnityAdsService.showExportAds]). This mapping is retained only
+/// for legacy compatibility; the export flow does not spend it.
 CoinFeature coinFeatureForQuality(int quality) {
   switch (quality) {
     case 1:
@@ -112,16 +119,14 @@ class _ExportScreenState extends State<ExportScreen> {
   double? get _durationSec =>
       ReelExportService.estimatedDurationSec(widget.project);
 
-  /// Total coin cost of THIS export at the current settings:
-  /// resolution (720p 50 / 1080p 100 / 4K 200) + 50 when the preset
-  /// has chroma key on. Shown on the Export button (Phase 10).
-  int get _exportCostCoins {
-    var total = CoinCosts.costFor(coinFeatureForQuality(_settings.quality));
-    if (widget.preset.chromaEnabled) {
-      total += CoinCosts.chromaKey;
-    }
-    return total;
-  }
+  /// Total coin cost of THIS export at the current settings.
+  /// v1.2.0: resolution is FREE (720p / 1080p / 4K all cost 0 coins —
+  /// Unity interstitials play alongside the export instead). The
+  /// only remaining charge is +50 when the preset has chroma key on
+  /// — that is the chroma feature's own price, not a resolution
+  /// price. Shown on the Export button.
+  int get _exportCostCoins =>
+      widget.preset.chromaEnabled ? CoinCosts.chromaKey : 0;
 
   String get _sizeEstimate {
     final label = _settings.estimatedSizeLabel(_durationSec);
@@ -145,27 +150,26 @@ class _ExportScreenState extends State<ExportScreen> {
       });
       return;
     }
-    // COINS (Phase 10): the export costs coins BEFORE the FFmpeg run
-    // — resolution (720p 50 / 1080p 100 / 4K 200) + 50 more when the
-    // preset has chroma key on (the chroma pass runs inside this
-    // export). Affordability of the TOTAL is checked first so a
-    // half-paid export never starts; the spends then land in order.
-    // A failed export does NOT auto-refund — no refund function
-    // exists server-side; the charge is per export attempt, stated
-    // on the button. Admins are waived server-side.
-    final exportFeature = coinFeatureForQuality(_settings.quality);
-    final charges = <CoinFeature>[exportFeature];
-    if (widget.preset.chromaEnabled) {
-      charges.add(CoinFeature.chromaKey);
-    }
+    // COINS (v1.2.0): export resolution costs NO coins any more —
+    // the old 720p 50 / 1080p 100 / 4K 200 charge is abolished;
+    // Unity interstitials play alongside the export instead (fired
+    // unawaited below). The ONLY charge left here is chroma key
+    // (50) when the preset has chroma on — the chroma feature's own
+    // price (plan §15), not a resolution price; the chroma pass runs
+    // inside this export. Affordability of the TOTAL is checked
+    // first so a half-paid export never starts; the spends then land
+    // in order. A failed export does NOT auto-refund — no refund
+    // function exists server-side; the charge is per export attempt,
+    // stated on the button. Admins are waived server-side.
+    final charges = <CoinFeature>[
+      if (widget.preset.chromaEnabled) CoinFeature.chromaKey,
+    ];
     final totalCost =
         charges.fold(0, (sum, f) => sum + CoinCosts.costFor(f));
     if (!CoinService.instance.canAffordAmount(totalCost)) {
       setState(() {
         _error = 'Coins kam hain — is export ke liye $totalCost coins '
-            'chahiye (${CoinCosts.labelFor(exportFeature)}'
-            '${widget.preset.chromaEnabled ? ' + Chroma key' : ''}). '
-            'Watch Ads se kamayein.';
+            'chahiye (Chroma key). Watch Ads se kamayein.';
         _failedStep = 'Coins';
       });
       return;
@@ -193,6 +197,14 @@ class _ExportScreenState extends State<ExportScreen> {
       _savedPath = null;
       _savedSizeBytes = null;
     });
+    // ADS ALONGSIDE EXPORT (v1.2.0): 720p → 1 interstitial,
+    // 1080p / 4K → 2 back-to-back. Fired UNAWAITED on purpose: the
+    // export starts immediately (the await below) and the ads never
+    // delay, block or fail it — showExportAds swallows every failure
+    // (offline / no fill included).
+    unawaited(
+      UnityAdsService.showExportAds(_settings.quality == 0 ? 1 : 2),
+    );
     final result = await ReelExportService.exportReel(
       project: widget.project,
       preset: widget.preset,
@@ -492,8 +504,10 @@ class _ExportScreenState extends State<ExportScreen> {
                   child: Text(
                     _exporting
                         ? 'Export ho raha hai…'
-                        : 'Export • ${_settings.qualityLabel} • '
-                            '$_exportCostCoins coins',
+                        : _exportCostCoins > 0
+                            ? 'Export • ${_settings.qualityLabel} • '
+                                '$_exportCostCoins coins'
+                            : 'Export • ${_settings.qualityLabel} • Free',
                   ),
                 ),
               ),

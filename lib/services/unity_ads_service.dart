@@ -231,6 +231,88 @@ class UnityAdsService {
       return false;
     }
   }
+
+  // ------------------------------------------------------------------
+  // Export ads (v1.2.0)
+  // ------------------------------------------------------------------
+
+  static bool _exportAdsInFlight = false;
+
+  /// Show [count] interstitial ads back-to-back alongside a video
+  /// export (v1.2.0 export rule: 720p → 1 ad, 1080p / 4K → 2 ads;
+  /// export resolution no longer costs coins).
+  ///
+  /// BEST-EFFORT ONLY: callers must fire this unawaited — the export
+  /// starts immediately and never waits for, or fails because of,
+  /// these ads. Every failure (SDK not initialized, offline, no fill,
+  /// load/show timeout) is swallowed; when one ad closes OR fails the
+  /// next one is attempted, and a failure simply ends that attempt.
+  /// The regular interstitial frequency cap is bypassed here because
+  /// the second ad must follow the first immediately, but each show
+  /// still updates [_lastInterstitialShown] so ordinary interstitials
+  /// stay capped afterwards. Re-entrant calls while a sequence is
+  /// already running are ignored.
+  static Future<void> showExportAds(int count) async {
+    if (count <= 0 || _exportAdsInFlight) return;
+    if (!AppConfig.unityAdsEnabled ||
+        !AppConfig.unityInterstitialEnabled) {
+      return;
+    }
+    _exportAdsInFlight = true;
+    try {
+      await init();
+      if (!_initialized) return;
+      for (var i = 0; i < count; i++) {
+        // Sequential on purpose: the next ad is attempted only after
+        // the previous one closed or failed. The result is ignored —
+        // a failed ad never stops the export (which is not waiting
+        // on this future anyway).
+        await _showOneExportInterstitial();
+      }
+    } catch (_) {
+      // Export ads are decoration — never surface a failure.
+    } finally {
+      _exportAdsInFlight = false;
+    }
+  }
+
+  /// Load (bounded 15s wait via [loadInterstitialAd]) + show ONE
+  /// interstitial for the export sequence, ignoring the frequency
+  /// cap. Returns true when an ad was shown (completed or skipped),
+  /// false on any failure. Show is bounded by a 2-minute timeout.
+  /// Never throws.
+  static Future<bool> _showOneExportInterstitial() async {
+    if (!_initialized || !AppConfig.unityInterstitialEnabled) {
+      return false;
+    }
+    try {
+      final loaded = await loadInterstitialAd();
+      if (!loaded) return false;
+      final completer = Completer<bool>();
+      UnityAds.showVideoAd(
+        placementId: AppConfig.unityInterstitialPlacementId,
+        onStart: (placementId) {
+          _lastInterstitialShown = DateTime.now();
+        },
+        onClick: (placementId) {},
+        onSkipped: (placementId) {
+          if (!completer.isCompleted) completer.complete(true);
+        },
+        onComplete: (placementId) {
+          if (!completer.isCompleted) completer.complete(true);
+        },
+        onFailed: (placementId, error, message) {
+          if (!completer.isCompleted) completer.complete(false);
+        },
+      );
+      return await completer.future.timeout(
+        const Duration(minutes: 2),
+        onTimeout: () => false,
+      );
+    } catch (_) {
+      return false;
+    }
+  }
 }
 
 /// Outcome of showing a Unity rewarded ad.

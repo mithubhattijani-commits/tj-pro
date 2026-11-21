@@ -26,6 +26,14 @@
 ///     listed in the Phase 10 release-prep report (parent step).
 ///   - Report button on the banner (opens WhatsApp with a prefilled
 ///     report message — real, not a dead button).
+///   - ADMIN HOUSE-AD OVERRIDE (v1.2.0): when the Supabase table
+///     `tjpro_admin_banner` has an enabled row with an image, that
+///     image + link override the remote-config banner (see
+///     RemoteConfigService). Tapping the banner opens the override's
+///     link (`advertisingBannerLinkUrl`) externally when one is set;
+///     when no link is set the tap keeps its original behaviour
+///     (no action). Admins (server-fed [AuthService.isAdmin]) also
+///     get an "Edit banner" button opening [AdminBannerScreen].
 library;
 
 import 'package:flutter/material.dart';
@@ -35,6 +43,7 @@ import '../services/auth_service.dart';
 import '../services/coin_service.dart';
 import '../services/remote_config_service.dart';
 import '../widgets/help_whatsapp_button.dart';
+import 'admin_banner_screen.dart';
 
 class AdvertiseScreen extends StatefulWidget {
   const AdvertiseScreen({super.key});
@@ -63,6 +72,28 @@ class _AdvertiseScreenState extends State<AdvertiseScreen> {
           ? '+${result.coins} coins earned!'
           : (result.error ?? 'Could not earn coins. Please try again.');
     });
+  }
+
+  /// Opens the banner's link (Supabase admin override /
+  /// `advertising_banner_link_url`) in the external browser. Only
+  /// wired as a tap handler when a link is actually set — with no
+  /// link the banner tap does nothing, exactly as before.
+  Future<void> _openBannerLink() async {
+    final link =
+        RemoteConfigService.instance.config.advertisingBannerLinkUrl
+            .trim();
+    if (link.isEmpty) return;
+    try {
+      await launchUrl(
+        Uri.parse(link),
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open the banner link.')),
+      );
+    }
   }
 
   /// Opens WhatsApp to the support number with a prefilled message
@@ -100,6 +131,7 @@ class _AdvertiseScreenState extends State<AdvertiseScreen> {
         builder: (context, config, _) {
           final bannerUrl = config.advertisingBannerImageUrl;
           final bannerEnabled = config.advertisingBannerEnabled;
+          final bannerLink = config.advertisingBannerLinkUrl.trim();
           return SingleChildScrollView(
             padding: const EdgeInsets.all(16),
             child: Column(
@@ -116,39 +148,47 @@ class _AdvertiseScreenState extends State<AdvertiseScreen> {
                 ),
                 const SizedBox(height: 12),
                 // The banner itself — BoxFit.contain: any size/aspect
-                // auto-fits, fully visible, NEVER cropped.
+                // auto-fits, fully visible, NEVER cropped. The
+                // neutral black12 box behind it is the letterbox for
+                // whatever space the fitted image does not fill.
+                // Tap: opens the banner link when one is set; with
+                // no link set there is no handler (original
+                // behaviour — tapping did nothing).
                 if (bannerEnabled)
-                  Container(
-                    height: 220,
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: Colors.black12,
-                      borderRadius: BorderRadius.circular(12),
+                  GestureDetector(
+                    onTap: bannerLink.isEmpty ? null : _openBannerLink,
+                    child: Container(
+                      height: 220,
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color: Colors.black12,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: bannerUrl.startsWith('assets/')
+                          ? Image.asset(
+                              bannerUrl,
+                              fit: BoxFit.contain,
+                              errorBuilder: (context, error, stackTrace) =>
+                                  const Center(
+                                child: Text(
+                                  'Banner load nahi hua.',
+                                  style: TextStyle(color: Colors.grey),
+                                ),
+                              ),
+                            )
+                          : Image.network(
+                              bannerUrl,
+                              fit: BoxFit.contain,
+                              errorBuilder: (context, error, stackTrace) =>
+                                  const Center(
+                                child: Text(
+                                  'Banner load nahi hua.',
+                                  style: TextStyle(color: Colors.grey),
+                                ),
+                              ),
+                            ),
                     ),
-                    clipBehavior: Clip.antiAlias,
-                    child: bannerUrl.startsWith('assets/')
-                        ? Image.asset(
-                            bannerUrl,
-                            fit: BoxFit.contain,
-                            errorBuilder: (context, error, stackTrace) =>
-                                const Center(
-                              child: Text(
-                                'Banner load nahi hua.',
-                                style: TextStyle(color: Colors.grey),
-                              ),
-                            ),
-                          )
-                        : Image.network(
-                            bannerUrl,
-                            fit: BoxFit.contain,
-                            errorBuilder: (context, error, stackTrace) =>
-                                const Center(
-                              child: Text(
-                                'Banner load nahi hua.',
-                                style: TextStyle(color: Colors.grey),
-                              ),
-                            ),
-                          ),
                   )
                 else
                   const Card(
@@ -170,6 +210,36 @@ class _AdvertiseScreenState extends State<AdvertiseScreen> {
                     icon: const Icon(Icons.flag_outlined, size: 18),
                     label: const Text('Report this banner'),
                   ),
+                ),
+                // Admin-only: edit the house-ad banner (image + link)
+                // in Supabase — shows in the app with no new build.
+                // Visibility is driven ONLY by the server-fed
+                // [AuthService.isAdmin] flag (fail closed: hidden
+                // until the server says admin).
+                ValueListenableBuilder<bool>(
+                  valueListenable: AuthService.isAdmin,
+                  builder: (context, isAdmin, _) {
+                    if (!isAdmin) return const SizedBox.shrink();
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          key: const Key('advertiseEditBannerButton'),
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => const AdminBannerScreen(),
+                              ),
+                            );
+                          },
+                          icon: const Icon(Icons.edit_outlined),
+                          label: const Text('Edit banner (Admin)'),
+                        ),
+                      ),
+                    );
+                  },
                 ),
                 const SizedBox(height: 8),
                 // WhatsApp contact (booking / help).

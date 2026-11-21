@@ -79,6 +79,70 @@ class UpdateCheckOutcome {
   final UpdateInfo? update;
 }
 
+/// Phase of the in-app update flow (plan §7, v1.2.0). Bound by the UI
+/// in `lib/widgets/update_ui.dart` via [UpdateService.updateState].
+enum UpdatePhase {
+  /// Nothing happening: no known update, no download.
+  idle,
+
+  /// A newer version is known but no download has started yet.
+  available,
+
+  /// The system DownloadManager is downloading the APK in the
+  /// background; the app stays fully usable.
+  downloading,
+
+  /// The APK is fully downloaded. The system install prompt has
+  /// already been fired once (existing behaviour); the UI's Install
+  /// button can fire it again with one tap if the user backed out.
+  downloaded,
+
+  /// The system install intent is being fired.
+  installing,
+
+  /// The download failed or was interrupted. Quiet state: no popup,
+  /// the UI offers a retry that restarts the download cleanly.
+  failed,
+}
+
+/// Immutable snapshot of the update flow for the UI to bind to.
+///
+/// [percent] is 0–100. [bytesDownloaded] / [bytesTotal] come straight
+/// from the DownloadManager status poll in
+/// [UpdateService.downloadAndInstall] (the native `downloadStatus`
+/// call already returns both numbers) — no new download mechanism
+/// and no new native bridge were needed to surface them.
+class UpdateState {
+  const UpdateState({
+    this.phase = UpdatePhase.idle,
+    this.percent = 0,
+    this.bytesDownloaded = 0,
+    this.bytesTotal = 0,
+    this.update,
+    this.downloadedApkPath,
+  });
+
+  final UpdatePhase phase;
+  final int percent;
+  final int bytesDownloaded;
+  final int bytesTotal;
+
+  /// The update this state belongs to, when one is known.
+  final UpdateInfo? update;
+
+  /// Local path of the fully downloaded APK (phase
+  /// [UpdatePhase.downloaded] / [UpdatePhase.installing]).
+  final String? downloadedApkPath;
+
+  /// Bytes still to download; 0 when the total is unknown or the
+  /// download is complete.
+  int get bytesRemaining =>
+      bytesTotal > bytesDownloaded ? bytesTotal - bytesDownloaded : 0;
+
+  /// 0.0–1.0 fraction for a [LinearProgressIndicator].
+  double get fraction => (percent / 100).clamp(0.0, 1.0);
+}
+
 class UpdateService {
   /// Fixed manifest URL. The file itself is published later by the
   /// parent (with the stable APK download link); until then this
@@ -96,6 +160,116 @@ class UpdateService {
   /// Drives the non-blocking progress UI (Jaani, 2 Nov 2026).
   static final ValueNotifier<double?> backgroundProgress =
       ValueNotifier<double?>(null);
+
+  /// Observable update state for the plan-§7 UI (`UpdatePopup` /
+  /// `UpdateProgressBar` in `lib/widgets/update_ui.dart`).
+  ///
+  /// This EXTENDS the existing flow: [backgroundProgress] is still
+  /// driven exactly as before, and every transition below is mirrored
+  /// into this richer snapshot (phase + percent + byte counts) by
+  /// [_setUpdateState]. The byte counts flow from the EXISTING
+  /// DownloadManager poll in [downloadAndInstall] — the native
+  /// `downloadStatus` result already carries `bytesDownloaded` and
+  /// `bytesTotal`, so no new polling bridge was required.
+  static final ValueNotifier<UpdateState> updateState =
+      ValueNotifier<UpdateState>(const UpdateState());
+
+  /// The update a download / retry currently belongs to.
+  static UpdateInfo? _activeUpdate;
+
+  /// Local path of the last fully downloaded update APK, so the UI's
+  /// Install button can re-fire the existing install intent.
+  static String? _downloadedApkPath;
+
+  /// Session guards for the §7 popup: at most ONE update popup per
+  /// launch, and "Later" snoozes it for the rest of the session.
+  static bool _updatePopupShownThisSession = false;
+  static bool _updatePopupSnoozedThisSession = false;
+
+  /// True while the §7 update popup may still be shown this session.
+  static bool get canShowUpdatePopup =>
+      !_updatePopupShownThisSession && !_updatePopupSnoozedThisSession;
+
+  /// Records that the §7 update popup has been shown this session.
+  static void markUpdatePopupShown() {
+    _updatePopupShownThisSession = true;
+  }
+
+  /// "Later" on the §7 popup: no update popup again this session.
+  /// (The manual "Check for updates" tile is unaffected.)
+  static void snoozeUpdatePopup() {
+    _updatePopupSnoozedThisSession = true;
+  }
+
+  /// Remembers [update] as the known/active update and, unless a
+  /// download is already in flight or finished, moves the state to
+  /// [UpdatePhase.available]. Never clobbers an in-flight download.
+  static void noteUpdateAvailable(UpdateInfo update) {
+    _activeUpdate = update;
+    final UpdatePhase phase = updateState.value.phase;
+    if (phase == UpdatePhase.idle ||
+        phase == UpdatePhase.available ||
+        phase == UpdatePhase.failed) {
+      _setUpdateState(UpdatePhase.available);
+    }
+  }
+
+  /// Fires the EXISTING system install intent for the already
+  /// downloaded APK (the same `installApk` channel call
+  /// [downloadAndInstall] makes on completion). One tap from the
+  /// progress bar's Install button; a no-op when nothing has been
+  /// downloaded. Afterwards the state returns to
+  /// [UpdatePhase.downloaded] so the button can fire the prompt
+  /// again if the user backed out of the system installer.
+  static Future<void> installDownloadedApk() async {
+    final String? path = _downloadedApkPath;
+    if (path == null) return;
+    _setUpdateState(UpdatePhase.installing);
+    try {
+      await _channel.invokeMethod<void>(
+        'installApk',
+        <String, String>{'path': path},
+      );
+    } catch (_) {}
+    _setUpdateState(UpdatePhase.downloaded);
+  }
+
+  /// Restarts a failed/interrupted download cleanly through the
+  /// existing [downloadAndInstall] flow. A no-op when no update is
+  /// known. Never shows a popup.
+  static Future<void> retryDownload(BuildContext context) async {
+    final UpdateInfo? update = _activeUpdate ?? updateState.value.update;
+    if (update == null) return;
+    _downloadedApkPath = null;
+    await downloadAndInstall(context, update);
+  }
+
+  /// Dismisses the quiet failed state (progress bar close button).
+  static void dismissFailedState() {
+    if (updateState.value.phase == UpdatePhase.failed) {
+      _setUpdateState(UpdatePhase.idle);
+    }
+  }
+
+  /// Single write point for [updateState]: preserves the counters
+  /// the caller does not pass and stamps the active update + APK
+  /// path onto every snapshot.
+  static void _setUpdateState(
+    UpdatePhase phase, {
+    int? percent,
+    int? bytesDownloaded,
+    int? bytesTotal,
+  }) {
+    final UpdateState prev = updateState.value;
+    updateState.value = UpdateState(
+      phase: phase,
+      percent: percent ?? prev.percent,
+      bytesDownloaded: bytesDownloaded ?? prev.bytesDownloaded,
+      bytesTotal: bytesTotal ?? prev.bytesTotal,
+      update: _activeUpdate ?? prev.update,
+      downloadedApkPath: _downloadedApkPath,
+    );
+  }
 
   /// Quick connectivity probe: resolves the update host. Used by the
   /// manual check to distinguish "no internet" from other failures.
@@ -262,6 +436,7 @@ class UpdateService {
   }
 
   static void showUpdateDialog(BuildContext context, UpdateInfo update) {
+    noteUpdateAvailable(update);
     showDialog<void>(
       context: context,
       // Jaani 3 Nov 2026: the update dialog must NEVER lock the app —
@@ -299,6 +474,7 @@ class UpdateService {
   /// SAME background download + system install-prompt flow as the
   /// normal update dialog.
   static void showForceUpdateDialog(BuildContext context, UpdateInfo update) {
+    noteUpdateAvailable(update);
     showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -347,6 +523,17 @@ class UpdateService {
     BuildContext context,
     UpdateInfo update,
   ) async {
+    // §7 state: this update is now the active one; any APK left over
+    // from a previous download no longer counts as ready to install.
+    _activeUpdate = update;
+    _downloadedApkPath = null;
+    _setUpdateState(
+      UpdatePhase.available,
+      percent: 0,
+      bytesDownloaded: 0,
+      bytesTotal: 0,
+    );
+
     // 1. The system installer needs the "install unknown apps" grant.
     bool canInstall = false;
     try {
@@ -384,6 +571,9 @@ class UpdateService {
     }
     if (downloadId == null) {
       backgroundProgress.value = null;
+      // §7: quiet failed state — the progress bar offers a retry,
+      // no popup loop (the existing snackbar below still shows).
+      _setUpdateState(UpdatePhase.failed);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -399,6 +589,12 @@ class UpdateService {
 
     // 3. Tell the user, return immediately — no modal, no lock.
     backgroundProgress.value = 0;
+    _setUpdateState(
+      UpdatePhase.downloading,
+      percent: 0,
+      bytesDownloaded: 0,
+      bytesTotal: 0,
+    );
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -431,23 +627,56 @@ class UpdateService {
         if (total > 0) {
           backgroundProgress.value =
               (downloaded / total).clamp(0.0, 1.0);
+          // §7: surface the poll's real byte counts to the UI state.
+          _setUpdateState(
+            UpdatePhase.downloading,
+            percent: ((downloaded / total) * 100).round().clamp(0, 100),
+            bytesDownloaded: downloaded,
+            bytesTotal: total,
+          );
+        } else {
+          // Total not known yet: keep the byte count, stay
+          // indeterminate (percent unchanged).
+          _setUpdateState(
+            UpdatePhase.downloading,
+            bytesDownloaded: downloaded,
+            bytesTotal: total,
+          );
         }
         if (state == 'success') {
           backgroundProgress.value = null;
           final String uri = (status?['localUri'] as String?) ?? '';
           final String? path = _uriToPath(uri);
-          if (path != null) {
-            try {
-              await _channel.invokeMethod<void>(
-                'installApk',
-                <String, String>{'path': path},
-              );
-            } catch (_) {}
+          if (path == null) {
+            // Downloaded but unusable: quiet failed state with a
+            // retry (existing behaviour simply returned silently).
+            _setUpdateState(UpdatePhase.failed);
+            return;
           }
+          // §7: remember the APK and mark it downloaded BEFORE the
+          // install intent fires, so the progress bar's Install
+          // button can re-fire the same intent with one tap if the
+          // user backs out of the system installer.
+          _downloadedApkPath = path;
+          _setUpdateState(
+            UpdatePhase.downloaded,
+            percent: 100,
+            bytesDownloaded: total > 0 ? total : downloaded,
+            bytesTotal: total,
+          );
+          try {
+            await _channel.invokeMethod<void>(
+              'installApk',
+              <String, String>{'path': path},
+            );
+          } catch (_) {}
           return;
         }
         if (state == 'failed' || state == 'not_found') {
           backgroundProgress.value = null;
+          // §7: quiet failed state — retry restarts cleanly via
+          // [retryDownload]; no popup is ever shown for this.
+          _setUpdateState(UpdatePhase.failed);
           if (context.mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
@@ -465,6 +694,10 @@ class UpdateService {
       }
       // Timed out after ~10 minutes of polling.
       backgroundProgress.value = null;
+      // §7: NOT a failure — the system download may still be running
+      // (its notification shows progress), so the state goes quiet
+      // (idle) instead of offering a conflicting retry.
+      _setUpdateState(UpdatePhase.idle);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -477,6 +710,7 @@ class UpdateService {
       }
     } catch (_) {
       backgroundProgress.value = null;
+      _setUpdateState(UpdatePhase.failed);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(

@@ -18,6 +18,22 @@
 /// full 3-ribbon set below its breaking banner, so the rule applies to it
 /// exactly as it applies to the final 3-ribbon template.
 ///
+/// v1.2.0 — VIDEO INTRO TEMPLATES + BUILT-IN MUSIC:
+/// two bundled video intro templates ([VideoIntroTemplate]:
+/// "Studio Breaking News" + "Globe Breaking News") join the Templates
+/// Library as optional, FREE, one-tap-apply entries — they are NOT
+/// [BreakingVariant] values on purpose: the PNG renderer in
+/// lib/live/news_template.dart switches exhaustively over
+/// [BreakingVariant], so new variants would break that file. The
+/// library registers them through its existing item registry (kind
+/// 'videoIntro'); their headline / ticker text / ticker direction /
+/// background music persist per project (see [NewsProject]) and the
+/// headline + ticker + direction also sync into the channel preset's
+/// top ribbon, so the existing breaking export path
+/// ([BreakingTemplate.fromProject] → renderLiveTemplateImage) renders
+/// the same headline + ticker on exported reels. The four bundled
+/// news-music MP3s are registered as [BuiltInNewsMusic] (FREE).
+///
 /// TICKER PASTE-TO-RUN (user, 20 Nov 2026 — v1 MUST-HAVE):
 /// pasting text into the ticker field must make the ticker run AT ONCE —
 /// no extra step. `tickerText` is a plain mutable field, read LIVE on
@@ -77,6 +93,144 @@ enum BreakingVariant {
   }
 }
 
+/// True when [text] contains Arabic/Urdu-script characters.
+bool tickerTextIsUrduScript(String text) =>
+    RegExp(r'[\u0600-\u06FF]').hasMatch(text);
+
+/// Default ticker scroll direction for [text] when the user has not
+/// overridden it (v1.2.0 §2.2): Urdu-script text scrolls
+/// right-to-left (toward the Left — the side that reads correctly
+/// for RTL), Latin/English text scrolls left-to-right (toward the
+/// Right). The user's toggle always wins over this default.
+RibbonDirection defaultTickerDirectionForText(String text) =>
+    tickerTextIsUrduScript(text)
+        ? RibbonDirection.rtl
+        : RibbonDirection.ltr;
+
+/// One bundled VIDEO intro template (v1.2.0 §2.1): a ready-made MP4
+/// intro (fixed broadcast labels baked into the video; the headline
+/// zone + bottom ribbon band stay empty in the video itself — the
+/// app renders the user's headline + scrolling ticker on top, in
+/// preview via `VideoIntroPreview` and in export via the existing
+/// breaking-template overlay path). FREE, built-in, optional —
+/// applying one is always a user tap, never forced.
+class VideoIntroTemplate {
+  const VideoIntroTemplate({
+    required this.id,
+    required this.label,
+    required this.assetPath,
+    required this.description,
+    required this.categories,
+    this.coinCost = 0,
+  });
+
+  /// Stable id, stored on the project as `videoTemplateId`.
+  final String id;
+
+  /// Picker display name.
+  final String label;
+
+  /// Bundled asset path (registered in pubspec by the coordinator).
+  final String assetPath;
+
+  final String description;
+
+  /// Templates Library categories this entry shows under.
+  final List<String> categories;
+
+  /// 0 = FREE (both built-in video intros are free).
+  final int coinCost;
+
+  bool get isFree => coinCost == 0;
+
+  String get displayName => label;
+
+  /// The two v1.2.0 built-in video intro templates.
+  static List<VideoIntroTemplate> defaults() {
+    return const [
+      VideoIntroTemplate(
+        id: 'studioBreakingNews',
+        label: 'Studio Breaking News',
+        assetPath: 'assets/templates/intro_studio.mp4',
+        description:
+            '3D news studio, BREAKING NEWS label, green-screen end card',
+        categories: ['breaking', 'bulletins'],
+      ),
+      VideoIntroTemplate(
+        id: 'globeBreakingNews',
+        label: 'Globe Breaking News',
+        assetPath: 'assets/templates/intro_globe.mp4',
+        description: 'Dark/gold 3D globe breaking-news intro',
+        categories: ['breaking', 'international'],
+      ),
+    ];
+  }
+
+  static VideoIntroTemplate? fromId(String? id) {
+    for (final t in defaults()) {
+      if (t.id == id) return t;
+    }
+    return null;
+  }
+}
+
+/// One bundled built-in background-music track (v1.2.0 §2.4).
+/// Built-in music is always FREE (coinCost 0). The selection persists
+/// per project as `NewsProject.backgroundMusicAsset` (and on
+/// [BreakingTemplate.backgroundMusicAsset] for template snapshots).
+class BuiltInNewsMusic {
+  const BuiltInNewsMusic({
+    required this.id,
+    required this.label,
+    required this.assetPath,
+    this.coinCost = 0,
+  });
+
+  final String id;
+  final String label;
+
+  /// Bundled asset path (registered in pubspec by the coordinator).
+  final String assetPath;
+
+  /// 0 = FREE — built-in music never costs coins.
+  final int coinCost;
+
+  bool get isFree => coinCost == 0;
+
+  /// The four v1.2.0 bundled news themes.
+  static List<BuiltInNewsMusic> defaults() {
+    return const [
+      BuiltInNewsMusic(
+        id: 'news_music_1',
+        label: 'News Theme 1',
+        assetPath: 'assets/music/news_music_1.mp3',
+      ),
+      BuiltInNewsMusic(
+        id: 'news_music_2',
+        label: 'News Theme 2',
+        assetPath: 'assets/music/news_music_2.mp3',
+      ),
+      BuiltInNewsMusic(
+        id: 'news_music_3',
+        label: 'News Theme 3',
+        assetPath: 'assets/music/news_music_3.mp3',
+      ),
+      BuiltInNewsMusic(
+        id: 'news_music_4',
+        label: 'News Theme 4',
+        assetPath: 'assets/music/news_music_4.mp3',
+      ),
+    ];
+  }
+
+  static BuiltInNewsMusic? fromAsset(String? assetPath) {
+    for (final m in defaults()) {
+      if (m.assetPath == assetPath) return m;
+    }
+    return null;
+  }
+}
+
 /// One breaking-news template instance (a variant + the user's edits).
 class BreakingTemplate {
   BreakingTemplate({
@@ -116,6 +270,7 @@ class BreakingTemplate {
     this.pipEnabled = false,
     this.pipPosition = 'bottomRight',
     this.pipScale = 0.3,
+    this.backgroundMusicAsset,
   }) : id = id ?? variant.id;
 
   /// Stable id. Built-ins use the variant id; saved customs get a
@@ -226,6 +381,11 @@ class BreakingTemplate {
   bool pipEnabled;
   String pipPosition;
   double pipScale;
+
+  /// Bundled built-in background-music asset chosen for this
+  /// template (v1.2.0 §2.4 — a [BuiltInNewsMusic] asset path, FREE),
+  /// or null for none. Travels to the project via [applyToProject].
+  String? backgroundMusicAsset;
 
   int get coinCost => variant.coinCost;
   bool get isFree => variant.coinCost == 0;
@@ -340,6 +500,14 @@ class BreakingTemplate {
         (project.tickerText.isEmpty
             ? preset.topRibbon.text
             : project.tickerText);
+    // v1.2.0 §2.2: the project's own ticker-direction override (set
+    // by the video-template Direction toggle) wins over the preset's
+    // ribbon direction in preview AND export.
+    if (project.tickerDirection != null) {
+      template.direction =
+          RibbonDirection.fromId(project.tickerDirection);
+    }
+    template.backgroundMusicAsset = project.backgroundMusicAsset;
     return template;
   }
 
@@ -390,6 +558,11 @@ class BreakingTemplate {
     project.breaking = true;
     project.headline = headline;
     project.tickerText = tickerText;
+    // v1.2.0 §2.2/§2.4: direction + built-in music travel with the
+    // template, so the export renders the same ticker direction and
+    // the chosen (free) music selection stays on the project.
+    project.tickerDirection = direction.id;
+    project.backgroundMusicAsset = backgroundMusicAsset;
   }
 
   /// The four v1 variant defaults. Per-variant colour roles (see the
@@ -469,6 +642,7 @@ class BreakingTemplate {
     bool? pipEnabled,
     String? pipPosition,
     double? pipScale,
+    String? backgroundMusicAsset,
   }) {
     return BreakingTemplate(
       id: id ?? this.id,
@@ -508,6 +682,8 @@ class BreakingTemplate {
       pipEnabled: pipEnabled ?? this.pipEnabled,
       pipPosition: pipPosition ?? this.pipPosition,
       pipScale: pipScale ?? this.pipScale,
+      backgroundMusicAsset:
+          backgroundMusicAsset ?? this.backgroundMusicAsset,
     );
   }
 
@@ -548,6 +724,7 @@ class BreakingTemplate {
         'pipEnabled': pipEnabled,
         'pipPosition': pipPosition,
         'pipScale': pipScale,
+        'backgroundMusicAsset': backgroundMusicAsset,
       };
 
   static BreakingTemplate fromJson(Map<String, dynamic> json) {
@@ -593,6 +770,7 @@ class BreakingTemplate {
       pipEnabled: (json['pipEnabled'] as bool?) ?? false,
       pipPosition: (json['pipPosition'] as String?) ?? 'bottomRight',
       pipScale: (json['pipScale'] as num?)?.toDouble() ?? 0.3,
+      backgroundMusicAsset: json['backgroundMusicAsset'] as String?,
     );
   }
 }

@@ -1,7 +1,7 @@
 name: tj_pro
 description: "TJ Pro — free offline photo and video editor for Android."
 publish_to: 'none'
-version: 1.1.0+10
+version: 1.2.0+11
 
 environment:
   sdk: ^3.13.7
@@ -75,6 +75,16 @@ flutter:
     # - Chroma-key backgrounds (~318 KB total, 1280x960): bundled.
     - assets/backgrounds/newsroom.jpg
     - assets/backgrounds/studio_desk.jpg
+    # News Studio v1.2.0 — built-in starter content (user-supplied
+    # 21 Nov 2026): two selectable video intro templates + four
+    # copyright-free news background-music tracks. All optional in
+    # the pickers; the Online Store carries the growing catalogue.
+    - assets/templates/intro_studio.mp4
+    - assets/templates/intro_globe.mp4
+    - assets/music/news_music_1.mp3
+    - assets/music/news_music_2.mp3
+    - assets/music/news_music_3.mp3
+    - assets/music/news_music_4.mp3
   # NO bundled Kasheeda font, NO bundled intro video — both are heavy
   # (12.6 MB TTF + 1.4 MB mp4) and are downloaded ON DEMAND instead
   # (see lib/services/asset_download_service.dart): the font loads via

@@ -26,6 +26,16 @@
 /// translator (ML Kit, on-device) opens from here.
 ///
 /// Look: dark navy/black + purple #7C3AED (mockups).
+///
+/// v1.2.0 restyle (approved mockup `k-captions.png`): the style
+/// picker is now a CapCut-style grouped card grid — category tabs
+/// (All / Karaoke / Pop / Typewriter / Flash / Urdu) over cards with
+/// live preview thumbnails — and the Urdu styles from
+/// `caption_styles.dart` (built on the `font_registry.dart` fonts)
+/// join the original 11, with the registry fonts in the Urdu font
+/// list and two Urdu one-tap presets. NO control, entry point or
+/// engine behaviour was removed: every pre-existing key, button,
+/// switch, export and burn-in path below is unchanged.
 library;
 
 import 'dart:async';
@@ -41,7 +51,9 @@ import '../services/caption_draft_service.dart';
 import '../services/caption_service.dart';
 import '../services/caption_styles.dart';
 import '../services/download_service.dart';
+import '../services/font_registry.dart';
 import '../services/video_export_service.dart';
+import '../theme.dart';
 import 'caption_editor.dart';
 import 'caption_translator_screen.dart';
 import 'karaoke_sync.dart';
@@ -81,6 +93,11 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
   double _previewPosition = 0.0;
   int _activeLine = -1;
   int _selectedLine = 0;
+
+  // Style picker state (v1.2.0 restyle): the selected CapCut-style
+  // category tab. Purely a view filter — every style stays reachable
+  // under 'All' and under its own category.
+  String _styleCategory = 'All';
 
   // Burn-in state.
   String? _burnVideoPath;
@@ -528,6 +545,136 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
     _edit(() => _e.addManualLine(text));
   }
 
+  // ---- Style picker (v1.2.0 CapCut-style card grid) ----
+
+  /// Category tabs for the style grid, in mockup order (the mockup's
+  /// Trending / Highlight / Glow / Aesthetic / Urdu become the
+  /// animation groups + Urdu, which is what the styles actually are).
+  static const List<String> _styleCategories = [
+    'All',
+    'Karaoke',
+    'Pop',
+    'Typewriter',
+    'Flash',
+    'Urdu',
+  ];
+
+  bool _inStyleCategory(StudioCaptionStyle style, String category) {
+    return switch (category) {
+      'All' => true,
+      'Urdu' => style.fontId != null,
+      'Karaoke' => style.animation == CaptionAnimation.karaoke,
+      'Pop' => style.animation == CaptionAnimation.pop,
+      'Typewriter' => style.animation == CaptionAnimation.typewriter,
+      'Flash' => style.animation == CaptionAnimation.flash,
+      _ => true,
+    };
+  }
+
+  /// One style card: a live preview thumbnail (sample words rendered
+  /// in the style's own colours / typeface) over the style name.
+  /// Tapping selects the style — the same action the old ChoiceChip
+  /// performed, with the same key.
+  Widget _styleCard(StudioCaptionStyle style, bool selected) {
+    final isUrdu = style.fontId != null;
+    final sample = isUrdu ? 'تازہ ترین خبر' : 'THE QUICK BROWN';
+    final words = sample.split(' ');
+    var previewStyle = TextStyle(
+      color: Color(style.textColor),
+      fontSize: (style.fontSizePx * 0.55).clamp(11.0, 16.0),
+      fontWeight: style.bold ? FontWeight.bold : FontWeight.normal,
+      shadows: style.shadow
+          ? const [
+              Shadow(color: Colors.black54, offset: Offset(1, 1), blurRadius: 2),
+            ]
+          : null,
+    );
+    if (isUrdu) {
+      // Registry-driven preview: the card renders in the style's own
+      // Urdu typeface (google_fonts download / Kasheeda FontLoader).
+      previewStyle = UrduFonts.byId(style.fontId!).apply(previewStyle);
+    }
+    final highlightStyle = previewStyle.copyWith(
+      color: Color(
+        style.highlightBg != 0 ? style.textColor : style.highlightColor,
+      ),
+    );
+    return InkWell(
+      key: Key('captionStyle-${style.id}'),
+      onTap: () {
+        setState(() => _p.captionStyleId = style.id);
+        _scheduleSave();
+      },
+      borderRadius: BorderRadius.circular(TjProTheme.cardRadius),
+      child: Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFF181828),
+          borderRadius: BorderRadius.circular(TjProTheme.cardRadius),
+          border: Border.all(
+            color: selected ? TjProTheme.violet : Colors.white12,
+            width: selected ? 2 : 1,
+          ),
+        ),
+        padding: const EdgeInsets.all(8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: style.backgroundColor != 0
+                      ? Color(style.backgroundColor)
+                      : Colors.black,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                alignment: Alignment.center,
+                child: RichText(
+                  textAlign: TextAlign.center,
+                  textDirection: isUrdu ? TextDirection.rtl : TextDirection.ltr,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  text: TextSpan(
+                    children: [
+                      for (var i = 0; i < words.length; i++)
+                        TextSpan(
+                          text: i == words.length - 1
+                              ? (style.uppercase
+                                  ? words[i].toUpperCase()
+                                  : words[i])
+                              : '${style.uppercase ? words[i].toUpperCase() : words[i]} ',
+                          style: i == 0 ? highlightStyle : previewStyle,
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    style.nameEn,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+                if (selected)
+                  const Icon(
+                    Icons.check_circle,
+                    size: 16,
+                    color: TjProTheme.violetBright,
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Theme(
@@ -579,7 +726,9 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 8),
-                  Row(
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
                     children: [
                       FilledButton(
                         key: const Key('restoreDraftButton'),
@@ -589,7 +738,6 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
                         ),
                         child: const Text('Draft restore karein'),
                       ),
-                      const SizedBox(width: 8),
                       TextButton(
                         onPressed: _dismissDraft,
                         child: const Text('Draft hatayein'),
@@ -609,7 +757,7 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
           height: 200,
           decoration: BoxDecoration(
             color: Colors.black,
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(TjProTheme.cardRadius),
             border: Border.all(color: Colors.white24),
           ),
           child: Stack(
@@ -706,26 +854,64 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
           ),
         ],
         const SizedBox(height: 20),
-        const Text(
-          'Style — 11 looks',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        Text(
+          'Style — ${StudioCaptionStyles.all.length} looks',
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: StudioCaptionStyles.all.map((style) {
-            final selected = project.captionStyleId == style.id;
-            return ChoiceChip(
-              key: Key('captionStyle-${style.id}'),
-              label: Text(style.nameEn),
-              selected: selected,
-              onSelected: (_) {
-                setState(() => project.captionStyleId = style.id);
-                _scheduleSave();
+        // CapCut-style category tabs (scrollable on narrow screens).
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: _styleCategories.map((category) {
+              final selected = _styleCategory == category;
+              return Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: ChoiceChip(
+                  key: Key('captionStyleCategory-$category'),
+                  label: Text(category),
+                  selected: selected,
+                  onSelected: (_) =>
+                      setState(() => _styleCategory = category),
+                ),
+              );
+            }).toList(),
+          ),
+        ),
+        const SizedBox(height: 10),
+        // Style cards with live preview thumbnails. The grid is a
+        // view over ALL styles — the category only filters which
+        // cards are visible, nothing is removed.
+        Builder(
+          builder: (context) {
+            final visible = StudioCaptionStyles.all
+                .where((s) => _inStyleCategory(s, _styleCategory))
+                .toList();
+            return LayoutBuilder(
+              builder: (context, constraints) {
+                final columns = constraints.maxWidth >= 560
+                    ? 4
+                    : constraints.maxWidth >= 360
+                        ? 3
+                        : 2;
+                return GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: columns,
+                    crossAxisSpacing: TjProTheme.gridGap,
+                    mainAxisSpacing: TjProTheme.gridGap,
+                    childAspectRatio: 0.92,
+                  ),
+                  itemCount: visible.length,
+                  itemBuilder: (context, i) => _styleCard(
+                    visible[i],
+                    project.captionStyleId == visible[i].id,
+                  ),
+                );
               },
             );
-          }).toList(),
+          },
         ),
         const SizedBox(height: 12),
         const Text(
@@ -751,10 +937,13 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
-        Row(
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 8,
+          runSpacing: 8,
           children: [
             const Text('Position'),
-            const Spacer(),
             SegmentedButton<CaptionPosition>(
               segments: const [
                 ButtonSegment(value: CaptionPosition.top, label: Text('Top')),
@@ -776,10 +965,13 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
           ],
         ),
         const SizedBox(height: 8),
-        Row(
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 8,
+          runSpacing: 8,
           children: [
             const Text('Size'),
-            const Spacer(),
             SegmentedButton<CaptionSize>(
               segments: const [
                 ButtonSegment(value: CaptionSize.small, label: Text('S')),
@@ -828,10 +1020,13 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
           }).toList(),
         ),
         const SizedBox(height: 8),
-        Row(
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 8,
+          runSpacing: 8,
           children: [
             const Text('Font'),
-            const Spacer(),
             DropdownButton<String>(
               key: const Key('captionFontDropdown'),
               value: CaptionFonts.forLang(tehreerLangOf(project.tehreer))
@@ -854,6 +1049,12 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
         const Text(
           'Bebas / Anton / Montserrat / Poppins app mein bundle nahi — '
           'preview mein system font dikhega, ASS mein family name likha jayega.',
+          style: TextStyle(color: Colors.grey, fontSize: 12),
+        ),
+        const Text(
+          'Urdu fonts: Jameel Noori (house font) ke saath Noto Nastaliq, '
+          'Gulzar aur Noto Naskh — ye google_fonts se runtime download + '
+          'cache hote hain (font registry: UrduFonts).',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
         SwitchListTile(
@@ -925,7 +1126,9 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
           ],
         ),
         const SizedBox(height: 8),
-        Row(
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
           children: [
             OutlinedButton(
               key: const Key('shiftBackButton'),
@@ -934,7 +1137,6 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
                   : () => _edit(() => _e.shiftAll(-0.5)),
               child: const Text('−0.5s sab'),
             ),
-            const SizedBox(width: 8),
             OutlinedButton(
               key: const Key('shiftForwardButton'),
               onPressed: _e.lines.isEmpty
@@ -942,7 +1144,6 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
                   : () => _edit(() => _e.shiftAll(0.5)),
               child: const Text('+0.5s sab'),
             ),
-            const SizedBox(width: 8),
             OutlinedButton(
               key: const Key('syncVoiceoverButton'),
               onPressed: project.voiceoverDurationSec == null
@@ -975,18 +1176,22 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
+                    Wrap(
+                      alignment: WrapAlignment.spaceBetween,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 8,
                       children: [
-                        Expanded(
-                          child: Text(
-                            '${line.startSec.toStringAsFixed(1)}s – ${line.endSec.toStringAsFixed(1)}s',
-                            style: const TextStyle(
-                              color: Colors.grey,
-                              fontSize: 12,
-                            ),
+                        Text(
+                          '${line.startSec.toStringAsFixed(1)}s – ${line.endSec.toStringAsFixed(1)}s',
+                          style: const TextStyle(
+                            color: Colors.grey,
+                            fontSize: 12,
                           ),
                         ),
-                        IconButton(
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
                           key: Key('captionNudgeBack-$index'),
                           icon: const Icon(Icons.remove, size: 18),
                           tooltip: '−0.5s',
@@ -1021,11 +1226,14 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
                               ? null
                               : () => _edit(() => _e.mergeWithNext(index)),
                         ),
-                        IconButton(
-                          key: Key('captionDelete-$index'),
-                          icon: const Icon(Icons.delete_outline),
-                          tooltip: 'Line hatayein',
-                          onPressed: () => _edit(() => _e.deleteLine(index)),
+                            IconButton(
+                              key: Key('captionDelete-$index'),
+                              icon: const Icon(Icons.delete_outline),
+                              tooltip: 'Line hatayein',
+                              onPressed: () =>
+                                  _edit(() => _e.deleteLine(index)),
+                            ),
+                          ],
                         ),
                       ],
                     ),

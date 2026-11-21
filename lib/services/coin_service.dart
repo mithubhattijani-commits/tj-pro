@@ -16,12 +16,14 @@ import 'unity_ads_service.dart';
 /// Earn:
 /// - 1 rewarded ad = 50 coins ([rewardPerAd]).
 /// - Daily free coins = 50 ([dailyFreeCoins]).
-/// - Max 20 rewarded ads/day = 1000 coins/day ([maxRewardedAdsPerDay]).
+/// - Max 50 rewarded ads/day = 2500 coins/day ([maxRewardedAdsPerDay]).
 ///
 /// Spend ([CoinCosts]):
-/// - One Click AI News Maker 100, voiceover 50/video, export 720p 50 /
-///   1080p 100 / 4K 200, chroma key 50, premium template 25,
-///   multi-platform publish 100, AI Enhance 50, auto captions 25.
+/// - One Click AI News Maker 100, voiceover 50/video, chroma key 50,
+///   premium template 25, multi-platform publish 100, AI Enhance 50,
+///   auto captions 25. (Export resolution is FREE since v1.2.0 — ads
+///   play alongside the export instead; the legacy export* entries in
+///   [CoinCosts] are retained but no longer charged by ExportScreen.)
 ///
 /// Admins (the 3 emails in [SupabaseService.adminEmails]) pay nothing:
 /// the SERVER waives the spend in `tjpro-spend-coins` and the Watch
@@ -56,9 +58,9 @@ class CoinService {
   static const int dailyFreeCoins = 50;
 
   /// Max rewarded ads per user per day (server-enforced too).
-  static const int maxRewardedAdsPerDay = 20;
+  static const int maxRewardedAdsPerDay = 50;
 
-  /// Max coins earnable from ads per day (20 x 50).
+  /// Max coins earnable from ads per day (50 x 50).
   static const int maxAdCoinsPerDay =
       maxRewardedAdsPerDay * rewardPerAd;
 
@@ -219,7 +221,7 @@ class CoinService {
   /// The ad runs on the coins placement ([rewardedCoinsPlacementId]).
   /// Coins are credited SERVER-side (`tjpro-claim-ad-reward`) only
   /// after the ad completes; a skip or a failed ad earns nothing.
-  /// The server enforces the 20/day cap — when it answers cap
+  /// The server enforces the 50/day cap — when it answers cap
   /// reached, the local counter is set to the cap.
   Future<CoinEarnResult> watchRewardedAd() async {
     if (isAdminNow) {
@@ -231,7 +233,7 @@ class CoinService {
     if (adsRemainingToday <= 0) {
       return const CoinEarnResult(
         ok: false,
-        error: 'Daily ad limit reached (20 ads/day). Come back tomorrow.',
+        error: 'Daily ad limit reached (50 ads/day). Come back tomorrow.',
       );
     }
     if (!AppConfig.unityAdsEnabled || !AppConfig.unityRewardedEnabled) {
@@ -290,7 +292,7 @@ class CoinService {
         return const CoinEarnResult(
           ok: false,
           error:
-              'Daily ad limit reached (20 ads/day). Come back tomorrow.',
+              'Daily ad limit reached (50 ads/day). Come back tomorrow.',
         );
       }
       await _recordAdWatched();

@@ -68,6 +68,7 @@ library;
 
 import 'dart:io';
 
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart';
 import 'package:gal/gal.dart';
 import 'package:path/path.dart' as p;
@@ -492,6 +493,56 @@ class ReelExportService {
         final c = cancelledResult();
         if (c != null) return c;
       }
+      // --- 2b. Background music bed (v1.2.0, built-in news music). ---
+      // The picked built-in track (project.backgroundMusicAsset) loops
+      // quietly under whatever audio the reel already has. Any failure
+      // is a NOTE — the export continues without the bed, never fails.
+      final musicTrack =
+          BuiltInNewsMusic.fromAsset(project.backgroundMusicAsset);
+      if (musicTrack != null) {
+        step('Background music mix ho raha hai…', 0.46);
+        final musicFile = await _extractAsset(
+          musicTrack.assetPath,
+          dir,
+          'reel_music_$stamp.mp3',
+        );
+        if (musicFile == null) {
+          notes.add(
+            'Background music file nahi mila — baghair music ke export '
+            'ho raha hai.',
+          );
+        } else {
+          final hasAudio = await probeHasAudio(File(out));
+          final bedOut = p.join(dir.path, 'reel_musicmix_$stamp.mp4');
+          final res = await runStage(
+            FfmpegService.musicBedCommand(
+              input: out,
+              musicPath: musicFile.path,
+              output: bedOut,
+              hasClipAudio: hasAudio,
+              audioBitrateKbps: effectiveSettings.audioBitrateKbps,
+            ),
+            0.46,
+            0.48,
+            expectedMs: reelMs,
+            onProgress: onProgress,
+          );
+          if (res.ok) {
+            out = bedOut;
+          } else {
+            notes.add(
+              'Background music mix nahi hua — baghair music ke export '
+              'ho raha hai.',
+            );
+          }
+        }
+        step('Background music done.', 0.48);
+      }
+
+      {
+        final c = cancelledResult();
+        if (c != null) return c;
+      }
       // --- 3. Chroma key (preset sensitivity + background). ---
       final chroma = handoff.chroma;
       if (chroma != null) {
@@ -661,6 +712,26 @@ class ReelExportService {
       }
       // --- 6. Intro / outro assembly. ---
       step('Intro/outro jor rahe hain…', 0.80);
+      // Built-in video intro template (v1.2.0): when the project has
+      // one applied, extract its bundled MP4 so the assembly can
+      // prepend it as the first segment. Missing/failed = note only.
+      String? videoIntroPath;
+      final vtpl = VideoIntroTemplate.fromId(project.videoTemplateId);
+      if (vtpl != null) {
+        final f = await _extractAsset(
+          vtpl.assetPath,
+          dir,
+          'reel_vtpl_$stamp.mp4',
+        );
+        if (f != null) {
+          videoIntroPath = f.path;
+        } else {
+          notes.add(
+            'Video intro template file nahi mila — intro ke baghair '
+            'export ho raha hai.',
+          );
+        }
+      }
       final assembled = await _assembleIntroOutro(
         main: out,
         dir: dir,
@@ -674,6 +745,7 @@ class ReelExportService {
         settings: effectiveSettings,
         reelMs: reelMs,
         onProgress: onProgress,
+        videoIntroPath: videoIntroPath,
       );
       if (assembled != null) out = assembled;
       step('Intro/outro done.', 0.86);
@@ -742,6 +814,27 @@ class ReelExportService {
     final dir = Directory(p.join(tmp.path, 'reel_export'));
     if (!await dir.exists()) await dir.create(recursive: true);
     return dir;
+  }
+
+  /// Extracts a bundled asset to a real file in [dir] (FFmpeg needs
+  /// file paths, not asset keys). Returns null on any failure — the
+  /// caller notes it and continues; never throws (v1.2.0).
+  static Future<File?> _extractAsset(
+    String assetPath,
+    Directory dir,
+    String name,
+  ) async {
+    try {
+      final data = await rootBundle.load(assetPath);
+      final f = File(p.join(dir.path, name));
+      await f.writeAsBytes(
+        data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+        flush: true,
+      );
+      return f;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Step 5 — rotating logo overlay. Returns the new output path, or
@@ -927,8 +1020,44 @@ class ReelExportService {
     ExportSettings settings = const ExportSettings(),
     int? reelMs,
     void Function(double progress)? onProgress,
+    String? videoIntroPath,
   }) async {
     final segments = <String>[];
+
+    // Built-in video intro template segment (v1.2.0) — always FIRST
+    // when the project has one applied. Normalized like the channel
+    // intro; a failed normalize is a note, never a crash.
+    final vtplPath = videoIntroPath;
+    if (vtplPath != null) {
+      final hasAudio = await probeHasAudio(File(vtplPath));
+      final vtplNorm = p.join(dir.path, 'reel_vtpl_norm_$stamp.mp4');
+      final res = await _runStage(
+        FfmpegService.normalizeWithAudioCommand(
+          input: vtplPath,
+          trimStart: 0,
+          trimEnd: 30,
+          width: width,
+          height: height,
+          output: vtplNorm,
+          addSilentAudio: !hasAudio,
+          fps: settings.fps,
+          videoBitrateKbps: settings.videoBitrateKbps,
+          audioBitrateKbps: settings.audioBitrateKbps,
+        ),
+        0.80,
+        0.82,
+        expectedMs: 17000,
+        onProgress: onProgress,
+      );
+      if (res.ok) {
+        segments.add(vtplNorm);
+      } else {
+        notes.add(
+          'Video intro template tayyar nahi hua — intro ke baghair '
+          'export ho raha hai.',
+        );
+      }
+    }
 
     if (preset.showIntro) {
       final svc = assetService ?? const AssetDownloadService();
