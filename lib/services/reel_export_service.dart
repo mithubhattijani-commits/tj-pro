@@ -525,7 +525,6 @@ class ReelExportService {
             0.46,
             0.48,
             expectedMs: reelMs,
-            onProgress: onProgress,
           );
           if (res.ok) {
             out = bedOut;
