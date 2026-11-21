@@ -547,6 +547,21 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
         _applyWorkingPreset(preset, workingPreset);
         preset.templateKind =
             selected?.kind == 'classic' ? 'classic' : 'nigraanFinal';
+        // The reel export renders by the PROJECT's templateKind
+        // (ReelExportService passes project.templateKind to
+        // renderLiveTemplateImage, and effectivePresetFor copies it
+        // onto the preset), so a project handed into this screen
+        // must follow the preset's new kind — otherwise a project
+        // created as 'breaking' would keep exporting the breaking
+        // frame after the user switched it to the Final 3-Ribbon
+        // template here. (The breaking / category branches above
+        // already sync the project via applyToProject.)
+        final project = _project;
+        if (project != null &&
+            project.templateKind != preset.templateKind) {
+          project.templateKind = preset.templateKind;
+          unawaited(NewsProjectStore.save(project));
+        }
         unawaited(
           ChannelPresetStore.saveAll(_presets, selectedId: preset.id),
         );
