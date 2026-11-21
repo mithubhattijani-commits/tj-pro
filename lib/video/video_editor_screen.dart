@@ -28,8 +28,6 @@ import '../live/live_studio_screen.dart';
 import '../news/breaking_templates.dart';
 import '../news/audio_tools_screen.dart';
 import '../news/caption_translator_screen.dart';
-
-part 'video_editor_panels.dart';
 import '../news/channel_preset.dart';
 import '../news/news_project.dart';
 import '../news/project_handoff.dart';
@@ -41,6 +39,8 @@ import '../services/pro_editor.dart';
 import '../services/fx_pack.dart';
 import '../services/pro_vision.dart';
 import '../services/reel_export_service.dart';
+
+part 'video_editor_panels.dart';
 
 class VideoClip {
   VideoClip(this.file, this.duration, this.aspectRatio);

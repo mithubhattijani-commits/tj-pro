@@ -1,3 +1,7 @@
+// The panels are an extension on the editor's State class by design
+// (part-file pattern), so calling the State's protected setState from
+// here is intentional.
+// ignore_for_file: invalid_use_of_protected_member
 part of 'video_editor_screen.dart';
 
 /// Tool panels for the video editor (one-build regroup).
