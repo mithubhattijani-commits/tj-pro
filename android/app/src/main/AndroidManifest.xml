@@ -33,11 +33,9 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
-        <!-- AdMob test app ID (see lib/services/ad_config.dart).
-             Replace with the real app ID when real ad units are used. -->
-        <meta-data
-            android:name="com.google.android.gms.ads.APPLICATION_ID"
-            android:value="ca-app-pub-3940256099942544~3347511713" />
+        <!-- AdMob meta-data REMOVED (one-build, defect #4): the app
+             is Unity-Ads-only now; the Google test app ID that used
+             to live here is gone with the google_mobile_ads plugin. -->
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
