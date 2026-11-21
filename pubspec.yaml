@@ -1,7 +1,7 @@
 name: tj_pro
 description: "TJ Pro — free offline photo and video editor for Android."
 publish_to: 'none'
-version: 1.0.8+9
+version: 1.1.0+10
 
 environment:
   sdk: ^3.13.7
@@ -21,7 +21,9 @@ dependencies:
   google_mlkit_face_detection: ^0.15.1
   google_mlkit_subject_segmentation: ^0.2.1
   google_mlkit_selfie_segmentation: ^0.12.1
-  google_mobile_ads: ^7.0.0
+  # google_mobile_ads REMOVED (one-build, defect #4): the decided
+  # ads system is Unity Ads only — see unity_ads_plugin below and
+  # lib/services/premium_gate.dart for the rewarded unlock gate.
   unity_ads_plugin: ^0.5.0
   url_launcher: ^6.2.5
   whisper_ggml_plus: ^1.5.0
