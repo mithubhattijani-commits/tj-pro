@@ -3,9 +3,12 @@
 /// auto-enhance), export to gallery.
 library;
 
+import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:gal/gal.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image/image.dart' as img;
@@ -15,10 +18,14 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../app_config.dart';
-import '../theme.dart';
-import '../services/ad_service.dart';
 import '../services/ai_service.dart';
 import '../services/photo_pipeline.dart';
+import '../services/premium_gate.dart';
+
+/// Round-2 theme unification (P13): the photo editor now wears the
+/// app's violet identity instead of its old private gold theme.
+const _accent = Color(0xFF7C3AED);
+const _accentLight = Color(0xFFA78BFA);
 
 const _filterLabels = {
   PhotoFilter.normal: 'Normal',
@@ -48,10 +55,48 @@ class PhotoEditorScreen extends StatefulWidget {
 class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
   final _picker = ImagePicker();
   File? _workingFile;
+  // Round-2 history (P6): the originally picked photo + a stack of
+  // working-file states (max 10 undo steps) around _replaceWorking.
+  File? _originalFile;
+  final List<File> _history = [];
+  int _historyIndex = -1;
+  bool _comparing = false; // hold-to-compare: show the original
   PhotoFilter _filter = PhotoFilter.normal;
+  // Round-2 Filters: strength of the chosen filter look + the LUT row.
+  double _filterIntensity = 1.0; // 0..1
+  String _selectedLut = ''; // '' = no LUT, else a photoLuts name
+  final Map<String, CubeLut> _luts = {};
+  bool _lutsLoading = false;
+  Map<PhotoFilter, Uint8List> _filterThumbs = {};
+  Map<String, Uint8List> _lutThumbs = {};
+  String? _thumbKey; // working-file path the thumbs were built for
+  // Round-2 Adjust panel: 12 sliders (Light / Colour / Detail).
+  double _exposure = 0; // -100..100
   double _brightness = 0; // -100..100
   double _contrast = 1.0; // 0..2
+  double _highlights = 0; // -100..100
+  double _shadows = 0; // -100..100
   double _saturation = 1.0; // 0..2
+  double _vibrance = 0; // -100..100
+  double _temperature = 0; // -100..100
+  double _tint = 0; // -100..100
+  double _sharpenDetail = 0; // 0..100 (Adjust > Detail)
+  double _vignette = 0; // 0..100
+  double _fade = 0; // 0..100
+  // Round-2 Crop panel state.
+  String _cropPreset = 'free'; // free, 9:16, 1:1, 16:9, 4:5, 3:4
+  double _straighten = 0; // -45..45 degrees, applied on button tap
+  // Round-2 Enhance intensity sliders (defaults = the old hard-coded
+  // strengths: Sharpen 0.8 -> 80, Denoise 0.6 -> 60).
+  double _sharpenAmount = 80; // 0..100
+  double _denoiseAmount = 60; // 0..100
+  // Round-2 AI tab: solid colour used by Replace Background.
+  Color _replaceBgColor = Colors.white;
+  // Pixel-preview (LUT / HSL / non-linear Adjust): a downscaled,
+  // fully-processed copy of the photo, debounce-refreshed on change.
+  Uint8List? _previewBytes;
+  String? _previewKey; // working-file path _previewBytes belongs to
+  Timer? _previewTimer;
   String _text = '';
   Color _textColor = Colors.white;
   double _textSize = 42;
@@ -88,28 +133,310 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
   int _hslSelectedColor = 0;
 
 
+  @override
+  void initState() {
+    super.initState();
+    _ensureLuts();
+  }
+
+  @override
+  void dispose() {
+    _previewTimer?.cancel();
+    super.dispose();
+  }
+
   void _setStatus(String s) => setState(() => _status = s);
+
+  /// P15: failures must be SEEN, not just whispered into the small grey
+  /// status line — every user-action failure also raises a SnackBar.
+  /// The status string is still set (other code reads it).
+  void _fail(String s) {
+    _setStatus(s);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(s)),
+      );
+    }
+  }
 
   List<double> get _matrix => buildColorMatrix(
         filter: _filter,
         brightness: _brightness,
         contrast: _contrast,
         saturation: _saturation,
+        filterIntensity: _filterIntensity,
+        exposure: _exposure,
+        temperature: _temperature,
+        tint: _tint,
+        vibrance: _vibrance,
+        fade: _fade,
       );
+
+  bool get _hslIsNeutral => _hslAdjustments.every(
+        (a) => a[0] == 0 && a[1] == 1.0 && a[2] == 0,
+      );
+
+  /// True when the preview needs the per-pixel pass (LUT selected, HSL
+  /// touched, or a non-linear Adjust control moved) — the ColorFilter
+  /// matrix alone cannot express those.
+  bool get _needsPixelPreview =>
+      _selectedLut.isNotEmpty ||
+      !_hslIsNeutral ||
+      _highlights != 0 ||
+      _shadows != 0 ||
+      _vignette != 0 ||
+      _sharpenDetail != 0;
+
+  /// Debounced pixel-preview refresh (250 ms). Builds a downscaled
+  /// (max 720 px wide) copy with matrix + LUT + pixel Adjust + HSL
+  /// baked in, so Filters/LUT/HSL/Adjust all preview LIVE.
+  void _schedulePixelPreview() {
+    _previewTimer?.cancel();
+    if (_workingFile == null || !_needsPixelPreview) {
+      if (_previewBytes != null) {
+        setState(() {
+          _previewBytes = null;
+          _previewKey = null;
+        });
+      }
+      return;
+    }
+    _previewTimer = Timer(
+      const Duration(milliseconds: 250),
+      _buildPixelPreview,
+    );
+  }
+
+  Future<void> _buildPixelPreview() async {
+    final file = _workingFile;
+    if (file == null || !_needsPixelPreview) return;
+    final key = file.path;
+    try {
+      var image = await _decodeWorking();
+      if (image.width > 720) {
+        image = img.copyResize(image, width: 720);
+      }
+      image = await applyColorMatrix(image, _matrix);
+      final lut = _luts[_selectedLut];
+      if (lut != null) {
+        image = await applyLut(image, lut);
+      }
+      if (_highlights != 0 ||
+          _shadows != 0 ||
+          _vignette != 0 ||
+          _sharpenDetail != 0) {
+        image = await applyAdjustments(
+          image,
+          highlights: _highlights,
+          shadows: _shadows,
+          vignette: _vignette,
+          sharpenDetail: _sharpenDetail,
+        );
+      }
+      if (!_hslIsNeutral) {
+        image = await adjustHSL(image, _hslAdjustments);
+      }
+      final bytes = _hasTransparency
+          ? img.encodePng(image)
+          : img.encodeJpg(image, quality: 85);
+      if (!mounted || _workingFile?.path != key) return;
+      setState(() {
+        _previewBytes = bytes;
+        _previewKey = key;
+      });
+    } catch (_) {
+      // Preview is best-effort: the matrix preview stays on screen.
+    }
+  }
+
+  /// Load the 5 bundled .cube LUTs once (assets declared in pubspec,
+  /// same files as the video editor) and parse them for the photo
+  /// pipeline. Failures leave the LUT row empty, never crash.
+  Future<void> _ensureLuts() async {
+    if (_luts.isNotEmpty || _lutsLoading) return;
+    _lutsLoading = true;
+    try {
+      for (final e in photoLuts) {
+        final name = e['name']!;
+        try {
+          final src = await rootBundle.loadString(e['asset']!);
+          final lut = parseCubeLut(src);
+          if (lut != null) _luts[name] = lut;
+        } catch (_) {
+          // One bad/missing asset must not block the others.
+        }
+      }
+    } finally {
+      _lutsLoading = false;
+    }
+    if (mounted) {
+      setState(() {});
+      _buildFilterThumbs();
+    }
+  }
+
+  /// Filter/LUT thumbnails: each look rendered onto a downscaled copy
+  /// of the CURRENT photo (cached per working file) — no more blind
+  /// text chips (P8).
+  Future<void> _buildFilterThumbs() async {
+    final file = _workingFile;
+    if (file == null) return;
+    final key = file.path;
+    if (_thumbKey == key && _filterThumbs.isNotEmpty) return;
+    try {
+      var base = await _decodeWorking();
+      base = img.copyResize(base, width: 144);
+      final map = <PhotoFilter, Uint8List>{};
+      for (final pf in PhotoFilter.values) {
+        final m = buildColorMatrix(
+          filter: pf,
+          brightness: 0,
+          contrast: 1,
+          saturation: 1,
+        );
+        final im = await applyColorMatrix(base, m);
+        map[pf] = img.encodeJpg(im, quality: 80);
+      }
+      final lutMap = <String, Uint8List>{};
+      for (final e in _luts.entries) {
+        final im = await applyLut(base, e.value);
+        lutMap[e.key] = img.encodeJpg(im, quality: 80);
+      }
+      if (!mounted || _workingFile?.path != key) return;
+      setState(() {
+        _filterThumbs = map;
+        _lutThumbs = lutMap;
+        _thumbKey = key;
+      });
+    } catch (_) {
+      // Thumbnails are best-effort; the panel falls back to chips.
+    }
+  }
+
+  /// Reset every non-destructive edit control to its default.
+  void _resetEditParams() {
+    _filter = PhotoFilter.normal;
+    _filterIntensity = 1.0;
+    _selectedLut = '';
+    _exposure = 0;
+    _brightness = 0;
+    _contrast = 1.0;
+    _highlights = 0;
+    _shadows = 0;
+    _saturation = 1.0;
+    _vibrance = 0;
+    _temperature = 0;
+    _tint = 0;
+    _sharpenDetail = 0;
+    _vignette = 0;
+    _fade = 0;
+    _straighten = 0;
+    _cropPreset = 'free';
+    _hslAdjustments = List.generate(8, (_) => [0.0, 1.0, 0.0]);
+    _hslSelectedColor = 0;
+    _previewBytes = null;
+    _previewKey = null;
+  }
 
   Future<void> _pick() async {
     final picked = await _picker.pickImage(source: ImageSource.gallery);
     if (picked == null) return;
+    final f = File(picked.path);
     setState(() {
-      _workingFile = File(picked.path);
-      _filter = PhotoFilter.normal;
-      _brightness = 0;
-      _contrast = 1.0;
-      _saturation = 1.0;
+      _workingFile = f;
+      _originalFile = f;
+      _history
+        ..clear()
+        ..add(f);
+      _historyIndex = 0;
+      _resetEditParams();
       _text = '';
       _hasTransparency = false;
+      _thumbKey = null;
+      _filterThumbs = {};
+      _lutThumbs = {};
       _status = 'Photo loaded.';
     });
+    _buildFilterThumbs();
+  }
+
+  /// The single choke point for changing the working photo: pushes the
+  /// new state onto the undo history (max 10 states kept) and refreshes
+  /// the per-photo caches. Every destructive op flows through here or
+  /// through _replaceWorking (which ends here too).
+  void _setWorkingFile(File f) {
+    // Drop any redo tail, then append the new state.
+    if (_historyIndex < _history.length - 1) {
+      _history.removeRange(_historyIndex + 1, _history.length);
+    }
+    if (_history.isEmpty || _history.last.path != f.path) {
+      _history.add(f);
+    }
+    while (_history.length > 10) {
+      _history.removeAt(0);
+    }
+    _historyIndex = _history.length - 1;
+    setState(() {
+      _workingFile = f;
+      _previewBytes = null;
+      _previewKey = null;
+      _thumbKey = null;
+    });
+    _buildFilterThumbs();
+    _schedulePixelPreview();
+  }
+
+  bool get _canUndo => _historyIndex > 0;
+  bool get _canRedo => _historyIndex < _history.length - 1;
+
+  void _undo() {
+    if (!_canUndo || _busy) return;
+    setState(() {
+      _historyIndex--;
+      _workingFile = _history[_historyIndex];
+      _previewBytes = null;
+      _previewKey = null;
+      _thumbKey = null;
+      _status = 'Undo.';
+    });
+    _buildFilterThumbs();
+    _schedulePixelPreview();
+  }
+
+  void _redo() {
+    if (!_canRedo || _busy) return;
+    setState(() {
+      _historyIndex++;
+      _workingFile = _history[_historyIndex];
+      _previewBytes = null;
+      _previewKey = null;
+      _thumbKey = null;
+      _status = 'Redo.';
+    });
+    _buildFilterThumbs();
+    _schedulePixelPreview();
+  }
+
+  /// Reset-all (P6): restore the originally picked photo and every
+  /// default param; history restarts from the original.
+  void _resetAll() {
+    final orig = _originalFile;
+    if (orig == null || _busy) return;
+    setState(() {
+      _workingFile = orig;
+      _history
+        ..clear()
+        ..add(orig);
+      _historyIndex = 0;
+      _resetEditParams();
+      _text = '';
+      _hasTransparency = false;
+      _thumbKey = null;
+      _filterThumbs = {};
+      _lutThumbs = {};
+      _status = 'Reset — original photo restored.';
+    });
+    _buildFilterThumbs();
   }
 
   /// Working files are always PNG (preserves transparency after a
@@ -123,7 +450,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
       ),
     );
     await f.writeAsBytes(img.encodePng(image));
-    setState(() => _workingFile = f);
+    _setWorkingFile(f);
   }
 
   Future<img.Image> _decodeWorking() async {
@@ -135,25 +462,105 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     return image;
   }
 
+  /// The full preset list handed to the system cropper (P10). The
+  /// package's enum has no portrait 9:16 / 4:5 / 3:4 entries, so those
+  /// exact ratios are ALSO offered as one-tap centre crops in the Crop
+  /// panel (see _quickRatioCrop) — every promised preset works.
+  List<CropAspectRatioPreset> _cropPresets() {
+    const all = [
+      CropAspectRatioPreset.original,
+      CropAspectRatioPreset.square,
+      CropAspectRatioPreset.ratio16x9,
+      CropAspectRatioPreset.ratio5x4,
+      CropAspectRatioPreset.ratio4x3,
+      CropAspectRatioPreset.ratio3x2,
+      CropAspectRatioPreset.ratio5x3,
+      CropAspectRatioPreset.ratio7x5,
+    ];
+    // The selected panel preset opens first in the cropper where the
+    // enum can express it.
+    final first = switch (_cropPreset) {
+      '1:1' => CropAspectRatioPreset.square,
+      '16:9' => CropAspectRatioPreset.ratio16x9,
+      '4:5' => CropAspectRatioPreset.ratio5x4,
+      '3:4' => CropAspectRatioPreset.ratio4x3,
+      _ => CropAspectRatioPreset.original,
+    };
+    return [first, ...all.where((e) => e != first)];
+  }
+
   Future<void> _crop() async {
     final file = _workingFile;
     if (file == null) return;
-    final cropped = await ImageCropper().cropImage(
-      sourcePath: file.path,
-      // PNG keeps transparency after a background removal; JPG otherwise.
-      compressFormat: _hasTransparency
-          ? ImageCompressFormat.png
-          : ImageCompressFormat.jpg,
-      uiSettings: [
-        AndroidUiSettings(
-          toolbarTitle: 'Crop photo',
-          lockAspectRatio: false,
-        ),
-      ],
-    );
-    if (cropped != null) {
-      setState(() => _workingFile = File(cropped.path));
+    try {
+      // image_cropper v13: presets live inside AndroidUiSettings
+      // (the top-level aspectRatioPresets arg no longer exists).
+      // Portrait ratios the enum lacks (9:16 / 4:5 / 3:4) are covered
+      // by the in-panel one-tap centre crops.
+      final cropped = await ImageCropper().cropImage(
+        sourcePath: file.path,
+        // PNG keeps transparency after a background removal; JPG otherwise.
+        compressFormat: _hasTransparency
+            ? ImageCompressFormat.png
+            : ImageCompressFormat.jpg,
+        uiSettings: [
+          AndroidUiSettings(
+            toolbarTitle: 'Crop photo',
+            lockAspectRatio: false,
+            aspectRatioPresets: _cropPresets(),
+          ),
+        ],
+      );
+      if (cropped != null) {
+        _setWorkingFile(File(cropped.path));
+        _setStatus('Cropped.');
+      }
+    } catch (e) {
+      _fail('Crop failed: $e');
     }
+  }
+
+  /// One-tap centre crop to an exact ratio (9:16, 1:1, 16:9, 4:5, 3:4).
+  /// Goes through the history stack, so it is undoable like any op.
+  Future<void> _quickRatioCrop(String label, int rx, int ry) async {
+    if (_workingFile == null || _busy) return;
+    setState(() => _cropPreset = label);
+    await _runEnhance('Cropping to $label', () async {
+      final image = await _decodeWorking();
+      final target = rx / ry;
+      final current = image.width / image.height;
+      int w = image.width, h = image.height;
+      if (current > target) {
+        w = (image.height * target).round();
+      } else {
+        h = (image.width / target).round();
+      }
+      if (w == image.width && h == image.height) return;
+      final x = (image.width - w) ~/ 2;
+      final y = (image.height - h) ~/ 2;
+      final out = img.copyCrop(image, x: x, y: y, width: w, height: h);
+      await _replaceWorking(out);
+    });
+  }
+
+  /// Mirror the photo horizontally (Crop panel — its only home now).
+  Future<void> _flipHorizontal() async {
+    await _runEnhance('Flipping', () async {
+      final image = await _decodeWorking();
+      await _replaceWorking(flipHorizontalPhoto(image));
+    });
+  }
+
+  /// Bake the straighten slider's angle into the photo, then re-centre
+  /// the slider so a second Apply starts from the new "level".
+  Future<void> _applyStraighten() async {
+    if (_straighten == 0) return;
+    final angle = _straighten;
+    await _runEnhance('Straightening', () async {
+      final image = await _decodeWorking();
+      await _replaceWorking(straightenPhoto(image, angle));
+    });
+    if (mounted) setState(() => _straighten = 0);
   }
 
   Future<void> _rotate(int quarterTurns) async {
@@ -168,53 +575,30 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
       await _replaceWorking(rotated);
       _setStatus('Rotated.');
     } catch (e) {
-      _setStatus('Rotate failed: $e');
+      _fail('Rotate failed: $e');
     } finally {
       setState(() => _busy = false);
     }
   }
 
-  /// Runs an AI job; returns true on success. Errors are shown in status.
-  /// AI tools are Premium: they need a rewarded ad unlock first.
+  /// Runs an AI job; returns true on success. Errors surface as a
+  /// status line AND a SnackBar (P15).
+  /// AI tools are Premium (P4): the gate is PremiumGate (Unity
+  /// rewarded) — if not already unlocked, tryUnlockWithAd() runs
+  /// BEFORE the job and the job only proceeds when it returns true.
   Future<bool> _runAi(String label, Future<void> Function() job) async {
     final file = _workingFile;
     if (file == null || _busy) return false;
-    if (!AdService.isPremiumUnlocked) {
-      _setStatus(
-        'AI tools are Premium. Unlock them with one short ad '
-        'from the home screen, then try again.',
-      );
-      if (mounted) {
-        final unlock = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Premium AI tools'),
-            content: const Text(
-              'Watch one short ad to unlock background remover, '
-              'blur, beautify and auto-enhance.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('Later'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('Watch ad'),
-              ),
-            ],
-          ),
+    if (!PremiumGate.isUnlocked) {
+      _setStatus('AI tools are Premium — one short ad unlocks them.');
+      final ok = await PremiumGate.tryUnlockWithAd();
+      if (!ok) {
+        _fail(
+          'Premium unlock nahi hua — ad mukammal dekhein ya thodi '
+          'der baad phir try karein.',
         );
-        if (unlock == true) {
-          final ok = await AdService.showRewarded();
-          _setStatus(
-            ok
-                ? 'Premium AI unlocked. Tap the AI tool again.'
-                : 'No ad was available right now. Try again.',
-          );
-        }
+        return false;
       }
-      return false;
     }
     setState(() {
       _busy = true;
@@ -225,7 +609,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
       _setStatus('$label done.');
       return true;
     } catch (e) {
-      _setStatus('$label failed: $e');
+      _fail('$label failed: $e');
       return false;
     } finally {
       setState(() => _busy = false);
@@ -263,6 +647,45 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     });
   }
 
+  /// Replace Background with the picked solid colour (AI tab). The
+  /// segmentation mask supports this directly — subject kept,
+  /// everything else becomes the colour. Result is opaque.
+  Future<void> _replaceBackgroundColor() async {
+    final file = _workingFile;
+    if (file == null) return;
+    final ok = await _runAi('Replacing background', () async {
+      final mask = await AiService.segmentSubject(file);
+      final image = await _decodeWorking();
+      final out = await replaceBackground(
+        image,
+        mask,
+        bgArgb: _replaceBgColor.toARGB32(),
+      );
+      await _replaceWorking(out);
+    });
+    if (ok) setState(() => _hasTransparency = false);
+  }
+
+  /// Replace Background with a gallery image (AI tab).
+  Future<void> _replaceBackgroundImage() async {
+    final file = _workingFile;
+    if (file == null || _busy) return;
+    final picked = await _picker.pickImage(source: ImageSource.gallery);
+    if (picked == null) return;
+    final ok = await _runAi('Replacing background', () async {
+      final mask = await AiService.segmentSubject(file);
+      final image = await _decodeWorking();
+      final bgBytes = await File(picked.path).readAsBytes();
+      final bgImage = img.decodeImage(bgBytes);
+      if (bgImage == null) {
+        throw Exception('Background photo could not be read.');
+      }
+      final out = await replaceBackground(image, mask, bgImage: bgImage);
+      await _replaceWorking(out);
+    });
+    if (ok) setState(() => _hasTransparency = false);
+  }
+
   Future<void> _beautify() async {
     final file = _workingFile;
     if (file == null) return;
@@ -288,10 +711,10 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
   /// Runs a FREE enhance job (not Premium — no ad gate). Shows busy state.
   /// Remini-style Priority 1 tools (Jaani 31 Oct 2026): Sharpen, Denoise,
   /// Enlarge, Color Fix. All algorithmic, on-device.
-  Future<void> _runEnhance(
+  Future<bool> _runEnhance(
       String label, Future<void> Function() job) async {
     final file = _workingFile;
-    if (file == null || _busy) return;
+    if (file == null || _busy) return false;
     setState(() {
       _busy = true;
       _status = '$label… (on-device)';
@@ -299,25 +722,31 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     try {
       await job();
       _setStatus('$label done.');
+      return true;
     } catch (e) {
-      _setStatus('$label failed: $e');
+      _fail('$label failed: $e');
+      return false;
     } finally {
       setState(() => _busy = false);
     }
   }
 
   Future<void> _sharpen() async {
+    // Intensity slider 0..100 -> unsharp amount 0..1 (80 = old 0.8).
+    final amount = _sharpenAmount / 100;
     await _runEnhance('Sharpening', () async {
       final image = await _decodeWorking();
-      final out = await sharpenImage(image, amount: 0.8);
+      final out = await sharpenImage(image, amount: amount);
       await _replaceWorking(out);
     });
   }
 
   Future<void> _denoise() async {
+    // Intensity slider 0..100 -> strength 0..1 (60 = old 0.6).
+    final strength = _denoiseAmount / 100;
     await _runEnhance('Denoising', () async {
       final image = await _decodeWorking();
-      final out = await denoiseImage(image, strength: 0.6);
+      final out = await denoiseImage(image, strength: strength);
       await _replaceWorking(out);
     });
   }
@@ -341,11 +770,14 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
   /// InShot-style HSL apply (Jaani 31 Oct 2026). Applies the current
   /// per-color adjustments. FREE, on-device.
   Future<void> _applyHSL() async {
-    await _runEnhance('Applying HSL', () async {
+    final ok = await _runEnhance('Applying HSL', () async {
       final image = await _decodeWorking();
       final out = await adjustHSL(image, _hslAdjustments);
       await _replaceWorking(out);
     });
+    // P7: after a successful Apply the sliders return to neutral, so
+    // a second Apply can never silently double-apply the same shift.
+    if (ok) _resetHSL();
   }
 
   /// Reset all HSL adjustments to neutral.
@@ -354,6 +786,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
       _hslAdjustments = List.generate(8, (_) => [0.0, 1.0, 0.0]);
       _hslSelectedColor = 0;
     });
+    _schedulePixelPreview();
   }
 
   Future<void> _export() async {
@@ -375,11 +808,25 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
         dir.path,
         'pve_export_${DateTime.now().millisecondsSinceEpoch}.$ext',
       );
+      final lut = _luts[_selectedLut];
       final params = PhotoEditParams(
         filter: _filter,
+        filterIntensity: _filterIntensity,
+        lutName: _selectedLut,
+        lutSize: lut?.size ?? 0,
+        lutTable: lut?.table,
         brightness: _brightness,
         contrast: _contrast,
         saturation: _saturation,
+        exposure: _exposure,
+        highlights: _highlights,
+        shadows: _shadows,
+        vibrance: _vibrance,
+        temperature: _temperature,
+        tint: _tint,
+        sharpenDetail: _sharpenDetail,
+        vignette: _vignette,
+        fade: _fade,
         text: _text,
         textArgb: _textColor.toARGB32(),
         textSize: _textSize,
@@ -390,6 +837,21 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
         textBg: _textBg,
         textBgArgb: _textBgColor.toARGB32(),
         textLineHeight: _textLineSpacing,
+        // P9: the full Text panel state — font, weight, italic,
+        // opacity, spacing, outline and alignment all reach export.
+        textFont: _textFont,
+        textBold: _textBold,
+        textItalic: _textItalic,
+        textOpacity: _textOpacity,
+        textLetterSpacing: _textLetterSpacing,
+        textOutline: _textOutline,
+        textOutlineArgb: _textOutlineColor.toARGB32(),
+        textOutlineWidth: _textOutlineWidth,
+        textAlignIndex: _textAlign == TextAlign.left
+            ? 0
+            : _textAlign == TextAlign.right
+                ? 2
+                : 1,
       );
       final outFile = await exportPhoto(
         workingFile: file,
@@ -405,7 +867,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
         );
       }
     } catch (e) {
-      _setStatus('Export failed: $e');
+      _fail('Export failed: $e');
     } finally {
       setState(() => _busy = false);
     }
@@ -422,7 +884,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
           width: 76,
           padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
           decoration: BoxDecoration(
-            color: selected ? TjProTheme.goldDeep : const Color(0xFF232323),
+            color: selected ? _accent : const Color(0xFF232323),
             borderRadius: BorderRadius.circular(12),
           ),
           child: Column(
@@ -447,19 +909,116 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
   /// Display name for a photo tool key (used in the panel header).
   String _photoToolDisplayName(String key) {
     const Map<String, String> names = <String, String>{
-      'pick': 'Pick Photo',
       'crop': 'Crop',
-      'rotate': 'Rotate',
       'filters': 'Filters',
       'adjust': 'Adjust',
       'text': 'Text',
-      'ai': 'AI Tools',
-      'bgremover': 'BG Remover',
-      'enhance': 'Enhance',
       'hsl': 'HSL',
-      'save': 'Save',
+      'enhance': 'Enhance',
+      'ai': 'AI Tools',
     };
     return names[key] ?? key;
+  }
+
+  /// One AI-tab action with its Premium badge ON the button (P3: the
+  /// user sees the gate before tapping, not after).
+  Widget _aiAction({
+    required String label,
+    required IconData icon,
+    required VoidCallback? onPressed,
+  }) {
+    return ElevatedButton.icon(
+      onPressed: onPressed,
+      icon: Icon(icon),
+      label: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(label),
+          const SizedBox(width: 6),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: _accent,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Text(
+              'Premium',
+              style: TextStyle(color: Colors.white, fontSize: 9),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Section header inside the Adjust panel (Light / Colour / Detail).
+  Widget _sectionLabel(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 12, bottom: 2),
+      child: Text(
+        text,
+        style: const TextStyle(
+          color: _accentLight,
+          fontWeight: FontWeight.bold,
+          fontSize: 12,
+          letterSpacing: 1.2,
+        ),
+      ),
+    );
+  }
+
+  /// One filter/LUT thumbnail tile in the Filters panel: the look
+  /// rendered on the user's own photo, with a violet selected ring.
+  Widget _lookThumb({
+    required String label,
+    required bool selected,
+    required Uint8List? thumb,
+    required VoidCallback onTap,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 10),
+      child: GestureDetector(
+        onTap: onTap,
+        child: Column(
+          children: [
+            Container(
+              width: 62,
+              height: 62,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: selected ? _accent : Colors.white24,
+                  width: selected ? 3 : 1,
+                ),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: thumb != null
+                    ? Image.memory(thumb, fit: BoxFit.cover)
+                    : Container(
+                        color: const Color(0xFF2A2A2A),
+                        child: const Icon(Icons.image, color: Colors.grey),
+                      ),
+              ),
+            ),
+            const SizedBox(height: 4),
+            SizedBox(
+              width: 66,
+              child: Text(
+                label,
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: selected ? _accentLight : Colors.white70,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   /// Header for the open photo tool panel: Back + tool name + Done.
@@ -742,6 +1301,8 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     final file = _workingFile;
     switch (_activePhotoTool) {
       case 'crop':
+        // Round-2: Crop is the ONLY home for crop + rotate (P2) and
+        // gains aspect presets, flip and straighten (P10).
         return [
           const Text('Crop',
               style: TextStyle(fontWeight: FontWeight.bold)),
@@ -751,16 +1312,63 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
             child: ElevatedButton.icon(
               onPressed: file == null || _busy ? null : _crop,
               icon: const Icon(Icons.crop),
-              label: const Text('Crop'),
+              label: const Text('Crop (system)'),
             ),
           ),
           const SizedBox(height: 8),
-          const Text('Crop opens the system cropper on the photo.',
-              style: TextStyle(color: Colors.grey)),
-        ];
-      case 'rotate':
-        return [
-          const Text('Rotate',
+          const Text(
+            'Ratio presets — tap for an instant centre crop '
+            '(Undo se wapas ho sakta hai):',
+            style: TextStyle(color: Colors.grey, fontSize: 12),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              ActionChip(
+                label: const Text('Free'),
+                onPressed: file == null || _busy
+                    ? null
+                    : () {
+                        setState(() => _cropPreset = 'free');
+                        _crop();
+                      },
+              ),
+              ActionChip(
+                label: const Text('9:16'),
+                onPressed: file == null || _busy
+                    ? null
+                    : () => _quickRatioCrop('9:16', 9, 16),
+              ),
+              ActionChip(
+                label: const Text('1:1'),
+                onPressed: file == null || _busy
+                    ? null
+                    : () => _quickRatioCrop('1:1', 1, 1),
+              ),
+              ActionChip(
+                label: const Text('16:9'),
+                onPressed: file == null || _busy
+                    ? null
+                    : () => _quickRatioCrop('16:9', 16, 9),
+              ),
+              ActionChip(
+                label: const Text('4:5'),
+                onPressed: file == null || _busy
+                    ? null
+                    : () => _quickRatioCrop('4:5', 4, 5),
+              ),
+              ActionChip(
+                label: const Text('3:4'),
+                onPressed: file == null || _busy
+                    ? null
+                    : () => _quickRatioCrop('3:4', 3, 4),
+              ),
+            ],
+          ),
+          const Divider(height: 24),
+          const Text('Rotate & flip',
               style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
           Row(
@@ -782,55 +1390,266 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
               ),
             ],
           ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: file == null || _busy ? null : _flipHorizontal,
+              icon: const Icon(Icons.flip),
+              label: const Text('Flip horizontal'),
+            ),
+          ),
+          const Divider(height: 24),
+          const Text('Straighten',
+              style: TextStyle(fontWeight: FontWeight.bold)),
+          _SliderRow(
+            label: 'Angle',
+            value: _straighten,
+            min: -45,
+            max: 45,
+            onChanged: (v) => setState(() => _straighten = v),
+          ),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed:
+                  file == null || _busy || _straighten == 0
+                      ? null
+                      : _applyStraighten,
+              icon: const Icon(Icons.check),
+              label: const Text('Apply straighten'),
+            ),
+          ),
         ];
       case 'filters':
+        // Round-2 (P1/P8): filters live ONLY here (the permanent strip
+        // under the preview is gone), as thumbnails rendered on the
+        // user's own photo, plus an intensity slider and the 5 LUTs.
         return [
-const Text('Filters', style: TextStyle(fontWeight: FontWeight.bold)),
+          const Text('Filters', style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: Row(
               children: _filterLabels.entries.map((e) {
-                final selected = e.key == _filter;
-                return Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: ChoiceChip(
-                    label: Text(e.value),
-                    selected: selected,
-                    onSelected: (_) => setState(() => _filter = e.key),
-                  ),
+                return _lookThumb(
+                  label: e.value,
+                  selected: e.key == _filter,
+                  thumb: _filterThumbs[e.key],
+                  onTap: () {
+                    setState(() => _filter = e.key);
+                    _schedulePixelPreview();
+                  },
                 );
               }).toList(),
             ),
           ),
-        ];
-      case 'adjust':
-        return [
-          const Text('Adjust',
+          _SliderRow(
+            label: 'Intensity',
+            value: _filterIntensity * 100,
+            min: 0,
+            max: 100,
+            onChanged: (v) {
+              setState(() => _filterIntensity = v / 100);
+              _schedulePixelPreview();
+            },
+          ),
+          const Divider(height: 24),
+          const Text('LUT looks',
               style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
-_SliderRow(
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _lookThumb(
+                  label: 'None',
+                  selected: _selectedLut.isEmpty,
+                  thumb: _filterThumbs[PhotoFilter.normal],
+                  onTap: () {
+                    setState(() => _selectedLut = '');
+                    _schedulePixelPreview();
+                  },
+                ),
+                ...photoLuts.map((e) {
+                  final name = e['name']!;
+                  return _lookThumb(
+                    label: name,
+                    selected: _selectedLut == name,
+                    thumb: _lutThumbs[name],
+                    onTap: () {
+                      setState(() => _selectedLut = name);
+                      _schedulePixelPreview();
+                    },
+                  );
+                }),
+              ],
+            ),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'LUTs video editor wale hi 5 looks hain — photo par bhi '
+            'ab full quality apply hote hain.',
+            style: TextStyle(color: Colors.grey, fontSize: 12),
+          ),
+        ];
+      case 'adjust':
+        // Round-2 (P5): 12 sliders in 3 labelled sections. Matrix
+        // controls preview through the ColorFilter; Highlights /
+        // Shadows / Vignette / Sharpen ride the debounced pixel
+        // preview — all live, all exported identically.
+        return [
+          Row(
+            children: [
+              const Text('Adjust',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              const Spacer(),
+              TextButton(
+                onPressed: () {
+                  setState(() {
+                    _exposure = 0;
+                    _brightness = 0;
+                    _contrast = 1.0;
+                    _highlights = 0;
+                    _shadows = 0;
+                    _saturation = 1.0;
+                    _vibrance = 0;
+                    _temperature = 0;
+                    _tint = 0;
+                    _sharpenDetail = 0;
+                    _vignette = 0;
+                    _fade = 0;
+                  });
+                  _schedulePixelPreview();
+                },
+                child: const Text('Reset'),
+              ),
+            ],
+          ),
+          _sectionLabel('LIGHT'),
+          _SliderRow(
+            label: 'Exposure',
+            value: _exposure,
+            min: -100,
+            max: 100,
+            onChanged: (v) {
+              setState(() => _exposure = v);
+              _schedulePixelPreview();
+            },
+          ),
+          _SliderRow(
             label: 'Brightness',
             value: _brightness,
             min: -100,
             max: 100,
-            onChanged: (v) => setState(() => _brightness = v),
+            onChanged: (v) {
+              setState(() => _brightness = v);
+              _schedulePixelPreview();
+            },
           ),
           _SliderRow(
             label: 'Contrast',
             value: _contrast,
             min: 0,
             max: 2,
-            onChanged: (v) => setState(() => _contrast = v),
+            onChanged: (v) {
+              setState(() => _contrast = v);
+              _schedulePixelPreview();
+            },
           ),
+          _SliderRow(
+            label: 'Highlights',
+            value: _highlights,
+            min: -100,
+            max: 100,
+            onChanged: (v) {
+              setState(() => _highlights = v);
+              _schedulePixelPreview();
+            },
+          ),
+          _SliderRow(
+            label: 'Shadows',
+            value: _shadows,
+            min: -100,
+            max: 100,
+            onChanged: (v) {
+              setState(() => _shadows = v);
+              _schedulePixelPreview();
+            },
+          ),
+          _sectionLabel('COLOUR'),
           _SliderRow(
             label: 'Saturation',
             value: _saturation,
             min: 0,
             max: 2,
-            onChanged: (v) => setState(() => _saturation = v),
+            onChanged: (v) {
+              setState(() => _saturation = v);
+              _schedulePixelPreview();
+            },
           ),
-          const Divider(height: 32),
+          _SliderRow(
+            label: 'Vibrance',
+            value: _vibrance,
+            min: -100,
+            max: 100,
+            onChanged: (v) {
+              setState(() => _vibrance = v);
+              _schedulePixelPreview();
+            },
+          ),
+          _SliderRow(
+            label: 'Temperature',
+            value: _temperature,
+            min: -100,
+            max: 100,
+            onChanged: (v) {
+              setState(() => _temperature = v);
+              _schedulePixelPreview();
+            },
+          ),
+          _SliderRow(
+            label: 'Tint',
+            value: _tint,
+            min: -100,
+            max: 100,
+            onChanged: (v) {
+              setState(() => _tint = v);
+              _schedulePixelPreview();
+            },
+          ),
+          _sectionLabel('DETAIL'),
+          _SliderRow(
+            label: 'Sharpen',
+            value: _sharpenDetail,
+            min: 0,
+            max: 100,
+            onChanged: (v) {
+              setState(() => _sharpenDetail = v);
+              _schedulePixelPreview();
+            },
+          ),
+          _SliderRow(
+            label: 'Vignette',
+            value: _vignette,
+            min: 0,
+            max: 100,
+            onChanged: (v) {
+              setState(() => _vignette = v);
+              _schedulePixelPreview();
+            },
+          ),
+          _SliderRow(
+            label: 'Fade',
+            value: _fade,
+            min: 0,
+            max: 100,
+            onChanged: (v) {
+              setState(() => _fade = v);
+              _schedulePixelPreview();
+            },
+          ),
+          const SizedBox(height: 8),
         ];
       case 'text':
         // Full CapCut-style text editor (Jaani 31 Oct 2026, full delegation):
@@ -986,7 +1805,7 @@ _SliderRow(
                 onPressed: () => setState(() => _textAlign = TextAlign.left),
                 icon: Icon(Icons.format_align_left,
                     color: _textAlign == TextAlign.left
-                        ? TjProTheme.gold
+                        ? _accentLight
                         : Colors.grey),
               ),
               IconButton(
@@ -994,7 +1813,7 @@ _SliderRow(
                 onPressed: () => setState(() => _textAlign = TextAlign.center),
                 icon: Icon(Icons.format_align_center,
                     color: _textAlign == TextAlign.center
-                        ? TjProTheme.gold
+                        ? _accentLight
                         : Colors.grey),
               ),
               IconButton(
@@ -1002,7 +1821,7 @@ _SliderRow(
                 onPressed: () => setState(() => _textAlign = TextAlign.right),
                 icon: Icon(Icons.format_align_right,
                     color: _textAlign == TextAlign.right
-                        ? TjProTheme.gold
+                        ? _accentLight
                         : Colors.grey),
               ),
             ],
@@ -1076,7 +1895,7 @@ _SliderRow(
                               shape: BoxShape.circle,
                               border: Border.all(
                                 color: _textOutlineColor == c
-                                    ? TjProTheme.gold
+                                    ? _accentLight
                                     : Colors.grey,
                                 width: _textOutlineColor == c ? 3 : 1,
                               ),
@@ -1117,7 +1936,7 @@ _SliderRow(
                               shape: BoxShape.circle,
                               border: Border.all(
                                 color: _textBgColor == c
-                                    ? TjProTheme.gold
+                                    ? _accentLight
                                     : Colors.grey,
                                 width: _textBgColor == c ? 3 : 1,
                               ),
@@ -1131,58 +1950,107 @@ _SliderRow(
       case 'ai':
         return [
 if (AppConfig.aiToolsEnabled) ...[
-            const Divider(height: 32),
+            // Round-2: ONE AI home (P3) — the old BG Remover rail tool
+            // is gone; Remove/Blur/Replace Background, Beautify and
+            // Auto-enhance all live here, each badged Premium (P3/P4).
             const Text('AI tools (on-device, offline)',
                 style: TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              ElevatedButton.icon(
-                onPressed: file == null || _busy ? null : _removeBackground,
-                icon: const Icon(Icons.person_off),
-                label: const Text('Remove background'),
-              ),
-              ElevatedButton.icon(
-                onPressed: file == null || _busy ? null : _blurBackground,
-                icon: const Icon(Icons.blur_on),
-                label: const Text('Blur background'),
-              ),
-              ElevatedButton.icon(
-                onPressed: file == null || _busy ? null : _beautify,
-                icon: const Icon(Icons.face_retouching_natural),
-                label: const Text('Beautify'),
-              ),
-              ElevatedButton.icon(
-                onPressed: file == null || _busy ? null : _autoEnhance,
-                icon: const Icon(Icons.auto_fix_high),
-                label: const Text('Auto-enhance'),
+            const SizedBox(height: 4),
+            const Text(
+              'Har AI tool Premium hai — pehli dafa ek short ad se '
+              'unlock hoga.',
+              style: TextStyle(color: Colors.grey, fontSize: 12),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _aiAction(
+                  label: 'Remove background',
+                  icon: Icons.person_off,
+                  onPressed: file == null || _busy ? null : _removeBackground,
+                ),
+                _aiAction(
+                  label: 'Blur background',
+                  icon: Icons.blur_on,
+                  onPressed: file == null || _busy ? null : _blurBackground,
+                ),
+                _aiAction(
+                  label: 'Beautify',
+                  icon: Icons.face_retouching_natural,
+                  onPressed: file == null || _busy ? null : _beautify,
+                ),
+                _aiAction(
+                  label: 'Auto-enhance',
+                  icon: Icons.auto_fix_high,
+                  onPressed: file == null || _busy ? null : _autoEnhance,
+                ),
+              ],
+            ),
+            const Divider(height: 24),
+            const Text('Replace background',
+                style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Text('Colour:'),
+                const SizedBox(width: 8),
+                ...[
+                  Colors.white,
+                  Colors.black,
+                  Colors.red,
+                  Colors.blue,
+                  Colors.green,
+                  Colors.yellow,
+                ].map((c) => GestureDetector(
+                      onTap: () => setState(() => _replaceBgColor = c),
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(horizontal: 3),
+                        width: 26,
+                        height: 26,
+                        decoration: BoxDecoration(
+                          color: c,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: _replaceBgColor == c
+                                ? _accentLight
+                                : Colors.grey,
+                            width: _replaceBgColor == c ? 3 : 1,
+                          ),
+                        ),
+                      ),
+                    )),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _aiAction(
+                  label: 'Replace with colour',
+                  icon: Icons.format_color_fill,
+                  onPressed:
+                      file == null || _busy ? null : _replaceBackgroundColor,
+                ),
+                _aiAction(
+                  label: 'Replace with image',
+                  icon: Icons.image,
+                  onPressed:
+                      file == null || _busy ? null : _replaceBackgroundImage,
+                ),
+              ],
+            ),
+            if (_hasTransparency) ...[
+              const SizedBox(height: 12),
+              const Text(
+                'Background hata diya gaya hai — ab Save karein.',
+                style: TextStyle(color: _accentLight),
               ),
             ],
-          ),
           ],
           const SizedBox(height: 16),
-        ];
-      case 'save':
-        return [
-SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: file == null || _busy ? null : _export,
-              icon: const Icon(Icons.save),
-              label: Text(_busy ? 'Working…' : 'Save to gallery'),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Text(_status),
-          const SizedBox(height: 8),
-          const Text(
-            'Note: filters and sliders preview live; crop, rotate and AI '
-            'tools change the photo itself. Auto-enhance is an automatic '
-            'levels/color adjustment (algorithmic, not ML).',
-            style: TextStyle(color: Colors.grey),
-          ),
         ];
       case 'enhance':
         // Remini-style Enhance section (Jaani 31 Oct 2026, Priority 1).
@@ -1196,6 +2064,23 @@ SizedBox(
             style: TextStyle(color: Colors.grey),
           ),
           const SizedBox(height: 16),
+          // Round-2 (P11): Sharpen/Denoise strengths are sliders now,
+          // not hard-coded constants (defaults unchanged: 80 / 60).
+          _SliderRow(
+            label: 'Sharpen',
+            value: _sharpenAmount,
+            min: 0,
+            max: 100,
+            onChanged: (v) => setState(() => _sharpenAmount = v),
+          ),
+          _SliderRow(
+            label: 'Denoise',
+            value: _denoiseAmount,
+            min: 0,
+            max: 100,
+            onChanged: (v) => setState(() => _denoiseAmount = v),
+          ),
+          const SizedBox(height: 8),
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -1246,7 +2131,9 @@ SizedBox(
           ),
           const SizedBox(height: 8),
           const Text(
-            'Rang select karein, phir Hue / Saturation / Lightness adjust karein.',
+            'Rang select karein, phir Hue / Saturation / Lightness '
+            'adjust karein — preview live update hota hai, Apply par '
+            'photo mein bake ho jata hai.',
             style: TextStyle(color: Colors.grey, fontSize: 12),
           ),
           const SizedBox(height: 12),
@@ -1304,24 +2191,33 @@ SizedBox(
                     value: adj[0],
                     min: -180,
                     max: 180,
-                    onChanged: (double v) => setState(
-                        () => _hslAdjustments[_hslSelectedColor][0] = v),
+                    onChanged: (double v) {
+                      setState(
+                          () => _hslAdjustments[_hslSelectedColor][0] = v);
+                      _schedulePixelPreview(); // P7: live preview
+                    },
                   ),
                   _hslSlider(
                     label: 'Saturation',
                     value: adj[1],
                     min: 0,
                     max: 2,
-                    onChanged: (double v) => setState(
-                        () => _hslAdjustments[_hslSelectedColor][1] = v),
+                    onChanged: (double v) {
+                      setState(
+                          () => _hslAdjustments[_hslSelectedColor][1] = v);
+                      _schedulePixelPreview();
+                    },
                   ),
                   _hslSlider(
                     label: 'Lightness',
                     value: adj[2],
                     min: -100,
                     max: 100,
-                    onChanged: (double v) => setState(
-                        () => _hslAdjustments[_hslSelectedColor][2] = v),
+                    onChanged: (double v) {
+                      setState(
+                          () => _hslAdjustments[_hslSelectedColor][2] = v);
+                      _schedulePixelPreview();
+                    },
                   ),
                 ],
               );
@@ -1340,71 +2236,21 @@ SizedBox(
             ),
           ),
         ];
-      case 'bgremover':
-        // Dedicated BG Remover panel (Jaani 31 Oct 2026): prominent,
-        // one-tap background removal. Uses the same on-device
-        // _removeBackground() as the AI Tools section.
-        return [
-          const Text('Background Remover',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-          const SizedBox(height: 8),
-          const Text(
-            'Ek tap mein photo ka background hataein. '
-            '100% on-device — koi upload nahi.',
-            style: TextStyle(color: Colors.grey),
-          ),
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: file == null || _busy ? null : _removeBackground,
-              icon: const Icon(Icons.person_off, size: 28),
-              label: const Padding(
-                padding: EdgeInsets.symmetric(vertical: 12),
-                child: Text('Remove Background', style: TextStyle(fontSize: 16)),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          if (_hasTransparency)
-            const Text(
-              'Background hata diya gaya hai — ab Save karein.',
-              style: TextStyle(color: TjProTheme.gold),
-            ),
-        ];
-      case 'pick':
       default:
+        // Round-2: no 'pick' rail tool anymore — Pick lives in the
+        // empty state + the AppBar. This fallback only shows when no
+        // photo is loaded yet (or an unknown key slips through).
         return [
           const Text('Pick a photo',
               style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
-Row(
-            children: [
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: _pick,
-                  icon: const Icon(Icons.photo_library),
-                  label: const Text('Pick photo'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              ElevatedButton.icon(
-                onPressed: file == null || _busy ? null : _crop,
-                icon: const Icon(Icons.crop),
-                label: const Text('Crop'),
-              ),
-              const SizedBox(width: 8),
-              IconButton(
-                tooltip: 'Rotate left',
-                onPressed: file == null || _busy ? null : () => _rotate(3),
-                icon: const Icon(Icons.rotate_left),
-              ),
-              IconButton(
-                tooltip: 'Rotate right',
-                onPressed: file == null || _busy ? null : () => _rotate(1),
-                icon: const Icon(Icons.rotate_right),
-              ),
-            ],
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _pick,
+              icon: const Icon(Icons.photo_library),
+              label: const Text('Pick photo'),
+            ),
           ),
           const SizedBox(height: 8),
           Text(_status, style: const TextStyle(color: Colors.grey)),
@@ -1416,16 +2262,37 @@ Row(
   Widget build(BuildContext context) {
     final file = _workingFile;
     return Theme(
+      // P13: violet identity, same as the rest of the app.
       data: ThemeData.dark().copyWith(
         colorScheme: ColorScheme.fromSeed(
-            seedColor: TjProTheme.gold, brightness: Brightness.dark),
+            seedColor: _accent, brightness: Brightness.dark),
       ),
       child: Scaffold(
         backgroundColor: const Color(0xFF121212),
         appBar: AppBar(
           backgroundColor: const Color(0xFF1E1E1E),
-          title: const Text('TJ Pro — Photo Editor'),
+          title: const Text('Photo Editor'),
           actions: [
+            IconButton(
+              tooltip: 'Pick photo',
+              onPressed: _busy ? null : _pick,
+              icon: const Icon(Icons.photo_library),
+            ),
+            IconButton(
+              tooltip: 'Undo',
+              onPressed: _canUndo && !_busy ? _undo : null,
+              icon: const Icon(Icons.undo),
+            ),
+            IconButton(
+              tooltip: 'Redo',
+              onPressed: _canRedo && !_busy ? _redo : null,
+              icon: const Icon(Icons.redo),
+            ),
+            IconButton(
+              tooltip: 'Reset all',
+              onPressed: file == null || _busy ? null : _resetAll,
+              icon: const Icon(Icons.restart_alt),
+            ),
             IconButton(
               tooltip: 'Save to gallery',
               onPressed: file == null || _busy ? null : _export,
@@ -1433,9 +2300,11 @@ Row(
             ),
           ],
         ),
-        // LAYOUT (Jaani spec 28 Oct 12:02 PKT, top to bottom):
-        // 1. preview on top (large)  2. filter strip beneath it
-        // 3. tool panel  4. ONE single-row tool rail at the bottom.
+        // LAYOUT (Round-2): 1. preview on top (large, with the Compare
+        // chip)  2. tool panel  3. ONE single-row 7-tool rail at the
+        // bottom. The old permanent filter strip is GONE (P1) — filters
+        // live only in the Filters panel, and the space went back to
+        // the preview/panel.
         body: Column(
           children: [
             Expanded(
@@ -1445,8 +2314,22 @@ Row(
                 padding: const EdgeInsets.all(8),
                 child: Center(
                   child: file == null
-                      ? const Text('No photo selected',
-                          style: TextStyle(color: Colors.white70))
+                      ? Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.photo_library,
+                                size: 64, color: Colors.white38),
+                            const SizedBox(height: 12),
+                            const Text('No photo selected',
+                                style: TextStyle(color: Colors.white70)),
+                            const SizedBox(height: 12),
+                            ElevatedButton.icon(
+                              onPressed: _pick,
+                              icon: const Icon(Icons.photo_library),
+                              label: const Text('Pick photo'),
+                            ),
+                          ],
+                        )
                       : Container(
             color: Colors.black12,
             constraints: const BoxConstraints(maxHeight: 420),
@@ -1456,9 +2339,56 @@ Row(
                       return Stack(
                         alignment: Alignment.center,
                         children: [
-                          ColorFiltered(
-                            colorFilter: ColorFilter.matrix(_matrix),
-                            child: Image.file(file, fit: BoxFit.contain),
+                          // Preview source priority: hold-Compare shows
+                          // the untouched original; the pixel preview
+                          // (LUT/HSL/non-linear Adjust baked in) wins
+                          // over the plain matrix preview.
+                          if (_comparing && _originalFile != null)
+                            Image.file(_originalFile!, fit: BoxFit.contain)
+                          else if (_previewBytes != null &&
+                              _previewKey == file.path)
+                            Image.memory(_previewBytes!,
+                                fit: BoxFit.contain)
+                          else
+                            ColorFiltered(
+                              colorFilter: ColorFilter.matrix(_matrix),
+                              child: Image.file(file, fit: BoxFit.contain),
+                            ),
+                          // Hold-to-compare (P6): press and hold the
+                          // chip to see the original, release to return.
+                          Positioned(
+                            top: 4,
+                            right: 4,
+                            child: GestureDetector(
+                              onTapDown: (_) =>
+                                  setState(() => _comparing = true),
+                              onTapUp: (_) =>
+                                  setState(() => _comparing = false),
+                              onTapCancel: () =>
+                                  setState(() => _comparing = false),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: _comparing
+                                      ? _accent
+                                      : Colors.black54,
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.compare,
+                                        size: 14, color: Colors.white),
+                                    SizedBox(width: 4),
+                                    Text('Compare',
+                                        style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 11)),
+                                  ],
+                                ),
+                              ),
+                            ),
                           ),
                           if (_text.isNotEmpty)
                             Positioned(
@@ -1484,34 +2414,6 @@ Row(
                   ),
           ),
                 ),
-              ),
-            ),
-            Container(
-              color: const Color(0xFF1B1B1B),
-              padding:
-                  const EdgeInsets.fromLTRB(12, 8, 12, 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-const Text('Filters', style: TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: _filterLabels.entries.map((e) {
-                final selected = e.key == _filter;
-                return Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: ChoiceChip(
-                    label: Text(e.value),
-                    selected: selected,
-                    onSelected: (_) => setState(() => _filter = e.key),
-                  ),
-                );
-              }).toList(),
-            ),
-          ),
-                ],
               ),
             ),
             Expanded(
@@ -1583,20 +2485,18 @@ const Text('Filters', style: TextStyle(fontWeight: FontWeight.bold)),
                   scrollDirection: Axis.horizontal,
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   children: [
-                    _photoRailButton('pick', 'Pick', Icons.photo_library),
+                    // Round-2 rail: 7 tools (was 11). Pick lives in
+                    // the empty state + AppBar; Rotate lives in Crop;
+                    // BG Remover lives in AI; Save stays in the AppBar.
                     _photoRailButton('crop', 'Crop', Icons.crop),
-                    _photoRailButton('rotate', 'Rotate', Icons.rotate_right),
                     _photoRailButton(
                         'filters', 'Filters', Icons.filter_vintage),
                     _photoRailButton('adjust', 'Adjust', Icons.tune),
                     _photoRailButton('text', 'Text', Icons.text_fields),
-                    _photoRailButton(
-                        'bgremover', 'BG Remover', Icons.person_off),
+                    _photoRailButton('hsl', 'HSL', Icons.palette),
                     _photoRailButton(
                         'enhance', 'Enhance', Icons.auto_fix_high),
-                    _photoRailButton('hsl', 'HSL', Icons.palette),
                     _photoRailButton('ai', 'AI Tools', Icons.psychology),
-                    _photoRailButton('save', 'Save', Icons.save),
                   ],
                 ),
               ),
