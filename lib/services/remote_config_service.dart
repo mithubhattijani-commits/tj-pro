@@ -10,10 +10,11 @@
 /// just uses what it has. UI listens to [notifier] so a fresh fetch
 /// updates the screen without a restart.
 ///
-/// NOTE: the reference design uses shared_preferences, but TJ Pro's
-/// pubspec does not declare it (and no new dependency may be added),
-/// so the cache lives in flutter_secure_storage, which is already a
-/// direct dependency (used for Live Studio stream keys).
+/// NOTE: the reference design uses shared_preferences, but the cache
+/// lives in flutter_secure_storage (already a direct dependency, used
+/// for Live Studio stream keys) — deliberately, so the remote-config
+/// cache never migrates stores. shared_preferences IS a dependency
+/// now (Phase 10, coin balance cache) but this cache stays put.
 library;
 
 import 'dart:async';
@@ -22,6 +23,8 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+
+import '../app_config.dart';
 
 class AnnouncementConfig {
   const AnnouncementConfig({this.enabled = false, this.text = ''});
@@ -88,6 +91,19 @@ class RemoteConfig {
     this.announcement = const AnnouncementConfig(),
     this.sponsoredAd = const SponsoredAdConfig(),
     this.forceUpdate = const ForceUpdateConfig(),
+    this.supportWhatsAppNumber = AppConfig.supportWhatsAppNumber,
+    this.rewardedCoinsPlacementId =
+        AppConfig.unityRewardedCoinsPlacementId,
+    this.advertisingBannerEnabled = AppConfig.advertisingBannerEnabled,
+    this.advertisingBannerImageUrl =
+        AppConfig.advertisingBannerImageUrl,
+    this.advertisingBannerPriceCoins =
+        AppConfig.advertisingBannerPriceCoins,
+    this.advertisingBannerDurationHours =
+        AppConfig.advertisingBannerDurationHours,
+    this.kasheedaFontUrl = AppConfig.kasheedaFontUrl,
+    this.nigraanIntroUrl = AppConfig.nigraanIntroUrl,
+    this.logoMovUrl = AppConfig.logoMovUrl,
   });
 
   final String displayName;
@@ -95,6 +111,35 @@ class RemoteConfig {
   final AnnouncementConfig announcement;
   final SponsoredAdConfig sponsoredAd;
   final ForceUpdateConfig forceUpdate;
+
+  /// WhatsApp help number (display form, e.g. '03090808180').
+  /// JSON key `support_whatsapp_number` in tj-pro.json; falls back to
+  /// [AppConfig.supportWhatsAppNumber] when absent.
+  final String supportWhatsAppNumber;
+
+  /// Unity rewarded placement that pays coins (News Studio earning).
+  /// JSON key `unity_rewarded_coins_placement_id` in tj-pro.json;
+  /// falls back to [AppConfig.unityRewardedCoinsPlacementId].
+  final String rewardedCoinsPlacementId;
+
+  /// Advertise page (dedicated page, NOT home slots) — admin-panel
+  /// controlled via tj-pro.json. Keys: `advertising_banner_enabled` /
+  /// `advertising_banner_image_url` /
+  /// `advertising_banner_price_coins` /
+  /// `advertising_banner_duration_hours`. All fall back to the
+  /// [AppConfig] defaults when absent.
+  final bool advertisingBannerEnabled;
+  final String advertisingBannerImageUrl;
+  final int advertisingBannerPriceCoins;
+  final int advertisingBannerDurationHours;
+
+  /// On-demand asset URLs (Kasheeda font / Nigraan intro / rotating
+  /// logo mov). JSON keys `kasheeda_font_url` / `nigraan_intro_url` /
+  /// `logo_mov_url`; empty means "not hosted yet" (same rule as the
+  /// [AppConfig] defaults — never a placeholder URL).
+  final String kasheedaFontUrl;
+  final String nigraanIntroUrl;
+  final String logoMovUrl;
 
   static const RemoteConfig defaults = RemoteConfig();
 
@@ -111,7 +156,54 @@ class RemoteConfig {
       forceUpdate: ForceUpdateConfig.fromJson(
         _stringMap(json['force_update']),
       ),
+      supportWhatsAppNumber: _nonEmptyString(
+        json['support_whatsapp_number'],
+        AppConfig.supportWhatsAppNumber,
+      ),
+      rewardedCoinsPlacementId: _nonEmptyString(
+        json['unity_rewarded_coins_placement_id'],
+        AppConfig.unityRewardedCoinsPlacementId,
+      ),
+      advertisingBannerEnabled:
+          json['advertising_banner_enabled'] is bool
+              ? json['advertising_banner_enabled'] as bool
+              : AppConfig.advertisingBannerEnabled,
+      advertisingBannerImageUrl: _nonEmptyString(
+        json['advertising_banner_image_url'],
+        AppConfig.advertisingBannerImageUrl,
+      ),
+      advertisingBannerPriceCoins: _nonEmptyInt(
+        json['advertising_banner_price_coins'],
+        AppConfig.advertisingBannerPriceCoins,
+      ),
+      advertisingBannerDurationHours: _nonEmptyInt(
+        json['advertising_banner_duration_hours'],
+        AppConfig.advertisingBannerDurationHours,
+      ),
+      kasheedaFontUrl: _nonEmptyString(
+        json['kasheeda_font_url'],
+        AppConfig.kasheedaFontUrl,
+      ),
+      nigraanIntroUrl: _nonEmptyString(
+        json['nigraan_intro_url'],
+        AppConfig.nigraanIntroUrl,
+      ),
+      logoMovUrl: _nonEmptyString(
+        json['logo_mov_url'],
+        AppConfig.logoMovUrl,
+      ),
     );
+  }
+
+  static String _nonEmptyString(dynamic value, String fallback) {
+    final String text = (value ?? '').toString().trim();
+    return text.isEmpty ? fallback : text;
+  }
+
+  static int _nonEmptyInt(dynamic value, int fallback) {
+    if (value is int && value > 0) return value;
+    final parsed = int.tryParse('${value ?? ''}');
+    return parsed != null && parsed > 0 ? parsed : fallback;
   }
 
   static Map<String, dynamic> _stringMap(dynamic value) {
@@ -129,6 +221,13 @@ class RemoteConfigService {
   /// TJ Pro remote-config endpoint (live on nigraantv.xyz).
   static const String configUrl =
       'https://nigraantv.xyz/apps/config/tj-pro.json';
+
+  /// Shared instance for services that need remote config without
+  /// going through main.dart's own instance (e.g. CoinService for the
+  /// rewarded-coins placement ID, the login screen for the WhatsApp
+  /// help number). Both instances read the same cache + URL, so their
+  /// values converge; call [init] before relying on fresh values.
+  static final RemoteConfigService instance = RemoteConfigService();
 
   static const Duration fetchTimeout = Duration(seconds: 8);
   static const Duration refreshInterval = Duration(hours: 6);

@@ -5,19 +5,27 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'theme.dart';
 
+import 'news/coins_screen.dart';
+import 'news/login_screen.dart';
 import 'photo/photo_editor_screen.dart';
 import 'app_config.dart';
 import 'services/ad_service.dart';
+import 'services/auth_service.dart';
+import 'services/coin_service.dart';
 import 'services/remote_config_service.dart';
 import 'services/unity_ads_service.dart';
 import 'services/update_service.dart';
 import 'video/video_editor_screen.dart';
 import 'live/live_studio_screen.dart';
+import 'news/news_studio_screen.dart';
 import 'widgets/banner_ad_widget.dart';
+import 'widgets/coins_pill.dart';
+import 'widgets/help_whatsapp_button.dart';
 import 'widgets/native_ad_widget.dart';
 
 /// Shared Remote Config instance: fetched once at startup; the home
@@ -32,6 +40,12 @@ Future<void> main() async {
   // Remote Config: returns fast (cache load only); the network refresh
   // is backgrounded and never blocks startup.
   await remoteConfigService.init();
+  // Login + Coins (Phase 10): restore the Supabase session (never
+  // throws, local-only mode when no anon key was supplied at build
+  // time) and load the local coin balance. Both are awaited here so
+  // the app-bar coins pill is correct on first paint.
+  await AuthService.init();
+  await CoinService.instance.load();
   runApp(const PhotoVideoEditorApp());
 }
 
@@ -67,6 +81,11 @@ class _HomeScreenState extends State<HomeScreen> {
   /// re-armed kill-switch (raised min) is honoured on the next
   /// config refresh.
   int _forceUpdateCheckedMin = -1;
+
+  /// Bottom-nav tab: 0 = Home, 1 = News Studio. The News Studio tab
+  /// and the 4th home card both open [NewsStudioScreen] — one entry
+  /// point, so Phase 3/6 only extend that screen, never re-route.
+  int _tabIndex = 0;
 
   @override
   void initState() {
@@ -177,11 +196,18 @@ class _HomeScreenState extends State<HomeScreen> {
             final String title = cfg.displayName.isNotEmpty
                 ? cfg.displayName
                 : AppConfig.appName;
-            return AppBar(title: Text(title));
+            return AppBar(
+              title: Text(title),
+              // Coins pill (Phase 10): live balance, hidden for
+              // admins; tap opens the Coins screen.
+              actions: const [CoinsPill()],
+            );
           },
         ),
       ),
-      body: ListView(
+      body: _tabIndex == 1 && AppConfig.newsStudioEnabled
+          ? const NewsStudioScreen()
+          : ListView(
         padding: const EdgeInsets.all(20),
         children: [
           // Remote Config header: remote logo (when set, with
@@ -275,6 +301,25 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
           const SizedBox(height: 16),
+          // News Studio (Phase 2, v1): AI News Broadcasting Studio —
+          // News Maker, channel presets, breaking templates, Gemini
+          // voice. Same screen as the bottom-nav tab.
+          if (AppConfig.newsStudioEnabled)
+            _EntryCard(
+              icon: Icons.newspaper,
+              title: 'News Studio',
+              subtitle:
+                  'AI News Broadcasting Studio — News Maker, templates, Gemini voice',
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const NewsStudioScreen(),
+                  ),
+                );
+              },
+            ),
+          const SizedBox(height: 16),
           // Remote Config sponsored ad card: shown only when the config
           // enables it. The image hides gracefully on load failure; the
           // tap opens the action URL in the external browser.
@@ -321,14 +366,45 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           const SizedBox(height: 16),
+          // Login + Coins (Phase 10, News Studio v1): the login tile
+          // shows the signed-in email (or Guest) and opens the login
+          // screen; the coins tile shows the live balance and opens
+          // the Coins screen (Watch Ads, daily claim, history).
+          _LoginTile(onAuthChanged: () => setState(() {})),
+          const SizedBox(height: 16),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.monetization_on),
+              title: const Text('Coins'),
+              subtitle: ValueListenableBuilder<int>(
+                valueListenable: CoinService.instance.balance,
+                builder: (context, balance, _) => Text(
+                  AuthService.isAdmin.value
+                      ? 'Admin — sab kuch free, no coins needed.'
+                      : 'Balance: $balance coins — Watch Ads se kamayein.',
+                ),
+              ),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 18),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const CoinsScreen(),
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 16),
           Card(
             child: ListTile(
               leading: const Icon(Icons.support_agent),
               title: const Text('مدد اور سپورٹ'),
-              subtitle: const Text('Jaani Bhatti — 03090808180'),
+              subtitle:
+                  Text('Jaani Bhatti — ${AppConfig.supportWhatsAppNumber}'),
               trailing: const Icon(Icons.chat),
               onTap: () async {
-                final uri = Uri.parse('https://wa.me/923090808180');
+                final uri = Uri.parse(AppConfig.supportWhatsAppLink);
                 if (await canLaunchUrl(uri)) {
                   await launchUrl(uri, mode: LaunchMode.externalApplication);
                 }
@@ -367,22 +443,46 @@ class _HomeScreenState extends State<HomeScreen> {
           const AdvertisingBanner(),
           const SizedBox(height: 16),
           const Center(child: BannerAdWidget()),
+          const SizedBox(height: 16),
+          // "For Help" row (Phase 10): WhatsApp support at the very
+          // end of home, number from remote config.
+          const HelpWhatsAppRow(),
         ],
       ),
+      // Bottom nav: Home + News Studio (Phase 2). Hidden entirely when
+      // the News Studio switch is off — then Home is the only screen.
+      bottomNavigationBar: AppConfig.newsStudioEnabled
+          ? BottomNavigationBar(
+              currentIndex: _tabIndex,
+              onTap: (index) => setState(() => _tabIndex = index),
+              items: const [
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.home),
+                  label: 'Home',
+                ),
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.newspaper),
+                  label: 'News Studio',
+                ),
+              ],
+            )
+          : null,
     );
   }
 }
 
 /// In-app advertising banner (Jaani, 2 Nov 2026): placed in the About
 /// section on the home screen. Tapping opens a WhatsApp chat with
-/// Nigraan TV for ad bookings.
+/// Nigraan TV for ad bookings. Number/link come from AppConfig
+/// (supportWhatsAppNumber / supportWhatsAppLink) — never hardcoded.
+/// NOTE (user order 20 Nov 2026): the paid-banner flow lives on a
+/// DEDICATED "Advertise" page (later phase) — this About-section card
+/// is the existing house banner, not the two home slots (superseded).
 class AdvertisingBanner extends StatelessWidget {
   const AdvertisingBanner({super.key});
 
-  static const String _waUrl = 'https://wa.me/923090808180';
-
   Future<void> _openWhatsApp() async {
-    final Uri uri = Uri.parse(_waUrl);
+    final Uri uri = Uri.parse(AppConfig.supportWhatsAppLink);
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     }
@@ -448,7 +548,7 @@ class AdvertisingBanner extends StatelessWidget {
                             color: Color(0xFF25D366), size: 18),
                         SizedBox(width: 6),
                         Text(
-                          '03090808180',
+                          AppConfig.supportWhatsAppNumber,
                           style: TextStyle(
                             color: Colors.white,
                             fontSize: 17,
@@ -625,6 +725,86 @@ class _PremiumUnlockCardState extends State<_PremiumUnlockCard> {
                 child: const Text('Watch ad'),
               ),
       ),
+    );
+  }
+}
+
+/// Login tile (Phase 10): shows the signed-in email (or Guest) and
+/// opens [LoginScreen]; when signed in, tapping offers sign-out.
+/// Rebuilds on auth-state changes via [AuthService.authStateChanges];
+/// the builder reads [AuthService.isSignedIn] directly because a
+/// session restored at startup emits no stream event after subscribe.
+class _LoginTile extends StatelessWidget {
+  const _LoginTile({required this.onAuthChanged});
+
+  final VoidCallback onAuthChanged;
+
+  Future<void> _openLogin(BuildContext context) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => LoginScreen(
+          onSignedIn: () {
+            Navigator.of(context).pop();
+            onAuthChanged();
+          },
+          onContinueAsGuest: () => Navigator.of(context).pop(),
+        ),
+      ),
+    );
+    onAuthChanged();
+  }
+
+  Future<void> _confirmSignOut(BuildContext context) async {
+    final email = AuthService.currentEmail ?? '';
+    final signOut = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Sign out?'),
+        content: Text(
+          'Signed in as $email.\nYour coins stay with your account — '
+          'sign in again any time to get them back.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Sign out'),
+          ),
+        ],
+      ),
+    );
+    if (signOut == true) {
+      await AuthService.signOut();
+      onAuthChanged();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<AuthState>(
+      stream: AuthService.authStateChanges,
+      builder: (context, snapshot) {
+        final signedIn = AuthService.isSignedIn;
+        return Card(
+          child: ListTile(
+            leading: const Icon(Icons.login),
+            title: Text(signedIn ? 'Account' : 'Login'),
+            subtitle: Text(
+              signedIn
+                  ? (AuthService.currentEmail ?? 'Signed in')
+                  : 'Guest — sign in to save your coins',
+            ),
+            trailing: const Icon(Icons.arrow_forward_ios, size: 18),
+            onTap: () => signedIn
+                ? _confirmSignOut(context)
+                : _openLogin(context),
+          ),
+        );
+      },
     );
   }
 }

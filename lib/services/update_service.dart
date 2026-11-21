@@ -14,11 +14,24 @@
 ///   {"versionCode": 3, "versionName": "1.2.0",
 ///    "url": "https://.../tj-pro.apk", "notes": "What's new"}
 ///
+/// Split-per-ABI releases (Phase 10, Magic Box pattern) add two
+/// optional maps; when present, this device's ABI wins, otherwise
+/// the universal "versionCode"/"url" are used:
+///   {"versionCode": 9, "versionName": "1.0.8",
+///    "url": "https://.../tj-pro-arm64-v8a.apk",
+///    "urls": {"arm64-v8a": "...", "armeabi-v7a": "...",
+///             "x86_64": "..."},
+///    "versionCodes": {"arm64-v8a": 2009, "armeabi-v7a": 1009,
+///                     "x86_64": 4009}}
+/// (Flutter's --split-per-abi scheme: armeabi-v7a = 1000 + base,
+/// arm64-v8a = 2000 + base, x86_64 = 4000 + base.)
+///
 /// The updater is inert until that manifest exists: a missing or
 /// unreachable manifest simply means "no update prompt, no error".
 library;
 
 import 'dart:convert';
+import 'dart:ffi';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -96,6 +109,61 @@ class UpdateService {
     }
   }
 
+  /// This device's ABI as the manifest's "urls"/"versionCodes" maps
+  /// name it (arm64-v8a / armeabi-v7a / x86_64), or null when it is
+  /// none of those (e.g. a desktop test run) — the caller then falls
+  /// back to the universal "url"/"versionCode".
+  static String? currentAbiName() {
+    final abi = Abi.current();
+    if (abi == Abi.androidArm64) return 'arm64-v8a';
+    if (abi == Abi.androidArm) return 'armeabi-v7a';
+    if (abi == Abi.androidX64) return 'x86_64';
+    return null;
+  }
+
+  /// Parses the version manifest into an [UpdateInfo], honouring the
+  /// per-ABI maps when present (Magic Box pattern, split-per-ABI
+  /// releases): `versionCodes` {arm64-v8a, armeabi-v7a, x86_64} and
+  /// `urls` {…} (per-ABI APK links). Missing maps, an unknown ABI,
+  /// or a missing per-ABI entry all fall back to the universal
+  /// "versionCode"/"url". Returns null when the manifest has no
+  /// usable version + URL. Pure — unit-tested; [abiNameOverride] is
+  /// the test seam (production passes nothing and the real
+  /// [currentAbiName] is used).
+  static UpdateInfo? updateInfoFromManifest(
+    Map<String, dynamic> data, {
+    String? abiNameOverride,
+  }) {
+    final abiName = abiNameOverride ?? currentAbiName();
+    int? remoteCode;
+    if (abiName != null) {
+      final codes = data['versionCodes'];
+      if (codes is Map) {
+        final code = codes[abiName];
+        if (code is int) remoteCode = code;
+      }
+    }
+    remoteCode ??= data['versionCode'] is int
+        ? data['versionCode'] as int
+        : null;
+    String? url;
+    if (abiName != null) {
+      final urls = data['urls'];
+      if (urls is Map) {
+        final abiUrl = urls[abiName];
+        if (abiUrl is String && abiUrl.isNotEmpty) url = abiUrl;
+      }
+    }
+    url ??= data['url'] is String ? data['url'] as String : null;
+    if (remoteCode == null || url == null || url.isEmpty) return null;
+    return UpdateInfo(
+      versionCode: remoteCode,
+      versionName: (data['versionName'] as String?) ?? 'v$remoteCode',
+      url: url,
+      notes: (data['notes'] as String?) ?? '',
+    );
+  }
+
   /// Manual-check entry point with distinguished failure modes.
   /// Returns the status plus [UpdateInfo] when a newer version exists.
   /// Never throws.
@@ -118,25 +186,16 @@ class UpdateService {
       if (data is! Map<String, dynamic>) {
         return const UpdateCheckOutcome(UpdateCheckResult.manifestNotFound);
       }
-      final remoteCode = data['versionCode'];
-      final url = data['url'];
-      if (remoteCode is! int || url is! String || url.isEmpty) {
+      final info = updateInfoFromManifest(data);
+      if (info == null) {
         return const UpdateCheckOutcome(UpdateCheckResult.manifestNotFound);
       }
-      final info = await PackageInfo.fromPlatform();
-      final currentCode = int.tryParse(info.buildNumber) ?? 0;
-      if (remoteCode <= currentCode) {
+      final packageInfo = await PackageInfo.fromPlatform();
+      final currentCode = int.tryParse(packageInfo.buildNumber) ?? 0;
+      if (info.versionCode <= currentCode) {
         return const UpdateCheckOutcome(UpdateCheckResult.upToDate);
       }
-      return UpdateCheckOutcome(
-        UpdateCheckResult.available,
-        UpdateInfo(
-          versionCode: remoteCode,
-          versionName: (data['versionName'] as String?) ?? 'v$remoteCode',
-          url: url,
-          notes: (data['notes'] as String?) ?? '',
-        ),
-      );
+      return UpdateCheckOutcome(UpdateCheckResult.available, info);
     } on SocketException {
       return const UpdateCheckOutcome(UpdateCheckResult.noInternet);
     } catch (_) {

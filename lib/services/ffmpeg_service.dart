@@ -251,6 +251,14 @@ class FfmpegService {
   /// Normalize one clip: trim + scale-to-cover + center-crop to a common size
   /// + 30fps + aac audio. Used before concat/xfade so every intermediate
   /// matches.
+  ///
+  /// Phase 9 — [fps], [videoBitrateKbps] and [audioBitrateKbps] are
+  /// the export screen's REAL settings: fps goes into the filter
+  /// (`fps=<n>`), an explicit video bitrate replaces CRF 23 with
+  /// `-b:v / -maxrate / -bufsize`, an explicit audio bitrate adds
+  /// `-b:a`. All three default to the Phase 7 behaviour (30 fps,
+  /// CRF 23, AAC with no explicit bitrate) so existing callers and
+  /// tests are untouched.
   static String normalizeCommand({
     required String input,
     required double trimStart,
@@ -258,10 +266,22 @@ class FfmpegService {
     required int width,
     required int height,
     required String output,
+    int fps = 30,
+    int? videoBitrateKbps,
+    int? audioBitrateKbps,
   }) {
+    final videoArgs = videoBitrateKbps == null
+        ? '-c:v libx264 -preset veryfast -crf 23'
+        : '-c:v libx264 -preset veryfast '
+            '-b:v ${videoBitrateKbps}k '
+            '-maxrate ${(videoBitrateKbps * 3 / 2).round()}k '
+            '-bufsize ${videoBitrateKbps * 2}k';
+    final audioArgs = audioBitrateKbps == null
+        ? '-c:a aac -ar 48000 -ac 2'
+        : '-c:a aac -b:a ${audioBitrateKbps}k -ar 48000 -ac 2';
     return '-y -ss $trimStart -to $trimEnd -i ${q(input)} '
-        '-vf "scale=$width:$height:force_original_aspect_ratio=increase,crop=$width:$height,fps=30,format=yuv420p" '
-        '-c:v libx264 -preset veryfast -crf 23 -c:a aac -ar 48000 -ac 2 ${q(output)}';
+        '-vf "scale=$width:$height:force_original_aspect_ratio=increase,crop=$width:$height,fps=$fps,format=yuv420p" '
+        '$videoArgs $audioArgs ${q(output)}';
   }
 
   /// Concat-demuxer command for already-normalized clips (fast, no re-encode).
@@ -373,6 +393,221 @@ class FfmpegService {
     return buf.toString();
   }
 
+  /// Logo-bug geometry for the Nigraan final template (mirrors
+  /// `NigraanFinalLayout.compute` in `lib/live/news_template.dart`):
+  /// logo size = 15.3% of the frame width, top-right with a 20px
+  /// margin, sitting under the top ticker when it is enabled.
+  /// Returns (x, y, size) in output pixels.
+  static (int, int, int) logoBugRect({
+    required int width,
+    required int height,
+    required bool topRibbonEnabled,
+  }) {
+    final size = (width * 0.153).round();
+    final x = width - size - 20;
+    final y = (topRibbonEnabled ? (height * 0.055).round() : 0) + 16;
+    return (x, y, size);
+  }
+
+  /// Voiceover mix pass: mixes [voiceoverPath] (the Gemini voiceover
+  /// WAV) over the clip audio of [input]. The clip audio is ducked to
+  /// [clipVolume] (0.35 = the voice stays clearly on top) and the mix
+  /// is cut to the video length (`duration=first`). Video is copied,
+  /// not re-encoded. When [hasClipAudio] is false the video has no
+  /// audio track at all, so the voiceover simply becomes the audio
+  /// track (`-shortest` trims it to the video).
+  static String voiceoverMixCommand({
+    required String input,
+    required String voiceoverPath,
+    required String output,
+    required bool hasClipAudio,
+    double clipVolume = 0.35,
+    // Phase 9 — the export screen's real audio bitrate. Null = the
+    // Phase 7 behaviour (AAC, no explicit bitrate).
+    int? audioBitrateKbps,
+  }) {
+    final vol = clipVolume.clamp(0.0, 1.0).toStringAsFixed(2);
+    final buf = StringBuffer();
+    buf.write('-y -i ${q(input)} -i ${q(voiceoverPath)} ');
+    if (hasClipAudio) {
+      buf.write(
+        '-filter_complex "[0:a]volume=$vol[ducked];'
+        '[ducked][1:a]amix=inputs=2:duration=first:'
+        'dropout_transition=0[aout]" '
+        '-map 0:v -map "[aout]" ',
+      );
+    } else {
+      buf.write('-map 0:v -map 1:a -shortest ');
+    }
+    final audioArgs = audioBitrateKbps == null
+        ? '-c:a aac'
+        : '-c:a aac -b:a ${audioBitrateKbps}k';
+    buf.write(
+      '-c:v copy $audioArgs -movflags +faststart ${q(output)}',
+    );
+    return buf.toString();
+  }
+
+  /// Rotating-logo overlay pass (Phase 7, see
+  /// `~/workspace/tj-pro-news-maker/rotation-decision.md`): overlays
+  /// the 3D-rotating logo bug on [input] at the template's logo-bug
+  /// spot (see [logoBugRect]). The loop source is EITHER
+  /// [movPath] — the pre-rendered `logo-rotating-alpha.mov`, ping-ponged
+  /// in-graph (forward + `reverse` concat, so the 10 s truncated swing
+  /// loops seamlessly) — OR [framesDir] — a directory of
+  /// `frame_%02d.png` frames (a generated rotating loop for a
+  /// user-replaced logo, or the default initial tile), looped with the
+  /// image2 demuxer. Exactly one of the two must be given. The
+  /// `perspective` filter is deliberately NOT used (rejected in the
+  /// decision doc: a shear, not a true rotationY). Audio is copied.
+  static String logoLoopOverlayCommand({
+    required String input,
+    required String output,
+    required int width,
+    required int height,
+    required bool topRibbonEnabled,
+    String? movPath,
+    String? framesDir,
+    int framesFps = 12,
+    // Phase 9 — the export screen's real video bitrate (null = CRF 23).
+    int? videoBitrateKbps,
+  }) {
+    assert(
+      (movPath == null) != (framesDir == null),
+      'logoLoopOverlayCommand needs exactly one of movPath / framesDir',
+    );
+    final (x, y, size) = logoBugRect(
+      width: width,
+      height: height,
+      topRibbonEnabled: topRibbonEnabled,
+    );
+    final buf = StringBuffer();
+    buf.write('-y ');
+    if (movPath != null) {
+      // Crop to the mov's opaque alpha bbox (measured 235,86,396x316
+      // on the 854x480 ProRes) — the logo occupies only the centre of
+      // the frame — then ping-pong forward+reverse into a seamless
+      // 20 s loop, scaled to bug size.
+      buf.write('-stream_loop -1 -i ${q(movPath)} ');
+      buf.write('-i ${q(input)} ');
+      buf.write('-filter_complex "');
+      buf.write(
+        '[0:v]crop=396:316:235:86,format=yuva420p,split[f][r];'
+        '[r]reverse[rr];[f][rr]concat=n=2:v=1:a=0,format=yuva420p,'
+        'scale=$size:-1[bug];'
+        '[1:v][bug]overlay=$x:$y[vout]" ',
+      );
+      buf.write('-map "[vout]" -map 1:a? ');
+    } else {
+      buf.write(
+        '-framerate $framesFps -stream_loop -1 '
+        '-i ${q('$framesDir/frame_%02d.png')} ',
+      );
+      buf.write('-i ${q(input)} ');
+      buf.write('-filter_complex "');
+      buf.write(
+        '[0:v]format=yuva420p,scale=$size:-1[bug];'
+        '[1:v][bug]overlay=$x:$y[vout]" ',
+      );
+      buf.write('-map "[vout]" -map 1:a? ');
+    }
+    // Phase 9 — an explicit video bitrate replaces CRF 23 (null =
+    // Phase 7 behaviour).
+    final videoArgs = videoBitrateKbps == null
+        ? '-c:v libx264 -preset veryfast -crf 23'
+        : '-c:v libx264 -preset veryfast '
+            '-b:v ${videoBitrateKbps}k '
+            '-maxrate ${(videoBitrateKbps * 3 / 2).round()}k '
+            '-bufsize ${videoBitrateKbps * 2}k';
+    buf.write(
+      '$videoArgs -c:a copy '
+      '-movflags +faststart ${q(output)}',
+    );
+    return buf.toString();
+  }
+
+  /// Normalize one segment AND guarantee it has an audio stream, so
+  /// the concat demuxer can join it with the other segments: when
+  /// [addSilentAudio] is true (the source has no audio — e.g. the
+  /// intro, or a still-image outro card), a silent stereo track of
+  /// [durationSec] is generated with `anullsrc`. When false this is
+  /// exactly [normalizeCommand].
+  static String normalizeWithAudioCommand({
+    required String input,
+    required double trimStart,
+    required double trimEnd,
+    required int width,
+    required int height,
+    required String output,
+    bool addSilentAudio = false,
+    // Phase 9 — passed through to [normalizeCommand] (see there).
+    int fps = 30,
+    int? videoBitrateKbps,
+    int? audioBitrateKbps,
+  }) {
+    if (!addSilentAudio) {
+      return normalizeCommand(
+        input: input,
+        trimStart: trimStart,
+        trimEnd: trimEnd,
+        width: width,
+        height: height,
+        output: output,
+        fps: fps,
+        videoBitrateKbps: videoBitrateKbps,
+        audioBitrateKbps: audioBitrateKbps,
+      );
+    }
+    final dur = (trimEnd - trimStart).clamp(0.1, 3600.0);
+    final videoArgs = videoBitrateKbps == null
+        ? '-c:v libx264 -preset veryfast -crf 23'
+        : '-c:v libx264 -preset veryfast '
+            '-b:v ${videoBitrateKbps}k '
+            '-maxrate ${(videoBitrateKbps * 3 / 2).round()}k '
+            '-bufsize ${videoBitrateKbps * 2}k';
+    final audioArgs = audioBitrateKbps == null
+        ? '-c:a aac -ar 48000 -ac 2'
+        : '-c:a aac -b:a ${audioBitrateKbps}k -ar 48000 -ac 2';
+    return '-y -ss $trimStart -to $trimEnd -i ${q(input)} '
+        '-f lavfi -t $dur -i anullsrc=channel_layout=stereo:sample_rate=48000 '
+        '-vf "scale=$width:$height:force_original_aspect_ratio=increase,crop=$width:$height,fps=$fps,format=yuv420p" '
+        '-map 0:v -map 1:a -shortest '
+        '$videoArgs $audioArgs ${q(output)}';
+  }
+
+  /// A still image held for [durationSec] as a video segment with a
+  /// silent audio track (the 3 s outro end card, rendered from the
+  /// template PNG). Same codecs/dims as [normalizeCommand] so the
+  /// concat demuxer can join it with the other segments.
+  static String stillSegmentCommand({
+    required String imagePath,
+    required double durationSec,
+    required int width,
+    required int height,
+    required String output,
+    // Phase 9 — the export screen's real fps/bitrate (see
+    // [normalizeCommand]; defaults = Phase 7 behaviour).
+    int fps = 30,
+    int? videoBitrateKbps,
+    int? audioBitrateKbps,
+  }) {
+    final dur = durationSec.clamp(0.1, 3600.0);
+    final videoArgs = videoBitrateKbps == null
+        ? '-c:v libx264 -preset veryfast -crf 23'
+        : '-c:v libx264 -preset veryfast '
+            '-b:v ${videoBitrateKbps}k '
+            '-maxrate ${(videoBitrateKbps * 3 / 2).round()}k '
+            '-bufsize ${videoBitrateKbps * 2}k';
+    final audioArgs = audioBitrateKbps == null
+        ? '-c:a aac -ar 48000 -ac 2'
+        : '-c:a aac -b:a ${audioBitrateKbps}k -ar 48000 -ac 2';
+    return '-y -loop 1 -t $dur -i ${q(imagePath)} '
+        '-f lavfi -t $dur -i anullsrc=channel_layout=stereo:sample_rate=48000 '
+        '-vf "scale=$width:$height:force_original_aspect_ratio=increase,crop=$width:$height,fps=$fps,format=yuv420p" '
+        '-map 0:v -map 1:a -shortest '
+        '$videoArgs $audioArgs ${q(output)}';
+  }
+
   /// Second-pass overlay for the v2 news template and/or logo.
   ///
   /// [templatePngPath] is the composited 720x1280 template frame
@@ -391,6 +626,8 @@ class FfmpegService {
     String? logoPath,
     String logoPosition = 'topRight',
     required String output,
+    // Phase 9 — the export screen's real video bitrate (null = CRF 23).
+    int? videoBitrateKbps,
   }) {
     if (templatePngPath == null && logoPath == null) return null;
     final buf = StringBuffer();
@@ -429,12 +666,46 @@ class FfmpegService {
       );
       videoLabel = '[vout]';
     }
+    final videoArgs = videoBitrateKbps == null
+        ? '-c:v libx264 -preset veryfast -crf 23'
+        : '-c:v libx264 -preset veryfast '
+            '-b:v ${videoBitrateKbps}k '
+            '-maxrate ${(videoBitrateKbps * 3 / 2).round()}k '
+            '-bufsize ${videoBitrateKbps * 2}k';
     buf.write(
       '" -map "$videoLabel" -map 0:a? '
-      '-c:v libx264 -preset veryfast -crf 23 -c:a copy '
+      '$videoArgs -c:a copy '
       '-movflags +faststart ${q(output)}',
     );
     return buf.toString();
+  }
+
+  /// Watermark overlay pass (Phase 8, master prompt §9).
+  ///
+  /// [watermarkPngPath] is the full-frame transparent PNG from
+  /// `renderWatermarkImage` (same frame size as [input], mark already
+  /// at its corner), so the overlay is a plain 0:0 composite — no
+  /// scale2ref, no position math in the filter graph. Audio is
+  /// copied untouched (only video re-encodes). The caller skips this
+  /// pass entirely when the preset's watermark is off.
+  static String watermarkOverlayCommand({
+    required String input,
+    required String watermarkPngPath,
+    required String output,
+    // Phase 9 — the export screen's real video bitrate (null = CRF 23).
+    int? videoBitrateKbps,
+  }) {
+    final videoArgs = videoBitrateKbps == null
+        ? '-c:v libx264 -preset veryfast -crf 23'
+        : '-c:v libx264 -preset veryfast '
+            '-b:v ${videoBitrateKbps}k '
+            '-maxrate ${(videoBitrateKbps * 3 / 2).round()}k '
+            '-bufsize ${videoBitrateKbps * 2}k';
+    return '-y -i ${q(input)} -i ${q(watermarkPngPath)} '
+        '-filter_complex "[0:v][1:v]overlay=0:0[vout]" '
+        '-map "[vout]" -map 0:a? '
+        '$videoArgs -c:a copy '
+        '-movflags +faststart ${q(output)}';
   }
 }
 

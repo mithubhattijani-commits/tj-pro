@@ -80,11 +80,18 @@ class UnityAdsService {
   /// Load the rewarded video ad. Called at init and automatically
   /// after each show so the next ad is ready.
   static Future<bool> loadRewardedAd() async {
+    return loadRewardedAdForPlacement(AppConfig.unityRewardedPlacementId);
+  }
+
+  /// Load a rewarded video ad for a specific placement ID (e.g. the
+  /// coins placement `rewarded_coins`). The default [loadRewardedAd]
+  /// keeps serving the Premium unlock placement.
+  static Future<bool> loadRewardedAdForPlacement(String placementId) async {
     if (!_initialized || !AppConfig.unityRewardedEnabled) return false;
     try {
       final completer = Completer<bool>();
       UnityAds.load(
-        placementId: AppConfig.unityRewardedPlacementId,
+        placementId: placementId,
         onComplete: (placementId) {
           if (!completer.isCompleted) completer.complete(true);
         },
@@ -107,13 +114,24 @@ class UnityAdsService {
   /// ad (caller unlocks Premium), [UnityAdResult.skipped] when they
   /// skipped early, [UnityAdResult.failed] on error.
   static Future<UnityAdResult> showRewardedAd() async {
+    return showRewardedAdForPlacement(AppConfig.unityRewardedPlacementId);
+  }
+
+  /// Show a rewarded video ad for a specific placement ID (e.g. the
+  /// coins placement). Returns [UnityAdResult.completed] only when the
+  /// user watched the full ad — the caller (CoinService) credits coins
+  /// only on completion. Preloads the next ad for the same placement
+  /// afterwards.
+  static Future<UnityAdResult> showRewardedAdForPlacement(
+    String placementId,
+  ) async {
     if (!_initialized || !AppConfig.unityRewardedEnabled) {
       return UnityAdResult.failed;
     }
     try {
       final completer = Completer<UnityAdResult>();
       UnityAds.showVideoAd(
-        placementId: AppConfig.unityRewardedPlacementId,
+        placementId: placementId,
         onStart: (placementId) {},
         onClick: (placementId) {},
         onSkipped: (placementId) {
@@ -137,7 +155,7 @@ class UnityAdsService {
         onTimeout: () => UnityAdResult.failed,
       );
       // Preload the next ad in the background.
-      unawaited(loadRewardedAd());
+      unawaited(loadRewardedAdForPlacement(placementId));
       return result;
     } catch (_) {
       return UnityAdResult.failed;

@@ -44,12 +44,16 @@ android {
         minSdk = 24
         // TJ Pro fixed: targetSdk 36 (do not change without a new release plan).
         targetSdk = 36
-        // DHAMAKA (Jaani 3 Nov 2026): arm64-v8a only — cuts APK size
-        // significantly (ffmpeg native libs are the bulk). All phones
-        // from 2017+ are arm64; armeabi-v7a/x86_64 are obsolete.
-        // This is SAFE (unlike R8 shrinking which crashed on 28 Oct).
+        // APP SIZE (user order 20 Nov 2026): all three ABIs, for the
+        // SPLIT-PER-ABI build — the CI workflow builds one APK per ABI,
+        // so each APK still carries only ONE ABI's native libs and stays
+        // small, while older armeabi-v7a phones and x86_64 devices
+        // (emulators/tablets) are covered too. This REPLACES the old
+        // arm64-only rule (3 Nov 2026) — arm64-only saved size by
+        // dropping devices; split-per-ABI saves size per APK instead.
+        // (The workflow split itself is a browser step — not this file.)
         ndk {
-            abiFilters += listOf("arm64-v8a")
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86_64")
         }
         // Uses the version code from pubspec.yaml. When using split APKs, 1000 * ABI_VERSION
         // is added automatically by Flutter. (https://developer.android.com/studio/build/configure-apk-splits#configure-APK-versions)

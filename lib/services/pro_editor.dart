@@ -846,6 +846,36 @@ String chromaFilterComplex({
   return buf.toString();
 }
 
+/// Chroma-key post-pass over an already-exported file (Phase 7):
+/// keys out the green/blue background (via [chromaFilterComplex])
+/// and composites the foreground over the new background. When the
+/// background is an image, [c.backgroundImagePath] is fed as input
+/// [1:v] (the exact layout [chromaFilterComplex] requires); a solid
+/// colour background needs no second input. Audio is copied
+/// untouched. This is the ONE builder both the reel export and the
+/// video editor's chroma post-pass use, so the persisted preset
+/// sensitivity + background (Template Studio) and the editor's own
+/// chroma controls apply through the same graph. Returns the full
+/// command string.
+String chromaPassCommand({
+  required String input,
+  required ProChroma c,
+  required String output,
+}) {
+  final buf = StringBuffer();
+  buf.write('-y -i ${FfmpegService.q(input)} ');
+  if (c.backgroundKind == 'image' && c.backgroundImagePath != null) {
+    buf.write('-i ${FfmpegService.q(c.backgroundImagePath!)} ');
+  }
+  final snippet = chromaFilterComplex(c: c, outLabel: '[vout]');
+  buf.write(
+    '-filter_complex "$snippet" -map "[vout]" -map 0:a? '
+    '-c:v libx264 -preset veryfast -crf 23 -c:a copy '
+    '-movflags +faststart ${FfmpegService.q(output)}',
+  );
+  return buf.toString();
+}
+
 // ---------------------------------------------------------------------------
 // 6. Stabilization (vidstab two-pass, deshake fallback)
 // ---------------------------------------------------------------------------

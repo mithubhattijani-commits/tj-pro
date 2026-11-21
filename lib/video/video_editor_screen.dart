@@ -23,12 +23,17 @@ import '../app_config.dart';
 import '../theme.dart';
 import '../live/news_template.dart';
 import '../live/live_studio_screen.dart';
+import '../news/breaking_templates.dart';
+import '../news/channel_preset.dart';
+import '../news/news_project.dart';
+import '../news/project_handoff.dart';
 import '../services/ad_service.dart';
 import '../services/ffmpeg_service.dart';
 import '../services/caption_service.dart';
 import '../services/pro_editor.dart';
 import '../services/fx_pack.dart';
 import '../services/pro_vision.dart';
+import '../services/reel_export_service.dart';
 
 class VideoClip {
   VideoClip(this.file, this.duration, this.aspectRatio);
@@ -42,7 +47,17 @@ class VideoClip {
 }
 
 class VideoEditorScreen extends StatefulWidget {
-  const VideoEditorScreen({super.key});
+  /// Plain editor: opens empty, clips come from the gallery picker.
+  ///
+  /// Timeline handoff (Phase 7): when [project] is given, the editor
+  /// opens WITH that News Maker project loaded — clips + voiceover +
+  /// template + ticker + captions, resolved by [buildHandoff] (see
+  /// `lib/news/project_handoff.dart`) — instead of dropping it. [preset]
+  /// is the project's channel preset (chroma / PIP / logo settings).
+  const VideoEditorScreen({super.key, this.project, this.preset});
+
+  final NewsProject? project;
+  final ChannelPreset? preset;
 
   @override
   State<VideoEditorScreen> createState() => _VideoEditorScreenState();
@@ -163,8 +178,27 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   bool _fxSilenceRemove = false;
   bool _fxPip = false;
   String _fxPipVideo = '';
+  // PIP inset position/scale — defaults are the long-standing
+  // hardcoded values; a timeline handoff replaces them with the
+  // channel preset's settings (Phase 7).
+  PipPosition _pipPosition = PipPosition.bottomRight;
+  double _pipScale = 0.3;
   ShakeFx _fxShake = ShakeFx.none;
   int _fxQuality = 0;
+
+  // ---- Timeline handoff state (Phase 7). Set once in [_loadProject]
+  // when the screen was opened with a NewsProject; null in the plain
+  // editor. ----
+  NewsProject? _handoffProject;
+  ChannelPreset? _handoffPreset;
+  String? _projectVoiceoverPath;
+  String? _projectTemplateKind;
+  bool _projectLoading = false;
+  // Handoff captions are already timeline-relative (0-based over the
+  // whole reel) — [_adjustedCaptions] must NOT re-offset them. The
+  // editor's own caption tools (transcribe / edit) record per-clip
+  // segments and reset this flag.
+  bool _captionsTimelineRelative = false;
 
   bool get _gradeActive =>
       _proLut.isNotEmpty ||
@@ -666,15 +700,120 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   @override
   void initState() {
     super.initState();
+    // Plain editor only: a handoff project brings its own template
+    // ([_loadProject] below) — the saved live template must NOT
+    // overwrite it when this future resolves.
     NewsTemplate.load().then((t) {
-      if (mounted) setState(() => _news = t);
+      if (mounted && widget.project == null) setState(() => _news = t);
     });
+    if (widget.project != null) {
+      _loadProject(widget.project!, widget.preset);
+    }
+  }
+
+  /// Timeline handoff (Phase 7): loads [project] into the editor —
+  /// clips (probed for duration/aspect like the gallery picker does),
+  /// voiceover, template + ticker, captions, and the preset's chroma
+  /// + PIP settings. Missing clip files are reported in the status
+  /// line, never silently dropped. A failure here never crashes the
+  /// screen: the editor stays usable as a plain editor.
+  Future<void> _loadProject(
+    NewsProject project,
+    ChannelPreset? preset,
+  ) async {
+    final handoff = buildHandoff(project: project, preset: preset);
+    setState(() {
+      _projectLoading = true;
+      _handoffProject = project;
+      _handoffPreset = preset;
+      _projectTemplateKind = handoff.templateKind;
+      _projectVoiceoverPath = handoff.voiceoverPath;
+      _captions = handoff.captions;
+      _captionsTimelineRelative = handoff.captions.isNotEmpty;
+      _news = handoff.template;
+      _newsEnabled = true;
+      _fxPip = handoff.pipEnabled;
+      _pipPosition = handoff.pipPosition;
+      _pipScale = handoff.pipScale;
+      if (handoff.chroma != null) {
+        _proChroma = true;
+        _proChromaSimilarity = handoff.chroma!.similarity;
+        _proChromaBlend = handoff.chroma!.blend;
+        _proChromaBgKind = 'image';
+        _proChromaBgImage = handoff.chroma!.backgroundImagePath;
+      }
+      _status = 'Project load ho raha hai…';
+    });
+    // Bundled chroma backdrop (newsroom / studio desk): materialise
+    // the asset to a file, like the LUT loader does — FFmpeg cannot
+    // read Flutter assets directly.
+    if (handoff.chromaBackgroundAsset != null) {
+      try {
+        final dir = await _workDir();
+        final bgFile =
+            await ensureLutFile(handoff.chromaBackgroundAsset!, dir);
+        if (mounted) {
+          setState(() => _proChromaBgImage = bgFile.path);
+        }
+      } catch (e) {
+        if (mounted) {
+          // Asset unreadable: fall back to the solid-colour
+          // background so the chroma pass still runs (as the status
+          // note below says) instead of referencing a missing [1:v].
+          setState(() {
+            _proChromaBgKind = 'color';
+            _proChromaBgImage = null;
+            _status =
+                'Note: chroma background load nahi hua, solid background use hoga.';
+          });
+        }
+      }
+    }
+    // Load the clips (same probe as the gallery picker: real duration
+    // + aspect from the video stream).
+    var loaded = 0;
+    for (final path in handoff.clipPaths) {
+      final file = File(path);
+      final probe = VideoPlayerController.file(file);
+      try {
+        await probe.initialize();
+        final d = probe.value.duration;
+        final aspect = probe.value.aspectRatio;
+        await probe.dispose();
+        if (!mounted) return;
+        setState(() {
+          _clips.add(VideoClip(file, d, aspect));
+          loaded++;
+        });
+      } catch (e) {
+        await probe.dispose();
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _projectLoading = false;
+      final dropped = handoff.droppedClipPaths;
+      _status = 'Project loaded: $loaded clip(s)'
+          '${handoff.voiceoverPath == null ? '' : ' • voiceover tayyar'}'
+          '${dropped.isEmpty ? '' : ' • ${dropped.length} clip file(s) nahi mili'}';
+    });
+    if (_clips.isNotEmpty) await _loadPreview();
   }
 
   @override
   void dispose() {
     _controller?.dispose();
     super.dispose();
+  }
+
+  /// Display title for the handoff banner (project title, else
+  /// headline, else 'Untitled').
+  String _projectTitle() {
+    final p = _handoffProject;
+    if (p == null) return 'Untitled';
+    if (p.title.trim().isNotEmpty) return p.title.trim();
+    if (p.headline.trim().isNotEmpty) return p.headline.trim();
+    return 'Untitled';
   }
 
   Future<void> _loadPreview() async {
@@ -1193,6 +1332,39 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         }
       }
 
+      // Timeline handoff (Phase 7): voiceover mix. The project
+      // voiceover (Gemini WAV) is mixed over the clip audio, ducked
+      // so the voice stays on top; when the video has no audio track
+      // the voiceover simply becomes the track. Guarded like the
+      // other post-passes: a failure keeps the unmixed export.
+      if (_projectVoiceoverPath != null &&
+          await File(_projectVoiceoverPath!).exists()) {
+        try {
+          _setStatus('Voiceover mix ho raha hai…');
+          final hasAudio = await ReelExportService.probeHasAudio(File(out));
+          final mixOut = p.join(dir.path, 'pve_export_voicemix_$stamp.mp4');
+          final res = await FfmpegService.run(
+            FfmpegService.voiceoverMixCommand(
+              input: out,
+              voiceoverPath: _projectVoiceoverPath!,
+              output: mixOut,
+              hasClipAudio: hasAudio,
+            ),
+          );
+          if (res.ok) {
+            out = mixOut;
+          } else {
+            _setStatus(
+              'Note: voiceover mix fail ho gaya, baghair voice ke save ho raha hai.',
+            );
+          }
+        } catch (e) {
+          _setStatus(
+            'Note: voiceover mix fail ho gaya ($e), baghair voice ke save ho raha hai.',
+          );
+        }
+      }
+
       // PRO post-passes, AFTER the main pipeline and BEFORE the news
       // template pass. Each is guarded: on failure the previous output
       // is kept, a status note is written, and the export continues —
@@ -1284,18 +1456,15 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
             backgroundImagePath:
                 _proChromaBgKind == 'image' ? _proChromaBgImage : null,
           );
-          final snippet = chromaFilterComplex(c: c, outLabel: '[vout]');
-          final buf = StringBuffer();
-          buf.write('-y -i ${FfmpegService.q(out)} ');
-          if (_proChromaBgKind == 'image' && _proChromaBgImage != null) {
-            buf.write('-i ${FfmpegService.q(_proChromaBgImage!)} ');
-          }
-          buf.write(
-            '-filter_complex "$snippet" -map "[vout]" -map 0:a? '
-            '-c:v libx264 -preset veryfast -crf 23 -c:a copy '
-            '-movflags +faststart ${FfmpegService.q(chromaOut)}',
+          // ONE builder for the chroma graph (shared with the reel
+          // export) — the Template Studio sensitivity + background and
+          // the editor's own chroma controls apply through it.
+          final cmd = chromaPassCommand(
+            input: out,
+            c: c,
+            output: chromaOut,
           );
-          final res = await FfmpegService.run(buf.toString());
+          final res = await FfmpegService.run(cmd);
           if (res.ok) {
             out = chromaOut;
           } else {
@@ -1342,12 +1511,22 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         }
       }
 
+      // PIP (Phase 7): the inset IS composited for real in the export
+      // ([pipOverlayFilter]) at the preset's position/scale when
+      // opened via timeline handoff. SPLIT SCREEN stays deferred:
+      // it needs a second concurrent video track, but this timeline
+      // is a single sequential clip list — there is no second input
+      // to composite (see the reel export header for the full reason).
       if (_fxPip && _fxPipVideo.isNotEmpty) {
         final String pipOut = p.join(dir.path, 'pve_export_pip_$stamp.mp4');
+        // PIP position/scale: the long-standing defaults, or the
+        // channel preset's settings when opened via timeline handoff
+        // (Phase 7) — the inset is composited for real, never a
+        // preview-only effect.
         final String snippet = pipOverlayFilter(
           pipLabel: '[1:v]',
-          position: PipPosition.bottomRight,
-          pipScale: 0.3,
+          position: _pipPosition,
+          pipScale: _pipScale,
           margin: 24,
           outLabel: '[vout]',
         );
@@ -1365,6 +1544,12 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         if (pr.ok) {
           out = pipOut;
         }
+      } else if (_fxPip) {
+        // PIP on but no inset video picked: the pass is skipped and
+        // the user is told — never a fake PIP claim.
+        _setStatus(
+          'Note: PIP video nahi chuna — PIP ke baghair save ho raha hai.',
+        );
       }
 
       // v2 news template + logo second pass (before gallery save).
@@ -1381,12 +1566,29 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         String? templatePng;
         if (useNews) {
           _setStatus('News template laga rahe hain…');
+          // Timeline handoff (Phase 7): render the PROJECT's template
+          // kind (nigraanFinal / breaking / classic) from its preset
+          // instead of the live design, with the logo left out of the
+          // PNG (the static logo comes from the overlay pass below,
+          // as before). The plain editor keeps the live render.
           final tplFile = await renderLiveTemplateImage(
             template: _news,
             tickerPx: 0,
             tickerAtStart: true,
             now: DateTime.now(),
             dir: dir,
+            templateKind: _projectTemplateKind ?? 'live',
+            preset: _handoffPreset,
+            breakingTemplate: _projectTemplateKind == 'breaking' &&
+                    _handoffProject != null &&
+                    _handoffPreset != null
+                ? BreakingTemplate.fromProject(
+                    _handoffProject!,
+                    _handoffPreset!,
+                  )
+                : null,
+            includeLogo: _handoffPreset == null,
+            includeIntroMarker: _handoffPreset == null,
           );
           templatePng = tplFile.path;
         }
@@ -1475,11 +1677,16 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   /// Captions mapped onto the exported timeline: captions were recorded
   /// against the selected clip, so in a merged export they start after
   /// the preceding clips, and everything scales by the export speed.
+  /// EXCEPTION (Phase 7 handoff): project captions are already
+  /// timeline-relative over the whole reel, so they get no offset —
+  /// only the speed scaling.
   List<CaptionSegment> _adjustedCaptions() {
     if (_captions.isEmpty) return [];
     var offset = 0.0;
-    for (var i = 0; i < _selected && i < _clips.length; i++) {
-      offset += _clips[i].effectiveDuration;
+    if (!_captionsTimelineRelative) {
+      for (var i = 0; i < _selected && i < _clips.length; i++) {
+        offset += _clips[i].effectiveDuration;
+      }
     }
     final speed = _speed;
     return _captions
@@ -1545,6 +1752,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       } else {
         setState(() {
           _captions = segments;
+          // Transcribed segments are per-clip, not timeline-relative.
+          _captionsTimelineRelative = false;
           _status =
               '${segments.length} caption segments ready — export se pehle Edit se dekh/edit kar sakte hain.';
         });
@@ -1615,6 +1824,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       }
       setState(() {
         _captions = kept;
+        // Edited segments are per-clip, not timeline-relative.
+        _captionsTimelineRelative = false;
         _status = kept.isEmpty
             ? 'Captions cleared.'
             : '${kept.length} caption segments ready.';
@@ -2462,6 +2673,50 @@ if (AppConfig.crossfadeEnabled)
                   ? 'Choose PIP video'
                   : p.basename(_fxPipVideo)),
             ),
+          if (_fxPip) ...[
+            const SizedBox(height: 8),
+            DropdownButtonFormField<PipPosition>(
+              key: const Key('pipPositionDropdown'),
+              initialValue: _pipPosition,
+              decoration: const InputDecoration(
+                labelText: 'PIP position',
+              ),
+              items: PipPosition.values
+                  .map(
+                    (pos) => DropdownMenuItem(
+                      value: pos,
+                      child: Text(pos.name),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (v) {
+                if (v != null) setState(() => _pipPosition = v);
+              },
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Text('PIP size'),
+                Expanded(
+                  child: Slider(
+                    key: const Key('pipScaleSlider'),
+                    value: _pipScale,
+                    min: 0.15,
+                    max: 0.5,
+                    divisions: 7,
+                    label: '${(_pipScale * 100).round()}%',
+                    onChanged: (v) => setState(() => _pipScale = v),
+                  ),
+                ),
+                Text('${(_pipScale * 100).round()}%'),
+              ],
+            ),
+            if (_fxPipVideo.isEmpty)
+              const Text(
+                'PIP video chunein — bina inset video ke PIP export mein nahi lagega.',
+                style: TextStyle(color: Colors.grey, fontSize: 12),
+              ),
+          ],
           const Divider(height: 32),
         ];
       case 'captions':
@@ -3244,6 +3499,26 @@ Row(
               ),
             ),
             _timelineSection(clip),
+            if (_handoffProject != null)
+              Container(
+                width: double.infinity,
+                color: const Color(0xFF1E1E2E),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                child: Text(
+                  key: const Key('handoffProjectBanner'),
+                  'News project: ${_projectTitle()} • ${_clips.length} clip(s)'
+                  '${_projectVoiceoverPath == null ? '' : ' • voiceover'}'
+                  ' • ${_projectTemplateKind ?? 'live'} template'
+                  '${_projectLoading ? ' • load ho raha hai…' : ''}',
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 12,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
             Expanded(
               flex: 4,
               child: Container(
