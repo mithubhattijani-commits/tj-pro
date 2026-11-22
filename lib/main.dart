@@ -216,6 +216,47 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// Account row tap (v1.5.0 grouped MORE): signed-in → sign-out
+  /// confirm; guest → login screen — via the shared top-level
+  /// flow helpers below.
+  void _accountTap() {
+    if (AuthService.isSignedIn) {
+      _confirmSignOutFlow(context, () => setState(() {}));
+    } else {
+      _openLoginFlow(context, () => setState(() {}));
+    }
+  }
+
+  /// Support row tap: the same WhatsApp deep link the old Support
+  /// card used.
+  Future<void> _openSupportWhatsApp() async {
+    final uri = Uri.parse(AppConfig.supportWhatsAppLink);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  /// About row tap: the old About card's text, as a dialog (the
+  /// card itself was part of the de-grouped MORE list).
+  void _showAbout() {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('About'),
+        content: const Text(
+          'TJ Pro by Nigraan TV — photo & video editor that works '
+          'fully offline on your phone. No account, no uploads.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -234,12 +275,11 @@ class _HomeScreenState extends State<HomeScreen> {
             return AppBar(
               title: Text(title),
               actions: [
-                // Pro (v1.4.0): gold crown opens the Pro screen.
+                // Pro: gold CROWN opens the Pro screen (v1.5.0,
+                // #13 — the old workspace_premium rosette read as a
+                // medal, not a crown; _CrownIcon draws a real one).
                 IconButton(
-                  icon: const Icon(
-                    Icons.workspace_premium,
-                    color: Color(0xFFFFC107),
-                  ),
+                  icon: const _CrownIcon(size: 26),
                   tooltip: 'TJ Pro — Go Pro',
                   onPressed: () => _open(const ProScreen()),
                 ),
@@ -262,14 +302,16 @@ class _HomeScreenState extends State<HomeScreen> {
                 ? const NewsStudioScreen()
                 : Container(
                     decoration: const BoxDecoration(
+                      // v1.5.0 (#1/H1): dark news-studio backdrop
+                      // (the old cream→pink gradient was the last
+                      // non-studio surface on Home).
                       gradient: LinearGradient(
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
                         colors: [
-                          Color(0xFFFDEBD2),
-                          Color(0xFFFBD9C2),
-                          Color(0xFFF6A8B8),
-                          Color(0xFFF15A8C),
+                          Color(0xFF0B1026),
+                          Color(0xFF131A33),
+                          Color(0xFF1B1035),
                         ],
                       ),
                     ),
@@ -313,7 +355,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                     fontSize: 13,
                                     fontWeight: FontWeight.bold,
                                     letterSpacing: 3,
-                                    color: Color(0xFF7C4A2D),
+                                    color: Color(0xFFF5C542),
                                   ),
                                 ),
                                 const SizedBox(height: 10),
@@ -321,7 +363,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   padding: const EdgeInsets.symmetric(
                                       horizontal: 16, vertical: 7),
                                   decoration: BoxDecoration(
-                                    color: const Color(0xFF4E342E),
+                                    color: const Color(0xFF232C4E),
                                     borderRadius: BorderRadius.circular(20),
                                   ),
                                   child: const Text(
@@ -349,7 +391,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                         fontSize: 12,
                                         fontWeight: FontWeight.bold,
                                         letterSpacing: 2,
-                                        color: Color(0xFF8E2434),
+                                        color: Color(0xFFFF8A80),
                                       ),
                                     ),
                                   ],
@@ -360,7 +402,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   style: TextStyle(
                                     fontSize: 15,
                                     fontWeight: FontWeight.w600,
-                                    color: Color(0xFF3E2723),
+                                    color: Colors.white,
                                   ),
                                 ),
                                 if (cfg.announcement.show)
@@ -577,7 +619,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   fontSize: 13,
                                   fontWeight: FontWeight.bold,
                                   letterSpacing: 1.5,
-                                  color: Color(0xFF5D2E1F),
+                                  color: Color(0xFFF5C542),
                                 ),
                               ),
                             ),
@@ -587,7 +629,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               child: const Text(
                                 'Store >',
                                 style: TextStyle(
-                                  color: Color(0xFF5D2E1F),
+                                  color: Color(0xFFF5C542),
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
@@ -646,195 +688,151 @@ class _HomeScreenState extends State<HomeScreen> {
                             );
                           },
                         ),
-                        // MORE: every destination the old home body
-                        // carried stays reachable here — nothing was
-                        // removed, only reorganised.
+                        // MORE (v1.5.0, H1 + fix #24): the old long
+                        // plain list of full-width cards is now
+                        // GROUPED cards — one card per theme, one row
+                        // per destination. Every destination the old
+                        // list carried is still here (nothing
+                        // removed): News Studio + Online Store, the
+                        // three editors, Coins & Pro (incl. Share &
+                        // Earn), Account & Support.
                         const Text(
                           'MORE',
                           style: TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.bold,
                             letterSpacing: 1.5,
-                            color: Color(0xFF5D2E1F),
+                            color: Color(0xFFF5C542),
                           ),
                         ),
                         const SizedBox(height: 12),
-                        if (AppConfig.newsStudioEnabled)
-                          _EntryCard(
-                            icon: Icons.newspaper,
-                            title: 'News Studio',
-                            subtitle:
-                                'AI News Broadcasting Studio — News Maker, templates, Gemini voice',
-                            onTap: () =>
-                                _open(const NewsStudioScreen()),
-                          ),
+                        _GroupedCard(
+                          rows: [
+                            if (AppConfig.newsStudioEnabled)
+                              _GroupedRow(
+                                icon: Icons.newspaper,
+                                title: 'News Studio',
+                                subtitle: 'Bulletins, templates, live',
+                                onTap: () =>
+                                    _open(const NewsStudioScreen()),
+                              ),
+                            _GroupedRow(
+                              icon: Icons.storefront,
+                              title: 'Online Store',
+                              subtitle: 'Templates, music, ribbons',
+                              onTap: () => _open(const StoreScreen()),
+                            ),
+                          ],
+                        ),
                         const SizedBox(height: 12),
-                        if (AppConfig.photoEditorEnabled)
-                          _EntryCard(
-                            icon: Icons.photo,
-                            title: 'Photo Editor',
-                            subtitle:
-                                'Filters, crop, rotate, brightness, text, AI tools',
-                            onTap: () =>
-                                _open(const PhotoEditorScreen()),
-                          ),
+                        _GroupedCard(
+                          rows: [
+                            if (AppConfig.photoEditorEnabled)
+                              _GroupedRow(
+                                icon: Icons.photo,
+                                title: 'Photo Editor',
+                                subtitle:
+                                    'Filters, crop, rotate, brightness, text, AI tools',
+                                onTap: () =>
+                                    _open(const PhotoEditorScreen()),
+                              ),
+                            if (AppConfig.videoEditorEnabled)
+                              _GroupedRow(
+                                icon: Icons.videocam,
+                                title: 'Video Editor',
+                                subtitle:
+                                    'Trim, cut & merge, text, music, speed, filters, crossfade',
+                                onTap: () =>
+                                    _open(const VideoEditorScreen()),
+                              ),
+                            if (AppConfig.liveStudioEnabled)
+                              _GroupedRow(
+                                icon: Icons.live_tv,
+                                title: 'Live Studio',
+                                subtitle:
+                                    'Facebook + YouTube par ek saath live',
+                                onTap: () =>
+                                    _open(const LiveStudioScreen()),
+                              ),
+                          ],
+                        ),
                         const SizedBox(height: 12),
-                        if (AppConfig.videoEditorEnabled)
-                          _EntryCard(
-                            icon: Icons.videocam,
-                            title: 'Video Editor',
-                            subtitle:
-                                'Trim, cut & merge, text, music, speed, filters, crossfade',
-                            onTap: () =>
-                                _open(const VideoEditorScreen()),
-                          ),
+                        _GroupedCard(
+                          rows: [
+                            _GroupedRow(
+                              icon: Icons.monetization_on,
+                              title: 'Coins',
+                              subtitle: '',
+                              subtitleWidget:
+                                  ValueListenableBuilder<int>(
+                                valueListenable:
+                                    CoinService.instance.balance,
+                                builder: (context, balance, _) => Text(
+                                  'Balance: $balance coins — Watch Ads se kamayein.',
+                                ),
+                              ),
+                              onTap: () => _open(const CoinsScreen()),
+                            ),
+                            _GroupedRow(
+                              icon: Icons.workspace_premium,
+                              title: 'Go Pro',
+                              subtitle:
+                                  'Weekly Rs 200 • 15 din Rs 500 • Monthly Rs 1000',
+                              onTap: () => _open(const ProScreen()),
+                            ),
+                            _GroupedRow(
+                              icon: Icons.group_add,
+                              title: 'Share & Earn',
+                              subtitle:
+                                  'Apna link share karein — har naye user par 100 coins.',
+                              onTap: () =>
+                                  _open(const ShareEarnScreen()),
+                            ),
+                          ],
+                        ),
                         const SizedBox(height: 12),
-                        if (AppConfig.liveStudioEnabled)
-                          _EntryCard(
-                            icon: Icons.live_tv,
-                            title: 'Live Studio',
-                            subtitle:
-                                'Facebook + YouTube par ek saath live — breaking news templates ke saath',
-                            onTap: () =>
-                                _open(const LiveStudioScreen()),
-                          ),
+                        _GroupedCard(
+                          rows: [
+                            _GroupedRow(
+                              icon: Icons.login,
+                              title: 'Account',
+                              subtitle: '',
+                              subtitleWidget: const _AccountSubtitle(),
+                              onTap: () => _accountTap(),
+                            ),
+                            _GroupedRow(
+                              icon: Icons.system_update,
+                              title: 'Check for updates',
+                              subtitle:
+                                  'Naya version aaye to yahan se update karein.',
+                              onTap: () =>
+                                  UpdateService.checkManually(context),
+                            ),
+                            _GroupedRow(
+                              icon: Icons.support_agent,
+                              title: 'مدد اور سپورٹ',
+                              subtitle:
+                                  'Jaani Bhatti — ${AppConfig.supportWhatsAppNumber}',
+                              onTap: _openSupportWhatsApp,
+                            ),
+                            _GroupedRow(
+                              icon: Icons.info_outline,
+                              title: 'About',
+                              subtitle:
+                                  'TJ Pro by Nigraan TV — offline photo & video editor',
+                              onTap: _showAbout,
+                            ),
+                          ],
+                        ),
                         const SizedBox(height: 16),
-                        // (The AdMob native ad card that used to sit
-                        // here was removed with AdMob — Unity has no
-                        // native format in this setup, defect #4.)
-                        // (v1.3.0 §8: the Premium-unlock card that sat
-                        // here is REMOVED by user order. Premium AI
-                        // tools unlock with coins only; coins are
-                        // earned by watching ads in the Coins section.)
                         const Text(
                           'Works offline. No account, no uploads — '
                           'everything is processed on your phone. '
                           'Basic editing is free; Premium AI tools unlock '
                           'with coins — earn coins by watching ads in the '
                           'Coins section.',
-                          style: TextStyle(color: Color(0xFF4E342E)),
+                          style: TextStyle(color: Colors.white70),
                           textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 16),
-                        Card(
-                          child: ListTile(
-                            leading: const Icon(Icons.system_update),
-                            title: const Text('Check for updates'),
-                            subtitle: const Text(
-                              'Naya version aaye to yahan se update karein.',
-                            ),
-                            trailing: const Icon(Icons.arrow_forward_ios,
-                                size: 18),
-                            onTap: () =>
-                                UpdateService.checkManually(context),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        // Login + Coins (Phase 10, News Studio v1): the
-                        // login tile shows the signed-in email (or
-                        // Guest) and opens the login screen; the coins
-                        // tile shows the live balance and opens the
-                        // Coins screen (Watch Ads, daily claim,
-                        // history).
-                        _LoginTile(onAuthChanged: () => setState(() {})),
-                        const SizedBox(height: 16),
-                        Card(
-                          child: ListTile(
-                            leading: const Icon(Icons.monetization_on),
-                            title: const Text('Coins'),
-                            subtitle: ValueListenableBuilder<int>(
-                              valueListenable: CoinService.instance.balance,
-                              builder: (context, balance, _) => Text(
-                                'Balance: $balance coins — Watch Ads se kamayein.',
-                              ),
-                            ),
-                            trailing: const Icon(Icons.arrow_forward_ios,
-                                size: 18),
-                            onTap: () => _open(const CoinsScreen()),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        // Share & Earn (v1.3.0): the referral entry —
-                        // its own tidy card (NOT a revival of the
-                        // removed ad-unlock card). Opens the Share &
-                        // Earn screen: my code + link, Share button,
-                        // joined/earned stats, reward claim.
-                        Card(
-                          child: ListTile(
-                            leading: const Icon(Icons.group_add),
-                            title: const Text('Share & Earn'),
-                            subtitle: const Text(
-                              'Apna link share karein — har naye user par 100 coins.',
-                            ),
-                            trailing: const Icon(Icons.arrow_forward_ios,
-                                size: 18),
-                            onTap: () => _open(const ShareEarnScreen()),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        // Online Store (v1.2.0): Drive-backed store —
-                        // templates, music, ribbons and more; new stock
-                        // appears without an app update. Entry is
-                        // ad-gated inside the Store itself (§3.4); no
-                        // ad is shown here on Home (§5).
-                        Card(
-                          child: ListTile(
-                            leading: const Icon(Icons.storefront),
-                            title: const Text('Online Store'),
-                            subtitle: const Text(
-                              'Templates, music, ribbons & more — new stock weekly',
-                            ),
-                            trailing: const Icon(Icons.arrow_forward_ios,
-                                size: 18),
-                            onTap: () => _open(const StoreScreen()),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        Card(
-                          child: ListTile(
-                            leading: const Icon(Icons.support_agent),
-                            title: const Text('مدد اور سپورٹ'),
-                            subtitle: Text(
-                                'Jaani Bhatti — ${AppConfig.supportWhatsAppNumber}'),
-                            trailing: const Icon(Icons.chat),
-                            onTap: () async {
-                              final uri =
-                                  Uri.parse(AppConfig.supportWhatsAppLink);
-                              if (await canLaunchUrl(uri)) {
-                                await launchUrl(uri,
-                                    mode: LaunchMode.externalApplication);
-                              }
-                            },
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        const Card(
-                          child: Padding(
-                            padding: EdgeInsets.all(16),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Icon(Icons.info_outline),
-                                    SizedBox(width: 8),
-                                    Text(
-                                      'About',
-                                      style: TextStyle(
-                                          fontSize: 18,
-                                          fontWeight: FontWeight.bold),
-                                    ),
-                                  ],
-                                ),
-                                SizedBox(height: 8),
-                                Text(
-                                  'TJ Pro by Nigraan TV — photo & video editor that '
-                                  'works fully offline on your phone. No account, no '
-                                  'uploads.',
-                                ),
-                              ],
-                            ),
-                          ),
                         ),
                         const SizedBox(height: 12),
                         const AdvertisingBanner(),
@@ -1249,59 +1247,63 @@ class _SponsoredAdCard extends StatelessWidget {
   }
 }
 
-/// Login tile (Phase 10): shows the signed-in email (or Guest) and
-/// opens [LoginScreen]; when signed in, tapping offers sign-out.
-/// Rebuilds on auth-state changes via [AuthService.authStateChanges];
-/// the builder reads [AuthService.isSignedIn] directly because a
-/// session restored at startup emits no stream event after subscribe.
-class _LoginTile extends StatelessWidget {
-  const _LoginTile({required this.onAuthChanged});
-
-  final VoidCallback onAuthChanged;
-
-  Future<void> _openLogin(BuildContext context) async {
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => LoginScreen(
-          onSignedIn: () {
-            Navigator.of(context).pop();
-            onAuthChanged();
-          },
-          onContinueAsGuest: () => Navigator.of(context).pop(),
-        ),
+/// Shared login flow (Phase 10; extracted in v1.5.0 for the Home
+/// grouped Account row — it replaces the old _LoginTile card).
+Future<void> _openLoginFlow(
+  BuildContext context,
+  VoidCallback onAuthChanged,
+) async {
+  await Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (_) => LoginScreen(
+        onSignedIn: () {
+          Navigator.of(context).pop();
+          onAuthChanged();
+        },
+        onContinueAsGuest: () => Navigator.of(context).pop(),
       ),
-    );
+    ),
+  );
+  onAuthChanged();
+}
+
+/// Shared sign-out confirm flow (see [_openLoginFlow]).
+Future<void> _confirmSignOutFlow(
+  BuildContext context,
+  VoidCallback onAuthChanged,
+) async {
+  final email = AuthService.currentEmail ?? '';
+  final signOut = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Sign out?'),
+      content: Text(
+        'Signed in as $email.\nYour coins stay with your account — '
+        'sign in again any time to get them back.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(false),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(true),
+          child: const Text('Sign out'),
+        ),
+      ],
+    ),
+  );
+  if (signOut == true) {
+    await AuthService.signOut();
     onAuthChanged();
   }
+}
 
-  Future<void> _confirmSignOut(BuildContext context) async {
-    final email = AuthService.currentEmail ?? '';
-    final signOut = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Sign out?'),
-        content: Text(
-          'Signed in as $email.\nYour coins stay with your account — '
-          'sign in again any time to get them back.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Sign out'),
-          ),
-        ],
-      ),
-    );
-    if (signOut == true) {
-      await AuthService.signOut();
-      onAuthChanged();
-    }
-  }
+/// The Account row's live subtitle (v1.5.0): signed-in email or the
+/// guest line, rebuilt on auth-state changes.
+class _AccountSubtitle extends StatelessWidget {
+  const _AccountSubtitle();
 
   @override
   Widget build(BuildContext context) {
@@ -1309,32 +1311,80 @@ class _LoginTile extends StatelessWidget {
       stream: AuthService.authStateChanges,
       builder: (context, snapshot) {
         final signedIn = AuthService.isSignedIn;
-        return Card(
-          child: ListTile(
-            leading: const Icon(Icons.login),
-            title: Text(signedIn ? 'Account' : 'Login'),
-            subtitle: Text(
-              signedIn
-                  ? (AuthService.currentEmail ?? 'Signed in')
-                  : 'Guest — sign in to save your coins',
-            ),
-            trailing: const Icon(Icons.arrow_forward_ios, size: 18),
-            onTap: () => signedIn
-                ? _confirmSignOut(context)
-                : _openLogin(context),
-          ),
+        return Text(
+          signedIn
+              ? (AuthService.currentEmail ?? 'Signed in')
+              : 'Guest — sign in to save your coins',
         );
       },
     );
   }
 }
 
-class _EntryCard extends StatelessWidget {
-  const _EntryCard({
+/// A real crown glyph (v1.5.0, #13) — Material has no crown icon,
+/// and Icons.workspace_premium reads as a medal/rosette. Three
+/// points + band + jewels, drawn in gold.
+class _CrownIcon extends StatelessWidget {
+  const _CrownIcon({this.size = 24, this.color = const Color(0xFFFFC107)});
+
+  final double size;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      size: Size.square(size),
+      painter: _CrownPainter(color),
+    );
+  }
+}
+
+class _CrownPainter extends CustomPainter {
+  const _CrownPainter(this.color);
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+    final fill = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+    final path = Path()
+      ..moveTo(w * 0.08, h * 0.76)
+      ..lineTo(w * 0.03, h * 0.30)
+      ..lineTo(w * 0.30, h * 0.52)
+      ..lineTo(w * 0.50, h * 0.16)
+      ..lineTo(w * 0.70, h * 0.52)
+      ..lineTo(w * 0.97, h * 0.30)
+      ..lineTo(w * 0.92, h * 0.76)
+      ..close();
+    canvas.drawPath(path, fill);
+    canvas.drawRect(
+      Rect.fromLTWH(w * 0.08, h * 0.81, w * 0.84, h * 0.09),
+      fill,
+    );
+    final jewel = Paint()..color = Colors.white.withValues(alpha: 0.9);
+    for (final cx in <double>[0.06, 0.50, 0.94]) {
+      canvas.drawCircle(Offset(w * cx, h * 0.24), w * 0.05, jewel);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_CrownPainter oldDelegate) =>
+      oldDelegate.color != color;
+}
+
+/// One row of a grouped MORE card (v1.5.0): plain data — the card
+/// renders it as a ListTile.
+class _GroupedRow {
+  const _GroupedRow({
     required this.icon,
     required this.title,
     required this.subtitle,
     required this.onTap,
+    this.subtitleWidget,
   });
 
   final IconData icon;
@@ -1342,40 +1392,42 @@ class _EntryCard extends StatelessWidget {
   final String subtitle;
   final VoidCallback onTap;
 
+  /// When set, rendered as the subtitle instead of [subtitle]
+  /// (live values: coins balance, account email).
+  final Widget? subtitleWidget;
+}
+
+/// A grouped MORE card (v1.5.0, H1): several destination rows in
+/// ONE card with hairline dividers — the grouped replacement for
+/// the old list of separate full-width cards.
+class _GroupedCard extends StatelessWidget {
+  const _GroupedCard({required this.rows});
+
+  final List<_GroupedRow> rows;
+
   @override
   Widget build(BuildContext context) {
     return Card(
       elevation: 2,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Row(
-            children: [
-              Icon(icon, size: 44, color: Theme.of(context).colorScheme.primary),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(subtitle),
-                  ],
-                ),
+      child: Column(
+        children: [
+          for (var i = 0; i < rows.length; i++) ...[
+            if (i > 0) const Divider(height: 1, indent: 56),
+            ListTile(
+              leading: Icon(
+                rows[i].icon,
+                color: Theme.of(context).colorScheme.primary,
               ),
-              const Icon(Icons.arrow_forward_ios, size: 18),
-            ],
-          ),
-        ),
+              title: Text(rows[i].title),
+              subtitle: rows[i].subtitleWidget ??
+                  Text(rows[i].subtitle),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+              onTap: rows[i].onTap,
+            ),
+          ],
+        ],
       ),
     );
   }
 }
+
