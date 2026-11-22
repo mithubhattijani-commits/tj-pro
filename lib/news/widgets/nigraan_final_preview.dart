@@ -886,7 +886,7 @@ class _ParityLogoBox extends StatelessWidget {
         child: Image.file(
           File(path),
           fit: BoxFit.contain,
-          errorBuilder: (_, __, ___) => _tile(),
+          errorBuilder: (_, _, _) => _tile(),
         ),
       );
     }
@@ -897,7 +897,7 @@ class _ParityLogoBox extends StatelessWidget {
         child: Image.asset(
           'assets/templates/nigraan_logo_gs_frame.png',
           fit: BoxFit.contain,
-          errorBuilder: (_, __, ___) => _tile(),
+          errorBuilder: (_, _, _) => _tile(),
         ),
       );
     }

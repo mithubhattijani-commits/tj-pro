@@ -2844,8 +2844,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     final dispY = (stage.height - dispH) / 2;
     final pipCtrl = _pipController;
     final pipReady = pipCtrl != null && pipCtrl.value.isInitialized;
-    final pipPxW = pipReady ? pipCtrl!.value.size.width : 1280;
-    final pipAspect = pipReady ? pipCtrl!.value.aspectRatio : 16 / 9;
+    final pipPxW = pipReady ? pipCtrl.value.size.width : 1280;
+    final pipAspect = pipReady ? pipCtrl.value.aspectRatio : 16 / 9;
     final s = _pipScale.clamp(0.15, 0.5);
     final pipW = dispW * pipPxW * s / basePxW;
     final pipH = pipW / pipAspect;
@@ -2859,8 +2859,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     // Preview mask at a capped resolution (shapes/gradients are
     // scale-invariant; feather is relative to the short side).
     if (_pipMask != 'none' && pipReady) {
-      final mw = pipCtrl!.value.size.width.round();
-      final mh = pipCtrl!.value.size.height.round();
+      final mw = pipCtrl.value.size.width.round();
+      final mh = pipCtrl.value.size.height.round();
       final cap = 480 / math.max(mw, mh);
       final sw = cap < 1 ? (mw * cap).round() : mw;
       final sh = cap < 1 ? (mh * cap).round() : mh;
@@ -2869,7 +2869,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       });
     }
     Widget content = pipReady
-        ? VideoPlayer(pipCtrl!)
+        ? VideoPlayer(pipCtrl)
         : Container(
             decoration: BoxDecoration(
               color: Colors.black54,
@@ -2887,8 +2887,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           img,
           ui.TileMode.clamp,
           ui.TileMode.clamp,
-          (Matrix4.identity()
-                ..scale(bounds.width / img.width, bounds.height / img.height))
+          (Matrix4.diagonal3Values(
+                bounds.width / img.width, bounds.height / img.height, 1.0))
               .storage,
         ),
         blendMode: BlendMode.dstIn,

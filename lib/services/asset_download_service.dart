@@ -295,7 +295,7 @@ class AssetDownloadService {
     try {
       final cached = await cachedFile(introFileName);
       if (cached != null) return cached;
-      return extractBundledAsset(introAssetPath, introFileName);
+      return await extractBundledAsset(introAssetPath, introFileName);
     } catch (_) {
       return null;
     }
@@ -308,7 +308,7 @@ class AssetDownloadService {
     try {
       final cached = await cachedFile(dejaVuFileName);
       if (cached != null) return cached;
-      return extractBundledAsset(dejaVuAssetPath, dejaVuFileName);
+      return await extractBundledAsset(dejaVuAssetPath, dejaVuFileName);
     } catch (_) {
       return null;
     }
@@ -321,7 +321,7 @@ class AssetDownloadService {
     try {
       final cached = await cachedFile(logoGsFileName);
       if (cached != null) return cached;
-      return extractBundledAsset(logoGsAssetPath, logoGsFileName);
+      return await extractBundledAsset(logoGsAssetPath, logoGsFileName);
     } catch (_) {
       return null;
     }

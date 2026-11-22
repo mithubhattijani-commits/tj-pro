@@ -406,9 +406,9 @@ class ReelExportService {
             await VideoExportService.probeVideoSize(
           File(handoff.clipPaths[i]),
         );
-        final clipMs = clipSize?.durationSeconds == null
-            ? null
-            : (clipSize!.durationSeconds! * 1000).round();
+        final clipDuration = clipSize?.durationSeconds;
+        final clipMs =
+            clipDuration == null ? null : (clipDuration * 1000).round();
         final stageFrom = 0.05 + 0.20 * i / totalClips;
         final stageTo = 0.05 + 0.20 * (i + 1) / totalClips;
         final res = await runStage(

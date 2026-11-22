@@ -386,7 +386,7 @@ bool _hasArabic(String text) =>
   bool? bufArabic;
   void flush() {
     if (buf.isNotEmpty && bufArabic != null) {
-      runs.add((bufArabic!, buf.toString()));
+      runs.add((bufArabic, buf.toString()));
     }
     buf = StringBuffer();
   }
@@ -1375,7 +1375,7 @@ String buildParityTemplateCommand({
     final capCx = _n(g.capsule.left + g.capsuleW / 2);
     final capY = _n(g.capsule.top);
     graph =
-        '${graph}${cur}settb=AVTB,setpts=\'PTS-STARTPTS+$epochUs\'[sh];'
+        '$graph${cur}settb=AVTB,setpts=\'PTS-STARTPTS+$epochUs\'[sh];'
         '[sh]drawtext=fontfile=${clockFontFile.replaceAll(':', '\\:')}'
         ":text='%{pts\\\\:localtime\\\\:0\\\\:%r}'"
         ':fontsize=${g.clockFont.round()}:fontcolor=white'
