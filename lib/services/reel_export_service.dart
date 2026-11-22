@@ -6,9 +6,14 @@
 ///   clips (normalised + cut-joined)
 ///     → voiceover mix (clip audio ducked under the Gemini voiceover)
 ///     → chroma-key pass (preset sensitivity + background)
-///     → template overlay (3-ribbon / breaking / classic PNG from
+///     → template overlay (for 'nigraanFinal': the v1.3.0 ANIMATED
+///       parity pass — both ribbons scroll, rotating logo + flipping
+///       clock capsule, see lib/live/parity_template.dart; other
+///       kinds: the 3-ribbon / breaking / classic PNG from
 ///       `renderLiveTemplateImage`, logo left OUT of the PNG)
-///     → rotating-logo overlay (ping-ponged mov, or generated frames)
+///     → rotating-logo overlay (ping-ponged mov, or generated
+///       frames) — SKIPPED for 'nigraanFinal' (the parity pass
+///       already carries the logo + capsule)
 ///     → watermark overlay (Phase 8: preset toggle/position/size —
 ///       skipped entirely when the preset's watermark is off)
 ///     → intro/outro assembly (10 s intro prepended, 3 s outro card —
@@ -32,15 +37,14 @@
 /// the logo-frame generation.
 ///
 /// What this export deliberately does NOT do (documented, not fake):
-/// - No scrolling ticker in the video: the template overlay is one
-///   static PNG per export (the same documented limit as the editor's
-///   template pass — scrolling ticker + live clock are live-only).
-///   Phase 9 RE-CHECKED this and keeps it deferred: a scrolling
-///   ticker needs either one PNG per frame or a separate
-///   ticker-strip layer with a time-expression overlay, and the
-///   renderer has no ticker-strip-only output — building it
-///   untested would risk the export pipeline. The export screen
-///   says so plainly instead of claiming a scrolling ticker.
+/// - Scrolling tickers: SINCE v1.3.0 the 'nigraanFinal' template
+///   DOES scroll — both bottom ribbons animate in the export via
+///   the parity pass (lib/live/parity_template.dart), matching the
+///   real Nigraan videos. The BREAKING / CLASSIC kinds still use
+///   one static PNG per export (their ribbons are headline strips,
+///   pinned at their start — the export screen says so plainly).
+///   Within the parity pass, the OPTIONAL top ribbon (off in the
+///   parity preset) is drawn as a still layer — it does not scroll.
 /// - No crossfade between clips: the project carries no transition
 ///   choice, so clips join with a hard cut (the editor's own export
 ///   has the transition picker for that).
@@ -76,6 +80,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../app_config.dart';
 import '../live/news_template.dart';
+import '../live/parity_template.dart';
 import 'asset_download_service.dart';
 import 'caption_service.dart';
 import 'caption_styles.dart';
@@ -366,18 +371,26 @@ class ReelExportService {
       // the last subtitle end, else null (stage fractions only).
       final reelMs = _estimatedReelMs(project);
 
-      // Kasheeda for the template renderer (best effort — the
-      // renderer falls back to the system font when it is missing).
-      var fontReady = false;
-      try {
-        final svc = assetService ?? const AssetDownloadService();
-        final cached =
-            await svc.cachedFile(AssetDownloadService.kasheedaFileName);
-        if (cached != null) {
-          await AssetDownloadService.loadKasheedaFontFromFile(cached);
-          fontReady = true;
-        }
-      } catch (_) {}
+      // Kasheeda for the template renderer. v1.3.0 (§9 criterion
+      // 7): the font ships BUNDLED with the app (cache → bundle →
+      // download URL, in that order). For the Final template a
+      // missing font FAILS the export loudly — the real template's
+      // Urdu IS Kasheeda, and a silent system-font fallback would
+      // ship a lookalike. Other kinds keep the best-effort path.
+      final fontReady =
+          await (assetService ?? const AssetDownloadService())
+              .ensureKasheedaFontReady(url: AppConfig.kasheedaFontUrl);
+      if (!fontReady && project.templateKind == 'nigraanFinal') {
+        return ReelExportResult(
+          success: false,
+          error: 'Kasheeda font nahi mila — Final template ki Urdu '
+              'usi font mein render hoti hai, is liye export roka '
+              'gaya. (Font app ke saath bundled hai; assets check '
+              'karein.)',
+          failedStep: 'Template font',
+          notes: notes,
+        );
+      }
 
       // --- 1. Normalise + join clips (export fps + dims). ---
       step('Clips tayyar ho rahe hain…', 0.05);
@@ -520,6 +533,17 @@ class ReelExportService {
               musicPath: musicFile.path,
               output: bedOut,
               hasClipAudio: hasAudio,
+              // v1.3.0 (§9 criterion 10): the Final template's bed
+              // sits at the reference level 0.12 with 0.8 s / 1.5 s
+              // fades; other kinds keep the v1.2.0 level.
+              musicVolume:
+                  project.templateKind == 'nigraanFinal' ? 0.12 : 0.18,
+              fadeInSec: project.templateKind == 'nigraanFinal' ? 0.8 : 0,
+              fadeOutSec: project.templateKind == 'nigraanFinal' ? 1.5 : 0,
+              durationSec:
+                  project.templateKind == 'nigraanFinal' && reelMs != null
+                      ? reelMs / 1000
+                      : null,
               audioBitrateKbps: effectiveSettings.audioBitrateKbps,
             ),
             0.46,
@@ -634,29 +658,63 @@ class ReelExportService {
         fontReady: fontReady,
         includeIntroMarker: false,
       );
-      final templated = p.join(dir.path, 'reel_templated_$stamp.mp4');
-      final overlayCmd = FfmpegService.overlayPassCommand(
-        input: out,
-        templatePngPath: templatePng.path,
-        output: templated,
-        videoBitrateKbps: effectiveSettings.videoBitrateKbps,
-      );
-      if (overlayCmd == null) {
-        notes.add('Template overlay skip hua (koi overlay nahi bana).');
-      } else {
-        final res = await runStage(
-          overlayCmd,
-          0.58,
-          0.68,
-          expectedMs: reelMs,
+      // v1.3.0 (§9): for 'nigraanFinal' the ANIMATED parity pass
+      // replaces the static PNG overlay AND the separate logo step
+      // — both ribbons scroll, the logo rotates bottom-right and
+      // the capsule clock ticks/flips, exactly like the real
+      // Nigraan videos. A failed parity pass falls back to the
+      // static overlay below with a note (never a silent swap).
+      var parityApplied = false;
+      if (project.templateKind == 'nigraanFinal') {
+        final parityOut = await _applyParityTemplate(
+          input: out,
+          dir: dir,
+          stamp: stamp,
+          preset: effective,
+          width: w,
+          height: h,
+          fontReady: fontReady,
+          assetService: assetService,
+          notes: notes,
+          settings: effectiveSettings,
+          reelMs: reelMs,
+          onProgress: onProgress,
         );
-        if (res.ok) {
-          out = templated;
+        if (parityOut != null) {
+          out = parityOut;
+          parityApplied = true;
         } else {
           notes.add(
-            'Template overlay fail ho gaya — saaf video export ho '
-            'rahi hai.',
+            'Animated Final template nahi laga — static template ke '
+            'saath export ho raha hai.',
           );
+        }
+      }
+      if (!parityApplied) {
+        final templated = p.join(dir.path, 'reel_templated_$stamp.mp4');
+        final overlayCmd = FfmpegService.overlayPassCommand(
+          input: out,
+          templatePngPath: templatePng.path,
+          output: templated,
+          videoBitrateKbps: effectiveSettings.videoBitrateKbps,
+        );
+        if (overlayCmd == null) {
+          notes.add('Template overlay skip hua (koi overlay nahi bana).');
+        } else {
+          final res = await runStage(
+            overlayCmd,
+            0.58,
+            0.68,
+            expectedMs: reelMs,
+          );
+          if (res.ok) {
+            out = templated;
+          } else {
+            notes.add(
+              'Template overlay fail ho gaya — saaf video export ho '
+              'rahi hai.',
+            );
+          }
         }
       }
       step('Template done.', 0.68);
@@ -665,23 +723,27 @@ class ReelExportService {
         final c = cancelledResult();
         if (c != null) return c;
       }
-      // --- 5. Rotating logo overlay. ---
-      step('Logo lag raha hai…', 0.70);
-      final logoDone = await _overlayRotatingLogo(
-        input: out,
-        dir: dir,
-        stamp: stamp,
-        preset: preset,
-        width: w,
-        height: h,
-        topRibbonEnabled: effective.topRibbon.enabled,
-        assetService: assetService,
-        notes: notes,
-        settings: effectiveSettings,
-        reelMs: reelMs,
-        onProgress: onProgress,
-      );
-      if (logoDone != null) out = logoDone;
+      // --- 5. Rotating logo overlay (inside the parity pass for
+      // 'nigraanFinal' — skipped there, the logo + capsule are
+      // already burned in at the reference position). ---
+      if (!parityApplied) {
+        step('Logo lag raha hai…', 0.70);
+        final logoDone = await _overlayRotatingLogo(
+          input: out,
+          dir: dir,
+          stamp: stamp,
+          preset: preset,
+          width: w,
+          height: h,
+          topRibbonEnabled: effective.topRibbon.enabled,
+          assetService: assetService,
+          notes: notes,
+          settings: effectiveSettings,
+          reelMs: reelMs,
+          onProgress: onProgress,
+        );
+        if (logoDone != null) out = logoDone;
+      }
       step('Logo done.', 0.78);
 
       {
@@ -841,6 +903,98 @@ class ReelExportService {
   /// Source order (rotation-decision.md): user logo → generated
   /// frames; default logo → cached mov (ping-pong) when downloaded,
   /// else generated frames from the default initial tile.
+  /// Step 4 (v1.3.0, 'nigraanFinal' only) — the ANIMATED parity
+  /// template pass: renders the parity layers (lib/live/
+  /// parity_template.dart) and burns them in with ONE ffmpeg pass —
+  /// both ribbons scroll, the logo rotates bottom-right, the
+  /// capsule clock ticks with seconds and flips to the Urdu date.
+  /// Logo source order: the cached alpha .mov → generated rotating
+  /// frames from the picked logo → the picked logo as a still.
+  /// Returns the new output path, or null on failure (the caller
+  /// falls back to the static overlay with a note).
+  static Future<String?> _applyParityTemplate({
+    required String input,
+    required Directory dir,
+    required int stamp,
+    required ChannelPreset preset,
+    required int width,
+    required int height,
+    required bool fontReady,
+    AssetDownloadService? assetService,
+    required List<String> notes,
+    ExportSettings settings = const ExportSettings(),
+    int? reelMs,
+    void Function(double progress)? onProgress,
+  }) async {
+    try {
+      final assets = await renderParityAssets(
+        preset: preset,
+        dir: dir,
+        width: width,
+        height: height,
+        now: DateTime.now(),
+        fontReady: fontReady,
+      );
+      final svc = assetService ?? const AssetDownloadService();
+      String? movPath;
+      String? framesDir;
+      String? stillPath;
+      final mov = await svc.cachedLogoMov();
+      if (mov != null) {
+        movPath = mov.path;
+      } else if (preset.logoPath != null &&
+          await File(preset.logoPath!).exists()) {
+        try {
+          final key = logoLoopCacheKey(logoFile: File(preset.logoPath!));
+          final dirFrames = Directory(p.join(dir.path, 'logo_loop_$key'));
+          await LogoLoopService.generateFrames(
+            logoFile: File(preset.logoPath!),
+            outDir: dirFrames,
+          );
+          framesDir = dirFrames.path;
+        } catch (_) {
+          stillPath = preset.logoPath;
+        }
+      }
+      // Clock font: bundled DejaVu → a system font → none (the
+      // capsule then shows only its date face; a note says so).
+      String? clockFont;
+      final dejaVu = await svc.ensureDejaVuFile();
+      clockFont = dejaVu?.path ?? FfmpegService.findFontFile();
+      if (clockFont == null) {
+        notes.add(
+          'Clock font nahi mila — capsule mein sirf date nazar '
+          'aayegi.',
+        );
+      }
+      final parityOut = p.join(dir.path, 'reel_parity_$stamp.mp4');
+      final cmd = buildParityTemplateCommand(
+        input: input,
+        output: parityOut,
+        assets: assets,
+        logoMovPath: movPath,
+        logoFramesDir: framesDir,
+        logoStillPng: stillPath,
+        clockFontFile: clockFont,
+        exportStart: DateTime.now(),
+        videoBitrateKbps: settings.videoBitrateKbps,
+      );
+      final res = await _runStage(
+        cmd,
+        0.58,
+        0.76,
+        expectedMs: reelMs,
+        onProgress: onProgress,
+      );
+      if (res.ok) return parityOut;
+      notes.add('Animated template pass fail ho gaya. ${res.logs}');
+      return null;
+    } catch (e) {
+      notes.add('Animated template pass fail ho gaya ($e).');
+      return null;
+    }
+  }
+
   static Future<String?> _overlayRotatingLogo({
     required String input,
     required Directory dir,
@@ -1062,7 +1216,10 @@ class ReelExportService {
       final svc = assetService ?? const AssetDownloadService();
       File? intro;
       try {
-        intro = await svc.cachedFile(AssetDownloadService.introFileName);
+        // v1.3.0 (§9.9): the intro ships BUNDLED with the app —
+        // cache → bundle first, the (currently unconfigured)
+        // download URL only as a last resort.
+        intro = await svc.ensureIntroFile();
         intro ??= await svc.getIntroVideo(
           url: AppConfig.nigraanIntroUrl,
         );
@@ -1085,6 +1242,10 @@ class ReelExportService {
             height: height,
             output: introNorm,
             addSilentAudio: !hasAudio,
+            // v1.3.0 (§9.9): the Final template's intro is
+            // normalised with BLURRED FILL (the reference
+            // treatment), never centre-cropped.
+            blurFill: preset.templateKind == 'nigraanFinal',
             fps: settings.fps,
             videoBitrateKbps: settings.videoBitrateKbps,
             audioBitrateKbps: settings.audioBitrateKbps,

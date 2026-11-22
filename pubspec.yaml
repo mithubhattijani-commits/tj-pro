@@ -1,7 +1,7 @@
 name: tj_pro
 description: "TJ Pro — free offline photo and video editor for Android."
 publish_to: 'none'
-version: 1.2.0+11
+version: 1.3.0+12
 
 environment:
   sdk: ^3.13.7
@@ -22,8 +22,9 @@ dependencies:
   google_mlkit_subject_segmentation: ^0.2.1
   google_mlkit_selfie_segmentation: ^0.12.1
   # google_mobile_ads REMOVED (one-build, defect #4): the decided
-  # ads system is Unity Ads only — see unity_ads_plugin below and
-  # lib/services/premium_gate.dart for the rewarded unlock gate.
+  # ads system is Unity Ads only — see unity_ads_plugin below.
+  # Premium unlocks are COINS ONLY (v1.3.0, §8): rewarded ads exist
+  # solely to earn coins via the Coins screen.
   unity_ads_plugin: ^0.5.0
   url_launcher: ^6.2.5
   whisper_ggml_plus: ^1.5.0
@@ -81,6 +82,11 @@ flutter:
     # the pickers; the Online Store carries the growing catalogue.
     - assets/templates/intro_studio.mp4
     - assets/templates/intro_globe.mp4
+    # v1.3.0 (§9 Final-template parity, criterion 8): the REAL 10 s
+    # Nigraan channel intro ships WITH the app so a Final-template
+    # export always has it (the on-demand URL stays empty). The
+    # binary is uploaded separately — this entry names its path.
+    - assets/templates/nigraan_intro.mp4
     - assets/music/news_music_1.mp3
     - assets/music/news_music_2.mp3
     - assets/music/news_music_3.mp3

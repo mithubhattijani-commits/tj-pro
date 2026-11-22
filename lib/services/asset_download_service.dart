@@ -206,6 +206,106 @@ class AssetDownloadService {
   /// downloaded. Never throws.
   Future<File?> cachedLogoMov() => cachedFile(logoMovFileName);
 
+  // ------------------------------------------------------------------
+  // v1.3.0 (§9 parity) — bundled-asset extraction.
+  //
+  // The Final template needs three files GUARANTEED on the device:
+  // the Kasheeda font (Urdu must never fall back silently in export),
+  // the real 10 s channel intro, and a DejaVu Sans Bold TTF for the
+  // FFmpeg drawtext clock. Each is looked for as a bundled asset
+  // first and extracted into this cache; the download URLs remain a
+  // fallback/override. A missing bundle is NOT an error here — the
+  // callers decide (the Final-template export blocks with a clear
+  // message when the font truly cannot be obtained).
+  // ------------------------------------------------------------------
+
+  /// Bundled asset path of the Kasheeda font (when a build bundles it).
+  static const kasheedaAssetPath =
+      'assets/fonts/JameelNooriNastaleeqKasheeda.ttf';
+
+  /// Bundled asset path of the real channel intro (v1.3.0, pubspec).
+  static const introAssetPath = 'assets/templates/nigraan_intro.mp4';
+
+  /// Bundled asset path + cache name of the DejaVu Sans Bold font
+  /// (the reference template's Latin font — ribbons' Latin runs are
+  /// drawn by the PNG renderer, the ticking clock by drawtext, which
+  /// needs a real font FILE).
+  static const dejaVuAssetPath = 'assets/fonts/DejaVuSans-Bold.ttf';
+  static const dejaVuFileName = 'DejaVuSans-Bold.ttf';
+
+  /// Extracts a bundled asset into the cache as [fileName]. Returns
+  /// the cached file, the already-cached file, or null when the asset
+  /// is not part of this build. Never throws.
+  Future<File?> extractBundledAsset(
+    String assetPath,
+    String fileName,
+  ) async {
+    try {
+      final cached = await cachedFile(fileName);
+      if (cached != null) return cached;
+      final data = await rootBundle.load(assetPath);
+      final dir = await _cacheDir();
+      final file = File(p.join(dir.path, fileName));
+      await file.writeAsBytes(
+        data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+      );
+      return file;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Makes the Kasheeda font ready, in order: already-loaded →
+  /// cache → bundled asset → download from [url] (skipped when the
+  /// URL is empty). Returns true when the family is registered.
+  Future<bool> ensureKasheedaFontReady({String url = ''}) async {
+    try {
+      if (_kasheedaLoaded) return true;
+      final cached = await cachedFile(kasheedaFileName);
+      if (cached != null) {
+        await loadKasheedaFontFromFile(cached);
+        return true;
+      }
+      final bundled =
+          await extractBundledAsset(kasheedaAssetPath, kasheedaFileName);
+      if (bundled != null) {
+        await loadKasheedaFontFromFile(bundled);
+        return true;
+      }
+      if (url.trim().isNotEmpty) {
+        await loadKasheedaFont(url: url);
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  /// The channel intro file: cache → bundled asset (v1.3.0) → null
+  /// (the caller may then try [getIntroVideo] with a URL). Never
+  /// throws.
+  Future<File?> ensureIntroFile() async {
+    try {
+      final cached = await cachedFile(introFileName);
+      if (cached != null) return cached;
+      return extractBundledAsset(introAssetPath, introFileName);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// A DejaVu Sans Bold font FILE for FFmpeg drawtext (the ticking
+  /// capsule clock): cache → bundled asset → null (the caller falls
+  /// back to a system font). Never throws.
+  Future<File?> ensureDejaVuFile() async {
+    try {
+      final cached = await cachedFile(dejaVuFileName);
+      if (cached != null) return cached;
+      return extractBundledAsset(dejaVuAssetPath, dejaVuFileName);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Clears all downloaded assets (frees disk; next use re-downloads).
   Future<void> clearCache() async {
     try {

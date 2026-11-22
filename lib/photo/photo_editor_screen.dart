@@ -19,7 +19,8 @@ import 'package:path_provider/path_provider.dart';
 import '../app_config.dart';
 import '../services/ai_service.dart';
 import '../services/photo_pipeline.dart';
-import '../services/premium_gate.dart';
+import '../services/coin_service.dart';
+import '../theme.dart';
 
 /// Round-2 theme unification (P13): the photo editor now wears the
 /// app's violet identity instead of its old private gold theme.
@@ -144,7 +145,28 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     super.dispose();
   }
 
-  void _setStatus(String s) => setState(() => _status = s);
+  // v1.3.0 (§5B): the status shows as a transient overlay chip on
+  // the preview (auto-hides), never as a permanent line.
+  bool _statusVisible = false;
+  Timer? _statusTimer;
+  // §8: this session's AI-tools coin unlock (charged once).
+  bool _aiCoinsPaid = false;
+  // §5B: the active sub-tab inside the open photo tool.
+  String? _photoTab;
+
+  void _setStatus(String s) {
+    setState(() => _status = s);
+    _flashStatus();
+  }
+
+  void _flashStatus() {
+    if (!mounted) return;
+    setState(() => _statusVisible = true);
+    _statusTimer?.cancel();
+    _statusTimer = Timer(const Duration(seconds: 5), () {
+      if (mounted && !_busy) setState(() => _statusVisible = false);
+    });
+  }
 
   /// P15: failures must be SEEN, not just whispered into the small grey
   /// status line — every user-action failure also raises a SnackBar.
@@ -582,22 +604,55 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
 
   /// Runs an AI job; returns true on success. Errors surface as a
   /// status line AND a SnackBar (P15).
-  /// AI tools are Premium (P4): the gate is PremiumGate (Unity
-  /// rewarded) — if not already unlocked, tryUnlockWithAd() runs
-  /// BEFORE the job and the job only proceeds when it returns true.
+  /// AI tools are Premium: v1.3.0 (§8) the unlock is COINS ONLY —
+  /// the first AI use in a session charges CoinFeature.aiEnhance
+  /// (50 coins) after a confirm dialog showing cost + balance;
+  /// the ad-unlock path is gone from the whole app. Admins are
+  /// waived by CoinService itself.
   Future<bool> _runAi(String label, Future<void> Function() job) async {
     final file = _workingFile;
     if (file == null || _busy) return false;
-    if (!PremiumGate.isUnlocked) {
-      _setStatus('AI tools are Premium — one short ad unlocks them.');
-      final ok = await PremiumGate.tryUnlockWithAd();
-      if (!ok) {
+    if (!_aiCoinsPaid && !CoinService.instance.isAdminNow) {
+      final cost = CoinCosts.costFor(CoinFeature.aiEnhance);
+      final balance = CoinService.instance.balance.value;
+      if (!mounted) return false;
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Premium AI tools'),
+          content: Text(
+            'AI tools is session mein $cost coins se unlock honge.\n'
+            'Aap ka balance: $balance coins.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Later'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text('Unlock — $cost coins'),
+            ),
+          ],
+        ),
+      );
+      if (confirm != true) return false;
+      final res = await CoinService.instance.spend(CoinFeature.aiEnhance);
+      if (!res.ok) {
         _fail(
-          'Premium unlock nahi hua — ad mukammal dekhein ya thodi '
-          'der baad phir try karein.',
+          res.error == 'insufficient_balance'
+              ? 'Coins kam hain — Coins section se rewarded ads '
+                  'dekh kar coins kamayein.'
+              : 'Unlock nahi hua (${res.error ?? 'error'}).',
         );
         return false;
       }
+      _aiCoinsPaid = true;
+      _setStatus(
+        res.adminFree
+            ? 'Admin — AI tools free unlock ho gaye.'
+            : 'AI tools unlock ho gaye ($cost coins).',
+      );
     }
     setState(() {
       _busy = true;
@@ -878,7 +933,10 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 4),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: () => setState(() => _activePhotoTool = key),
+        onTap: () => setState(() {
+              _activePhotoTool = key;
+              _photoTab = null;
+            }),
         child: Container(
           width: 76,
           padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
@@ -1029,7 +1087,10 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
         children: [
           IconButton(
             tooltip: 'Back to tools',
-            onPressed: () => setState(() => _activePhotoTool = null),
+            onPressed: () => setState(() {
+                  _activePhotoTool = null;
+                  _photoTab = null;
+                }),
             icon: const Icon(Icons.arrow_back, color: Colors.white),
           ),
           Expanded(
@@ -1044,7 +1105,10 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
             ),
           ),
           TextButton(
-            onPressed: () => setState(() => _activePhotoTool = null),
+            onPressed: () => setState(() {
+                  _activePhotoTool = null;
+                  _photoTab = null;
+                }),
             child: const Text('Done'),
           ),
         ],
@@ -1294,6 +1358,127 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
       ));
     }
     return shadows;
+  }
+
+  /// v1.3.0 (§5B): sub-tabs inside the multi-section photo tools.
+  /// Only the active sub-tab's controls render — the full tool
+  /// list is partitioned at its section anchors, so every control
+  /// is preserved exactly (nothing removed, only re-homed).
+  List<(String, String)> _photoTabs() {
+    switch (_activePhotoTool) {
+      case 'crop':
+        return const [('ratio', 'Ratio'), ('straighten', 'Straighten')];
+      case 'adjust':
+        return const [
+          ('light', 'Light'),
+          ('colour', 'Colour'),
+          ('detail', 'Detail'),
+        ];
+      case 'text':
+        return const [
+          ('write', 'Write'),
+          ('style', 'Style'),
+          ('effects', 'Effects'),
+        ];
+      default:
+        return const [];
+    }
+  }
+
+  String get _currentPhotoTab {
+    final tabs = _photoTabs();
+    if (tabs.isEmpty) return '';
+    final t = _photoTab;
+    if (t != null && tabs.any((e) => e.$1 == t)) return t;
+    return tabs.first.$1;
+  }
+
+  Widget _photoTabRow() {
+    final tabs = _photoTabs();
+    if (tabs.length < 2) return const SizedBox.shrink();
+    final current = _currentPhotoTab;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (final t in tabs)
+              Padding(
+                padding: const EdgeInsets.only(right: 6),
+                child: ChoiceChip(
+                  label: Text(t.$2),
+                  selected: current == t.$1,
+                  onSelected: (_) => setState(() => _photoTab = t.$1),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  int _anchorIdx(List<Widget> items, bool Function(Widget) test) {
+    for (var i = 0; i < items.length; i++) {
+      if (test(items[i])) return i;
+    }
+    return -1;
+  }
+
+  bool _isSectionLabel(Widget w, String text) =>
+      w is Padding && w.child is Text && (w.child as Text).data == text;
+
+  /// The visible slice of the open tool's panel (§5B partitions).
+  List<Widget> _photoVisibleChildren() {
+    final all = _photoPanelChildren();
+    switch (_activePhotoTool) {
+      case 'crop':
+        final idx = _anchorIdx(
+          all,
+          (w) => w is Text && w.data == 'Straighten',
+        );
+        if (idx < 0) return all;
+        return _currentPhotoTab == 'straighten'
+            ? all.sublist(idx)
+            : all.sublist(0, idx);
+      case 'adjust':
+        final colourIdx =
+            _anchorIdx(all, (w) => _isSectionLabel(w, 'COLOUR'));
+        final detailIdx =
+            _anchorIdx(all, (w) => _isSectionLabel(w, 'DETAIL'));
+        if (colourIdx < 0 || detailIdx < 0 || all.isEmpty) return all;
+        // The header row (title + Reset) rides on every tab.
+        final header = all.first;
+        switch (_currentPhotoTab) {
+          case 'colour':
+            return [header, ...all.sublist(colourIdx, detailIdx)];
+          case 'detail':
+            return [header, ...all.sublist(detailIdx)];
+          default:
+            return [header, ...all.sublist(1, colourIdx)];
+        }
+      case 'text':
+        final sizeIdx = _anchorIdx(
+          all,
+          (w) => w is _SliderRow && w.label == 'Text size',
+        );
+        final fxIdx = _anchorIdx(
+          all,
+          (w) => w is Text && w.data == 'Effects',
+        );
+        if (sizeIdx < 2 || fxIdx < 0 || fxIdx <= sizeIdx - 2) return all;
+        final styleStart = sizeIdx - 2;
+        switch (_currentPhotoTab) {
+          case 'style':
+            return all.sublist(styleStart, fxIdx);
+          case 'effects':
+            return all.sublist(fxIdx);
+          default:
+            return all.sublist(0, styleStart);
+        }
+      default:
+        return all;
+    }
   }
 
   List<Widget> _photoPanelChildren() {
@@ -2292,10 +2477,19 @@ if (AppConfig.aiToolsEnabled) ...[
               onPressed: file == null || _busy ? null : _resetAll,
               icon: const Icon(Icons.restart_alt),
             ),
-            IconButton(
-              tooltip: 'Save to gallery',
-              onPressed: file == null || _busy ? null : _export,
-              icon: const Icon(Icons.save),
+            // v1.3.0 (§5B): Save is a labelled GOLD pill in the
+            // AppBar, not a bare icon.
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 8, 12, 8),
+              child: ElevatedButton.icon(
+                onPressed: file == null || _busy ? null : _export,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: TjProTheme.gold,
+                  foregroundColor: Colors.black,
+                ),
+                icon: const Icon(Icons.save, size: 18),
+                label: const Text('Save'),
+              ),
             ),
           ],
         ),
@@ -2304,10 +2498,13 @@ if (AppConfig.aiToolsEnabled) ...[
         // bottom. The old permanent filter strip is GONE (P1) — filters
         // live only in the Filters panel, and the space went back to
         // the preview/panel.
-        body: Column(
+        // v1.3.0 (§5B): the status is a transient chip OVERLAYING
+        // the preview (top of the body), not a permanent line.
+        body: Stack(
           children: [
+            Column(
+              children: [
             Expanded(
-              flex: 5,
               child: Container(
                 color: Colors.black,
                 padding: const EdgeInsets.all(8),
@@ -2415,88 +2612,119 @@ if (AppConfig.aiToolsEnabled) ...[
                 ),
               ),
             ),
-            Expanded(
-              flex: 4,
-              child: Container(
-                color: const Color(0xFF121212),
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-                // InShot-style smooth transitions between tools (Jaani 31 Oct
-                // 2026: "aur smooth"). AnimatedSwitcher fades/slides panels.
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 250),
-                  transitionBuilder:
-                      (Widget child, Animation<double> animation) {
-                    return FadeTransition(
-                      opacity: animation,
-                      child: SlideTransition(
-                        position: Tween<Offset>(
-                          begin: const Offset(0, 0.08),
-                          end: Offset.zero,
-                        ).animate(animation),
-                        child: child,
-                      ),
-                    );
-                  },
-                  child: _activePhotoTool == null
-                      // No tool selected: hint to pick one from the rail.
-                      ? const Center(
-                          key: ValueKey<String>('photo-hint'),
-                          child: Text(
-                            'Neeche se koi tool select karein',
-                            style:
-                                TextStyle(color: Colors.grey, fontSize: 14),
-                          ),
-                        )
-                      // Tool open: CapCut-style header (Back/Done)
-                      // + that tool's options only.
-                      : ListView(
-                          key: ValueKey<String>(
-                              'photo-tool-${_activePhotoTool!}'),
-                          padding: const EdgeInsets.only(top: 4),
+            // Tool zone (§5B): fixed height — the rail, or ONLY
+            // the open tool's panel (header + sub-tabs + its
+            // controls) in the rail's place.
+            SizedBox(
+              height: 218,
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 150),
+                transitionBuilder:
+                    (Widget child, Animation<double> animation) {
+                  return FadeTransition(
+                    opacity: animation,
+                    child: SlideTransition(
+                      position: Tween<Offset>(
+                        begin: const Offset(0, 0.05),
+                        end: Offset.zero,
+                      ).animate(CurvedAnimation(
+                          parent: animation, curve: Curves.easeOut)),
+                      child: child,
+                    ),
+                  );
+                },
+                child: _activePhotoTool == null
+                    ? Container(
+                        key: const ValueKey<String>('photo-rail'),
+                        color: const Color(0xFF1B1B1B),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            _photoPanelHeader(_activePhotoTool!),
-                            ..._photoPanelChildren(),
+                            const Padding(
+                              padding: EdgeInsets.fromLTRB(12, 10, 12, 2),
+                              child: Text(
+                                'Tools — koi tool chunein, sirf usi ke '
+                                'controls khulenge.',
+                                style: TextStyle(
+                                    color: Colors.grey, fontSize: 12),
+                              ),
+                            ),
+                            SizedBox(
+                              height: 88,
+                              child: ListView(
+                                scrollDirection: Axis.horizontal,
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 6),
+                                children: [
+                                  // Round-2 rail: 7 tools. Pick lives
+                                  // in the empty state + AppBar;
+                                  // Rotate lives in Crop; BG Remover
+                                  // lives in AI; Save in the AppBar.
+                                  _photoRailButton(
+                                      'crop', 'Crop', Icons.crop),
+                                  _photoRailButton('filters', 'Filters',
+                                      Icons.filter_vintage),
+                                  _photoRailButton(
+                                      'adjust', 'Adjust', Icons.tune),
+                                  _photoRailButton(
+                                      'text', 'Text', Icons.text_fields),
+                                  _photoRailButton(
+                                      'hsl', 'HSL', Icons.palette),
+                                  _photoRailButton('enhance', 'Enhance',
+                                      Icons.auto_fix_high),
+                                  _photoRailButton(
+                                      'ai', 'AI Tools', Icons.psychology),
+                                ],
+                              ),
+                            ),
                           ],
                         ),
-                ),
+                      )
+                    : Container(
+                        key: ValueKey<String>(
+                            'photo-panel-${_activePhotoTool!}'),
+                        color: const Color(0xFF121212),
+                        padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _photoPanelHeader(_activePhotoTool!),
+                            _photoTabRow(),
+                            Expanded(
+                              child: ListView(
+                                padding: const EdgeInsets.only(top: 4),
+                                children: _photoVisibleChildren(),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              child: Text(_status,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.grey, fontSize: 12)),
+              ],
             ),
-            // ONE single horizontal tool row (scrollable) — never a grid,
-            // never two rows.
-            // CapCut-style (Jaani 31 Oct 2026): hidden while a tool's
-            // panel is open — only that tool's options show, with
-            // Back/Done in the panel header to return here.
-            // Height 88: fits icon (24) + gap (4) + 2-line label (~28)
-            // + button padding (16) + container padding (12) with margin.
-            if (_activePhotoTool == null)
-              Container(
-                height: 88,
-                color: const Color(0xFF1B1B1B),
-                padding: const EdgeInsets.symmetric(vertical: 6),
-                child: ListView(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  children: [
-                    // Round-2 rail: 7 tools (was 11). Pick lives in
-                    // the empty state + AppBar; Rotate lives in Crop;
-                    // BG Remover lives in AI; Save stays in the AppBar.
-                    _photoRailButton('crop', 'Crop', Icons.crop),
-                    _photoRailButton(
-                        'filters', 'Filters', Icons.filter_vintage),
-                    _photoRailButton('adjust', 'Adjust', Icons.tune),
-                    _photoRailButton('text', 'Text', Icons.text_fields),
-                    _photoRailButton('hsl', 'HSL', Icons.palette),
-                    _photoRailButton(
-                        'enhance', 'Enhance', Icons.auto_fix_high),
-                    _photoRailButton('ai', 'AI Tools', Icons.psychology),
-                  ],
+            if (_statusVisible)
+              Positioned(
+                top: 10,
+                left: 12,
+                right: 12,
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.75),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Text(
+                      _status,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: Colors.white, fontSize: 12),
+                    ),
+                  ),
                 ),
               ),
           ],

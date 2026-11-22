@@ -7,6 +7,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -31,7 +32,10 @@ import '../news/caption_translator_screen.dart';
 import '../news/channel_preset.dart';
 import '../news/news_project.dart';
 import '../news/project_handoff.dart';
-import '../services/premium_gate.dart';
+import '../services/coin_service.dart';
+import '../services/photo_pipeline.dart';
+import '../services/asset_download_service.dart';
+import '../live/parity_template.dart';
 import '../services/unity_ads_service.dart';
 import '../services/ffmpeg_service.dart';
 import '../services/caption_service.dart';
@@ -39,6 +43,7 @@ import '../services/pro_editor.dart';
 import '../services/fx_pack.dart';
 import '../services/pro_vision.dart';
 import '../services/reel_export_service.dart';
+import '../services/video_export_service.dart';
 
 part 'video_editor_panels.dart';
 
@@ -51,6 +56,13 @@ class VideoClip {
   double trimEnd = -1; // -1 = full duration
   double get effectiveEnd => trimEnd < 0 ? duration.inMilliseconds / 1000 : trimEnd;
   double get effectiveDuration => effectiveEnd - trimStart;
+
+  // v1.3.0 (§6.1): a still PHOTO can sit on the timeline as a clip.
+  // It is materialised to a real video segment at export
+  // (photoClipCommand); [kenBurns] adds the slow zoom.
+  bool isPhoto = false;
+  bool kenBurns = true;
+  bool kbZoomIn = true;
 }
 
 class VideoEditorScreen extends StatefulWidget {
@@ -97,6 +109,60 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   // CapCut-style tool selection (Jaani 31 Oct 2026): null = tool grid
   // visible, no panel open. Non-null = that tool's panel open, grid hidden.
   String? _activeTool;
+
+  // ---- v1.3.0 layout/feature state (§3–§6). ----
+  /// Sub-tab inside the open tool panel (null = the tool's first
+  /// tab). Reset whenever the tool changes.
+  String? _panelTab;
+  /// §6.1 filter intensity 0..1 (1 = the long-standing full look).
+  double _filterIntensity = 1;
+  /// §6.2 hold-to-compare: while true the stage shows the RAW
+  /// frame (no colour matrix).
+  bool _comparing = false;
+  /// §5A Colour›Adjust: which ONE grade slider is on screen.
+  String _gradeSlider = 'LUT';
+  /// §5A Overlay›Keyframes: 0 = Start keyframe page, 1 = End.
+  int _kfPage = 0;
+  /// §6.8 auto music ducking under the clip/voice audio.
+  bool _autoDuck = false;
+  /// §6.9 music volume keyframes: (timeSec, gain) points.
+  final List<(double, double)> _volumePoints = [];
+  /// §6.7 main-clip transform (defaults = identity).
+  double _tfScale = 1;
+  double _tfX = 0;
+  double _tfY = 0;
+  double _tfRot = 0;
+  double _tfOpacity = 1;
+  bool get _transformActive =>
+      _tfScale != 1 || _tfX != 0 || _tfY != 0 || _tfRot != 0 || _tfOpacity != 1;
+  /// §6.5 canvas fill: 'none' (crop), 'blur' or 'color'.
+  String _canvasFill = 'none';
+  String _canvasFillColor = 'black';
+  /// §6.1 intro/outro attach slots (picked video files).
+  String? _introClipPath;
+  String? _outroClipPath;
+  /// True once the AppBar quality pill set the export quality —
+  /// [_export] then skips its dialog.
+  bool _qualityPicked = false;
+  /// §8: this session's AI-tools coin unlock (charged once).
+  bool _aiCoinsPaid = false;
+  /// §6.6 undo/redo snapshot stacks (see _pushHistory).
+  final List<String> _undoStack = [];
+  final List<String> _redoStack = [];
+  /// §6.10 custom speed-ramp point speeds (start / middle / end).
+  double _rampStart = 1;
+  double _rampMid = 0.5;
+  double _rampEnd = 1;
+  /// §6.11 PIP opacity (1 = solid) + mask ('none' / 'circle').
+  /// Blend modes are NOT offered — see the report: ffmpeg's blend
+  /// filter ignores the overlay's alpha, so a true blend mode
+  /// cannot be produced honestly with this graph.
+  double _pipOpacity = 1;
+  String _pipMask = 'none';
+  // Status is a transient overlay chip on the stage (§3), not a
+  // permanent line: it flashes for a few seconds per message.
+  bool _statusVisible = false;
+  Timer? _statusTimer;
 
   // ---- PRO tools (v2.1.0) state. Defaults = today's behaviour: every
   // pro switch/dropdown off or neutral, so an untouched export is
@@ -238,26 +304,27 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         _ => null,
       };
 
-  /// Premium gate mirrored from the photo editor's AI tools
-  /// (_runAi): ML features need a rewarded-ad unlock first. Difference
-  /// from the photo editor (which asks the user to tap the tool again
-  /// after unlocking): here a successful unlock lets the action
-  /// proceed immediately, so the BG-remover switch can turn on and the
-  /// Track button can run in the same tap.
+  /// v1.3.0 (§8): premium ML tools unlock with COINS ONLY — the
+  /// ad-unlock path is gone from the whole app. The first AI use
+  /// in a session asks once: a confirm dialog shows the cost
+  /// (CoinFeature.aiEnhance = 50) and the current balance, then
+  /// [CoinService.spend] charges it. Admins are waived by
+  /// CoinService itself. Later AI uses in the same session proceed
+  /// without asking again. A failed/insufficient spend keeps the
+  /// tool OFF and says why — never a silent pass.
   Future<bool> _ensurePremiumUnlocked() async {
-    if (PremiumGate.isUnlocked) return true;
-    _setStatus(
-      'Pro ML tools are Premium. Unlock them with one short ad '
-      'from the home screen, then try again.',
-    );
+    if (_aiCoinsPaid || CoinService.instance.isAdminNow) return true;
+    final cost = CoinCosts.costFor(CoinFeature.aiEnhance);
+    final balance = CoinService.instance.balance.value;
     if (!mounted) return false;
-    final unlock = await showDialog<bool>(
+    final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Premium Pro tools'),
-        content: const Text(
-          'Watch one short ad to unlock video background remover '
-          'and motion tracking.',
+        title: const Text('Premium AI tools'),
+        content: Text(
+          'AI tools (background remover, motion tracking) is session '
+          'mein $cost coins se unlock honge.\n'
+          'Aap ka balance: $balance coins.',
         ),
         actions: [
           TextButton(
@@ -266,20 +333,28 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Watch ad'),
+            child: Text('Unlock — $cost coins'),
           ),
         ],
       ),
     );
-    if (unlock == true) {
-      final ok = await PremiumGate.tryUnlockWithAd();
+    if (confirm != true) return false;
+    final res = await CoinService.instance.spend(CoinFeature.aiEnhance);
+    if (res.ok) {
+      _aiCoinsPaid = true;
       _setStatus(
-        ok
-            ? 'Premium Pro unlocked.'
-            : 'No ad was available right now. Try again.',
+        res.adminFree
+            ? 'Admin — AI tools free unlock ho gaye.'
+            : 'AI tools unlock ho gaye ($cost coins).',
       );
-      return ok;
+      return true;
     }
+    _setStatus(
+      res.error == 'insufficient_balance'
+          ? 'Coins kam hain — Coins section se rewarded ads dekh kar '
+              'coins kamayein.'
+          : 'Unlock nahi hua (${res.error ?? 'error'}). Dobara try karein.',
+    );
     return false;
   }
 
@@ -838,6 +913,14 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
 
   Future<void> _loadPreview() async {
     if (_clips.isEmpty) return;
+    // v1.3.0 (§6.1): a photo clip has no video controller — the
+    // stage shows the still image instead.
+    if (_clips[_selected].isPhoto) {
+      final old = _controller;
+      setState(() => _controller = null);
+      await old?.dispose();
+      return;
+    }
     final old = _controller;
     final c = VideoPlayerController.file(_clips[_selected].file);
     setState(() => _controller = c);
@@ -861,11 +944,13 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       final d = probe.value.duration;
       final aspect = probe.value.aspectRatio;
       await probe.dispose();
+      _pushHistory();
       setState(() {
         _clips.add(VideoClip(file, d, aspect));
         _selected = _clips.length - 1;
         _status = 'Clip ${_clips.length} added (${d.inSeconds}s).';
       });
+      _flashStatus();
       await _loadPreview();
     } catch (e) {
       await probe.dispose();
@@ -887,7 +972,290 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     }
   }
 
-  void _setStatus(String s) => setState(() => _status = s);
+  void _setStatus(String s) {
+    setState(() => _status = s);
+    _flashStatus();
+  }
+
+  /// Shows the status chip (stage overlay) and arms its auto-hide.
+  /// While an export runs the chip stays (progress lives there).
+  void _flashStatus() {
+    if (!mounted) return;
+    setState(() => _statusVisible = true);
+    _statusTimer?.cancel();
+    _statusTimer = Timer(const Duration(seconds: 5), () {
+      if (mounted && !_busy) setState(() => _statusVisible = false);
+    });
+  }
+
+  // ---- §6.6 undo/redo -------------------------------------------------
+  // A snapshot is the whole editable project state as JSON: clip
+  // files + trims + the global look/audio scalars. Pushed BEFORE
+  // structural mutations (add / remove / split / trim-end / freeze
+  // / photo-add); undo restores the exact prior state.
+  String _snapshot() => jsonEncode({
+        'clips': [
+          for (final c in _clips)
+            {
+              'path': c.file.path,
+              'durMs': c.duration.inMilliseconds,
+              'ar': c.aspectRatio,
+              'ts': c.trimStart,
+              'te': c.trimEnd,
+              'photo': c.isPhoto,
+              'kb': c.kenBurns,
+              'kbin': c.kbZoomIn,
+            },
+        ],
+        'sel': _selected,
+        'speed': _speed,
+        'filter': _filter,
+        'aspect': _aspect,
+        'crossfade': _crossfade,
+        'music': _musicPath,
+        'musicVol': _musicVolume,
+        'text': _text,
+      });
+
+  void _pushHistory() {
+    _undoStack.add(_snapshot());
+    if (_undoStack.length > 40) _undoStack.removeAt(0);
+    _redoStack.clear();
+  }
+
+  Future<void> _restoreSnapshot(String snap) async {
+    final m = jsonDecode(snap) as Map<String, dynamic>;
+    final clips = <VideoClip>[];
+    for (final e in (m['clips'] as List).cast<Map<String, dynamic>>()) {
+      final c = VideoClip(
+        File(e['path'] as String),
+        Duration(milliseconds: (e['durMs'] as num).toInt()),
+        (e['ar'] as num).toDouble(),
+      );
+      c.trimStart = (e['ts'] as num).toDouble();
+      c.trimEnd = (e['te'] as num).toDouble();
+      c.isPhoto = e['photo'] as bool? ?? false;
+      c.kenBurns = e['kb'] as bool? ?? true;
+      c.kbZoomIn = e['kbin'] as bool? ?? true;
+      clips.add(c);
+    }
+    setState(() {
+      _clips
+        ..clear()
+        ..addAll(clips);
+      _selected = ((m['sel'] as num?)?.toInt() ?? 0)
+          .clamp(0, clips.isEmpty ? 0 : clips.length - 1);
+      _speed = (m['speed'] as num?)?.toDouble() ?? 1;
+      _filter = m['filter'] as String? ?? 'Normal';
+      _aspect = m['aspect'] as String? ?? 'Original';
+      _crossfade = m['crossfade'] as bool? ?? false;
+      _musicPath = m['music'] as String?;
+      _musicVolume = (m['musicVol'] as num?)?.toDouble() ?? 1;
+      _text = m['text'] as String? ?? '';
+    });
+    if (_clips.isNotEmpty) {
+      await _loadPreview();
+    } else {
+      await _controller?.dispose();
+      if (mounted) setState(() => _controller = null);
+    }
+  }
+
+  Future<void> _undo() async {
+    if (_undoStack.isEmpty || _busy) return;
+    _redoStack.add(_snapshot());
+    await _restoreSnapshot(_undoStack.removeLast());
+    _setStatus('Undo ho gaya.');
+  }
+
+  Future<void> _redo() async {
+    if (_redoStack.isEmpty || _busy) return;
+    _undoStack.add(_snapshot());
+    await _restoreSnapshot(_redoStack.removeLast());
+    _setStatus('Redo ho gaya.');
+  }
+
+  /// Opens a tool panel (or closes it when [key] is null); the
+  /// panel always starts on its first sub-tab (§3).
+  void _openTool(String? key) {
+    setState(() {
+      _activeTool = key;
+      _panelTab = null;
+    });
+  }
+
+  /// The stage's LIVE colour matrix (§3/§6.1/§6.2): the chosen
+  /// filter at [_filterIntensity] plus the ProGrade values the
+  /// matrix can express (LUTs are file-based and export-only —
+  /// the preview says so in the Colour panel). Hold-to-compare
+  /// swaps in the identity matrix.
+  List<double> get _stageMatrix {
+    if (_comparing) {
+      return const [
+        1, 0, 0, 0, 0, //
+        0, 1, 0, 0, 0, //
+        0, 0, 1, 0, 0, //
+        0, 0, 0, 1, 0,
+      ];
+    }
+    final filter = switch (_filter) {
+      'Warm' => PhotoFilter.warm,
+      'Cool' => PhotoFilter.cool,
+      'B&W' => PhotoFilter.blackWhite,
+      'Vivid' => PhotoFilter.vivid,
+      'Sepia' => PhotoFilter.sepia,
+      _ => PhotoFilter.normal,
+    };
+    return buildColorMatrix(
+      filter: filter,
+      brightness: _proBrightness,
+      contrast: _proContrast,
+      saturation: _proSaturation,
+      filterIntensity: _filterIntensity,
+      exposure: _proExposure,
+      temperature: _proTemperature,
+      tint: _proTint,
+      vibrance: (_proVibrance - 1) * 100,
+    );
+  }
+
+  /// AppBar quality pill (§3): pick the export quality ahead of
+  /// time; [_export] then skips its dialog.
+  Future<void> _pickExportQuality() async {
+    final quality = await showDialog<int>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('Export quality'),
+        children: [
+          for (final entry in const [
+            (0, '720p HD (fast)'),
+            (1, '1080p Full HD'),
+            (2, '2160p 4K (slow)'),
+          ])
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(ctx, entry.$1),
+              child: Text(entry.$2),
+            ),
+        ],
+      ),
+    );
+    if (quality == null) return;
+    setState(() {
+      _fxQuality = quality;
+      _qualityPicked = true;
+    });
+    _setStatus(
+      'Export quality: ${const ['720p', '1080p', '4K'][quality]} set ho gayi.',
+    );
+  }
+
+  String get _qualityLabel =>
+      const ['720p', '1080p', '4K'][_fxQuality.clamp(0, 2)];
+
+  /// §6.1 — add a PHOTO as a timeline clip (3 s default, Ken Burns
+  /// on). The photo is materialised to a video segment at export.
+  Future<void> _addPhotoClip() async {
+    final picked = await _picker.pickImage(source: ImageSource.gallery);
+    if (picked == null) return;
+    final file = File(picked.path);
+    var aspect = 16 / 9;
+    try {
+      final bytes = await file.readAsBytes();
+      final codec = await ui.instantiateImageCodec(bytes);
+      final frame = await codec.getNextFrame();
+      aspect = frame.image.width / frame.image.height;
+      frame.image.dispose();
+    } catch (_) {}
+    _pushHistory();
+    final clip = VideoClip(file, const Duration(seconds: 3), aspect)
+      ..isPhoto = true;
+    setState(() {
+      _clips.add(clip);
+      _selected = _clips.length - 1;
+      _status = 'Photo clip add ho gaya (3s, Ken Burns on).';
+    });
+    _flashStatus();
+    await _loadPreview();
+  }
+
+  /// §6.3 — freeze-frame insert: the current playhead frame becomes
+  /// a 2 s photo clip right after the selected clip.
+  Future<void> _freezeFrameInsert() async {
+    if (_clips.isEmpty || _busy) return;
+    final ctrl = _controller;
+    if (ctrl == null || !ctrl.value.isInitialized) {
+      _setStatus('Pehle clip ka preview load honay dein.');
+      return;
+    }
+    final idx = _selected < _clips.length ? _selected : 0;
+    final clip = _clips[idx];
+    final posSec = ctrl.value.position.inMilliseconds / 1000.0;
+    final seekSec = posSec.clamp(0.0, clip.duration.inMilliseconds / 1000.0);
+    setState(() => _busy = true);
+    try {
+      final dir = await _workDir();
+      final stamp = DateTime.now().millisecondsSinceEpoch;
+      final out = p.join(dir.path, 'freeze_$stamp.png');
+      final r = await FfmpegService.run(
+        '-ss $seekSec -i ${FfmpegService.q(clip.file.path)} '
+        '-frames:v 1 -q:v 2 -y ${FfmpegService.q(out)}',
+      );
+      if (!r.ok) {
+        _setStatus('Freeze frame nahi bana. ${r.logs}');
+        return;
+      }
+      _pushHistory();
+      final frozen = VideoClip(
+        File(out),
+        const Duration(seconds: 2),
+        clip.aspectRatio,
+      )..isPhoto = true;
+      setState(() {
+        _clips.insert(idx + 1, frozen);
+        _selected = idx + 1;
+      });
+      _setStatus('Freeze frame clip ban gaya (2s).');
+      await _loadPreview();
+    } catch (e) {
+      _setStatus('Freeze frame failed: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// Fullscreen preview (transport row): the same controller in a
+  /// full-screen dialog, with the live colour matrix applied.
+  Future<void> _openFullscreen() async {
+    final ctrl = _controller;
+    if (ctrl == null || !ctrl.value.isInitialized) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => Dialog.fullscreen(
+        backgroundColor: Colors.black,
+        child: Stack(
+          children: [
+            Center(
+              child: ColorFiltered(
+                colorFilter: ColorFilter.matrix(_stageMatrix),
+                child: AspectRatio(
+                  aspectRatio: ctrl.value.aspectRatio,
+                  child: VideoPlayer(ctrl),
+                ),
+              ),
+            ),
+            Positioned(
+              top: 8,
+              right: 8,
+              child: IconButton(
+                icon: const Icon(Icons.close, color: Colors.white),
+                onPressed: () => Navigator.pop(ctx),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   Future<Directory> _workDir() async {
     final tmp = await getTemporaryDirectory();
@@ -981,7 +1349,51 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       // intermediate as a one-clip export. Multi-clip + beat sync =
       // markers only (no cut).
       var clips = _clips;
-      if (_beatAutoCut && _beats.isNotEmpty && _clips.length == 1) {
+      // v1.3.0 (§6.1): photo clips are materialised to real video
+      // segments first (Ken Burns zoom or a static hold), so every
+      // later stage sees ordinary video clips.
+      var hadPhoto = false;
+      if (clips.any((c) => c.isPhoto)) {
+        hadPhoto = true;
+        final mat = <VideoClip>[];
+        for (var i = 0; i < clips.length; i++) {
+          final c = clips[i];
+          if (!c.isPhoto) {
+            mat.add(c);
+            continue;
+          }
+          final portraitP = c.aspectRatio < 1.0;
+          final pw = _fxQuality == 2
+              ? (portraitP ? 2160 : 3840)
+              : _fxQuality == 1
+                  ? (portraitP ? 1080 : 1920)
+                  : (portraitP ? 720 : 1280);
+          final ph = _fxQuality == 2
+              ? (portraitP ? 3840 : 2160)
+              : _fxQuality == 1
+                  ? (portraitP ? 1920 : 1080)
+                  : (portraitP ? 1280 : 720);
+          final seg = p.join(dir.path, 'photo_${stamp}_$i.mp4');
+          _setStatus('Photo clip ${i + 1} tayyar ho raha hai…');
+          final res = await FfmpegService.run(
+            FfmpegService.photoClipCommand(
+              imagePath: c.file.path,
+              output: seg,
+              width: pw,
+              height: ph,
+              durationSec: c.effectiveDuration,
+              kenBurns: c.kenBurns,
+              zoomIn: c.kbZoomIn,
+            ),
+          );
+          if (!res.ok) {
+            throw Exception('Photo clip ${i + 1} failed. ${res.logs}');
+          }
+          mat.add(VideoClip(File(seg), c.duration, c.aspectRatio));
+        }
+        clips = mat;
+      }
+      if (_beatAutoCut && _beats.isNotEmpty && _clips.length == 1 && !hadPhoto) {
         final src = _clips.first;
         final segments = beatSegments(
           _beats,
@@ -1084,11 +1496,28 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
             )
           : '';
       final rampPreset = _rampPreset();
-      final hasRamp = rampPreset != null;
       final exportDurSec =
           clips.fold<double>(0.0, (a, c) => a + c.effectiveDuration);
-      final rampSegs =
-          hasRamp ? rampSegments(rampPreset, exportDurSec) : <RampSegment>[];
+      // v1.3.0 (§6.10): the 'Custom' ramp builds its segments from
+      // the three point speeds (start / middle / end thirds).
+      final customRamp = _proRamp == 'Custom' && exportDurSec > 0;
+      final hasRamp = rampPreset != null || customRamp;
+      final rampSegs = rampPreset != null
+          ? rampSegments(rampPreset, exportDurSec)
+          : customRamp
+              ? <RampSegment>[
+                  RampSegment(
+                      tStart: 0, tEnd: exportDurSec / 3, speed: _rampStart),
+                  RampSegment(
+                      tStart: exportDurSec / 3,
+                      tEnd: exportDurSec * 2 / 3,
+                      speed: _rampMid),
+                  RampSegment(
+                      tStart: exportDurSec * 2 / 3,
+                      tEnd: exportDurSec,
+                      speed: _rampEnd),
+                ]
+              : <RampSegment>[];
       final List<String> extraParts = <String>[];
       if (gradeStr.isNotEmpty) extraParts.add(gradeStr);
       if (hasRamp) extraParts.add(rampSetpts(rampSegs));
@@ -1101,8 +1530,12 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       // keep the music track untouched, so the ramp audio filter only
       // applies when no music is picked).
       final effectiveSpeed = hasRamp ? 1.0 : _speed;
+      // v1.3.0 (§6.8): auto-duck keeps the music OUT of the main
+      // pass — a post-pass sidechain-ducks it under the clip audio.
+      final duckMusic = _autoDuck && _musicPath != null;
+      final String? mainMusicPath = duckMusic ? null : _musicPath;
       final String? rampAudio =
-          (hasRamp && _musicPath == null) ? rampAudioFilter(rampSegs) : null;
+          (hasRamp && mainMusicPath == null) ? rampAudioFilter(rampSegs) : null;
       final String voiceStr = voiceFxFilter(_fxVoice);
       final String fadeStr = audioFadeFilter(
         fadeInSec: _fxFadeIn,
@@ -1130,10 +1563,10 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         // Mute original audio (CapCut/VN-style): silence the clip's own
         // audio at export. Ignored when music is picked — music already
         // replaces the clip audio track.
-        if (_muteOriginal && _musicPath == null) {
+        if (_muteOriginal && mainMusicPath == null) {
           afParts.add('volume=0');
         }
-        if (effectiveSpeed != 1.0 && _musicPath == null) {
+        if (effectiveSpeed != 1.0 && mainMusicPath == null) {
           afParts.add('atempo=$effectiveSpeed');
         }
         if (fxAudioFilter.isNotEmpty) {
@@ -1141,7 +1574,13 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         }
         // Music track gain: with music picked, the output audio stream is
         // the music track, so volume= here adjusts music only.
-        if (_musicPath != null && _musicVolume != 1.0) {
+        if (mainMusicPath != null && _volumePoints.isNotEmpty) {
+          // v1.3.0 (§6.9): music volume keyframes — a piecewise
+          // linear gain envelope over the music track.
+          afParts.add(
+            "volume='${volumeEnvelopeExpression(_volumePoints, _musicVolume)}':eval=frame",
+          );
+        } else if (mainMusicPath != null && _musicVolume != 1.0) {
           afParts.add('volume=${_musicVolume.toStringAsFixed(2)}');
         }
         if (afParts.isNotEmpty) {
@@ -1165,16 +1604,21 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           trimEnd: c.effectiveEnd,
           speed: effectiveSpeed,
           filterPreset: _filter,
-          aspect: _aspect,
+          // §6.5 blur fill: the main pass keeps the original frame;
+          // a post-pass reframes it over its own blurred copy.
+          aspect: _canvasFill == 'blur' ? 'Original' : _aspect,
           text: text,
           fontFile: _fontFile,
           subtitlesPath: subsPath,
           captionFilter: capFilter,
           textAtTop: useCaptions,
-          musicPath: _musicPath,
+          musicPath: mainMusicPath,
           extraVideoFilter: extraVideoFilter,
           audioFilter: finalAudioFilter,
           exportQuality: _fxQuality,
+          filterIntensity: _filterIntensity,
+          canvasFill: _canvasFill == 'color' ? 'color' : 'none',
+          fillColor: _canvasFillColor,
           output: out,
         );
         final totalMs =
@@ -1197,16 +1641,19 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
             trimEnd: c.effectiveEnd,
             speed: effectiveSpeed,
             filterPreset: _filter,
-            aspect: _aspect,
+            aspect: _canvasFill == 'blur' ? 'Original' : _aspect,
             text: text,
             fontFile: _fontFile,
             subtitlesPath: subsPath,
             captionFilter: capFilter,
             textAtTop: useCaptions,
-            musicPath: _musicPath,
+            musicPath: mainMusicPath,
             extraVideoFilter: gradeStr.isEmpty ? null : gradeStr,
             audioFilter: null,
             exportQuality: _fxQuality,
+            filterIntensity: _filterIntensity,
+            canvasFill: _canvasFill == 'color' ? 'color' : 'none',
+            fillColor: _canvasFillColor,
             output: out,
           );
           final retryRes = await FfmpegService.run(
@@ -1250,6 +1697,9 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
             width: w,
             height: h,
             output: nf,
+            // §6.5: blur fill frames every clip over its own
+            // blurred copy instead of cropping.
+            blurFill: _canvasFill == 'blur',
           );
           _setStatus('Preparing clip ${i + 1}/${clips.length}…');
           final res = await FfmpegService.run(cmd);
@@ -1303,16 +1753,20 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           input: merged,
           speed: effectiveSpeed,
           filterPreset: _filter,
-          aspect: _aspect,
+          // Blur fill already framed the clips in normalize.
+          aspect: _canvasFill == 'blur' ? 'Original' : _aspect,
           text: text,
           fontFile: _fontFile,
           subtitlesPath: subsPath,
           captionFilter: capFilter,
           textAtTop: useCaptions,
-          musicPath: _musicPath,
+          musicPath: mainMusicPath,
           extraVideoFilter: extraVideoFilter,
           audioFilter: finalAudioFilter,
           exportQuality: _fxQuality,
+          filterIntensity: _filterIntensity,
+          canvasFill: _canvasFill == 'color' ? 'color' : 'none',
+          fillColor: _canvasFillColor,
           output: out,
         );
         final res = await FfmpegService.run(
@@ -1329,16 +1783,19 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
             input: merged,
             speed: effectiveSpeed,
             filterPreset: _filter,
-            aspect: _aspect,
+            aspect: _canvasFill == 'blur' ? 'Original' : _aspect,
             text: text,
             fontFile: _fontFile,
             subtitlesPath: subsPath,
             captionFilter: capFilter,
             textAtTop: useCaptions,
-            musicPath: _musicPath,
+            musicPath: mainMusicPath,
             extraVideoFilter: gradeStr.isEmpty ? null : gradeStr,
             audioFilter: null,
             exportQuality: _fxQuality,
+            filterIntensity: _filterIntensity,
+            canvasFill: _canvasFill == 'color' ? 'color' : 'none',
+            fillColor: _canvasFillColor,
             output: out,
           );
           final retryRes = await FfmpegService.run(
@@ -1351,6 +1808,69 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           }
         } else if (!res.ok) {
           throw Exception('Final export failed. ${res.logs}');
+        }
+      }
+
+      // v1.3.0 (§6.5): blur-fill reframe for the SINGLE-clip path
+      // (the main pass ran with aspect 'Original'). Guarded like
+      // every post-pass.
+      if (clips.length == 1 && _canvasFill == 'blur' && _aspect != 'Original') {
+        try {
+          final dims = FfmpegService.exportDims(_aspect, _fxQuality);
+          if (dims != null) {
+            _setStatus('Canvas blur fill lag raha hai…');
+            final bfOut = p.join(dir.path, 'pve_export_blurfill_$stamp.mp4');
+            final res = await FfmpegService.run(
+              FfmpegService.blurFillPassCommand(
+                input: out,
+                output: bfOut,
+                width: dims.$1,
+                height: dims.$2,
+              ),
+            );
+            if (res.ok) {
+              out = bfOut;
+            } else {
+              _setStatus(
+                'Note: blur fill fail ho gaya, baghair is ke save ho raha hai.',
+              );
+            }
+          }
+        } catch (e) {
+          _setStatus(
+            'Note: blur fill fail ho gaya ($e), baghair is ke save ho raha hai.',
+          );
+        }
+      }
+
+      // v1.3.0 (§6.8): auto music ducking — the music was kept out
+      // of the main pass; here it is sidechain-ducked under the
+      // clip's own audio (or becomes the track when there is none).
+      if (duckMusic) {
+        try {
+          _setStatus('Music ducking ho raha hai…');
+          final hasAudio = await ReelExportService.probeHasAudio(File(out));
+          final duckOut = p.join(dir.path, 'pve_export_duck_$stamp.mp4');
+          final res = await FfmpegService.run(
+            FfmpegService.musicDuckCommand(
+              input: out,
+              musicPath: _musicPath!,
+              output: duckOut,
+              hasClipAudio: hasAudio,
+              musicVolume: _musicVolume,
+            ),
+          );
+          if (res.ok) {
+            out = duckOut;
+          } else {
+            _setStatus(
+              'Note: music ducking fail ho gaya, baghair music ke save ho raha hai.',
+            );
+          }
+        } catch (e) {
+          _setStatus(
+            'Note: music ducking fail ho gaya ($e), baghair music ke save ho raha hai.',
+          );
         }
       }
 
@@ -1423,6 +1943,41 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         } catch (e) {
           _setStatus(
             'Note: stabilization fail ho gaya ($e), baghair is ke save ho raha hai.',
+          );
+        }
+      }
+      // (a2) v1.3.0 (§6.7): main-clip transform (scale / position /
+      // rotation / opacity over a blurred backdrop).
+      if (_transformActive) {
+        try {
+          final size = await VideoExportService.probeVideoSize(File(out));
+          if (size != null) {
+            _setStatus('Transform lag raha hai…');
+            final tfOut = p.join(dir.path, 'pve_export_transform_$stamp.mp4');
+            final res = await FfmpegService.run(
+              FfmpegService.transformPassCommand(
+                input: out,
+                output: tfOut,
+                width: size.width,
+                height: size.height,
+                scale: _tfScale,
+                posX: _tfX,
+                posY: _tfY,
+                rotationDeg: _tfRot,
+                opacity: _tfOpacity,
+              ),
+            );
+            if (res.ok) {
+              out = tfOut;
+            } else {
+              _setStatus(
+                'Note: transform fail ho gaya, baghair is ke save ho raha hai.',
+              );
+            }
+          }
+        } catch (e) {
+          _setStatus(
+            'Note: transform fail ho gaya ($e), baghair is ke save ho raha hai.',
           );
         }
       }
@@ -1547,13 +2102,19 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         // channel preset's settings when opened via timeline handoff
         // (Phase 7) — the inset is composited for real, never a
         // preview-only effect.
-        final String snippet = pipOverlayFilter(
-          pipLabel: '[1:v]',
-          position: _pipPosition,
-          pipScale: _pipScale,
-          margin: 24,
-          outLabel: '[vout]',
-        );
+        // v1.3.0 (§6.11): PIP opacity + circle mask extend the
+        // stock snippet (alpha via colorchannelmixer; the circle
+        // via a geq alpha disc). Blend modes are not offered —
+        // ffmpeg's blend ignores overlay alpha (see state note).
+        final String snippet = (_pipOpacity < 1 || _pipMask == 'circle')
+            ? _pipSnippetWithAlpha()
+            : pipOverlayFilter(
+                pipLabel: '[1:v]',
+                position: _pipPosition,
+                pipScale: _pipScale,
+                margin: 24,
+                outLabel: '[vout]',
+              );
         final StringBuffer pb = StringBuffer();
         pb.write('-y -i ');
         pb.write(FfmpegService.q(out));
@@ -1578,66 +2139,217 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
 
       // v2 news template + logo second pass (before gallery save).
       // The template frame is rendered by the same dart:ui renderer
-      // the live view uses, so Urdu shaping stays correct; the ticker
-      // is pinned to the left margin and the clock is the export-time
-      // stamp — scrolling ticker and live clock are live-only. If the
+      // the live view uses, so Urdu shaping stays correct. If the
       // pass fails, the clean export is saved instead of failing.
+      //
+      // v1.3.0 (§9): a 'nigraanFinal' HANDOFF project takes the
+      // ANIMATED parity pass instead (both ribbons scroll, rotating
+      // logo + flipping clock capsule — parity_template.dart), with
+      // the Kasheeda font gate: no font, no template (a loud status,
+      // never a fallback-font lookalike). The plain editor's live
+      // design keeps the static pass; its ticker/clock note in the
+      // News panel was updated accordingly.
       if (_newsEnabled) {
-        final useNews = _news.breakingHeadline.trim().isNotEmpty ||
-            _news.lowerTitle.trim().isNotEmpty ||
-            _news.lowerSubtitle.trim().isNotEmpty ||
-            _news.tickerText.trim().isNotEmpty;
-        String? templatePng;
-        if (useNews) {
-          _setStatus('News template laga rahe hain…');
-          // Timeline handoff (Phase 7): render the PROJECT's template
-          // kind (nigraanFinal / breaking / classic) from its preset
-          // instead of the live design, with the logo left out of the
-          // PNG (the static logo comes from the overlay pass below,
-          // as before). The plain editor keeps the live render.
-          final tplFile = await renderLiveTemplateImage(
-            template: _news,
-            tickerPx: 0,
-            tickerAtStart: true,
-            now: DateTime.now(),
-            dir: dir,
-            templateKind: _projectTemplateKind ?? 'live',
-            preset: _handoffPreset,
-            breakingTemplate: _projectTemplateKind == 'breaking' &&
-                    _handoffProject != null &&
-                    _handoffPreset != null
-                ? BreakingTemplate.fromProject(
-                    _handoffProject!,
-                    _handoffPreset!,
-                  )
-                : null,
-            includeLogo: _handoffPreset == null,
-            includeIntroMarker: _handoffPreset == null,
+        var parityDone = false;
+        if (_projectTemplateKind == 'nigraanFinal' &&
+            _handoffProject != null &&
+            _handoffPreset != null) {
+          final svc = const AssetDownloadService();
+          final fontReady = await svc.ensureKasheedaFontReady(
+            url: AppConfig.kasheedaFontUrl,
           );
-          templatePng = tplFile.path;
-        }
-        String? logoPath;
-        final pickedLogo = _news.logoPath;
-        if (pickedLogo != null && await File(pickedLogo).exists()) {
-          logoPath = pickedLogo;
-        }
-        final templated = p.join(dir.path, 'pve_export_templated_$stamp.mp4');
-        final overlayCmd = FfmpegService.overlayPassCommand(
-          input: out,
-          templatePngPath: templatePng,
-          logoPath: logoPath,
-          logoPosition: _news.logoPosition.name,
-          output: templated,
-        );
-        if (overlayCmd != null) {
-          final res = await FfmpegService.run(overlayCmd);
-          if (!res.ok) {
+          if (!fontReady) {
             _setStatus(
-              'Note: news template pass fail ho gaya, saaf video save ho rahi hai.',
+              'Kasheeda font nahi mila — Final template nahi laga, '
+              'saaf video save ho rahi hai.',
             );
           } else {
-            out = templated;
+            try {
+              _setStatus('Final template (animated) lag raha hai…');
+              final size =
+                  await VideoExportService.probeVideoSize(File(out));
+              if (size != null) {
+                final effPreset = effectivePresetFor(
+                  project: _handoffProject!,
+                  preset: _handoffPreset!,
+                );
+                final assets = await renderParityAssets(
+                  preset: effPreset,
+                  dir: dir,
+                  width: size.width,
+                  height: size.height,
+                  now: DateTime.now(),
+                  fontReady: fontReady,
+                );
+                String? movPath;
+                String? framesDir;
+                String? stillPath;
+                final mov = await svc.cachedLogoMov();
+                if (mov != null) {
+                  movPath = mov.path;
+                } else if (_news.logoPath != null &&
+                    await File(_news.logoPath!).exists()) {
+                  stillPath = _news.logoPath;
+                }
+                String? clockFont;
+                final dejaVu = await svc.ensureDejaVuFile();
+                clockFont = dejaVu?.path ?? FfmpegService.findFontFile();
+                final parityOut =
+                    p.join(dir.path, 'pve_export_parity_$stamp.mp4');
+                final cmd = buildParityTemplateCommand(
+                  input: out,
+                  output: parityOut,
+                  assets: assets,
+                  logoMovPath: movPath,
+                  logoFramesDir: framesDir,
+                  logoStillPng: stillPath,
+                  clockFontFile: clockFont,
+                  exportStart: DateTime.now(),
+                  videoBitrateKbps: null,
+                );
+                final res = await FfmpegService.run(cmd);
+                if (res.ok) {
+                  out = parityOut;
+                  parityDone = true;
+                } else {
+                  _setStatus(
+                    'Note: animated template fail ho gaya, static '
+                    'template se try ho raha hai.',
+                  );
+                }
+              }
+            } catch (e) {
+              _setStatus(
+                'Note: animated template fail ho gaya ($e), static '
+                'template se try ho raha hai.',
+              );
+            }
           }
+        }
+        if (!parityDone) {
+          final useNews = _news.breakingHeadline.trim().isNotEmpty ||
+              _news.lowerTitle.trim().isNotEmpty ||
+              _news.lowerSubtitle.trim().isNotEmpty ||
+              _news.tickerText.trim().isNotEmpty;
+          String? templatePng;
+          if (useNews) {
+            _setStatus('News template laga rahe hain…');
+            // Timeline handoff (Phase 7): render the PROJECT's template
+            // kind (nigraanFinal / breaking / classic) from its preset
+            // instead of the live design, with the logo left out of the
+            // PNG (the static logo comes from the overlay pass below,
+            // as before). The plain editor keeps the live render.
+            final tplFile = await renderLiveTemplateImage(
+              template: _news,
+              tickerPx: 0,
+              tickerAtStart: true,
+              now: DateTime.now(),
+              dir: dir,
+              templateKind: _projectTemplateKind ?? 'live',
+              preset: _handoffPreset,
+              breakingTemplate: _projectTemplateKind == 'breaking' &&
+                      _handoffProject != null &&
+                      _handoffPreset != null
+                  ? BreakingTemplate.fromProject(
+                      _handoffProject!,
+                      _handoffPreset!,
+                    )
+                  : null,
+              includeLogo: _handoffPreset == null,
+              includeIntroMarker: _handoffPreset == null,
+            );
+            templatePng = tplFile.path;
+          }
+          String? logoPath;
+          final pickedLogo = _news.logoPath;
+          if (pickedLogo != null && await File(pickedLogo).exists()) {
+            logoPath = pickedLogo;
+          }
+          final templated = p.join(dir.path, 'pve_export_templated_$stamp.mp4');
+          final overlayCmd = FfmpegService.overlayPassCommand(
+            input: out,
+            templatePngPath: templatePng,
+            logoPath: logoPath,
+            logoPosition: _news.logoPosition.name,
+            output: templated,
+          );
+          if (overlayCmd != null) {
+            final res = await FfmpegService.run(overlayCmd);
+            if (!res.ok) {
+              _setStatus(
+                'Note: news template pass fail ho gaya, saaf video save ho rahi hai.',
+              );
+            } else {
+              out = templated;
+            }
+          }
+        }
+      }
+
+      // v1.3.0 (§6.1): intro / outro attach slots — the picked
+      // videos are normalised to the export's own dims and joined
+      // with the concat demuxer (intro first, outro last). Guarded:
+      // a failed attach keeps the unattached export.
+      if (_introClipPath != null || _outroClipPath != null) {
+        try {
+          final size = await VideoExportService.probeVideoSize(File(out));
+          if (size != null) {
+            final segments = <String>[];
+            Future<String?> attach(String path, String tag) async {
+              final hasAudio =
+                  await ReelExportService.probeHasAudio(File(path));
+              final norm = p.join(dir.path, 'attach_${tag}_$stamp.mp4');
+              final res = await FfmpegService.run(
+                FfmpegService.normalizeWithAudioCommand(
+                  input: path,
+                  trimStart: 0,
+                  trimEnd: 3600,
+                  width: size.width,
+                  height: size.height,
+                  output: norm,
+                  addSilentAudio: !hasAudio,
+                ),
+              );
+              return res.ok ? norm : null;
+            }
+
+            if (_introClipPath != null) {
+              final n = await attach(_introClipPath!, 'intro');
+              if (n != null) segments.add(n);
+            }
+            segments.add(out);
+            if (_outroClipPath != null) {
+              final n = await attach(_outroClipPath!, 'outro');
+              if (n != null) segments.add(n);
+            }
+            if (segments.length > 1) {
+              _setStatus('Intro/outro jor rahe hain…');
+              final listFile = p.join(dir.path, 'attach_$stamp.txt');
+              await File(listFile).writeAsString(
+                segments
+                    .map((f) => "file '${f.replaceAll("'", "'\\''")}'")
+                    .join('\n'),
+              );
+              final joined = p.join(dir.path, 'pve_export_joined_$stamp.mp4');
+              final res = await FfmpegService.run(
+                FfmpegService.concatCommand(
+                  listFile: listFile,
+                  output: joined,
+                ),
+              );
+              if (res.ok) {
+                out = joined;
+              } else {
+                _setStatus(
+                  'Note: intro/outro attach fail ho gaya, baghair is ke save ho raha hai.',
+                );
+              }
+            }
+          }
+        } catch (e) {
+          _setStatus(
+            'Note: intro/outro attach fail ho gaya ($e), baghair is ke save ho raha hai.',
+          );
         }
       }
 
@@ -1670,24 +2382,27 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     if (_busy) return;
     // Export quality lives at the export step now (one-build): it
     // used to hide inside the old Filters panel; the user confirms
-    // it here, CapCut-style, before the render starts.
-    final quality = await showDialog<int>(
-      context: context,
-      builder: (ctx) => SimpleDialog(
-        title: const Text('Export quality'),
-        children: [
-          for (final entry in const [
-            (0, '720p HD (fast)'),
-            (1, '1080p Full HD'),
-            (2, '2160p 4K (slow)'),
-          ])
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(ctx, entry.$1),
-              child: Text(entry.$2),
+    // it here, CapCut-style, before the render starts. v1.3.0: when
+    // the AppBar quality pill already set it, the dialog is skipped.
+    final quality = _qualityPicked
+        ? _fxQuality
+        : await showDialog<int>(
+            context: context,
+            builder: (ctx) => SimpleDialog(
+              title: const Text('Export quality'),
+              children: [
+                for (final entry in const [
+                  (0, '720p HD (fast)'),
+                  (1, '1080p Full HD'),
+                  (2, '2160p 4K (slow)'),
+                ])
+                  SimpleDialogOption(
+                    onPressed: () => Navigator.pop(ctx, entry.$1),
+                    child: Text(entry.$2),
+                  ),
+              ],
             ),
-        ],
-      ),
-    );
+          );
     if (quality == null || !mounted) return;
     _fxQuality = quality;
     setState(() {
@@ -1718,6 +2433,28 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     } finally {
       setState(() => _busy = false);
     }
+  }
+
+  /// §6.11 PIP snippet with alpha: the inset is scaled, given an
+  /// alpha channel, optionally circle-masked (geq alpha disc) and
+  /// faded to [_pipOpacity] before the overlay — the alpha-aware
+  /// counterpart of [pipOverlayFilter] (same position math).
+  String _pipSnippetWithAlpha() {
+    const margin = 24;
+    final s = _pipScale.clamp(0.15, 0.5);
+    final (xExpr, yExpr) = switch (_pipPosition) {
+      PipPosition.topLeft => ('$margin', '$margin'),
+      PipPosition.topRight => ('W-w-$margin', '$margin'),
+      PipPosition.bottomLeft => ('$margin', 'H-h-$margin'),
+      _ => ('W-w-$margin', 'H-h-$margin'),
+    };
+    final mask = _pipMask == 'circle'
+        ? ",geq=r='r(X\\,Y)':g='g(X\\,Y)':b='b(X\\,Y)'"
+            ":a='if(lte((X-W/2)*(X-W/2)+(Y-H/2)*(Y-H/2)\\,pow(min(W\\,H)/2\\,2))\\,255\\,0)'"
+        : '';
+    return '[1:v]scale=iw*$s:ih*$s,format=yuva420p$mask,'
+        'colorchannelmixer=aa=${_pipOpacity.toStringAsFixed(2)}[pip];'
+        "[0:v][pip]overlay=x='$xExpr':y='$yExpr'[vout]";
   }
 
   /// Captions mapped onto the exported timeline: captions were recorded
@@ -1890,6 +2627,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     final second = VideoClip(clip.file, clip.duration, clip.aspectRatio);
     second.trimStart = mid;
     second.trimEnd = clip.effectiveEnd;
+    _pushHistory();
     clip.trimEnd = mid;
     setState(() {
       _clips.insert(_selected + 1, second);
@@ -2025,7 +2763,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 4),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: () => setState(() => _activeTool = key),
+        onTap: () => _openTool(key),
         child: Container(
           width: 76,
           padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
@@ -2076,7 +2814,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         children: [
           IconButton(
             tooltip: 'Back to tools',
-            onPressed: () => setState(() => _activeTool = null),
+            onPressed: () => _openTool(null),
             icon: const Icon(Icons.arrow_back, color: Colors.white),
           ),
           Expanded(
@@ -2091,7 +2829,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
             ),
           ),
           TextButton(
-            onPressed: () => setState(() => _activeTool = null),
+            onPressed: () => _openTool(null),
             child: const Text('Done'),
           ),
         ],
@@ -2104,6 +2842,16 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   Widget build(BuildContext context) {
     final clip = _clips.isEmpty ? null : _clips[_selected];
     final ctrl = _controller;
+    final ready = ctrl != null && ctrl.value.isInitialized;
+    final isPlaying = ready && ctrl.value.isPlaying;
+    final posSec = ready ? ctrl.value.position.inMilliseconds / 1000 : 0.0;
+    final durSec = clip != null ? clip.duration.inMilliseconds / 1000 : 0.0;
+    String fmt(double sec) {
+      final m = sec ~/ 60;
+      final ss = (sec % 60).toStringAsFixed(1).padLeft(4, '0');
+      return '$m:$ss';
+    }
+
     return Theme(
       data: ThemeData.dark().copyWith(
         colorScheme: ColorScheme.fromSeed(
@@ -2115,140 +2863,46 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           backgroundColor: const Color(0xFF1E1E1E),
           title: const Text('TJ Pro — Video Editor'),
           actions: [
-            IconButton(
-              tooltip: 'Export video',
-              onPressed: _busy ? null : _export,
-              icon: const Icon(Icons.ios_share),
+            // Export-quality pill (§3): tap to set the quality
+            // ahead of time; Export then skips its dialog.
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              child: OutlinedButton(
+                onPressed: _busy ? null : _pickExportQuality,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  side: const BorderSide(color: Colors.white38),
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                ),
+                child: Text(_qualityLabel),
+              ),
+            ),
+            // ONE gold Export pill — top-right, always (§3/§4).
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 8, 12, 8),
+              child: ElevatedButton.icon(
+                onPressed: _busy ? null : _export,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: TjProTheme.gold,
+                  foregroundColor: Colors.black,
+                ),
+                icon: const Icon(Icons.ios_share, size: 18),
+                label: Text(_busy ? 'Exporting…' : 'Export'),
+              ),
             ),
           ],
         ),
-        // LAYOUT (Jaani spec 28 Oct 12:02 PKT, top to bottom):
-        // 1. preview on top (large)  2. timeline beneath it
-        // 3. tool panel  4. ONE single-row tool rail at the bottom.
+        // LAYOUT v1.3.0 (§3 — the user's screenshot complaint: the
+        // preview was crushed by permanently-open blocks). Top to
+        // bottom: handoff banner → BIG stage (dominant share, the
+        // transport row pinned to ITS bottom, status as a transient
+        // overlay chip) → timeline directly under the stage → ONE
+        // tool zone: the tool rail, or ONLY the open tool's panel
+        // in the rail's place. Nothing else is ever open; there is
+        // NO separate Add-video row (the + tile lives at the end
+        // of the timeline) and NO second Export button.
         body: Column(
           children: [
-            Expanded(
-              flex: 5,
-              child: Container(
-                color: Colors.black,
-                padding: const EdgeInsets.all(8),
-                child: Column(
-                  children: [
-                    Expanded(
-                      child: Center(
-                        child: ctrl != null && ctrl.value.isInitialized
-                            ? Stack(
-                                alignment: Alignment.bottomCenter,
-                                children: [
-                                  GestureDetector(
-                                    onTapDown: _onPreviewTapDown,
-                                    child: VideoPlayer(ctrl),
-                                  ),
-                                  if (_trackStartX != null)
-                                    Align(
-                                      alignment: Alignment(
-                                        _trackStartX! * 2 - 1,
-                                        _trackStartY! * 2 - 1,
-                                      ),
-                                      child: const Icon(
-                                        Icons.location_on,
-                                        color: Colors.redAccent,
-                                        size: 28,
-                                      ),
-                                    ),
-                                  if (_text.trim().isNotEmpty)
-                                    Padding(
-                                      padding:
-                                          const EdgeInsets.only(bottom: 24),
-                                      child: Text(
-                                        _text,
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 22,
-                                          fontWeight: FontWeight.bold,
-                                          shadows: [
-                                            Shadow(
-                                                color: Colors.black,
-                                                blurRadius: 6),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                ],
-                              )
-                            : const Text('No video selected',
-                                style: TextStyle(color: Colors.white70)),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-Row(
-            children: [
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: _addClip,
-                  icon: const Icon(Icons.video_library),
-                  label: const Text('Add video'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              if (ctrl != null && ctrl.value.isInitialized)
-                ElevatedButton.icon(
-                  onPressed: () {
-                    setState(() {
-                      ctrl.value.isPlaying ? ctrl.pause() : ctrl.play();
-                    });
-                  },
-                  icon: Icon(
-                    ctrl.value.isPlaying ? Icons.pause : Icons.play_arrow,
-                  ),
-                  label: Text(ctrl.value.isPlaying ? 'Pause' : 'Play'),
-                ),
-            ],
-          ),
-                  ],
-                ),
-              ),
-            ),
-            // Canvas / aspect chip row (one-build): aspect left the
-            // old Filters panel and lives here, InShot-Canvas style.
-            Container(
-              color: const Color(0xFF1B1B1B),
-              padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
-              child: Row(
-                children: [
-                  const Icon(Icons.crop, size: 16, color: Colors.white70),
-                  const SizedBox(width: 6),
-                  const Text('Canvas',
-                      style: TextStyle(color: Colors.white70, fontSize: 12)),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: [
-                          for (final a in const [
-                            'Original',
-                            '9:16',
-                            '16:9',
-                            '1:1',
-                          ])
-                            Padding(
-                              padding: const EdgeInsets.only(right: 6),
-                              child: ChoiceChip(
-                                label: Text(a),
-                                selected: _aspect == a,
-                                onSelected: (_) =>
-                                    setState(() => _aspect = a),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            _timelineSection(clip),
             if (_handoffProject != null)
               Container(
                 width: double.infinity,
@@ -2269,107 +2923,330 @@ Row(
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
+            // ---- STAGE ----
             Expanded(
-              flex: 4,
               child: Container(
-                color: const Color(0xFF121212),
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                color: Colors.black,
+                child: Stack(
                   children: [
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: _busy ? null : _export,
-                        icon: const Icon(Icons.ios_share),
-                        label: Text(_busy ? 'Exporting…' : 'Export video'),
-                      ),
-                    ),
-                    Expanded(
-                      // InShot-style smooth transitions between tools
-                      // (Jaani 31 Oct 2026: "aur smooth").
-                      child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 250),
-                        transitionBuilder:
-                            (Widget child, Animation<double> animation) {
-                          return FadeTransition(
-                            opacity: animation,
-                            child: SlideTransition(
-                              position: Tween<Offset>(
-                                begin: const Offset(0, 0.08),
-                                end: Offset.zero,
-                              ).animate(animation),
-                              child: child,
-                            ),
-                          );
-                        },
-                        child: _activeTool == null
-                            // No tool selected: hint to pick one from the rail.
-                            ? const Center(
-                                key: ValueKey<String>('video-hint'),
-                                child: Text(
-                                  'Neeche se koi tool select karein',
-                                  style: TextStyle(
-                                      color: Colors.grey, fontSize: 14),
-                                ),
-                              )
-                            // Tool open: CapCut-style header (Back/Done)
-                            // + that tool's options only.
-                            : ListView(
-                                key: ValueKey<String>(
-                                    'video-tool-${_activeTool!}'),
-                                padding: const EdgeInsets.only(top: 8),
+                    Positioned.fill(
+                      child: clip == null
+                          ? Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  _toolPanelHeader(_activeTool!),
-                                  ..._toolPanelChildren(),
+                                  // + empty-state on the stage (§4):
+                                  // the same add action as the
+                                  // timeline's + tile.
+                                  InkWell(
+                                    onTap: _addClip,
+                                    borderRadius: BorderRadius.circular(16),
+                                    child: Container(
+                                      width: 110,
+                                      height: 110,
+                                      decoration: BoxDecoration(
+                                        border: Border.all(
+                                          color: TjProTheme.gold,
+                                          width: 2,
+                                        ),
+                                        borderRadius:
+                                            BorderRadius.circular(16),
+                                      ),
+                                      child: const Column(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          Icon(Icons.add,
+                                              color: TjProTheme.gold,
+                                              size: 40),
+                                          SizedBox(height: 4),
+                                          Text('Add video',
+                                              style: TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 13)),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  const Text(
+                                    'Pehli video add karein — ya timeline '
+                                    'ke + tile se.',
+                                    style: TextStyle(color: Colors.white54),
+                                  ),
                                 ],
                               ),
+                            )
+                          : clip.isPhoto
+                              ? ColorFiltered(
+                                  colorFilter:
+                                      ColorFilter.matrix(_stageMatrix),
+                                  child: Image.file(
+                                    clip.file,
+                                    fit: BoxFit.contain,
+                                    width: double.infinity,
+                                    height: double.infinity,
+                                  ),
+                                )
+                              : ready
+                                  ? GestureDetector(
+                                      onTapDown: _onPreviewTapDown,
+                                      // §6.2 hold-to-compare: hold
+                                      // the stage to see the RAW
+                                      // frame, release for the
+                                      // graded one.
+                                      onLongPressStart: (_) =>
+                                          setState(() => _comparing = true),
+                                      onLongPressEnd: (_) =>
+                                          setState(() => _comparing = false),
+                                      child: Stack(
+                                        alignment: Alignment.bottomCenter,
+                                        children: [
+                                          ColorFiltered(
+                                            colorFilter: ColorFilter.matrix(
+                                                _stageMatrix),
+                                            child: VideoPlayer(ctrl),
+                                          ),
+                                          if (_trackStartX != null)
+                                            Align(
+                                              alignment: Alignment(
+                                                _trackStartX! * 2 - 1,
+                                                _trackStartY! * 2 - 1,
+                                              ),
+                                              child: const Icon(
+                                                Icons.location_on,
+                                                color: Colors.redAccent,
+                                                size: 28,
+                                              ),
+                                            ),
+                                          if (_text.trim().isNotEmpty)
+                                            Padding(
+                                              padding: const EdgeInsets.only(
+                                                  bottom: 64),
+                                              child: Text(
+                                                _text,
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 22,
+                                                  fontWeight: FontWeight.bold,
+                                                  shadows: [
+                                                    Shadow(
+                                                        color: Colors.black,
+                                                        blurRadius: 6),
+                                                  ],
+                                                ),
+                                              ),
+                                            ),
+                                          if (_comparing)
+                                            const Positioned(
+                                              top: 10,
+                                              child: Chip(
+                                                label: Text('Original'),
+                                                backgroundColor:
+                                                    Colors.black54,
+                                                labelStyle: TextStyle(
+                                                    color: Colors.white),
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                    )
+                                  : const Center(
+                                      child: Text('Preview load ho raha hai…',
+                                          style:
+                                              TextStyle(color: Colors.white70)),
+                                    ),
+                    ),
+                    // Transient status chip (§3) — overlays the
+                    // stage, auto-hides; never a permanent line.
+                    if (_statusVisible)
+                      Positioned(
+                        top: 10,
+                        left: 12,
+                        right: 12,
+                        child: Align(
+                          alignment: Alignment.topCenter,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.75),
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: Text(
+                              _status,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  color: Colors.white, fontSize: 12),
+                            ),
+                          ),
+                        ),
+                      ),
+                    // Transport row — pinned to the STAGE bottom.
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      child: Container(
+                        color: Colors.black.withValues(alpha: 0.55),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        child: Row(
+                          children: [
+                            IconButton(
+                              tooltip: 'Undo',
+                              onPressed: _undoStack.isEmpty ? null : _undo,
+                              icon: const Icon(Icons.undo,
+                                  color: Colors.white, size: 20),
+                            ),
+                            IconButton(
+                              tooltip: 'Redo',
+                              onPressed: _redoStack.isEmpty ? null : _redo,
+                              icon: const Icon(Icons.redo,
+                                  color: Colors.white, size: 20),
+                            ),
+                            const Spacer(),
+                            if (ready)
+                              InkWell(
+                                onTap: () {
+                                  setState(() {
+                                    isPlaying ? ctrl.pause() : ctrl.play();
+                                  });
+                                },
+                                borderRadius: BorderRadius.circular(24),
+                                child: Container(
+                                  width: 48,
+                                  height: 48,
+                                  decoration: const BoxDecoration(
+                                    color: TjProTheme.gold,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: Icon(
+                                    isPlaying
+                                        ? Icons.pause
+                                        : Icons.play_arrow,
+                                    color: Colors.black,
+                                    size: 28,
+                                  ),
+                                ),
+                              ),
+                            const SizedBox(width: 12),
+                            Text(
+                              '${fmt(posSec)} / ${fmt(durSec)}',
+                              style: const TextStyle(
+                                  color: Colors.white, fontSize: 12),
+                            ),
+                            const Spacer(),
+                            IconButton(
+                              tooltip: 'Fullscreen',
+                              onPressed: ready ? _openFullscreen : null,
+                              icon: const Icon(Icons.fullscreen,
+                                  color: Colors.white, size: 22),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ],
                 ),
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              child: Text(_status,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.grey, fontSize: 12)),
-            ),
-            // ONE single horizontal tool row (scrollable) — never a grid,
-            // never two rows. Every tool from the old screen is here.
-            // Height 88: fits icon (24) + gap (4) + 2-line label (~28)
-            // + button padding (16) + container padding (12) with margin.
-            // CapCut-style (Jaani 31 Oct 2026): hidden while a tool's
-            // panel is open — only that tool's options show, with
-            // Back/Done in the panel header to return here.
-            if (_activeTool == null)
-              Container(
-                height: 88,
-                color: const Color(0xFF1B1B1B),
-                padding: const EdgeInsets.symmetric(vertical: 6),
-                child: ListView(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  children: [
-                    _railButton('edit', 'Edit', Icons.content_cut),
-                    _railButton('audio', 'Audio', Icons.music_note),
-                    _railButton('text', 'Text', Icons.text_fields),
-                    _railButton('colour', 'Colour', Icons.palette),
-                    _railButton('effects', 'Effects', Icons.auto_awesome),
-                    _railButton('overlay', 'Overlay', Icons.layers),
-                    _railButton('transitions', 'Transitions', Icons.swap_horiz),
-                    _railButton('news', 'News', Icons.newspaper),
-                  ],
-                ),
+            // ---- TIMELINE (directly under the stage) ----
+            _timelineSection(clip),
+            // ---- TOOL ZONE: rail ⇄ the one open panel ----
+            SizedBox(
+              height: 218,
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 150),
+                transitionBuilder:
+                    (Widget child, Animation<double> animation) {
+                  return FadeTransition(
+                    opacity: animation,
+                    child: SlideTransition(
+                      position: Tween<Offset>(
+                        begin: const Offset(0, 0.05),
+                        end: Offset.zero,
+                      ).animate(CurvedAnimation(
+                          parent: animation, curve: Curves.easeOut)),
+                      child: child,
+                    ),
+                  );
+                },
+                child: _activeTool == null
+                    ? Container(
+                        key: const ValueKey<String>('video-rail'),
+                        color: const Color(0xFF1B1B1B),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Padding(
+                              padding: EdgeInsets.fromLTRB(12, 10, 12, 2),
+                              child: Text(
+                                'Tools — koi tool chunein, sirf usi ke '
+                                'controls khulenge.',
+                                style: TextStyle(
+                                    color: Colors.grey, fontSize: 12),
+                              ),
+                            ),
+                            SizedBox(
+                              height: 88,
+                              child: ListView(
+                                scrollDirection: Axis.horizontal,
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 6),
+                                children: [
+                                  _railButton(
+                                      'edit', 'Edit', Icons.content_cut),
+                                  _railButton(
+                                      'audio', 'Audio', Icons.music_note),
+                                  _railButton(
+                                      'text', 'Text', Icons.text_fields),
+                                  _railButton(
+                                      'colour', 'Colour', Icons.palette),
+                                  _railButton('effects', 'Effects',
+                                      Icons.auto_awesome),
+                                  _railButton(
+                                      'overlay', 'Overlay', Icons.layers),
+                                  _railButton('transitions', 'Transitions',
+                                      Icons.swap_horiz),
+                                  _railButton(
+                                      'news', 'News', Icons.newspaper),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : Container(
+                        key: ValueKey<String>('video-panel-${_activeTool!}'),
+                        color: const Color(0xFF121212),
+                        padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _toolPanelHeader(_activeTool!),
+                            _panelTabRow(),
+                            Expanded(
+                              child: ListView(
+                                padding: const EdgeInsets.only(top: 4),
+                                children: _toolPanelChildren(),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
               ),
+            ),
           ],
         ),
       ),
     );
   }
+
 }
+
+
 
 /// Label + value slider row for the Pro tools panel.
 class _ProSlider extends StatelessWidget {

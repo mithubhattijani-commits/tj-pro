@@ -1,9 +1,8 @@
 /// Video burn-in — burn styled ASS captions INTO an MP4 on-device
 /// (Phase 5, ported from Magic Box's `video_export_service.dart`,
-/// v1.0.13 — adapted: Magic Box's ad-unlock gate (`requestUnlock`,
-/// one rewarded ad before the burn-in) is NOT ported. TJ Pro has no
-/// per-feature ad-gate policy decided for the Studio (see
-/// `magic-box-port.md` §6C); the burn-in runs with no ad gate. The
+/// v1.0.13 — adapted: Magic Box's per-feature ad gate is NOT ported.
+/// TJ Pro's unlock economy is coins only (v1.3.0 §8) and the burn-in
+/// itself was never gated; it runs with no gate. The
 /// rest — probe, subtitles attempt, drawtext fallback, Download
 /// folder output, progress — is the same.
 ///

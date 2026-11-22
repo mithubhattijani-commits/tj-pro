@@ -16,7 +16,6 @@ import 'photo/photo_editor_screen.dart';
 import 'app_config.dart';
 import 'services/auth_service.dart';
 import 'services/coin_service.dart';
-import 'services/premium_gate.dart';
 import 'services/remote_config_service.dart';
 import 'services/unity_ads_service.dart';
 import 'services/update_service.dart';
@@ -356,13 +355,16 @@ class _HomeScreenState extends State<HomeScreen> {
           // (The AdMob native ad card that used to sit here was
           // removed with AdMob — Unity has no native format in this
           // setup, defect #4.)
-          const _PremiumUnlockCard(),
-          const SizedBox(height: 16),
+          // (v1.3.0 §8: the Premium-unlock card that sat here —
+          // "Watch ad" to unlock the AI tools — is REMOVED by user
+          // order. Premium AI tools unlock with coins only; coins are
+          // earned by watching ads in the Coins section below.)
           const Text(
             'Works offline. No account, no uploads — '
             'everything is processed on your phone. '
             'Basic editing is free; Premium AI tools unlock '
-            'with one short ad.',
+            'with coins — earn coins by watching ads in the '
+            'Coins section.',
             style: TextStyle(color: Colors.grey),
             textAlign: TextAlign.center,
           ),
@@ -699,68 +701,6 @@ class _SponsoredAdCard extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _PremiumUnlockCard extends StatefulWidget {
-  const _PremiumUnlockCard();
-
-  @override
-  State<_PremiumUnlockCard> createState() => _PremiumUnlockCardState();
-}
-
-class _PremiumUnlockCardState extends State<_PremiumUnlockCard> {
-  bool _busy = false;
-
-  @override
-  Widget build(BuildContext context) {
-    if (!AppConfig.aiToolsEnabled) {
-      return const SizedBox.shrink();
-    }
-    if (PremiumGate.isUnlocked) {
-      return const Card(
-        child: ListTile(
-          leading: Icon(Icons.workspace_premium),
-          title: Text('Premium AI unlocked'),
-          subtitle: Text('All AI tools are available.'),
-        ),
-      );
-    }
-    return Card(
-      child: ListTile(
-        leading: const Icon(Icons.workspace_premium),
-        title: const Text('Premium AI tools'),
-        subtitle: const Text(
-          'Background remover, blur, beautify and auto-enhance.',
-        ),
-        trailing: _busy
-            ? const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : TextButton(
-                onPressed: () async {
-                  setState(() => _busy = true);
-                  final messenger = ScaffoldMessenger.of(context);
-                  final ok = await PremiumGate.tryUnlockWithAd();
-                  if (mounted) {
-                    setState(() => _busy = false);
-                    messenger.showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          ok
-                              ? 'Premium AI unlocked.'
-                              : 'No ad was available right now. Try again.',
-                        ),
-                      ),
-                    );
-                  }
-                },
-                child: const Text('Watch ad'),
-              ),
       ),
     );
   }

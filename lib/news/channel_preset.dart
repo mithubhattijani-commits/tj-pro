@@ -477,13 +477,17 @@ class ChannelPreset {
       watermarkPosition: 'bottomRight',
       watermarkSize: 0.12,
       templateKind: 'nigraanFinal',
+      // v1.3.0 (§9 parity): the REAL final template has NO top
+      // ribbon and NO outro — the top ribbon stays available as an
+      // option the user can switch on, and the outro likewise.
+      showOutro: false,
       topRibbon: RibbonConfig(
         text: '',
         color: 0xFF01B0FF,
         speed: 1.0,
         direction: RibbonDirection.rtl,
         fontSize: 20,
-        enabled: true,
+        enabled: false,
         contentKind: RibbonContentKind.current,
       ),
       urduRibbon: RibbonConfig(
@@ -583,7 +587,12 @@ class ChannelPreset {
           (json['breakingTickerColor'] as int?) ?? 0xFF01B0FF,
       categoryLabel: (json['categoryLabel'] as String?) ?? '',
       showIntro: (json['showIntro'] as bool?) ?? true,
-      showOutro: (json['showOutro'] as bool?) ?? true,
+      // v1.3.0 (§9.10): no default end card for the final template
+      // — stored values still win, but an ABSENT key on a
+      // nigraanFinal preset means OFF (the reference has no outro).
+      showOutro: (json['showOutro'] as bool?) ??
+          (((json['templateKind'] as String?) ?? 'nigraanFinal') !=
+              'nigraanFinal'),
       lowerThirdTitle: (json['lowerThirdTitle'] as String?) ?? '',
       lowerThirdSubtitle: (json['lowerThirdSubtitle'] as String?) ?? '',
       showLowerThird: (json['showLowerThird'] as bool?) ?? true,

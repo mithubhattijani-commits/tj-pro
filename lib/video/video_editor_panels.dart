@@ -51,97 +51,829 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
     return items;
   }
 
-  /// One-build regroup (proposal S4.1): the old 15 flat tools are
-  /// composed into 8 tabs. Every legacy panel is reused exactly once
-  /// below — no option is removed, only re-homed. (Keyframes stay
-  /// with the Stickers panel: they animate the sticker/title
-  /// overlay itself.)
+  /// v1.3.0 (§3/§5A): every tool panel is split into SUB-TABS —
+  /// only the active sub-tab's controls are on screen, ever. The
+  /// tab list per tool (the panel header renders these as chips).
+  List<(String, String)> _panelTabs() {
+    switch (_activeTool) {
+      case 'edit':
+        return const [
+          ('trim', 'Trim'),
+          ('speed', 'Speed'),
+          ('beat', 'Beat'),
+          ('steady', 'Steady'),
+          ('transform', 'Transform'),
+        ];
+      case 'audio':
+        return const [
+          ('music', 'Music'),
+          ('voice', 'Voice'),
+          ('clean', 'Clean'),
+        ];
+      case 'text':
+        return const [
+          ('text', 'Text'),
+          ('titles', 'Titles'),
+          ('captions', 'Captions'),
+        ];
+      case 'colour':
+        return const [
+          ('filters', 'Filters'),
+          ('adjust', 'Adjust'),
+        ];
+      case 'effects':
+        return const [
+          ('effects', 'Effects'),
+          ('tracking', 'Tracking'),
+        ];
+      case 'overlay':
+        return const [
+          ('sticker', 'Sticker'),
+          ('keyframes', 'Keyframes'),
+          ('pip', 'PIP'),
+          ('background', 'Background'),
+        ];
+      case 'news':
+        return const [
+          ('template', 'Template'),
+          ('text', 'Text'),
+          ('logo', 'Logo'),
+        ];
+      default:
+        return const [];
+    }
+  }
+
+  /// The active sub-tab key (falls back to the tool's first tab).
+  String get _currentTab {
+    final tabs = _panelTabs();
+    if (tabs.isEmpty) return '';
+    final t = _panelTab;
+    if (t != null && tabs.any((e) => e.$1 == t)) return t;
+    return tabs.first.$1;
+  }
+
+  /// The sub-tab chip row under the panel header (§3).
+  Widget _panelTabRow() {
+    final tabs = _panelTabs();
+    if (tabs.length < 2) return const SizedBox.shrink();
+    final current = _currentTab;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (final t in tabs)
+              Padding(
+                padding: const EdgeInsets.only(right: 6),
+                child: ChoiceChip(
+                  label: Text(t.$2),
+                  selected: current == t.$1,
+                  onSelected: (_) => setState(() => _panelTab = t.$1),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Index of the first widget matching [test], or -1. Used to
+  /// split a legacy panel body at a section anchor (the widgets
+  /// themselves are preserved exactly — only re-homed, §5).
+  int _anchorIndex(List<Widget> items, bool Function(Widget) test) {
+    for (var i = 0; i < items.length; i++) {
+      if (test(items[i])) return i;
+    }
+    return -1;
+  }
+
+  bool _isTextStarting(Widget w, String prefix) =>
+      w is Text && (w.data ?? '').startsWith(prefix);
+
+  /// v1.3.0 composition: ONE sub-tab of ONE tool at a time (§3).
+  /// Every legacy control from the one-build regroup is still
+  /// reachable exactly once — the §5A inventory is the checklist.
   List<Widget> _toolPanelChildren() {
     switch (_activeTool) {
       case 'edit':
-        return [
-          _sectionTitle('Speed'),
-          ..._panelBody('speed'),
-          _sectionTitle('Beat cut'),
-          ..._panelBody('beats'),
-          _sectionTitle('Steady video'),
-          ..._panelBody('stabilization'),
-        ];
+        switch (_currentTab) {
+          case 'speed':
+            return [
+              ..._panelBody('speed'),
+              if (_proRamp == 'Custom') ..._customRampWidgets(),
+            ];
+          case 'beat':
+            return _panelBody('beats');
+          case 'steady':
+            return _panelBody('stabilization');
+          case 'transform':
+            return _transformTabChildren();
+          default:
+            return _trimTabChildren();
+        }
       case 'audio':
-        return [
-          ..._panelBody('audio'),
-          const Divider(height: 32),
-          ListTile(
-            leading: const Icon(Icons.build_circle_outlined),
-            title: const Text('More audio tools'),
-            subtitle: const Text('Converter, trimmer, joiner, extract'),
-            trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const AudioToolsScreen(),
-                ),
-              );
-            },
-          ),
-        ];
+        final body = _panelBody('audio');
+        final voiceIdx =
+            _anchorIndex(body, (w) => _isTextStarting(w, 'Voice changer'));
+        final cleanIdx =
+            _anchorIndex(body, (w) => _isTextStarting(w, 'Cleanup'));
+        final v = voiceIdx < 0 ? body.length : voiceIdx;
+        final c = cleanIdx < 0 ? body.length : cleanIdx;
+        switch (_currentTab) {
+          case 'voice':
+            return body.sublist(v, c);
+          case 'clean':
+            return body.sublist(c);
+          default:
+            return [
+              ...body.sublist(0, v),
+              ..._musicExtras(),
+              const Divider(height: 32),
+              ListTile(
+                leading: const Icon(Icons.build_circle_outlined),
+                title: const Text('More audio tools'),
+                subtitle: const Text('Converter, trimmer, joiner, extract'),
+                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const AudioToolsScreen(),
+                    ),
+                  );
+                },
+              ),
+            ];
+        }
       case 'text':
-        return [
-          _sectionTitle('Text overlay'),
-          ..._panelBody('text'),
-          _sectionTitle('Motion titles'),
-          ..._panelBody('titles'),
-          _sectionTitle('Captions'),
-          ..._panelBody('captions'),
-          ListTile(
-            leading: const Icon(Icons.translate),
-            title: const Text('Translate captions'),
-            subtitle: const Text('Caption Translator (ML Kit)'),
-            trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => CaptionTranslatorScreen(
-                    initialSegments: _captions,
-                    fromLang: _captionLocale,
-                    toLang: _captionLocale == 'ur' ? 'en' : 'ur',
-                  ),
-                ),
-              );
-            },
-          ),
-        ];
+        switch (_currentTab) {
+          case 'titles':
+            return _panelBody('titles');
+          case 'captions':
+            return [
+              ..._panelBody('captions'),
+              ListTile(
+                leading: const Icon(Icons.translate),
+                title: const Text('Translate captions'),
+                subtitle: const Text('Caption Translator (ML Kit)'),
+                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => CaptionTranslatorScreen(
+                        initialSegments: _captions,
+                        fromLang: _captionLocale,
+                        toLang: _captionLocale == 'ur' ? 'en' : 'ur',
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ];
+          default:
+            return _panelBody('text');
+        }
       case 'colour':
-        return [
-          _sectionTitle('Filters'),
-          ..._panelBody('filters'),
-          _sectionTitle('Adjust + LUTs'),
-          ..._panelBody('grading'),
-        ];
+        return _currentTab == 'adjust'
+            ? _legacyPanelChildren('gradingOne')
+            : _legacyPanelChildren('filtersRow');
       case 'effects':
-        return [
-          ..._panelBody('effects'),
-          _sectionTitle('Motion tracking'),
-          ..._panelBody('tracking'),
-        ];
+        return _currentTab == 'tracking'
+            ? _panelBody('tracking')
+            : _panelBody('effects');
       case 'overlay':
-        return [
-          _sectionTitle('Stickers & keyframes'),
-          ..._panelBody('stickers'),
-          _sectionTitle('PIP'),
-          ..._panelBody('overlays'),
-          _sectionTitle('Background'),
-          ..._panelBody('chroma'),
-        ];
+        switch (_currentTab) {
+          case 'keyframes':
+            return _keyframesTabChildren();
+          case 'pip':
+            return [
+              ..._panelBody('overlays'),
+              ..._pipExtras(),
+            ];
+          case 'background':
+            return _panelBody('chroma');
+          default:
+            return _stickerTabChildren();
+        }
       case 'transitions':
-        return _legacyPanelChildren('transitions');
+        return [
+          ..._panelBody('transitions'),
+          _sectionTitle('Duration presets'),
+          Wrap(
+            spacing: 6,
+            children: [
+              for (final e in const [
+                ('Quick', 0.3),
+                ('Smooth', 0.5),
+                ('Long', 1.0),
+              ])
+                ChoiceChip(
+                  label: Text('${e.$1} — ${e.$2}s'),
+                  selected: _crossfade && _proTransitionDur == e.$2,
+                  onSelected: (_) => setState(() {
+                    _proTransitionDur = e.$2;
+                    _crossfade = true;
+                  }),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+        ];
       case 'news':
-        return _legacyPanelChildren('news');
+        switch (_currentTab) {
+          case 'text':
+            return _legacyPanelChildren('newsText');
+          case 'logo':
+            return _legacyPanelChildren('newsLogo');
+          default:
+            return _legacyPanelChildren('newsTemplate');
+        }
       default:
         return _legacyPanelChildren('text');
     }
+  }
+
+  /// Edit › Speed extras for the Custom ramp (§6.10): three point
+  /// speeds + the curve graph.
+  List<Widget> _customRampWidgets() {
+    return [
+      _sectionTitle('Custom ramp — 3 points'),
+      _ProSlider(
+        label: 'Start speed',
+        value: _rampStart,
+        min: 0.25,
+        max: 2,
+        divisions: 35,
+        onChanged: (v) => setState(() => _rampStart = v),
+      ),
+      _ProSlider(
+        label: 'Middle speed',
+        value: _rampMid,
+        min: 0.25,
+        max: 2,
+        divisions: 35,
+        onChanged: (v) => setState(() => _rampMid = v),
+      ),
+      _ProSlider(
+        label: 'End speed',
+        value: _rampEnd,
+        min: 0.25,
+        max: 2,
+        divisions: 35,
+        onChanged: (v) => setState(() => _rampEnd = v),
+      ),
+      Container(
+        height: 64,
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1B1B1B),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: CustomPaint(
+          painter: _RampCurvePainter(_rampStart, _rampMid, _rampEnd),
+          child: const SizedBox.expand(),
+        ),
+      ),
+      const Text(
+        'Curve: pehla third Start speed, darmiyan Middle, aakhri '
+        'third End speed par chalega.',
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      const Divider(height: 32),
+    ];
+  }
+
+  /// Audio › Music extras (§6.8 ducking + §6.9 volume keyframes).
+  List<Widget> _musicExtras() {
+    final posSec = _controller != null && _controller!.value.isInitialized
+        ? _controller!.value.position.inMilliseconds / 1000
+        : 0.0;
+    return [
+      const Divider(height: 32),
+      SwitchListTile(
+        title: const Text('Auto ducking'),
+        subtitle: const Text(
+          'Music clip ki awaz ke neeche khud dab jayega (sidechain) '
+          '— export mein alag pass mein lagta hai.',
+        ),
+        value: _autoDuck,
+        onChanged: (v) => setState(() => _autoDuck = v),
+      ),
+      if (_musicPath != null) ...[
+        _sectionTitle('Volume keyframes'),
+        if (_volumePoints.isEmpty)
+          const Text(
+            'Koi point nahi — music seedha Music volume par chalega.',
+            style: TextStyle(color: Colors.grey, fontSize: 12),
+          ),
+        for (var i = 0; i < _volumePoints.length; i++)
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '${_volumePoints[i].$1.toStringAsFixed(1)}s → '
+                  'gain ${_volumePoints[i].$2.toStringAsFixed(2)}',
+                  style: const TextStyle(fontSize: 13),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close, size: 18),
+                onPressed: () =>
+                    setState(() => _volumePoints.removeAt(i)),
+              ),
+            ],
+          ),
+        ElevatedButton.icon(
+          onPressed: () {
+            setState(() {
+              _volumePoints.add((posSec, _musicVolume));
+              _volumePoints.sort((a, b) => a.$1.compareTo(b.$1));
+            });
+          },
+          icon: const Icon(Icons.add_location_alt_outlined),
+          label: Text(
+            'Point add karein — playhead ${posSec.toStringAsFixed(1)}s, '
+            'gain ${_musicVolume.toStringAsFixed(2)}',
+          ),
+        ),
+      ],
+    ];
+  }
+
+  /// Overlay › Sticker: the stickers body WITHOUT the keyframes
+  /// block (that lives on its own sub-tab now).
+  List<Widget> _stickerTabChildren() {
+    final body = _panelBody('stickers');
+    final kfIdx =
+        _anchorIndex(body, (w) => _isTextStarting(w, 'Keyframes animate'));
+    return kfIdx < 0 ? body : body.sublist(0, kfIdx);
+  }
+
+  /// Overlay › Keyframes: easing chips + curve graph on top, then
+  /// the Start OR End keyframe sliders (§5A — one page at a time).
+  List<Widget> _keyframesTabChildren() {
+    final body = _panelBody('stickers');
+    final kfIdx =
+        _anchorIndex(body, (w) => _isTextStarting(w, 'Keyframes animate'));
+    if (kfIdx < 0) return body;
+    final slice = body.sublist(kfIdx);
+    final startIdx =
+        _anchorIndex(slice, (w) => _isTextStarting(w, 'Start keyframe'));
+    final endIdx =
+        _anchorIndex(slice, (w) => _isTextStarting(w, 'End keyframe'));
+    if (startIdx < 0 || endIdx < 0) return slice;
+    final header = slice.sublist(0, startIdx);
+    final startSliders = slice.sublist(startIdx, endIdx);
+    final endSliders = slice.sublist(endIdx);
+    return [
+      ...header,
+      if (_proKeyframes &&
+          (_proTitle.trim().isNotEmpty || _proSticker.trim().isNotEmpty)) ...[
+        const Text('Motion easing',
+            style: TextStyle(fontWeight: FontWeight.bold)),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            for (final e in KeyframeEasing.values)
+              ChoiceChip(
+                label: Text(keyframeEasingLabel(e).split(' (').first),
+                selected: _kfEasing == e,
+                onSelected: (_) => setState(() => _kfEasing = e),
+              ),
+          ],
+        ),
+        Container(
+          height: 56,
+          margin: const EdgeInsets.symmetric(vertical: 6),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1B1B1B),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: CustomPaint(
+            painter: _EasingCurvePainter(_kfEasing),
+            child: const SizedBox.expand(),
+          ),
+        ),
+        const SizedBox(height: 4),
+        SegmentedButton<int>(
+          segments: const [
+            ButtonSegment(value: 0, label: Text('Start keyframe')),
+            ButtonSegment(value: 1, label: Text('End keyframe')),
+          ],
+          selected: {_kfPage},
+          onSelectionChanged: (v) => setState(() => _kfPage = v.first),
+        ),
+        const SizedBox(height: 8),
+      ],
+      if (_kfPage == 0) ...startSliders else ...endSliders,
+    ];
+  }
+
+  /// Overlay › PIP extras (§6.11): opacity + circle mask.
+  List<Widget> _pipExtras() {
+    if (!_fxPip) return const [];
+    return [
+      _sectionTitle('PIP style'),
+      _ProSlider(
+        label: 'PIP opacity',
+        value: _pipOpacity,
+        min: 0.1,
+        max: 1,
+        divisions: 18,
+        onChanged: (v) => setState(() => _pipOpacity = v),
+      ),
+      Row(
+        children: [
+          const Text('Mask'),
+          const SizedBox(width: 12),
+          ChoiceChip(
+            label: const Text('None'),
+            selected: _pipMask == 'none',
+            onSelected: (_) => setState(() => _pipMask = 'none'),
+          ),
+          const SizedBox(width: 6),
+          ChoiceChip(
+            label: const Text('Circle'),
+            selected: _pipMask == 'circle',
+            onSelected: (_) => setState(() => _pipMask = 'circle'),
+          ),
+        ],
+      ),
+      const Text(
+        'Blend modes nahi diye gaye: ffmpeg ka blend filter inset '
+        'ki alpha nahi maanta, is liye woh jhoota option hota. '
+        'Opacity + circle mask asal alpha ke saath lagte hain.',
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      const Divider(height: 32),
+    ];
+  }
+
+  /// Edit › Trim (§5A): fine trim + the action row (Split / Frame /
+  /// Freeze / Extract / Delete — moved here from the old timeline
+  /// header) + Canvas chips + fill + intro/outro attach slots.
+  List<Widget> _trimTabChildren() {
+    final clip = _clips.isEmpty ? null : _clips[_selected];
+    final dur = clip != null ? clip.duration.inMilliseconds / 1000 : 0.0;
+    return [
+      _sectionTitle('Trim selected clip'),
+      if (clip == null)
+        const Text(
+          'Pehle timeline se clip add karein (+ tile).',
+          style: TextStyle(color: Colors.grey),
+        )
+      else ...[
+        Text(
+          'Trim: ${clip.trimStart.toStringAsFixed(1)}s – '
+          '${clip.effectiveEnd.toStringAsFixed(1)}s '
+          '(kul ${dur.toStringAsFixed(1)}s)',
+        ),
+        RangeSlider(
+          values: RangeValues(clip.trimStart, clip.effectiveEnd),
+          min: 0,
+          max: dur,
+          divisions: (clip.duration.inMilliseconds / 100).round().clamp(1, 1000),
+          labels: RangeLabels(
+            '${clip.trimStart.toStringAsFixed(1)}s',
+            '${clip.effectiveEnd.toStringAsFixed(1)}s',
+          ),
+          onChangeStart: (_) => _pushHistory(),
+          onChanged: (v) {
+            if (v.end - v.start < 0.5) return;
+            setState(() {
+              clip.trimStart = v.start;
+              clip.trimEnd = v.end;
+            });
+          },
+        ),
+        Row(
+          children: [
+            const Text('Start (fine)'),
+            Expanded(
+              child: Slider(
+                value: clip.trimStart.clamp(0, dur),
+                min: 0,
+                max: dur,
+                onChangeStart: (_) => _pushHistory(),
+                onChanged: (v) {
+                  if (clip.effectiveEnd - v < 0.5) return;
+                  setState(() => clip.trimStart = v);
+                },
+              ),
+            ),
+            Text('${clip.trimStart.toStringAsFixed(1)}s'),
+          ],
+        ),
+        Row(
+          children: [
+            const Text('End (fine)'),
+            Expanded(
+              child: Slider(
+                value: clip.effectiveEnd.clamp(0, dur),
+                min: 0,
+                max: dur,
+                onChangeStart: (_) => _pushHistory(),
+                onChanged: (v) {
+                  if (v - clip.trimStart < 0.5) return;
+                  setState(() => clip.trimEnd = v);
+                },
+              ),
+            ),
+            Text('${clip.effectiveEnd.toStringAsFixed(1)}s'),
+          ],
+        ),
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            TextButton.icon(
+              onPressed: _splitSelectedClip,
+              icon: const Icon(Icons.content_cut, size: 18),
+              label: const Text('Split'),
+            ),
+            TextButton.icon(
+              onPressed: _busy ? null : _saveFrameSnapshot,
+              icon: const Icon(Icons.camera_alt_outlined, size: 18),
+              label: const Text('Frame'),
+            ),
+            TextButton.icon(
+              onPressed: _busy ? null : _freezeFrameInsert,
+              icon: const Icon(Icons.ac_unit, size: 18),
+              label: const Text('Freeze'),
+            ),
+            TextButton.icon(
+              onPressed: _busy ? null : _extractClipAudio,
+              icon: const Icon(Icons.audio_file_outlined, size: 18),
+              label: const Text('Extract audio'),
+            ),
+            TextButton.icon(
+              onPressed: _busy
+                  ? null
+                  : () async {
+                      _pushHistory();
+                      setState(() {
+                        _clips.removeAt(_selected);
+                        if (_selected >= _clips.length) {
+                          _selected =
+                              _clips.isEmpty ? 0 : _clips.length - 1;
+                        }
+                      });
+                      if (_clips.isNotEmpty) {
+                        await _loadPreview();
+                      } else {
+                        await _controller?.dispose();
+                        setState(() => _controller = null);
+                      }
+                      _setStatus(
+                        'Clip delete ho gaya — Undo se wapas aa sakta hai.',
+                      );
+                    },
+              icon: const Icon(Icons.delete_outline, size: 18),
+              label: const Text('Delete'),
+            ),
+          ],
+        ),
+      ],
+      _sectionTitle('Canvas'),
+      SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            const Icon(Icons.crop, size: 16, color: Colors.white70),
+            const SizedBox(width: 6),
+            for (final a in const ['Original', '9:16', '16:9', '1:1'])
+              Padding(
+                padding: const EdgeInsets.only(right: 6),
+                child: ChoiceChip(
+                  label: Text(a),
+                  selected: _aspect == a,
+                  onSelected: (_) => setState(() => _aspect = a),
+                ),
+              ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 6),
+      Row(
+        children: [
+          const Text('Fill'),
+          const SizedBox(width: 10),
+          for (final e in const [
+            ('none', 'Crop'),
+            ('blur', 'Blur'),
+            ('color', 'Colour'),
+          ])
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: ChoiceChip(
+                label: Text(e.$2),
+                selected: _canvasFill == e.$1,
+                onSelected: (_) => setState(() => _canvasFill = e.$1),
+              ),
+            ),
+        ],
+      ),
+      if (_canvasFill == 'color')
+        Row(
+          children: [
+            const Text('Fill colour'),
+            const SizedBox(width: 10),
+            for (final e in const [
+              ('black', 'Black'),
+              ('white', 'White'),
+              ('0x1A1A2E', 'Navy'),
+              ('0x7C3AED', 'Purple'),
+            ])
+              Padding(
+                padding: const EdgeInsets.only(right: 6),
+                child: ChoiceChip(
+                  label: Text(e.$2),
+                  selected: _canvasFillColor == e.$1,
+                  onSelected: (_) => setState(() => _canvasFillColor = e.$1),
+                ),
+              ),
+          ],
+        ),
+      _sectionTitle('Intro / outro attach'),
+      Row(
+        children: [
+          Expanded(
+            child: ElevatedButton.icon(
+              onPressed: () async {
+                final picked =
+                    await _picker.pickVideo(source: ImageSource.gallery);
+                if (picked != null) {
+                  setState(() => _introClipPath = picked.path);
+                }
+              },
+              icon: const Icon(Icons.movie_creation_outlined),
+              label: Text(
+                _introClipPath == null
+                    ? 'Intro chunein'
+                    : p.basename(_introClipPath!),
+              ),
+            ),
+          ),
+          if (_introClipPath != null)
+            IconButton(
+              icon: const Icon(Icons.clear),
+              onPressed: () => setState(() => _introClipPath = null),
+            ),
+        ],
+      ),
+      const SizedBox(height: 6),
+      Row(
+        children: [
+          Expanded(
+            child: ElevatedButton.icon(
+              onPressed: () async {
+                final picked =
+                    await _picker.pickVideo(source: ImageSource.gallery);
+                if (picked != null) {
+                  setState(() => _outroClipPath = picked.path);
+                }
+              },
+              icon: const Icon(Icons.movie_filter_outlined),
+              label: Text(
+                _outroClipPath == null
+                    ? 'Outro chunein'
+                    : p.basename(_outroClipPath!),
+              ),
+            ),
+          ),
+          if (_outroClipPath != null)
+            IconButton(
+              icon: const Icon(Icons.clear),
+              onPressed: () => setState(() => _outroClipPath = null),
+            ),
+        ],
+      ),
+      const Text(
+        'Attach export ke aakhir mein lagta hai: intro sab se '
+        'pehle, outro sab se aakhir mein (export size par '
+        'normalise karke).',
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      const Divider(height: 32),
+    ];
+  }
+
+  /// Edit › Transform (§6.7) + the selected photo clip's Ken Burns
+  /// controls (§6.1).
+  List<Widget> _transformTabChildren() {
+    final clip = _clips.isEmpty ? null : _clips[_selected];
+    return [
+      _sectionTitle('Transform — main clip'),
+      _ProSlider(
+        label: 'Scale',
+        value: _tfScale,
+        min: 0.5,
+        max: 2,
+        divisions: 30,
+        onChanged: (v) => setState(() => _tfScale = v),
+      ),
+      _ProSlider(
+        label: 'Position X',
+        value: _tfX,
+        min: -0.5,
+        max: 0.5,
+        divisions: 20,
+        onChanged: (v) => setState(() => _tfX = v),
+      ),
+      _ProSlider(
+        label: 'Position Y',
+        value: _tfY,
+        min: -0.5,
+        max: 0.5,
+        divisions: 20,
+        onChanged: (v) => setState(() => _tfY = v),
+      ),
+      _ProSlider(
+        label: 'Rotation (deg)',
+        value: _tfRot,
+        min: -45,
+        max: 45,
+        divisions: 90,
+        digits: 0,
+        onChanged: (v) => setState(() => _tfRot = v),
+      ),
+      _ProSlider(
+        label: 'Opacity',
+        value: _tfOpacity,
+        min: 0.1,
+        max: 1,
+        divisions: 18,
+        onChanged: (v) => setState(() => _tfOpacity = v),
+      ),
+      TextButton(
+        onPressed: () => setState(() {
+          _tfScale = 1;
+          _tfX = 0;
+          _tfY = 0;
+          _tfRot = 0;
+          _tfOpacity = 1;
+        }),
+        child: const Text('Transform reset'),
+      ),
+      const Text(
+        'Transform export mein blurred backdrop par lagta hai — '
+        'kaale kinare kabhi nahi aate.',
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      if (clip != null && clip.isPhoto) ...[
+        _sectionTitle('Photo clip — Ken Burns'),
+        SwitchListTile(
+          title: const Text('Ken Burns (slow zoom)'),
+          value: clip.kenBurns,
+          onChanged: (v) => setState(() => clip.kenBurns = v),
+        ),
+        Row(
+          children: [
+            const Text('Zoom'),
+            const SizedBox(width: 10),
+            ChoiceChip(
+              label: const Text('Zoom in'),
+              selected: clip.kbZoomIn,
+              onSelected: (_) => setState(() => clip.kbZoomIn = true),
+            ),
+            const SizedBox(width: 6),
+            ChoiceChip(
+              label: const Text('Zoom out'),
+              selected: !clip.kbZoomIn,
+              onSelected: (_) => setState(() => clip.kbZoomIn = false),
+            ),
+          ],
+        ),
+        _ProSlider(
+          label: 'Photo duration (s)',
+          value: clip.duration.inMilliseconds / 1000,
+          min: 1,
+          max: 10,
+          divisions: 18,
+          digits: 1,
+          onChanged: (v) {
+            setState(() {
+              final old = clip;
+              final nc = VideoClip(
+                old.file,
+                Duration(milliseconds: (v * 1000).round()),
+                old.aspectRatio,
+              );
+              nc.isPhoto = true;
+              nc.kenBurns = old.kenBurns;
+              nc.kbZoomIn = old.kbZoomIn;
+              _clips[_selected] = nc;
+            });
+          },
+        ),
+      ],
+      const Divider(height: 32),
+    ];
   }
 
   List<Widget> _legacyPanelChildren(String toolKey) {
@@ -202,19 +934,9 @@ TextField(
               if (_proKeyframes &&
                   (_proTitle.trim().isNotEmpty ||
                       _proSticker.trim().isNotEmpty)) ...[
-                DropdownButtonFormField<KeyframeEasing>(
-                  initialValue: _kfEasing,
-                  decoration: const InputDecoration(
-                      labelText: 'Motion easing'),
-                  items: KeyframeEasing.values
-                      .map((KeyframeEasing e) => DropdownMenuItem(
-                            value: e,
-                            child: Text(keyframeEasingLabel(e)),
-                          ))
-                      .toList(),
-                  onChanged: (KeyframeEasing? v) =>
-                      setState(() => _kfEasing = v ?? KeyframeEasing.linear),
-                ),
+                // v1.3.0: the easing DROPDOWN is replaced by chips
+                // + a curve graph at the top of the Keyframes
+                // sub-tab (same _kfEasing state — presentation only).
                 const SizedBox(height: 8),
                 const Text('Start keyframe',
                     style: TextStyle(fontWeight: FontWeight.bold)),
@@ -576,6 +1298,7 @@ TextField(
                   'slowStart',
                   'slowEnd',
                   'pulse',
+                  'Custom',
                 ]
                     .map((s) => DropdownMenuItem(value: s, child: Text(s)))
                     .toList(),
@@ -858,9 +1581,12 @@ if (AppConfig.crossfadeEnabled)
               },
             ),
             const Text(
-              'Note: export me ticker aur clock ek still frame honge — '
-              'scrolling ticker aur live clock sirf live me chalte hain. '
-              'Yehi template Live Studio me bhi use hota hai.',
+              'Note: News Studio ke Final-template (nigraanFinal) '
+              'project ka export ANIMATED hota hai — dono ribbons '
+              'scroll karti hain, logo ghoomta hai, clock tick karta '
+              'hai. Plain editor ke live design ka export ek still '
+              'frame rehta hai. Yehi template Live Studio me bhi use '
+              'hota hai.',
               style: TextStyle(color: Colors.grey),
             ),
           ],
@@ -1226,7 +1952,8 @@ const Text('Auto Captions (CapCut-style)',
               SwitchListTile(
                 title: const Text('Video background remover (ML)'),
                 subtitle: const Text(
-                  'Premium: ek short ad (Unity) dekh kar unlock hoga.',
+                  'Premium AI: 50 coins se unlock hoga (is session '
+                  'ke liye).',
                 ),
                 value: _proBgRemove,
                 onChanged: _onBgRemoverChanged,
@@ -1495,6 +2222,279 @@ const Text('Auto Captions (CapCut-style)',
             ),
           ),
         ];
+      case 'filtersRow':
+        // v1.3.0 (§5A Colour › Filters): chip row instead of the
+        // dropdown (same _filter state) + the §6.1 intensity
+        // slider. The stage preview updates LIVE via the colour
+        // matrix; the export scales the same ffmpeg filter.
+        return [
+          const Text('Filters — LIVE preview stage par',
+              style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final f in const [
+                'Normal',
+                'Warm',
+                'Cool',
+                'B&W',
+                'Vivid',
+                'Sepia',
+              ])
+                ChoiceChip(
+                  label: Text(f),
+                  selected: _filter == f,
+                  onSelected: (_) => setState(() => _filter = f),
+                ),
+            ],
+          ),
+          _ProSlider(
+            label: 'Filter intensity',
+            value: _filterIntensity,
+            min: 0,
+            max: 1,
+            divisions: 20,
+            onChanged: (v) => setState(() => _filterIntensity = v),
+          ),
+          const Text(
+            'Note: LUT looks sirf export mein lagte hain (file-based '
+            'hain) — stage preview mein filter + Adjust ke values '
+            'live dikhte hain.',
+            style: TextStyle(color: Colors.grey, fontSize: 12),
+          ),
+          const Divider(height: 32),
+        ];
+      case 'gradingOne':
+        // v1.3.0 (§5A Colour › Adjust): the LUT dropdown stays on
+        // top; below it ONE grade slider at a time, picked by
+        // chips (same state as the old all-sliders list).
+        return [
+          const Text('Adjust — ek waqt mein ek slider',
+              style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          DropdownButtonFormField<String>(
+            initialValue: _proLut,
+            decoration: const InputDecoration(labelText: 'LUT look'),
+            items: proLuts
+                .map((e) => DropdownMenuItem(
+                      value: e['name'] ?? '',
+                      child: Text(
+                        (e['name'] ?? '').isEmpty ? 'None' : e['name']!,
+                      ),
+                    ))
+                .toList(),
+            onChanged: (v) => setState(() => _proLut = v ?? ''),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final name in const [
+                'Temperature',
+                'Tint',
+                'Saturation',
+                'Vibrance',
+                'Contrast',
+                'Shadows',
+                'Highlights',
+                'Brightness',
+                'Exposure',
+              ])
+                ChoiceChip(
+                  label: Text(name),
+                  selected: _gradeSlider == name,
+                  onSelected: (_) => setState(() => _gradeSlider = name),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          _gradeSliderWidget(),
+          const Divider(height: 32),
+        ];
+      case 'newsTemplate':
+        // v1.3.0 (§5A News › Template): the master switch + the
+        // Live Studio entry (the old 'live' panel body).
+        return [
+          const Text('News — template',
+              style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          SwitchListTile(
+            title: const Text('News Template (Live Studio wala)'),
+            subtitle: const Text(
+              'Breaking banner, lower-third, ticker, clock, logo — '
+              'export par bhi lagega.',
+            ),
+            value: _newsEnabled,
+            onChanged: (v) => setState(() => _newsEnabled = v),
+          ),
+          if (_projectTemplateKind == 'nigraanFinal')
+            const Padding(
+              padding: EdgeInsets.only(top: 4),
+              child: Text(
+                'Ye project Final template (nigraanFinal) hai: is ka '
+                'export ANIMATED lagega — dono ribbons scroll, '
+                'ghoomta logo, tick karta clock (bilkul asal Nigraan '
+                'video jaisa).',
+                style: TextStyle(color: Colors.grey, fontSize: 12),
+              ),
+            ),
+          const Divider(height: 32),
+          ..._panelBody('live'),
+        ];
+      case 'newsText':
+        // v1.3.0 (§5A News › Text): the four template text fields
+        // + the clock toggle (same _news state as before).
+        return [
+          const Text('News — text fields',
+              style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          if (!_newsEnabled)
+            const Text(
+              'Pehle Template tab mein News Template ON karein.',
+              style: TextStyle(color: Colors.grey),
+            )
+          else ...[
+            TextFormField(
+              initialValue: _news.breakingHeadline,
+              decoration: const InputDecoration(
+                labelText: 'Breaking headline (surkh patti)',
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (v) {
+                _news.breakingHeadline = v;
+                unawaited(_news.save());
+              },
+            ),
+            const SizedBox(height: 8),
+            TextFormField(
+              initialValue: _news.lowerTitle,
+              decoration: const InputDecoration(
+                labelText: 'Lower-third title (naam)',
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (v) {
+                _news.lowerTitle = v;
+                unawaited(_news.save());
+              },
+            ),
+            const SizedBox(height: 8),
+            TextFormField(
+              initialValue: _news.lowerSubtitle,
+              decoration: const InputDecoration(
+                labelText: 'Lower-third subtitle (ohda / jagah)',
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (v) {
+                _news.lowerSubtitle = v;
+                unawaited(_news.save());
+              },
+            ),
+            const SizedBox(height: 8),
+            TextFormField(
+              initialValue: _news.tickerText,
+              decoration: const InputDecoration(
+                labelText: 'Ticker text (neeche chalta hua)',
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (v) {
+                _news.tickerText = v;
+                unawaited(_news.save());
+              },
+            ),
+            SwitchListTile(
+              title: const Text('Live clock / date dikhayein'),
+              value: _news.showClock,
+              onChanged: (v) {
+                setState(() => _news.showClock = v);
+                unawaited(_news.save());
+              },
+            ),
+          ],
+          const Divider(height: 32),
+        ];
+      case 'newsLogo':
+        // v1.3.0 (§5A News › Logo): logo pick + position + rotation.
+        return [
+          const Text('News — logo',
+              style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          if (!_newsEnabled)
+            const Text(
+              'Pehle Template tab mein News Template ON karein.',
+              style: TextStyle(color: Colors.grey),
+            )
+          else ...[
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: () async {
+                      final picked = await _picker.pickImage(
+                        source: ImageSource.gallery,
+                      );
+                      if (picked == null) return;
+                      setState(() => _news.logoPath = picked.path);
+                      await _news.save();
+                    },
+                    icon: const Icon(Icons.image),
+                    label: Text(
+                      _news.logoPath == null
+                          ? 'Logo chunein'
+                          : 'Logo badlein',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: DropdownButtonFormField<LogoPosition>(
+                    initialValue: _news.logoPosition,
+                    decoration: const InputDecoration(
+                      labelText: 'Logo jagah',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: LogoPosition.values
+                        .map((pos) => DropdownMenuItem(
+                              value: pos,
+                              child: Text(pos.label),
+                            ))
+                        .toList(),
+                    onChanged: (v) {
+                      if (v == null) return;
+                      setState(() => _news.logoPosition = v);
+                      unawaited(_news.save());
+                    },
+                  ),
+                ),
+              ],
+            ),
+            SwitchListTile(
+              title: const Text('Logo ahista ghoome (rotation)'),
+              subtitle: const Text(
+                'Live mein ghoomega; Final-template export mein '
+                'logo asal template ki jagah par ghoomta hai, baqi '
+                'exports mein static rehta hai.',
+              ),
+              value: _news.logoRotate,
+              onChanged: (v) {
+                setState(() => _news.logoRotate = v);
+                unawaited(_news.save());
+              },
+            ),
+            const Text(
+              'Note: News Studio ke Final-template (nigraanFinal) '
+              'project ka export ANIMATED hota hai — dono ribbons '
+              'scroll karti hain, logo ghoomta hai, clock tick karta '
+              'hai. Plain editor ke live design ka export ek still '
+              'frame rehta hai. Yehi template Live Studio me bhi use '
+              'hota hai.',
+              style: TextStyle(color: Colors.grey),
+            ),
+          ],
+          const Divider(height: 32),
+        ];
       case 'text':
       default:
         return [
@@ -1515,6 +2515,107 @@ const Text('Auto Captions (CapCut-style)',
     }
   }
 
+  /// The ONE grade slider currently picked on Colour › Adjust.
+  Widget _gradeSliderWidget() {
+    switch (_gradeSlider) {
+      case 'Temperature':
+        return _ProSlider(
+          label: 'Temperature',
+          value: _proTemperature,
+          min: -100,
+          max: 100,
+          divisions: 40,
+          digits: 0,
+          onChanged: (v) => setState(() => _proTemperature = v),
+        );
+      case 'Tint':
+        return _ProSlider(
+          label: 'Tint',
+          value: _proTint,
+          min: -100,
+          max: 100,
+          divisions: 40,
+          digits: 0,
+          onChanged: (v) => setState(() => _proTint = v),
+        );
+      case 'Saturation':
+        return _ProSlider(
+          label: 'Saturation',
+          value: _proSaturation,
+          min: 0,
+          max: 2,
+          divisions: 40,
+          onChanged: (v) => setState(() => _proSaturation = v),
+        );
+      case 'Vibrance':
+        return _ProSlider(
+          label: 'Vibrance',
+          value: _proVibrance,
+          min: 0,
+          max: 2,
+          divisions: 40,
+          onChanged: (v) => setState(() => _proVibrance = v),
+        );
+      case 'Contrast':
+        return _ProSlider(
+          label: 'Contrast',
+          value: _proContrast,
+          min: 0,
+          max: 2,
+          divisions: 40,
+          onChanged: (v) => setState(() => _proContrast = v),
+        );
+      case 'Shadows':
+        return _ProSlider(
+          label: 'Shadows',
+          value: _proShadows,
+          min: -100,
+          max: 100,
+          divisions: 40,
+          digits: 0,
+          onChanged: (v) => setState(() => _proShadows = v),
+        );
+      case 'Highlights':
+        return _ProSlider(
+          label: 'Highlights',
+          value: _proHighlights,
+          min: -100,
+          max: 100,
+          divisions: 40,
+          digits: 0,
+          onChanged: (v) => setState(() => _proHighlights = v),
+        );
+      case 'Brightness':
+        return _ProSlider(
+          label: 'Brightness',
+          value: _proBrightness,
+          min: -100,
+          max: 100,
+          divisions: 40,
+          digits: 0,
+          onChanged: (v) => setState(() => _proBrightness = v),
+        );
+      default:
+        return _ProSlider(
+          label: 'Exposure',
+          value: _proExposure,
+          min: -100,
+          max: 100,
+          divisions: 40,
+          digits: 0,
+          onChanged: (v) => setState(() => _proExposure = v),
+        );
+    }
+  }
+
+  /// v1.3.0 (§3/§5A) timeline: a ruler row (playhead readout +
+  /// progress), ONE filmstrip track — slim clip cards with trim
+  /// HANDLE drag zones on the selected clip, a + tile at the END
+  /// (Add video — there is NO separate add row anywhere) and a
+  /// photo tile beside it — then the layered bars (§6.4): the
+  /// music bar (or a ghost "+ Add audio" row) and the text bar.
+  /// Split / Frame / Extract / the trim slider moved to
+  /// Edit › Trim — nothing is lost, only re-homed.
   Widget _timelineSection(VideoClip? clip) {
     final ctrl = _controller;
     final pos = ctrl != null && ctrl.value.isInitialized
@@ -1522,176 +2623,411 @@ const Text('Auto Captions (CapCut-style)',
         : 0.0;
     final dur = clip != null ? clip.duration.inMilliseconds / 1000 : 0.0;
     final frac = dur > 0 ? (pos / dur).clamp(0.0, 1.0) : 0.0;
+    final totalDur =
+        _clips.fold<double>(0, (a, c) => a + c.effectiveDuration);
+    String fmt(double sec) {
+      final m = sec ~/ 60;
+      final ss = (sec % 60).toStringAsFixed(0).padLeft(2, '0');
+      return '$m:$ss';
+    }
+
+    Widget addTile({
+      required IconData icon,
+      required String label,
+      required VoidCallback onTap,
+    }) {
+      return GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: 54,
+          height: 58,
+          margin: const EdgeInsets.only(right: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFF232323),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: TjProTheme.gold, width: 1.5),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, color: TjProTheme.gold, size: 22),
+              Text(label,
+                  style: const TextStyle(color: Colors.white, fontSize: 10)),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Container(
       color: const Color(0xFF1B1B1B),
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Ruler row: playhead readout + clip position + total.
           Row(
             children: [
-              const Text('Timeline',
-                  style: TextStyle(
-                      fontWeight: FontWeight.bold, color: Colors.white)),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  _clips.isEmpty
-                      ? 'No clips yet — Add video above'
-                      : 'Playhead ${pos.toStringAsFixed(1)}s / ${dur.toStringAsFixed(1)}s'
-                          ' • Clip ${_selected + 1} of ${_clips.length}',
-                  style: const TextStyle(color: Colors.grey, fontSize: 12),
-                  overflow: TextOverflow.ellipsis,
+              Text(
+                _clips.isEmpty
+                    ? 'Timeline — koi clip nahi'
+                    : '${fmt(pos)} / ${fmt(dur)}',
+                style: const TextStyle(color: Colors.white70, fontSize: 11),
+              ),
+              const Spacer(),
+              if (_clips.isNotEmpty)
+                Text(
+                  'Clip ${_selected + 1} of ${_clips.length} • '
+                  'kul ${fmt(totalDur)}',
+                  style: const TextStyle(color: Colors.grey, fontSize: 11),
                 ),
-              ),
-              TextButton.icon(
-                onPressed: _clips.isEmpty ? null : _splitSelectedClip,
-                icon: const Icon(Icons.content_cut, size: 18),
-                label: const Text('Split'),
-              ),
-              TextButton.icon(
-                onPressed:
-                    (_clips.isEmpty || _busy) ? null : _saveFrameSnapshot,
-                icon: const Icon(Icons.camera_alt_outlined, size: 18),
-                label: const Text('Frame'),
-              ),
-              TextButton.icon(
-                onPressed:
-                    (_clips.isEmpty || _busy) ? null : _extractClipAudio,
-                icon: const Icon(Icons.audio_file_outlined, size: 18),
-                label: const Text('Audio'),
-              ),
             ],
           ),
-          // Playhead marker (red) above the clip blocks.
+          // Playhead progress line.
           Container(
-            height: 4,
-            alignment: Alignment(frac * 2 - 1, 0),
-            child: Container(width: 28, height: 4, color: Colors.redAccent),
+            height: 3,
+            margin: const EdgeInsets.symmetric(vertical: 5),
+            child: LinearProgressIndicator(
+              value: frac,
+              backgroundColor: Colors.white12,
+              valueColor:
+                  const AlwaysStoppedAnimation<Color>(TjProTheme.gold),
+            ),
           ),
-          const SizedBox(height: 6),
+          // Filmstrip track + the + tiles at its END.
           SizedBox(
-            height: 88,
+            height: 58,
             child: _clips.isEmpty
-                ? const Center(
-                    child: Text('Timeline khaali hai',
-                        style: TextStyle(color: Colors.grey)))
-                : SingleChildScrollView(
+                ? Row(
+                    children: [
+                      addTile(
+                        icon: Icons.add,
+                        label: 'Video',
+                        onTap: _addClip,
+                      ),
+                      addTile(
+                        icon: Icons.photo_outlined,
+                        label: 'Photo',
+                        onTap: _addPhotoClip,
+                      ),
+                      const Expanded(
+                        child: Text(
+                          'Timeline khaali hai — + tile se shuru karein.',
+                          style: TextStyle(color: Colors.grey, fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  )
+                : ListView(
                     scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: _clips.asMap().entries.map((e) {
-                        final i = e.key;
-                        final c = e.value;
-                        final selected = i == _selected;
-                        return GestureDetector(
-                          onTap: () async {
-                            setState(() => _selected = i);
-                            await _loadPreview();
-                          },
-                          child: Container(
-                            width: 128,
-                            height: 88,
-                            margin: const EdgeInsets.only(right: 8),
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: selected
-                                  ? TjProTheme.goldDeep
-                                  : const Color(0xFF2E2E2E),
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(
-                                color: selected
-                                    ? TjProTheme.gold
-                                    : Colors.grey.shade700,
-                              ),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text('Clip ${i + 1}',
-                                          style: const TextStyle(
-                                              color: Colors.white,
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 12)),
-                                    ),
-                                    GestureDetector(
-                                      onTap: () async {
-                                        setState(() {
-                                          _clips.removeAt(i);
-                                          if (_selected >= _clips.length) {
-                                            _selected = _clips.length - 1;
-                                          }
-                                        });
-                                        if (_clips.isNotEmpty) {
-                                          await _loadPreview();
-                                        } else {
-                                          await _controller?.dispose();
-                                          setState(() => _controller = null);
-                                        }
-                                      },
-                                      child: const Icon(Icons.close,
-                                          size: 16, color: Colors.white70),
-                                    ),
-                                  ],
-                                ),
-                                Text(
-                                  p.basename(c.file.path),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                      color: Colors.white70, fontSize: 11),
-                                ),
-                                Text(
-                                  '${c.effectiveDuration.toStringAsFixed(1)}s'
-                                  ' • trim ${c.trimStart.toStringAsFixed(1)}'
-                                  '–${c.effectiveEnd.toStringAsFixed(1)}s',
-                                  style: const TextStyle(
-                                      color: Colors.white70, fontSize: 11),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      }).toList(),
-                    ),
+                    children: [
+                      for (var i = 0; i < _clips.length; i++)
+                        _timelineCard(i),
+                      addTile(
+                        icon: Icons.add,
+                        label: 'Video',
+                        onTap: _addClip,
+                      ),
+                      addTile(
+                        icon: Icons.photo_outlined,
+                        label: 'Photo',
+                        onTap: _addPhotoClip,
+                      ),
+                    ],
                   ),
           ),
-          if (_clips.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            const Text('Trim selected clip — drag the handles',
-                style: TextStyle(color: Colors.grey, fontSize: 12)),
-if (clip != null) ...[
-              const SizedBox(height: 8),
-              Text(
-                'Trim selected clip: ${clip.trimStart.toStringAsFixed(1)}s – ${clip.effectiveEnd.toStringAsFixed(1)}s',
-              ),
-              RangeSlider(
-                values: RangeValues(
-                  clip.trimStart,
-                  clip.effectiveEnd,
+          // Layered bar — audio (§6.4).
+          const SizedBox(height: 6),
+          if (_musicPath != null)
+            InkWell(
+              onTap: () => setState(() {
+                _activeTool = 'audio';
+                _panelTab = 'music';
+              }),
+              child: Container(
+                height: 26,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF263238),
+                  borderRadius: BorderRadius.circular(6),
                 ),
-                min: 0,
-                max: clip.duration.inMilliseconds / 1000,
-                divisions:
-                    (clip.duration.inMilliseconds / 100).round().clamp(1, 1000),
-                labels: RangeLabels(
-                  '${clip.trimStart.toStringAsFixed(1)}s',
-                  '${clip.effectiveEnd.toStringAsFixed(1)}s',
+                child: Row(
+                  children: [
+                    const Icon(Icons.music_note,
+                        size: 14, color: Colors.lightBlueAccent),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        p.basename(_musicPath!),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: Colors.white, fontSize: 11),
+                      ),
+                    ),
+                    if (_autoDuck)
+                      const Text('duck ',
+                          style: TextStyle(
+                              color: Colors.orangeAccent, fontSize: 10)),
+                    GestureDetector(
+                      onTap: () => setState(() => _musicPath = null),
+                      child: const Icon(Icons.close,
+                          size: 14, color: Colors.white70),
+                    ),
+                  ],
                 ),
-                onChanged: (v) {
-                  if (v.end - v.start < 0.5) return;
-                  setState(() {
-                    clip.trimStart = v.start;
-                    clip.trimEnd = v.end;
-                  });
-                },
               ),
-            ],
+            )
+          else
+            InkWell(
+              onTap: _pickMusic,
+              child: Container(
+                height: 26,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: Colors.white24),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.add, size: 14, color: Colors.white54),
+                    SizedBox(width: 6),
+                    Text('Add audio',
+                        style:
+                            TextStyle(color: Colors.white54, fontSize: 11)),
+                  ],
+                ),
+              ),
+            ),
+          // Layered bar — text / captions (§6.4).
+          if (_text.trim().isNotEmpty || _captions.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            InkWell(
+              onTap: () => _openTool('text'),
+              child: Container(
+                height: 26,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF37474F),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.text_fields,
+                        size: 14, color: Colors.amberAccent),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        _text.trim().isNotEmpty
+                            ? _text.trim()
+                            : '${_captions.length} captions',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: Colors.white, fontSize: 11),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ],
         ],
       ),
     );
   }
+
+  /// One filmstrip card. The SELECTED card carries left/right
+  /// trim HANDLE zones (12 px) — drag them to trim; the drag
+  /// start pushes an undo snapshot.
+  Widget _timelineCard(int i) {
+    final c = _clips[i];
+    final selected = i == _selected;
+    final cardW =
+        (44 + c.effectiveDuration * 7).clamp(56.0, 170.0).toDouble();
+    final secsPerPx = c.duration.inMilliseconds / 1000 / 340;
+    Widget handle(bool isStart) {
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onHorizontalDragStart: (_) => _pushHistory(),
+        onHorizontalDragUpdate: (d) {
+          setState(() {
+            if (isStart) {
+              c.trimStart = (c.trimStart + d.delta.dx * secsPerPx)
+                  .clamp(0, c.effectiveEnd - 0.5);
+            } else {
+              final ne = (c.effectiveEnd + d.delta.dx * secsPerPx)
+                  .clamp(c.trimStart + 0.5, c.duration.inMilliseconds / 1000);
+              c.trimEnd = ne;
+            }
+          });
+        },
+        child: Container(
+          width: 12,
+          height: 58,
+          color: TjProTheme.gold.withValues(alpha: 0.35),
+          child: Icon(
+            isStart ? Icons.chevron_left : Icons.chevron_right,
+            size: 12,
+            color: Colors.black,
+          ),
+        ),
+      );
+    }
+
+    return GestureDetector(
+      onTap: () async {
+        setState(() => _selected = i);
+        await _loadPreview();
+      },
+      child: Container(
+        width: cardW,
+        height: 58,
+        margin: const EdgeInsets.only(right: 8),
+        decoration: BoxDecoration(
+          color: selected ? TjProTheme.goldDeep : const Color(0xFF2E2E2E),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: selected ? TjProTheme.gold : Colors.grey.shade700,
+            width: selected ? 2 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            if (selected) handle(true),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          c.isPhoto ? Icons.photo : Icons.movie_outlined,
+                          size: 13,
+                          color: Colors.white70,
+                        ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            'Clip ${i + 1}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    Text(
+                      '${c.effectiveDuration.toStringAsFixed(1)}s'
+                      ' • ${c.trimStart.toStringAsFixed(1)}'
+                      '–${c.effectiveEnd.toStringAsFixed(1)}s',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: Colors.white70, fontSize: 10),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            if (selected) handle(false),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// §6.10 — the custom speed-ramp curve: three plateaus (start /
+/// middle / end thirds) drawn as a step graph.
+class _RampCurvePainter extends CustomPainter {
+  const _RampCurvePainter(this.start, this.mid, this.end);
+
+  final double start;
+  final double mid;
+  final double end;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final axis = Paint()
+      ..color = Colors.white24
+      ..strokeWidth = 1;
+    canvas.drawLine(
+      Offset(0, size.height - 4),
+      Offset(size.width, size.height - 4),
+      axis,
+    );
+    double y(double speed) =>
+        size.height - 4 - (speed.clamp(0.25, 2) / 2) * (size.height - 10);
+    final path = Path()
+      ..moveTo(0, y(start))
+      ..lineTo(size.width / 3, y(start))
+      ..lineTo(size.width / 3, y(mid))
+      ..lineTo(size.width * 2 / 3, y(mid))
+      ..lineTo(size.width * 2 / 3, y(end))
+      ..lineTo(size.width, y(end));
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = TjProTheme.gold
+        ..strokeWidth = 2
+        ..style = PaintingStyle.stroke,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_RampCurvePainter old) =>
+      old.start != start || old.mid != mid || old.end != end;
+}
+
+/// §5A — the keyframe easing curve graph (the motion the overlay
+/// will follow from the Start to the End keyframe).
+class _EasingCurvePainter extends CustomPainter {
+  const _EasingCurvePainter(this.easing);
+
+  final KeyframeEasing easing;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final axis = Paint()
+      ..color = Colors.white24
+      ..strokeWidth = 1;
+    canvas.drawRect(
+      Rect.fromLTWH(2, 2, size.width - 4, size.height - 4),
+      axis..style = PaintingStyle.stroke,
+    );
+    final w = size.width - 8;
+    final h = size.height - 8;
+    Offset pt(double x, double y) => Offset(4 + x * w, 4 + (1 - y) * h);
+    final path = Path()..moveTo(pt(0, 0).dx, pt(0, 0).dy);
+    switch (easing) {
+      case KeyframeEasing.linear:
+        path.lineTo(pt(1, 1).dx, pt(1, 1).dy);
+      case KeyframeEasing.easeIn:
+        path.quadraticBezierTo(pt(0.6, 0).dx, pt(0.6, 0).dy, pt(1, 1).dx, pt(1, 1).dy);
+      case KeyframeEasing.easeOut:
+        path.quadraticBezierTo(pt(0.4, 1).dx, pt(0.4, 1).dy, pt(1, 1).dx, pt(1, 1).dy);
+      case KeyframeEasing.easeInOut:
+        path.cubicTo(
+          pt(0.4, 0).dx, pt(0.4, 0).dy,
+          pt(0.6, 1).dx, pt(0.6, 1).dy,
+          pt(1, 1).dx, pt(1, 1).dy,
+        );
+    }
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = TjProTheme.gold
+        ..strokeWidth = 2
+        ..style = PaintingStyle.stroke,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_EasingCurvePainter old) => old.easing != easing;
 }

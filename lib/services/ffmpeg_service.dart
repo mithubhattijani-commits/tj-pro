@@ -87,18 +87,39 @@ class FfmpegService {
   }
 
   /// Video filter chain for the named preset (empty = no filter).
-  static String videoFilter(String preset) {
+  ///
+  /// v1.3.0 (feature §6.1): [intensity] 0..1 scales the preset's
+  /// strength — every parameter's deviation from neutral is scaled
+  /// by it (the sepia matrix is lerped toward identity), mirroring
+  /// the live preview's matrix lerp in the Colour panel. Intensity 1
+  /// (the default) returns exactly the long-standing strings.
+  static String videoFilter(String preset, {double intensity = 1}) {
+    final i = intensity.clamp(0.0, 1.0);
+    String n(double v) => v.toStringAsFixed(3);
     switch (preset) {
       case 'Warm':
-        return 'colortemperature=temperature=3800:mix=0.6:pl=1';
+        return 'colortemperature=temperature=${(6500 - (6500 - 3800) * i).round()}:mix=${n(0.6 * i)}:pl=1';
       case 'Cool':
-        return 'colortemperature=temperature=8500:mix=0.6:pl=1';
+        return 'colortemperature=temperature=${(6500 + (8500 - 6500) * i).round()}:mix=${n(0.6 * i)}:pl=1';
       case 'B&W':
-        return 'hue=s=0';
+        return 'hue=s=${n(1 - i)}';
       case 'Vivid':
-        return 'eq=saturation=1.4:contrast=1.08:brightness=0.02';
+        return 'eq=saturation=${n(1 + 0.4 * i)}:contrast=${n(1 + 0.08 * i)}:brightness=${n(0.02 * i)}';
       case 'Sepia':
-        return 'colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131';
+        const m = [
+          .393, .769, .189, 0, //
+          .349, .686, .168, 0,
+          .272, .534, .131, 0,
+        ];
+        const id = [
+          1.0, 0.0, 0.0, 0, //
+          0.0, 1.0, 0.0, 0,
+          0.0, 0.0, 1.0, 0,
+        ];
+        final lerped = [
+          for (var k = 0; k < m.length; k++) n(id[k] + (m[k] - id[k]) * i),
+        ];
+        return 'colorchannelmixer=${lerped.join(':')}';
       default:
         return '';
     }
@@ -136,11 +157,27 @@ class FfmpegService {
   /// Aspect filter: scale to cover target then center-crop (empty = original).
   /// The target size follows [exportQuality]: 0 = 720p HD (fast, the
   /// long-standing default), 1 = 1080p Full HD, 2 = 2160p 4K (slow).
-  static String aspectFilter(String aspect, {int exportQuality = 0}) {
+  ///
+  /// v1.3.0 (feature §6.5 — canvas background fill): [canvasFill]
+  /// 'color' letterboxes instead of cropping — the clip is scaled to
+  /// FIT and padded with [fillColor], so nothing is cut off. 'blur'
+  /// is NOT produced here (it needs a two-stream graph); callers use
+  /// [blurFillPassCommand] / the blur-fill normalize variant instead
+  /// and pass aspect 'Original' to this chain.
+  static String aspectFilter(
+    String aspect, {
+    int exportQuality = 0,
+    String canvasFill = 'none',
+    String fillColor = 'black',
+  }) {
     final dims = exportDims(aspect, exportQuality);
     if (dims == null) return '';
     final int w = dims.$1;
     final int h = dims.$2;
+    if (canvasFill == 'color') {
+      return 'scale=$w:$h:force_original_aspect_ratio=decrease,'
+          'pad=$w:$h:(ow-iw)/2:(oh-ih)/2:color=$fillColor';
+    }
     return 'scale=$w:$h:force_original_aspect_ratio=increase,crop=$w:$h';
   }
 
@@ -158,12 +195,22 @@ class FfmpegService {
     bool textAtTop = false,
     int? videoHeight,
     int exportQuality = 0,
+    // v1.3.0: filter intensity (§6.1) + canvas fill (§6.5). Defaults
+    // reproduce the pre-v1.3.0 graph exactly.
+    double filterIntensity = 1,
+    String canvasFill = 'none',
+    String fillColor = 'black',
   }) {
     final parts = <String>[];
     if (speed != 1.0) parts.add('setpts=PTS/$speed');
-    final vf = videoFilter(filterPreset);
+    final vf = videoFilter(filterPreset, intensity: filterIntensity);
     if (vf.isNotEmpty) parts.add(vf);
-    final af = aspectFilter(aspect, exportQuality: exportQuality);
+    final af = aspectFilter(
+      aspect,
+      exportQuality: exportQuality,
+      canvasFill: canvasFill,
+      fillColor: fillColor,
+    );
     if (af.isNotEmpty) parts.add(af);
     if (text != null && text.trim().isNotEmpty && fontFile != null) {
       final h = videoHeight ?? exportDims(aspect, exportQuality)?.$2 ?? 720;
@@ -206,6 +253,10 @@ class FfmpegService {
     String? musicPath,
     required String output,
     int exportQuality = 0,
+    // v1.3.0: see [finalFilterGraph].
+    double filterIntensity = 1,
+    String canvasFill = 'none',
+    String fillColor = 'black',
   }) {
     final graph = finalFilterGraph(
       speed: speed,
@@ -218,6 +269,9 @@ class FfmpegService {
       extraVideoFilter: extraVideoFilter,
       textAtTop: textAtTop,
       exportQuality: exportQuality,
+      filterIntensity: filterIntensity,
+      canvasFill: canvasFill,
+      fillColor: fillColor,
     );
     final buf = StringBuffer();
     buf.write('-y -ss $trimStart -to $trimEnd -i ${q(input)} ');
@@ -269,6 +323,11 @@ class FfmpegService {
     int fps = 30,
     int? videoBitrateKbps,
     int? audioBitrateKbps,
+    // v1.3.0 (§6.5): blur-fill framing instead of scale+crop — the
+    // clip is scaled to FIT over a blurred, darkened copy of itself
+    // (the reference intro treatment). Needs a two-stream graph, so
+    // this variant uses -filter_complex.
+    bool blurFill = false,
   }) {
     final videoArgs = videoBitrateKbps == null
         ? '-c:v libx264 -preset veryfast -crf 23'
@@ -279,9 +338,136 @@ class FfmpegService {
     final audioArgs = audioBitrateKbps == null
         ? '-c:a aac -ar 48000 -ac 2'
         : '-c:a aac -b:a ${audioBitrateKbps}k -ar 48000 -ac 2';
+    if (blurFill) {
+      return '-y -ss $trimStart -to $trimEnd -i ${q(input)} '
+          '-filter_complex "[0:v]split[bg][fg];'
+          '[bg]scale=$width:$height:force_original_aspect_ratio=increase,'
+          'crop=$width:$height,gblur=sigma=24,eq=brightness=-0.12[bgb];'
+          '[fg]scale=$width:$height:force_original_aspect_ratio=decrease[fgb];'
+          '[bgb][fgb]overlay=(W-w)/2:(H-h)/2,fps=$fps,format=yuv420p[vout]" '
+          '-map "[vout]" -map 0:a? '
+          '$videoArgs $audioArgs ${q(output)}';
+    }
     return '-y -ss $trimStart -to $trimEnd -i ${q(input)} '
         '-vf "scale=$width:$height:force_original_aspect_ratio=increase,crop=$width:$height,fps=$fps,format=yuv420p" '
         '$videoArgs $audioArgs ${q(output)}';
+  }
+
+  /// v1.3.0 (§6.5) — blur-fill as a standalone pass over an already
+  /// rendered video (the single-clip editor path, where the main
+  /// pass ran with aspect 'Original'): the frame is reframed to
+  /// [width]x[height] as a sharp fit over its own blurred copy.
+  /// Audio is copied. Guarded by the caller like every post-pass.
+  static String blurFillPassCommand({
+    required String input,
+    required String output,
+    required int width,
+    required int height,
+  }) {
+    return '-y -i ${q(input)} '
+        '-filter_complex "[0:v]split[bg][fg];'
+        '[bg]scale=$width:$height:force_original_aspect_ratio=increase,'
+        'crop=$width:$height,gblur=sigma=24,eq=brightness=-0.12[bgb];'
+        '[fg]scale=$width:$height:force_original_aspect_ratio=decrease[fgb];'
+        '[bgb][fgb]overlay=(W-w)/2:(H-h)/2,format=yuv420p[vout]" '
+        '-map "[vout]" -map 0:a? '
+        '-c:v libx264 -preset veryfast -crf 23 -c:a copy '
+        '-movflags +faststart ${q(output)}';
+  }
+
+  /// v1.3.0 (§6.7) — main-clip transform pass: the clip is scaled,
+  /// rotated and faded over a blurred copy of itself (never black
+  /// bars). [posX]/[posY] are centre offsets as fractions of the
+  /// frame (−0.5..0.5). [rotationDeg] rotates the foreground;
+  /// [opacity] 0..1 fades it over the backdrop. Audio copied.
+  static String transformPassCommand({
+    required String input,
+    required String output,
+    required int width,
+    required int height,
+    required double scale,
+    required double posX,
+    required double posY,
+    required double rotationDeg,
+    required double opacity,
+  }) {
+    final s = scale.clamp(0.3, 2.5);
+    final rad = (rotationDeg * 3.14159265 / 180).toStringAsFixed(4);
+    final op = opacity.clamp(0.0, 1.0).toStringAsFixed(2);
+    final ox = (posX * width).round();
+    final oy = (posY * height).round();
+    return '-y -i ${q(input)} '
+        '-filter_complex "[0:v]split[bg][fgs];'
+        '[bg]scale=$width:$height:force_original_aspect_ratio=increase,'
+        'crop=$width:$height,gblur=sigma=24,eq=brightness=-0.18[bgb];'
+        '[fgs]format=yuva420p,scale=iw*$s:ih*$s,'
+        'rotate=$rad:ow=rotw(iw):oh=roth(ih):c=black@0,'
+        'colorchannelmixer=aa=$op[fgv];'
+        '[bgb][fgv]overlay=x=(W-w)/2+$ox:y=(H-h)/2+$oy,format=yuv420p[vout]" '
+        '-map "[vout]" -map 0:a? '
+        '-c:v libx264 -preset veryfast -crf 23 -c:a copy '
+        '-movflags +faststart ${q(output)}';
+  }
+
+  /// v1.3.0 (§6.1) — a still photo becomes a video clip: the photo
+  /// fills [width]x[height] for [durationSec]. With [kenBurns] the
+  /// frame slowly zooms (in or out — the pipeline's zoompan move);
+  /// without it the photo is a static scale+crop segment. Silent
+  /// stereo audio is added so concat joins match the other clips.
+  static String photoClipCommand({
+    required String imagePath,
+    required String output,
+    required int width,
+    required int height,
+    required double durationSec,
+    bool kenBurns = false,
+    bool zoomIn = true,
+  }) {
+    final dur = durationSec.clamp(0.5, 60.0);
+    final frames = (dur * 30).round();
+    final String vf;
+    if (kenBurns) {
+      // zoompan works on a single input frame: upscale first so the
+      // zoom has pixels to move through, then pan/zoom to the frame.
+      final z = zoomIn
+          ? "z='min(1+0.12*on/$frames,1.12)'"
+          : "z='max(1.12-0.12*on/$frames,1.0)'";
+      vf = 'scale=${width * 2}:${height * 2}:force_original_aspect_ratio=increase,'
+          'crop=${width * 2}:${height * 2},'
+          'zoompan=$z:x=\'iw/2-(iw/zoom/2)\':y=\'ih/2-(ih/zoom/2)\''
+          ':d=$frames:s=${width}x$height:fps=30,format=yuv420p';
+    } else {
+      vf = 'scale=$width:$height:force_original_aspect_ratio=increase,'
+          'crop=$width:$height,fps=30,format=yuv420p';
+    }
+    return '-y -loop 1 -t $dur -i ${q(imagePath)} '
+        '-f lavfi -t $dur -i anullsrc=channel_layout=stereo:sample_rate=48000 '
+        '-vf "$vf" -map 0:v -map 1:a -shortest '
+        '-c:v libx264 -preset veryfast -crf 23 -c:a aac -ar 48000 -ac 2 '
+        '${q(output)}';
+  }
+
+  /// v1.3.0 (§6.9) — piecewise-linear volume envelope expression for
+  /// the `volume` filter's eval mode: [points] are (timeSec, gain)
+  /// pairs sorted by time; the gain holds the first/last value
+  /// outside the point range and lerps between points. Returns an
+  /// FFmpeg expression string (no surrounding quotes).
+  static String volumeEnvelopeExpression(
+    List<(double, double)> points,
+    double fallback,
+  ) {
+    if (points.isEmpty) return fallback.toStringAsFixed(2);
+    final pts = [...points]..sort((a, b) => a.$1.compareTo(b.$1));
+    String n(double v) => v.toStringAsFixed(3);
+    var expr = n(pts.last.$2);
+    for (var i = pts.length - 2; i >= 0; i--) {
+      final (t0, v0) = pts[i];
+      final (t1, v1) = pts[i + 1];
+      final span = (t1 - t0).abs() < 0.001 ? 0.001 : t1 - t0;
+      expr =
+          'if(lt(t,${n(t1)}),${n(v0)}+(${n(v1)}-${n(v0)})*(t-${n(t0)})/${n(span)},$expr)';
+    }
+    return 'if(lt(t,${n(pts.first.$1)}),${n(pts.first.$2)},$expr)';
   }
 
   /// Concat-demuxer command for already-normalized clips (fast, no re-encode).
@@ -352,6 +538,10 @@ class FfmpegService {
     String? musicPath,
     required String output,
     int exportQuality = 0,
+    // v1.3.0: see [finalFilterGraph].
+    double filterIntensity = 1,
+    String canvasFill = 'none',
+    String fillColor = 'black',
   }) {
     final graph = finalFilterGraph(
       speed: speed,
@@ -364,6 +554,9 @@ class FfmpegService {
       extraVideoFilter: extraVideoFilter,
       textAtTop: textAtTop,
       exportQuality: exportQuality,
+      filterIntensity: filterIntensity,
+      canvasFill: canvasFill,
+      fillColor: fillColor,
     );
     final buf = StringBuffer();
     buf.write('-y -i ${q(input)} ');
@@ -461,15 +654,72 @@ class FfmpegService {
     required bool hasClipAudio,
     double musicVolume = 0.18,
     int? audioBitrateKbps,
+    // v1.3.0 (§9 criterion 10): optional bed fades — the Final
+    // template's bed fades in 0.8 s / out 1.5 s. [durationSec] is
+    // needed to place the fade-out; without it no fades are applied.
+    double fadeInSec = 0,
+    double fadeOutSec = 0,
+    double? durationSec,
   }) {
     final vol = musicVolume.clamp(0.0, 1.0).toStringAsFixed(2);
+    var bedChain = '[1:a]volume=$vol';
+    if (fadeInSec > 0) {
+      bedChain += ',afade=t=in:st=0:d=${fadeInSec.toStringAsFixed(2)}';
+    }
+    if (fadeOutSec > 0 && durationSec != null && durationSec > fadeOutSec) {
+      bedChain +=
+          ',afade=t=out:st=${(durationSec - fadeOutSec).toStringAsFixed(2)}:d=${fadeOutSec.toStringAsFixed(2)}';
+    }
+    bedChain += '[bed]';
     final buf = StringBuffer();
     buf.write('-y -i ${q(input)} -stream_loop -1 -i ${q(musicPath)} ');
     if (hasClipAudio) {
       buf.write(
-        '-filter_complex "[1:a]volume=$vol[bed];'
+        '-filter_complex "$bedChain;'
         '[0:a][bed]amix=inputs=2:duration=first:'
         'dropout_transition=0[aout]" '
+        '-map 0:v -map "[aout]" ',
+      );
+    } else {
+      buf.write(
+        '-filter_complex "${bedChain.replaceAll('[bed]', '[aout]')}" '
+        '-map 0:v -map "[aout]" -shortest ',
+      );
+    }
+    final audioArgs = audioBitrateKbps == null
+        ? '-c:a aac'
+        : '-c:a aac -b:a ${audioBitrateKbps}k';
+    buf.write(
+      '-c:v copy $audioArgs -movflags +faststart ${q(output)}',
+    );
+    return buf.toString();
+  }
+
+  /// v1.3.0 (§6.8 — auto-duck): mixes [musicPath] UNDER the existing
+  /// audio of [input] with sidechain compression — the music dips
+  /// automatically whenever the clip's own audio (voice) is loud and
+  /// comes back up in the gaps, the way the reel pipeline ducks its
+  /// bed by hand. The music is first gained to [musicVolume], then
+  /// ducked by the original audio as the sidechain. When the input
+  /// has no audio track the music simply becomes the track (no
+  /// ducking possible). Video is copied, not re-encoded.
+  static String musicDuckCommand({
+    required String input,
+    required String musicPath,
+    required String output,
+    required bool hasClipAudio,
+    double musicVolume = 1.0,
+    int? audioBitrateKbps,
+  }) {
+    final vol = musicVolume.clamp(0.0, 1.5).toStringAsFixed(2);
+    final buf = StringBuffer();
+    buf.write('-y -i ${q(input)} -stream_loop -1 -i ${q(musicPath)} ');
+    if (hasClipAudio) {
+      buf.write(
+        '-filter_complex "[0:a]asplit[voice][sc];'
+        '[1:a]volume=$vol[bedraw];'
+        '[bedraw][sc]sidechaincompress=threshold=0.02:ratio=8:attack=40:release=400[bed];'
+        '[voice][bed]amix=inputs=2:duration=first:dropout_transition=0[aout]" '
         '-map 0:v -map "[aout]" ',
       );
     } else {
@@ -583,6 +833,9 @@ class FfmpegService {
     int fps = 30,
     int? videoBitrateKbps,
     int? audioBitrateKbps,
+    // v1.3.0 (§9.9): blurred-fill framing (the Final template's
+    // intro treatment) instead of scale+crop.
+    bool blurFill = false,
   }) {
     if (!addSilentAudio) {
       return normalizeCommand(
@@ -595,6 +848,7 @@ class FfmpegService {
         fps: fps,
         videoBitrateKbps: videoBitrateKbps,
         audioBitrateKbps: audioBitrateKbps,
+        blurFill: blurFill,
       );
     }
     final dur = (trimEnd - trimStart).clamp(0.1, 3600.0);
@@ -607,10 +861,18 @@ class FfmpegService {
     final audioArgs = audioBitrateKbps == null
         ? '-c:a aac -ar 48000 -ac 2'
         : '-c:a aac -b:a ${audioBitrateKbps}k -ar 48000 -ac 2';
+    final frameChain = blurFill
+        ? '-filter_complex "[0:v]split[bg][fg];'
+            '[bg]scale=$width:$height:force_original_aspect_ratio=increase,'
+            'crop=$width:$height,gblur=sigma=24,eq=brightness=-0.12[bgb];'
+            '[fg]scale=$width:$height:force_original_aspect_ratio=decrease[fgb];'
+            '[bgb][fgb]overlay=(W-w)/2:(H-h)/2,fps=$fps,format=yuv420p[vout]" '
+            '-map "[vout]" -map 1:a'
+        : '-vf "scale=$width:$height:force_original_aspect_ratio=increase,crop=$width:$height,fps=$fps,format=yuv420p" '
+            '-map 0:v -map 1:a';
     return '-y -ss $trimStart -to $trimEnd -i ${q(input)} '
         '-f lavfi -t $dur -i anullsrc=channel_layout=stereo:sample_rate=48000 '
-        '-vf "scale=$width:$height:force_original_aspect_ratio=increase,crop=$width:$height,fps=$fps,format=yuv420p" '
-        '-map 0:v -map 1:a -shortest '
+        '$frameChain -shortest '
         '$videoArgs $audioArgs ${q(output)}';
   }
 

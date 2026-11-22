@@ -1,27 +1,29 @@
-/// Live Flutter preview of the Nigraan final 3-ribbon template
-/// (Phase 3) — the on-screen twin of the PNG renderer in
-/// lib/live/news_template.dart ([NigraanFinalLayout] geometry, same
-/// house colours, same chip labels). Used by the Template & Studio
-/// screen (full preview + the paste-to-run ticker strip) and the News
-/// Studio home preview.
+/// Live Flutter preview of the Nigraan final template — the
+/// on-screen twin of the parity renderer in
+/// lib/live/parity_template.dart ([ParityGeometry], same house
+/// colours, same chip labels). Used by the Template & Studio
+/// screen (full preview + the paste-to-run ticker strip) and the
+/// News Studio home preview.
 ///
-/// TICKER PASTE-TO-RUN: the top ticker scrolls from the preset's live
-/// text — [ScrollingTickerText] re-measures and restarts its animation
-/// on every text change, so a paste scrolls in the preview
-/// IMMEDIATELY, with no extra step. Only the top ticker scrolls in
-/// the preview (middle/bottom are headline strips, pinned at their
-/// start — same as the PNG renderer; per-ribbon scroll phases are a
-/// Phase 7 export-animation item).
+/// TICKER PASTE-TO-RUN: the top ticker scrolls from the preset's
+/// live text — [ScrollingTickerText] re-measures and restarts its
+/// animation on every text change, so a paste scrolls in the
+/// preview IMMEDIATELY, with no extra step. Since v1.3.0 the two
+/// bottom ribbons scroll in the preview too, exactly like the
+/// export (Urdu rightward, English leftward).
 library;
+
+import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 
 import '../../live/news_template.dart';
+import '../../live/parity_template.dart';
 import '../../services/asset_download_service.dart';
 import '../channel_preset.dart';
 import '../watermark.dart';
 import 'pip_inset.dart';
-import 'rotating_logo.dart';
 
 /// Horizontally scrolling ticker line.
 ///
@@ -178,12 +180,19 @@ double fitPreviewChipFontSize(String text, double fontSize, double maxWidth) {
       .clamp(fontSize * 0.6, fontSize);
 }
 
-/// Full 3-ribbon template preview (9:16 frame): top ticker with the
-/// scrolling text + red "تازہ ترین" chip, rotating logo bug + capsule
-/// top-right, middle Urdu ribbon + black "بریکنگ نیوز" chip, bottom
-/// English ribbon at half thickness + "HEADLINES" chip, lower third
-/// above the ribbons. Disabled ribbons are skipped and the layout
-/// reflows (same bottom-up rule as [NigraanFinalLayout]).
+/// Full template preview (9:16 frame).
+///
+/// v1.3.0 (§9 Final-template parity): the preview now mirrors the
+/// REAL reference template — the same geometry the export renders
+/// ([ParityGeometry] in lib/live/parity_template.dart): two FLUSH,
+/// equal-height bottom ribbons; the Urdu chip at the RIGHT with
+/// GOLD text; the English chip at the left with GOLD text; BOTH
+/// ribbons SCROLL (Urdu rightward, English leftward) with gold-dot
+/// separators; the logo sits bottom-right with the flipping
+/// TIME (with seconds) <-> Urdu DATE capsule directly under it.
+/// The optional top ticker still scrolls at the top. Ribbon
+/// heights carry a small legibility floor at preview sizes (the
+/// export uses the exact fractions).
 class NigraanFinalPreview extends StatelessWidget {
   const NigraanFinalPreview({
     super.key,
@@ -208,9 +217,11 @@ class NigraanFinalPreview extends StatelessWidget {
   Widget build(BuildContext context) {
     final h = height;
     final w = h * 9 / 16;
+    // Parity fractions at preview scale (reference 1080x1920).
+    final g = ParityGeometry.forSize(1080, 1920);
+    final scaleW = w / 1080;
+    final ribbonH = (g.ribbonH * (h / 1920)).clamp(22.0, 200.0);
     final tickerH = (h * 0.055).clamp(26.0, 44.0);
-    final englishH = tickerH / 2;
-    final urduH = tickerH;
     const gap = 6.0;
     final ltH = (h * 0.10).clamp(36.0, 200.0);
 
@@ -223,26 +234,21 @@ class NigraanFinalPreview extends StatelessWidget {
     final hasInterviewPlate = preset.showInterviewPlate &&
         preset.interviewName.trim().isNotEmpty;
 
-    final urduTop =
-        (showEnglish ? h - englishH - gap : h) - urduH;
-    final lowerThirdTop = (showUrdu
-            ? urduTop - gap
-            : (showEnglish ? h - englishH - gap : h)) -
-        ltH;
-    // Interview plate stacks above the lower third (or above the
-    // lowest ribbon when there is no lower third) — Phase 6.
-    // Minimum 56px so tag + name + designation always fit (§14
-    // rule 4: no overflow).
+    // Flush stack: English at the very bottom, Urdu directly on it.
+    final englishTop = h - ribbonH;
+    final urduTop = (showEnglish ? englishTop : h) - ribbonH;
+    final ribbonsTop = showUrdu ? urduTop : (showEnglish ? englishTop : h);
+    final lowerThirdTop = ribbonsTop - gap - ltH;
     final plateH = (h * 0.08).clamp(56.0, 120.0);
-    final interviewTop = hasLowerThird
-        ? lowerThirdTop - gap - plateH
-        : (showUrdu
-                ? urduTop - gap
-                : (showEnglish ? h - englishH - gap : h)) -
-            gap -
-            plateH;
+    final interviewTop =
+        (hasLowerThird ? lowerThirdTop : ribbonsTop) - gap - plateH;
 
-    TextStyle ribbonStyle(RibbonConfig ribbon, double stripH) {
+    final logoW = g.logoVisibleW * scaleW;
+    final logoH = logoW * 347 / 422;
+    final capsuleH = (g.capsuleH * (h / 1920)).clamp(15.0, 200.0);
+    final logoRight = g.logoMargin * scaleW;
+
+    TextStyle topStyle(RibbonConfig ribbon, double stripH) {
       final size = NigraanFinalLayout.ribbonFontSize(ribbon, stripH);
       return TextStyle(
         color: Colors.white,
@@ -252,15 +258,13 @@ class NigraanFinalPreview extends StatelessWidget {
       );
     }
 
-    Widget chip(
+    Widget topChip(
       String label,
       Color bg,
       double stripH, {
       String? fontFamily,
       double fontFactor = 0.45,
     }) {
-      // Fixed ribbon labels shrink to fit (never truncate, never
-      // overflow the row — the scrolling text takes the rest).
       final maxChipW = w * 0.45;
       final chipFontSize = fitPreviewChipFontSize(
         label,
@@ -289,6 +293,45 @@ class NigraanFinalPreview extends StatelessWidget {
       );
     }
 
+    // Parity chip: black, GOLD text, fixed reference width, gold
+    // divider on the window side.
+    Widget parityChip({
+      required String label,
+      required double widthPx,
+      required bool dividerOnLeft,
+      String? fontFamily,
+      required double fontSize,
+    }) {
+      return Container(
+        width: widthPx,
+        color: Colors.black,
+        child: Stack(
+          children: [
+            Center(
+              child: Text(
+                label,
+                style: TextStyle(
+                  color: const Color(0xFFF5C542),
+                  fontSize: fontSize,
+                  fontWeight: FontWeight.bold,
+                  fontFamily: fontFamily,
+                ),
+                maxLines: 1,
+                softWrap: false,
+              ),
+            ),
+            Positioned(
+              top: 0,
+              bottom: 0,
+              left: dividerOnLeft ? 0 : null,
+              right: dividerOnLeft ? null : 0,
+              child: Container(width: 1.5, color: const Color(0xFFF5C542)),
+            ),
+          ],
+        ),
+      );
+    }
+
     final initial = preset.name.trim().isEmpty
         ? 'N'
         : preset.name.trim()[0].toUpperCase();
@@ -303,7 +346,6 @@ class NigraanFinalPreview extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: Stack(
         children: [
-          // Video area hint (the template overlays the video).
           const Positioned.fill(
             child: Center(
               child: Icon(
@@ -324,7 +366,7 @@ class NigraanFinalPreview extends StatelessWidget {
                 color: Color(preset.topRibbon.color),
                 child: Row(
                   children: [
-                    chip(
+                    topChip(
                       NigraanFinalLayout.tickerChipText,
                       const Color(0xFFD50000),
                       tickerH,
@@ -339,7 +381,7 @@ class NigraanFinalPreview extends StatelessWidget {
                           text: preset.topRibbon.text,
                           speed: preset.topRibbon.speed,
                           direction: preset.topRibbon.direction,
-                          style: ribbonStyle(preset.topRibbon, tickerH),
+                          style: topStyle(preset.topRibbon, tickerH),
                         ),
                       ),
                     ),
@@ -347,17 +389,7 @@ class NigraanFinalPreview extends StatelessWidget {
                 ),
               ),
             ),
-          Positioned(
-            key: const Key('preview-logo-bug'),
-            top: (showTicker ? tickerH : 0) + 8,
-            right: 8,
-            child: LogoBug(
-              logoPath: preset.logoPath,
-              initial: initial,
-              size: 52,
-            ),
-          ),
-          // Category chip + intro/outro markers (Phase 6, top-left).
+          // Category chip + intro/outro markers (top-left).
           Positioned(
             top: (showTicker ? tickerH : 0) + 8,
             left: 8,
@@ -535,44 +567,72 @@ class NigraanFinalPreview extends StatelessWidget {
                 ),
               ),
             ),
+          // Logo + flipping capsule stack, bottom-right, sitting
+          // directly on the ribbons (v1.3.0 parity).
+          Positioned(
+            key: const Key('preview-logo-bug'),
+            right: logoRight,
+            bottom: (showUrdu || showEnglish)
+                ? (h - ribbonsTop) + capsuleH
+                : capsuleH + 4,
+            child: _ParityLogoBox(
+              logoPath: preset.logoPath,
+              initial: initial,
+              width: logoW,
+              height: logoH,
+            ),
+          ),
+          Positioned(
+            right: logoRight,
+            bottom: showUrdu || showEnglish ? h - ribbonsTop : 4,
+            child: _ParityCapsule(
+              width: logoW,
+              height: capsuleH,
+              fontReady: fontReady,
+            ),
+          ),
           if (showUrdu)
             Positioned(
               key: const Key('preview-middle-ribbon'),
               top: urduTop,
               left: 0,
               right: 0,
-              height: urduH,
+              height: ribbonH,
               child: Container(
                 color: Color(preset.urduRibbon.color),
-                child: Row(
+                child: Column(
                   children: [
-                    if (preset.showBreakingBanner)
-                      chip(
-                        NigraanFinalLayout.urduChipText,
-                        Colors.black,
-                        urduH,
-                        fontFamily: _kasheeda(
-                          NigraanFinalLayout.urduChipText,
-                        ),
-                      ),
+                    Container(height: 2, color: const Color(0xFFF5C542)),
                     Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        child: Text(
-                          preset.urduRibbon.text.isEmpty
-                              ? 'قومی خبریں'
-                              : preset.urduRibbon.text,
-                          style: ribbonStyle(preset.urduRibbon, urduH)
-                              .copyWith(
-                            color: preset.urduRibbon.text.isEmpty
-                                ? Colors.white70
-                                : Colors.white,
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: _ParityScrollText(
+                              text: preset.urduRibbon.text.isEmpty
+                                  ? 'قومی خبریں'
+                                  : preset.urduRibbon.text,
+                              rtl: true,
+                              speedPxPerSec: g.scrollSpeed * scaleW,
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: ribbonH * 0.5625,
+                                fontWeight: FontWeight.bold,
+                                fontFamily:
+                                    _kasheeda(preset.urduRibbon.text),
+                              ),
+                            ),
                           ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.right,
-                          textDirection: TextDirection.rtl,
-                        ),
+                          if (preset.showBreakingBanner)
+                            parityChip(
+                              label: NigraanFinalLayout.urduChipText,
+                              widthPx: g.urduChipW * scaleW,
+                              dividerOnLeft: true,
+                              fontFamily: _kasheeda(
+                                NigraanFinalLayout.urduChipText,
+                              ),
+                              fontSize: ribbonH * 0.45,
+                            ),
+                        ],
                       ),
                     ),
                   ],
@@ -585,35 +645,35 @@ class NigraanFinalPreview extends StatelessWidget {
               left: 0,
               right: 0,
               bottom: 0,
-              height: englishH,
+              height: ribbonH,
               child: Container(
                 color: Color(preset.englishRibbon.color),
-                child: Row(
+                child: Column(
                   children: [
-                    chip(
-                      NigraanFinalLayout.englishChipText,
-                      Colors.black,
-                      englishH,
-                      fontFactor: 0.55,
-                    ),
+                    Container(height: 2, color: const Color(0xFFF5C542)),
                     Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        child: Text(
-                          preset.englishRibbon.text.isEmpty
-                              ? 'International headlines'
-                              : preset.englishRibbon.text,
-                          style: ribbonStyle(
-                            preset.englishRibbon,
-                            englishH,
-                          ).copyWith(
-                            color: preset.englishRibbon.text.isEmpty
-                                ? Colors.white70
-                                : Colors.white,
+                      child: Row(
+                        children: [
+                          parityChip(
+                            label: NigraanFinalLayout.englishChipText,
+                            widthPx: g.englishChipW * scaleW,
+                            dividerOnLeft: false,
+                            fontSize: ribbonH * 0.45,
                           ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                          Expanded(
+                            child: _ParityScrollText(
+                              text: preset.englishRibbon.text.isEmpty
+                                  ? 'International headlines'
+                                  : preset.englishRibbon.text,
+                              rtl: false,
+                              speedPxPerSec: g.scrollSpeed * scaleW,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                              ).copyWith(fontSize: ribbonH * 0.53),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
@@ -633,6 +693,247 @@ class NigraanFinalPreview extends StatelessWidget {
               frameHeight: h,
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// The parity logo box: the picked logo image fitted into the
+/// reference's VISIBLE box (185/1080 wide, 422:347), or the
+/// channel initial tile when no logo is picked.
+class _ParityLogoBox extends StatelessWidget {
+  const _ParityLogoBox({
+    required this.logoPath,
+    required this.initial,
+    required this.width,
+    required this.height,
+  });
+
+  final String? logoPath;
+  final String initial;
+  final double width;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    final path = logoPath;
+    if (path != null && path.isNotEmpty) {
+      return SizedBox(
+        width: width,
+        height: height,
+        child: Image.file(
+          File(path),
+          fit: BoxFit.contain,
+          errorBuilder: (_, __, ___) => _tile(),
+        ),
+      );
+    }
+    return _tile();
+  }
+
+  Widget _tile() => Container(
+        width: width,
+        height: height,
+        decoration: BoxDecoration(
+          color: const Color(0xFF7C3AED),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        alignment: Alignment.center,
+        child: Text(
+          initial,
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: width * 0.4,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      );
+}
+
+/// The flipping TIME <-> Urdu DATE capsule (3s per face), black at
+/// 67% alpha with a gold top line — the widget twin of the export's
+/// drawtext clock + date PNG pair.
+class _ParityCapsule extends StatefulWidget {
+  const _ParityCapsule({
+    required this.width,
+    required this.height,
+    required this.fontReady,
+  });
+
+  final double width;
+  final double height;
+  final bool fontReady;
+
+  @override
+  State<_ParityCapsule> createState() => _ParityCapsuleState();
+}
+
+class _ParityCapsuleState extends State<_ParityCapsule> {
+  Timer? _timer;
+  bool _showDate = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (mounted) setState(() => _showDate = !_showDate);
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final dateFamily = widget.fontReady
+        ? AssetDownloadService.kasheedaFamily
+        : null;
+    return Container(
+      width: widget.width,
+      height: widget.height,
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.67),
+        borderRadius: BorderRadius.circular(4),
+        border: const Border(
+          top: BorderSide(color: Color(0xFFF5C542), width: 2),
+        ),
+      ),
+      alignment: Alignment.center,
+      child: _showDate
+          ? FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                parityUrduDate(now),
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: widget.height * 0.55,
+                  fontFamily: dateFamily,
+                ),
+                maxLines: 1,
+                softWrap: false,
+              ),
+            )
+          : Text(
+              parityTimeString(now),
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: widget.height * 0.55,
+                fontWeight: FontWeight.bold,
+              ),
+              maxLines: 1,
+              softWrap: false,
+            ),
+    );
+  }
+}
+
+/// One parity ribbon's scrolling headline sequence: the headlines
+/// of [text] joined by gold dots, looping seamlessly — RTL moves
+/// RIGHTWARD, LTR moves leftward (the reference directions).
+class _ParityScrollText extends StatefulWidget {
+  const _ParityScrollText({
+    required this.text,
+    required this.rtl,
+    required this.speedPxPerSec,
+    required this.style,
+  });
+
+  final String text;
+  final bool rtl;
+  final double speedPxPerSec;
+  final TextStyle style;
+
+  @override
+  State<_ParityScrollText> createState() => _ParityScrollTextState();
+}
+
+class _ParityScrollTextState extends State<_ParityScrollText>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(vsync: this);
+  double _seqW = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _measureAndRestart());
+  }
+
+  @override
+  void didUpdateWidget(_ParityScrollText oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.text != widget.text || oldWidget.style != widget.style) {
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => _measureAndRestart());
+    }
+  }
+
+  String get _sequence {
+    final parts = paritySplitHeadlines(widget.text);
+    if (parts.isEmpty) return widget.text;
+    return '${parts.join('  ●  ')}  ●  ';
+  }
+
+  void _measureAndRestart() {
+    if (!mounted) return;
+    final painter = TextPainter(
+      text: TextSpan(text: _sequence, style: widget.style),
+      textDirection: widget.rtl ? TextDirection.rtl : TextDirection.ltr,
+      maxLines: 1,
+    )..layout();
+    _seqW = painter.width;
+    if (_seqW <= 0) return;
+    final speed = widget.speedPxPerSec <= 0 ? 20.0 : widget.speedPxPerSec;
+    _controller.duration =
+        Duration(milliseconds: (_seqW / speed * 1000).round());
+    _controller.repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRect(
+      child: AnimatedBuilder(
+        animation: _controller,
+        builder: (context, child) {
+          if (_seqW <= 0) return const SizedBox.shrink();
+          final travelled = _controller.value * _seqW;
+          final x = widget.rtl ? -_seqW + travelled : -travelled;
+          return Stack(
+            children: [
+              Transform.translate(
+                offset: Offset(x, 0),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: child,
+                ),
+              ),
+              Transform.translate(
+                offset: Offset(x + _seqW, 0),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: child,
+                ),
+              ),
+            ],
+          );
+        },
+        child: Text(
+          _sequence,
+          style: widget.style,
+          maxLines: 1,
+          softWrap: false,
+          textDirection: widget.rtl ? TextDirection.rtl : TextDirection.ltr,
+        ),
       ),
     );
   }

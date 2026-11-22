@@ -37,9 +37,10 @@ class AppConfig {
   // Full-screen ad after a video export.
   static const bool interstitialAdEnabled = true;
 
-  // Rewarded ad that unlocks the Premium AI tools. If this is false,
-  // the AI tools work without watching an ad.
-  static const bool rewardedAdEnabled = true;
+  // (v1.3.0 §8: the old rewarded-ad feature switch — "rewarded ad
+  // that unlocks the Premium AI tools" — is REMOVED. Premium tools
+  // unlock with COINS only; rewarded ads exist solely to earn coins
+  // via the Coins screen's `rewarded_coins` placement below.)
 
   // Native ad card in the home tools feed. NOTE: the native slot
   // was an AdMob format and was removed with AdMob (defect #4) —
@@ -129,20 +130,22 @@ class AppConfig {
   static const int advertisingBannerDurationHours = 2;
 
   // ON-DEMAND ASSETS (user order 20 Nov 2026: keep the app as small as
-  // possible). The heavy News Studio assets are NOT bundled — they are
-  // downloaded on first use and cached in app documents by
-  // AssetDownloadService (lib/services/asset_download_service.dart):
+  // possible). The heavy News Studio assets are cached in app documents
+  // by AssetDownloadService (lib/services/asset_download_service.dart):
   //   - Kasheeda font (12.6 MB TTF): loaded via FontLoader from the
   //     cached file — Urdu (Nastaleeq) rendering for ribbons/tickers
   //     (FFmpeg drawtext cannot shape Urdu, so the template renderer
   //     draws PNG overlays with this font).
-  //   - Nigraan intro (10s, 854x480 LANDSCAPE, 10.005s): portrait export
-  //     needs scale/crop (scale to 720 wide + centre-crop to 720x1280).
-  // URLs are EMPTY until the files are hosted at release time (the parent
-  // agent hosts them); NEVER hardcode a fake/placeholder URL here — an
-  // empty URL means "not hosted yet" and the service throws a clear
-  // error instead of downloading garbage. Remote config (tj-pro.json)
-  // may override these with `kasheeda_font_url` / `nigraan_intro_url`.
+  //   - Nigraan intro (10s, 854x480 LANDSCAPE, 10.005s).
+  // v1.3.0 (§9 parity): the intro now ALSO ships bundled
+  // (assets/templates/nigraan_intro.mp4) and the font is extracted
+  // from a bundled asset when one is present — the cache is filled
+  // from the bundle first, the URLs below remain a remote override.
+  // URLs are EMPTY until the files are hosted at release time; NEVER
+  // hardcode a fake/placeholder URL here — an empty URL means "not
+  // hosted yet" and the service throws a clear error instead of
+  // downloading garbage. Remote config (tj-pro.json) may override
+  // these with `kasheeda_font_url` / `nigraan_intro_url`.
   static const String kasheedaFontUrl = '';
   static const String nigraanIntroUrl = '';
 
@@ -162,7 +165,11 @@ class AppConfig {
   static const bool unityRewardedEnabled = true;
   static const bool unityInterstitialEnabled = true;
   static const String unityGameId = '800418048';
-  static const String unityRewardedPlacementId = 'BP_Rewarded_Android';
+  // (v1.3.0 §8: the old unlock placement id
+  // ('BP_Rewarded_Android') is REMOVED from the unlock flow — there
+  // is no ad-unlock flow any more. The only rewarded placement the
+  // app uses is the earn-coins one, `unityRewardedCoinsPlacementId`
+  // below.)
   static const String unityInterstitialPlacementId = 'BP_Interstitial_Android';
 
   // Unity BANNER placement (one-build, defect #4 — the banner was

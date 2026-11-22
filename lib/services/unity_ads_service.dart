@@ -81,13 +81,18 @@ class UnityAdsService {
 
   /// Load the rewarded video ad. Called at init and automatically
   /// after each show so the next ad is ready.
+  ///
+  /// v1.3.0 (§8): rewarded ads are EARN-COINS ONLY — this preloads the
+  /// coins placement (`rewarded_coins`). The old Premium-unlock
+  /// placement is gone; premium tools unlock with coins.
   static Future<bool> loadRewardedAd() async {
-    return loadRewardedAdForPlacement(AppConfig.unityRewardedPlacementId);
+    return loadRewardedAdForPlacement(
+      AppConfig.unityRewardedCoinsPlacementId,
+    );
   }
 
   /// Load a rewarded video ad for a specific placement ID (e.g. the
-  /// coins placement `rewarded_coins`). The default [loadRewardedAd]
-  /// keeps serving the Premium unlock placement.
+  /// coins placement `rewarded_coins`).
   static Future<bool> loadRewardedAdForPlacement(String placementId) async {
     if (!_initialized || !AppConfig.unityRewardedEnabled) return false;
     try {
@@ -110,13 +115,17 @@ class UnityAdsService {
     }
   }
 
-  /// Show the rewarded video ad.
+  /// Show the rewarded video ad (the earn-coins placement).
   ///
   /// Returns [UnityAdResult.completed] when the user watched the full
-  /// ad (caller unlocks Premium), [UnityAdResult.skipped] when they
-  /// skipped early, [UnityAdResult.failed] on error.
+  /// ad (the caller credits coins), [UnityAdResult.skipped] when they
+  /// skipped early, [UnityAdResult.failed] on error. v1.3.0 (§8):
+  /// a completed rewarded ad NEVER unlocks premium tools directly —
+  /// it only earns coins (see CoinService.watchRewardedAd).
   static Future<UnityAdResult> showRewardedAd() async {
-    return showRewardedAdForPlacement(AppConfig.unityRewardedPlacementId);
+    return showRewardedAdForPlacement(
+      AppConfig.unityRewardedCoinsPlacementId,
+    );
   }
 
   /// Show a rewarded video ad for a specific placement ID (e.g. the
@@ -317,7 +326,7 @@ class UnityAdsService {
 
 /// Outcome of showing a Unity rewarded ad.
 enum UnityAdResult {
-  /// User watched the full ad — caller unlocks the reward.
+  /// User watched the full ad — caller credits the coin reward.
   completed,
 
   /// User skipped before the end — no reward.
