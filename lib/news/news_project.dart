@@ -110,6 +110,7 @@ class NewsProject {
     this.title = '',
     this.tehreer = '',
     this.voice = GeminiVoice.aoede,
+    this.studioVoiceId = '',
     this.voiceoverPath,
     this.voiceoverDurationSec,
     List<String>? clipPaths,
@@ -159,6 +160,13 @@ class NewsProject {
 
   /// Gemini voice for the voiceover (Aoede female / Charon male).
   GeminiVoice voice;
+
+  /// v1.5.0 (#19): the ONE unified voice selection — a
+  /// [StudioVoice] id from the shared 8-voice catalogue (6 Gemini +
+  /// Asad/Uzma Edge). Empty = derive from [voice] (the pre-v1.5.0
+  /// projects). When a Gemini voice is picked, [voice] is kept in
+  /// sync so every other reader of the project stays correct.
+  String studioVoiceId;
 
   /// Cached voiceover WAV path (from GeminiVoiceService), or null.
   String? voiceoverPath;
@@ -299,6 +307,7 @@ class NewsProject {
     String? title,
     String? tehreer,
     GeminiVoice? voice,
+    String? studioVoiceId,
     String? voiceoverPath,
     double? voiceoverDurationSec,
     List<String>? clipPaths,
@@ -333,6 +342,7 @@ class NewsProject {
       title: title ?? this.title,
       tehreer: tehreer ?? this.tehreer,
       voice: voice ?? this.voice,
+      studioVoiceId: studioVoiceId ?? this.studioVoiceId,
       voiceoverPath: voiceoverPath ?? this.voiceoverPath,
       voiceoverDurationSec:
           voiceoverDurationSec ?? this.voiceoverDurationSec,
@@ -373,6 +383,7 @@ class NewsProject {
         'title': title,
         'tehreer': tehreer,
         'voice': voice.apiName,
+        'studioVoiceId': studioVoiceId,
         'voiceoverPath': voiceoverPath,
         'voiceoverDurationSec': voiceoverDurationSec,
         'clipPaths': clipPaths,
@@ -452,6 +463,7 @@ class NewsProject {
       title: (json['title'] as String?) ?? '',
       tehreer: (json['tehreer'] as String?) ?? '',
       voice: voice,
+      studioVoiceId: (json['studioVoiceId'] as String?) ?? '',
       voiceoverPath: json['voiceoverPath'] as String?,
       voiceoverDurationSec:
           (json['voiceoverDurationSec'] as num?)?.toDouble(),

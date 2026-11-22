@@ -25,7 +25,13 @@ import 'coins_screen.dart';
 /// by the UI — if the ad is not ready or fails, the user is simply
 /// already inside the store.
 class StoreScreen extends StatefulWidget {
-  const StoreScreen({super.key});
+  const StoreScreen({super.key, this.initialCategory});
+
+  /// v1.5.0 (#31/#32): the category the store opens on — the Video
+  /// Editor's Templates tool and the News Studio Templates/Ribbons
+  /// pickers pass 'Templates' / 'Ribbons' so the store lands on that
+  /// section. Unknown/absent values fall back to the first category.
+  final String? initialCategory;
 
   @override
   State<StoreScreen> createState() => _StoreScreenState();
@@ -35,7 +41,11 @@ class _StoreScreenState extends State<StoreScreen> {
   final StoreService _store = StoreService.instance;
   final CoinService _coins = CoinService.instance;
 
-  String _category = StoreConfig.categories.first;
+  late String _category = StoreConfig.categories.contains(
+    widget.initialCategory,
+  )
+      ? widget.initialCategory!
+      : StoreConfig.categories.first;
   List<StoreItem> _items = const <StoreItem>[];
   Set<String> _ownedIds = <String>{};
   bool _loadingCache = true;

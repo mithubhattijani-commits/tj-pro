@@ -59,9 +59,18 @@ import 'auth_service.dart';
 import 'tts_processing.dart';
 
 /// Gemini voices available in News Maker. Aoede is the default.
+///
+/// v1.5.0 (#19): extended from 2 to the 6 Gemini voices of the ONE
+/// unified 8-voice catalogue ([StudioVoice.all] — these 6 plus the
+/// Asad/Uzma Edge voices), so News Maker and AI Voice Studio offer
+/// the SAME voices. [apiName] is what NewsProject persists.
 enum GeminiVoice {
   aoede('Aoede', 'Female'),
-  charon('Charon', 'Male');
+  charon('Charon', 'Male'),
+  kore('Kore', 'Female'),
+  fenrir('Fenrir', 'Male'),
+  puck('Puck', 'Male'),
+  zephyr('Zephyr', 'Female');
 
   const GeminiVoice(this.apiName, this.label);
   final String apiName;
