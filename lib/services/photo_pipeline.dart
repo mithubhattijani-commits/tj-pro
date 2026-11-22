@@ -38,6 +38,13 @@ class PhotoEditParams {
     this.sharpenDetail = 0, // 0..100, unsharp amount = v/100
     this.vignette = 0, // 0..100, radial edge darkening
     this.fade = 0, // 0..100, lifted blacks + reduced contrast
+    // v1.4.0 Adjust additions: global hue rotation in degrees
+    // (-180..180, applied as a uniform HSL hue shift), film grain
+    // amount 0..100, and an optional per-channel tone curve as four
+    // 256-entry LUTs ([rgb, r, g, b], see [applyToneCurve]).
+    this.hueShift = 0,
+    this.grain = 0,
+    this.curveLuts,
     this.text = '',
     this.textArgb = 0xFFFFFFFF,
     this.textSize = 48.0,
@@ -80,6 +87,9 @@ class PhotoEditParams {
   final double sharpenDetail;
   final double vignette;
   final double fade;
+  final double hueShift;
+  final double grain;
+  final List<List<int>>? curveLuts;
   final String text;
   final int textArgb;
   final double textSize;
@@ -1078,6 +1088,26 @@ Future<img.Image> applySegmentationMask(
 /// font — the one param the rasterizer can only honor best-effort.
 String? _fontFamilyForKey(String key) {
   switch (key) {
+    // v1.4.0: font_registry.dart ids (UrduFonts) map onto the same
+    // family names google_fonts registers when the preview loads them.
+    case 'jameel_kasheeda':
+      return 'JameelNooriNastaleeqKasheeda';
+    case 'noto_nastaliq_urdu':
+      return 'Noto Nastaliq Urdu';
+    case 'noto_naskh_arabic':
+      return 'Noto Naskh Arabic';
+    case 'scheherazade_new':
+      return 'Scheherazade New';
+    case 'amiri':
+      return 'Amiri';
+    case 'lateef':
+      return 'Lateef';
+    case 'harmattan':
+      return 'Harmattan';
+    case 'mirza':
+      return 'Mirza';
+    case 'katibeh':
+      return 'Katibeh';
     case 'nastaliq':
       return 'Noto Nastaliq Urdu';
     case 'naskh':
@@ -1125,6 +1155,16 @@ Future<Uint8List> rasterizeText({
   int outlineArgb = 0xFF000000,
   double outlineWidth = 2.0,
   ui.TextAlign textAlign = ui.TextAlign.center,
+  // v1.4.0 Text system: full shadow/glow control + an optional wrap
+  // width (the on-canvas text box width, in image pixels). Defaults
+  // reproduce the pre-v1.4.0 rendering exactly.
+  int shadowArgb = 0xDD000000,
+  double shadowDx = 2,
+  double shadowDy = 3,
+  double shadowBlur = 6,
+  int? glowArgb,
+  double glowBlur = 16,
+  double? maxWidthPx,
 }) async {
   // Opacity: scale the colour's own alpha (ARGB int maths, no reliance
   // on newer Color APIs).
@@ -1135,16 +1175,25 @@ Future<Uint8List> rasterizeText({
   final effOutlineArgb = (outlineArgb & 0x00FFFFFF) | (oAlpha << 24);
   final List<ui.Shadow> shadows = [];
   if (glow) {
+    final gAlpha = (((glowArgb ?? argb) >> 24) & 0xFF);
+    final effGlowArgb = glowArgb == null
+        ? effArgb
+        : (((gAlpha * opacity.clamp(0.0, 1.0)).round() << 24) |
+            (glowArgb & 0x00FFFFFF));
     shadows.add(ui.Shadow(
-      color: ui.Color(effArgb).withValues(alpha: 0.9),
-      blurRadius: 16,
+      color: ui.Color(effGlowArgb).withValues(alpha: 0.9),
+      blurRadius: glowBlur,
     ));
   }
   if (shadow) {
-    shadows.add(const ui.Shadow(
-      color: ui.Color(0xDD000000),
-      offset: ui.Offset(2, 3),
-      blurRadius: 6,
+    final sAlpha =
+        (((shadowArgb >> 24) & 0xFF) * opacity.clamp(0.0, 1.0)).round();
+    final effShadowArgb =
+        (shadowArgb & 0x00FFFFFF) | (sAlpha << 24);
+    shadows.add(ui.Shadow(
+      color: ui.Color(effShadowArgb),
+      offset: ui.Offset(shadowDx, shadowDy),
+      blurRadius: shadowBlur,
     ));
   }
 
@@ -1169,7 +1218,7 @@ Future<Uint8List> rasterizeText({
       )
       ..addText(text);
     return builder.build()
-      ..layout(const ui.ParagraphConstraints(width: 4000));
+      ..layout(ui.ParagraphConstraints(width: maxWidthPx ?? 4000));
   }
 
   final paragraph = buildPara(effArgb);
@@ -1224,15 +1273,134 @@ img.Image compositeText(
   img.Image base,
   Uint8List textPng,
   double nx,
-  double ny,
-) {
-  final textImg = img.decodeImage(textPng);
+  double ny, {
+  // v1.4.0: the on-canvas rotate/scale handle's angle, in degrees
+  // (clockwise, matching the preview's Transform.rotate).
+  double rotationDegrees = 0,
+}) {
+  var textImg = img.decodeImage(textPng);
   if (textImg == null) return base;
+  if (rotationDegrees != 0) {
+    textImg = img.copyRotate(textImg, angle: rotationDegrees);
+  }
   final dstX =
       (nx * base.width - textImg.width / 2).round().clamp(0, base.width - 1);
   final dstY =
       (ny * base.height - textImg.height / 2).round().clamp(0, base.height - 1);
   return img.compositeImage(base, textImg, dstX: dstX, dstY: dstY);
+}
+
+/// One text layer for the v1.4.0 multi-layer export. Mirrors the
+/// single-text fields of [PhotoEditParams] and adds the on-canvas box
+/// geometry (centre, width fraction, rotation) the new Text system
+/// edits live.
+class PhotoTextLayerParams {
+  const PhotoTextLayerParams({
+    required this.text,
+    required this.argb,
+    required this.size,
+    required this.centerX,
+    required this.centerY,
+    this.boxWidthFrac = 0.7,
+    this.rotationDegrees = 0,
+    this.shadow = true,
+    this.shadowArgb = 0xDD000000,
+    this.shadowDx = 2,
+    this.shadowDy = 3,
+    this.shadowBlur = 6,
+    this.glow = false,
+    this.glowArgb,
+    this.glowBlur = 16,
+    this.bg = false,
+    this.bgArgb = 0x8A000000,
+    this.lineHeight = 1.0,
+    this.fontKey = 'default',
+    this.bold = true,
+    this.italic = false,
+    this.opacity = 1.0,
+    this.letterSpacing = 0.0,
+    this.outline = false,
+    this.outlineArgb = 0xFF000000,
+    this.outlineWidth = 2.0,
+    this.textAlign = ui.TextAlign.center,
+  });
+
+  final String text;
+  final int argb;
+  final double size;
+  final double centerX;
+  final double centerY;
+  final double boxWidthFrac;
+  final double rotationDegrees;
+  final bool shadow;
+  final int shadowArgb;
+  final double shadowDx;
+  final double shadowDy;
+  final double shadowBlur;
+  final bool glow;
+  final int? glowArgb;
+  final double glowBlur;
+  final bool bg;
+  final int bgArgb;
+  final double lineHeight;
+  final String fontKey;
+  final bool bold;
+  final bool italic;
+  final double opacity;
+  final double letterSpacing;
+  final bool outline;
+  final int outlineArgb;
+  final double outlineWidth;
+  final ui.TextAlign textAlign;
+}
+
+/// One image/glyph overlay (PIP photo or sticker) for the export.
+/// Exactly one of [imagePath] / [pngBytes] is set. [scaleFrac] is the
+/// overlay width as a fraction of the photo width.
+class PhotoOverlayLayerParams {
+  const PhotoOverlayLayerParams({
+    this.imagePath,
+    this.pngBytes,
+    required this.centerX,
+    required this.centerY,
+    this.scaleFrac = 0.35,
+    this.rotationDegrees = 0,
+  });
+
+  final String? imagePath;
+  final Uint8List? pngBytes;
+  final double centerX;
+  final double centerY;
+  final double scaleFrac;
+  final double rotationDegrees;
+}
+
+PhotoTextLayerParams _layerFromParams(PhotoEditParams params) {
+  return PhotoTextLayerParams(
+    text: params.text,
+    argb: params.textArgb,
+    size: params.textSize,
+    centerX: params.textOffsetX,
+    centerY: params.textOffsetY,
+    shadow: params.textShadow,
+    glow: params.textGlow,
+    bg: params.textBg,
+    bgArgb: params.textBgArgb,
+    lineHeight: params.textLineHeight,
+    fontKey: params.textFont,
+    bold: params.textBold,
+    italic: params.textItalic,
+    opacity: params.textOpacity,
+    letterSpacing: params.textLetterSpacing,
+    outline: params.textOutline,
+    outlineArgb: params.textOutlineArgb,
+    outlineWidth: params.textOutlineWidth,
+    textAlign: params.textAlignIndex == 0
+        ? ui.TextAlign.left
+        : params.textAlignIndex == 2
+            ? ui.TextAlign.right
+            : ui.TextAlign.center,
+  );
 }
 
 /// Full export: decode the working file, apply the preview matrix, composite
@@ -1241,6 +1409,47 @@ img.Image compositeText(
 Future<File> exportPhoto({
   required File workingFile,
   required PhotoEditParams params,
+  required String outPath,
+  required bool keepAlpha,
+}) async {
+  return _exportCore(
+    workingFile: workingFile,
+    params: params,
+    layers: params.text.trim().isEmpty
+        ? const []
+        : [_layerFromParams(params)],
+    overlays: const [],
+    outPath: outPath,
+    keepAlpha: keepAlpha,
+  );
+}
+
+/// v1.4.0 export: same colour/LUT/Adjust pass as [exportPhoto], then
+/// every overlay (PIP/sticker) and EVERY text layer composited in
+/// order — the multi-layer Text system reaches the saved photo.
+Future<File> exportPhotoWithLayers({
+  required File workingFile,
+  required PhotoEditParams params,
+  required List<PhotoTextLayerParams> layers,
+  List<PhotoOverlayLayerParams> overlays = const [],
+  required String outPath,
+  required bool keepAlpha,
+}) async {
+  return _exportCore(
+    workingFile: workingFile,
+    params: params,
+    layers: layers,
+    overlays: overlays,
+    outPath: outPath,
+    keepAlpha: keepAlpha,
+  );
+}
+
+Future<File> _exportCore({
+  required File workingFile,
+  required PhotoEditParams params,
+  required List<PhotoTextLayerParams> layers,
+  required List<PhotoOverlayLayerParams> overlays,
   required String outPath,
   required bool keepAlpha,
 }) async {
@@ -1277,35 +1486,58 @@ Future<File> exportPhoto({
       sharpenDetail: params.sharpenDetail,
     );
   }
-  if (params.text.trim().isNotEmpty) {
+  // v1.4.0 Adjust additions, in pipeline order after the classic
+  // pass: tone curve -> global hue -> grain.
+  if (params.curveLuts != null && params.curveLuts!.length == 4) {
+    image = await applyToneCurve(image, params.curveLuts!);
+  }
+  if (params.hueShift != 0) {
+    image = await adjustHSL(
+      image,
+      List.generate(8, (_) => [params.hueShift, 1.0, 0.0]),
+    );
+  }
+  if (params.grain > 0) {
+    image = await applyGrain(image, params.grain);
+  }
+  // Overlays (PIP photos / sticker glyphs) sit under the text layers.
+  for (final o in overlays) {
+    image = await compositeOverlayLayer(image, o);
+  }
+  for (final layer in layers) {
+    if (layer.text.trim().isEmpty) continue;
     final textPng = await rasterizeText(
-      text: params.text,
-      argb: params.textArgb,
-      size: params.textSize,
-      shadow: params.textShadow,
-      glow: params.textGlow,
-      bg: params.textBg,
-      bgArgb: params.textBgArgb,
-      height: params.textLineHeight,
-      fontKey: params.textFont,
-      bold: params.textBold,
-      italic: params.textItalic,
-      opacity: params.textOpacity,
-      letterSpacing: params.textLetterSpacing,
-      outline: params.textOutline,
-      outlineArgb: params.textOutlineArgb,
-      outlineWidth: params.textOutlineWidth,
-      textAlign: params.textAlignIndex == 0
-          ? ui.TextAlign.left
-          : params.textAlignIndex == 2
-              ? ui.TextAlign.right
-              : ui.TextAlign.center,
+      text: layer.text,
+      argb: layer.argb,
+      size: layer.size,
+      shadow: layer.shadow,
+      shadowArgb: layer.shadowArgb,
+      shadowDx: layer.shadowDx,
+      shadowDy: layer.shadowDy,
+      shadowBlur: layer.shadowBlur,
+      glow: layer.glow,
+      glowArgb: layer.glowArgb,
+      glowBlur: layer.glowBlur,
+      bg: layer.bg,
+      bgArgb: layer.bgArgb,
+      height: layer.lineHeight,
+      fontKey: layer.fontKey,
+      bold: layer.bold,
+      italic: layer.italic,
+      opacity: layer.opacity,
+      letterSpacing: layer.letterSpacing,
+      outline: layer.outline,
+      outlineArgb: layer.outlineArgb,
+      outlineWidth: layer.outlineWidth,
+      textAlign: layer.textAlign,
+      maxWidthPx: layer.boxWidthFrac * image.width,
     );
     image = compositeText(
       image,
       textPng,
-      params.textOffsetX,
-      params.textOffsetY,
+      layer.centerX,
+      layer.centerY,
+      rotationDegrees: layer.rotationDegrees,
     );
   }
   final out = File(outPath);
@@ -1315,4 +1547,652 @@ Future<File> exportPhoto({
     await out.writeAsBytes(img.encodeJpg(image, quality: 92));
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// v1.4.0 additions: tone curve, grain, classic effects, doodle, overlays,
+// canvas expand, frame border, alpha (cutout) ops and makeup tint.
+// All algorithmic, on-device, FREE — same discipline as the rest of
+// this file (heavy per-pixel work runs in a compute isolate).
+// ---------------------------------------------------------------------------
+
+/// Mirror the photo top<->bottom (Rotate tool's second flip).
+img.Image flipVerticalPhoto(img.Image src) => img.flipVertical(src);
+
+Uint8List _curveJob(List<dynamic> args) {
+  final bytes = args[0] as Uint8List;
+  // Flattened [rgb, r, g, b] LUTs, 256 entries each.
+  final luts = args[1] as List<int>;
+  final out = Uint8List.fromList(bytes);
+  for (var i = 0; i < bytes.length; i += 4) {
+    for (var c = 0; c < 3; c++) {
+      final v = bytes[i + c];
+      final per = luts[(c + 1) * 256 + v];
+      out[i + c] = luts[per];
+    }
+  }
+  return out;
+}
+
+/// Apply a per-channel tone curve. [channelLuts] is [rgb, r, g, b],
+/// each a 256-entry table (0..255). A pixel channel first passes its
+/// own channel LUT, then the shared RGB LUT — the same composition
+/// order classic curve editors use.
+Future<img.Image> applyToneCurve(
+  img.Image src,
+  List<List<int>> channelLuts,
+) async {
+  assert(channelLuts.length == 4);
+  final flat = <int>[];
+  for (final lut in channelLuts) {
+    assert(lut.length == 256);
+    flat.addAll(lut.map((v) => v.clamp(0, 255)));
+  }
+  final rgba = src.convert(numChannels: 4);
+  final bytes = rgba.getBytes(order: img.ChannelOrder.rgba);
+  final out = await compute(_curveJob, [bytes, flat]);
+  return img.Image.fromBytes(
+    width: src.width,
+    height: src.height,
+    bytes: out.buffer,
+    numChannels: 4,
+    order: img.ChannelOrder.rgba,
+  );
+}
+
+/// Deterministic pseudo-random value 0..1 for pixel [seed] — an LCG,
+/// so preview and export grain agree and no dart:math Random state
+/// leaks between isolates.
+double _lcg(int seed) {
+  var s = (seed * 1103515245 + 12345) & 0x7FFFFFFF;
+  s = (s * 1103515245 + 12345) & 0x7FFFFFFF;
+  return (s % 10000) / 10000.0;
+}
+
+Uint8List _grainJob(List<dynamic> args) {
+  final bytes = args[0] as Uint8List;
+  final amount = (args[1] as num).toDouble().clamp(0, 100) / 100;
+  final out = Uint8List.fromList(bytes);
+  final amp = amount * 46;
+  for (var i = 0; i < bytes.length; i += 4) {
+    final n = (_lcg(i ~/ 4 + 7) - 0.5) * 2 * amp;
+    for (var c = 0; c < 3; c++) {
+      out[i + c] = (bytes[i + c] + n).clamp(0, 255).round();
+    }
+  }
+  return out;
+}
+
+/// Film grain: monochrome noise, [amount] 0..100.
+Future<img.Image> applyGrain(img.Image src, double amount) async {
+  if (amount <= 0) return src;
+  final rgba = src.convert(numChannels: 4);
+  final bytes = rgba.getBytes(order: img.ChannelOrder.rgba);
+  final out = await compute(_grainJob, [bytes, amount.clamp(0, 100)]);
+  return img.Image.fromBytes(
+    width: src.width,
+    height: src.height,
+    bytes: out.buffer,
+    numChannels: 4,
+    order: img.ChannelOrder.rgba,
+  );
+}
+
+Uint8List _effectJob(List<dynamic> args) {
+  final bytes = args[0] as Uint8List;
+  final w = args[1] as int;
+  final h = args[2] as int;
+  final mode = args[3] as String;
+  final t = (args[4] as num).toDouble().clamp(0.0, 1.0);
+  final src = img.decodeImage(bytes);
+  if (src == null) return bytes;
+  final rgba = src.convert(numChannels: 4);
+  final sb = rgba.getBytes(order: img.ChannelOrder.rgba);
+  final out = Uint8List.fromList(sb);
+  int idx(int x, int y) =>
+      (y.clamp(0, h - 1) * w + x.clamp(0, w - 1)) * 4;
+  switch (mode) {
+    case 'rgb':
+      final d = (2 + t * 10).round();
+      for (var y = 0; y < h; y++) {
+        for (var x = 0; x < w; x++) {
+          final o = idx(x, y);
+          out[o] = sb[idx(x + d, y)];
+          out[o + 2] = sb[idx(x - d, y)];
+        }
+      }
+    case 'glitch':
+      for (var y = 0; y < h; y++) {
+        final band = _lcg(y * 31 + 5);
+        final shift = band > 0.72 ? ((band - 0.72) * 220 * t).round() : 0;
+        final split = band > 0.86;
+        for (var x = 0; x < w; x++) {
+          final o = idx(x, y);
+          final s = idx(x + shift, y);
+          out[o] = sb[s];
+          out[o + 1] = sb[s + 1];
+          out[o + 2] = sb[s + 2];
+          if (split) {
+            out[o] = sb[idx(x + shift + 6, y)];
+            out[o + 2] = sb[idx(x + shift - 6, y) + 2];
+          }
+        }
+      }
+    case 'noise':
+      final amp = t * 90;
+      for (var i = 0; i < sb.length; i += 4) {
+        final n = (_lcg(i ~/ 4 + 13) - 0.5) * 2 * amp;
+        for (var c = 0; c < 3; c++) {
+          out[i + c] = (sb[i + c] + n).clamp(0, 255).round();
+        }
+      }
+    case 'tv':
+      for (var y = 0; y < h; y++) {
+        final dark = (y % 3 == 0) ? 1 - 0.38 * t : 1.0;
+        for (var x = 0; x < w; x++) {
+          final o = idx(x, y);
+          for (var c = 0; c < 3; c++) {
+            out[o + c] = (sb[o + c] * dark).round();
+          }
+        }
+      }
+    case 'ghost':
+      final d = (6 + t * 42).round();
+      final a = 0.45 * t;
+      for (var y = 0; y < h; y++) {
+        for (var x = 0; x < w; x++) {
+          final o = idx(x, y);
+          final s = idx(x + d, y);
+          for (var c = 0; c < 3; c++) {
+            out[o + c] = (sb[o + c] * (1 - a) + sb[s + c] * a).round();
+          }
+        }
+      }
+    case 'strobe':
+      for (var y = 0; y < h; y++) {
+        final invert = (y ~/ 14) % 2 == 0;
+        if (!invert) continue;
+        for (var x = 0; x < w; x++) {
+          final o = idx(x, y);
+          for (var c = 0; c < 3; c++) {
+            out[o + c] =
+                (sb[o + c] * (1 - t) + (255 - sb[o + c]) * t).round();
+          }
+        }
+      }
+    case 'tilt':
+      final blurred = img.gaussianBlur(rgba, radius: 6);
+      final bb = blurred.getBytes(order: img.ChannelOrder.rgba);
+      final cy = h / 2;
+      for (var y = 0; y < h; y++) {
+        final d = (y - cy).abs() / cy; // 0 centre .. 1 edge
+        final bw = ((d - 0.35) / 0.65).clamp(0.0, 1.0) * t;
+        if (bw <= 0) continue;
+        for (var x = 0; x < w; x++) {
+          final o = idx(x, y);
+          for (var c = 0; c < 3; c++) {
+            out[o + c] = (sb[o + c] * (1 - bw) + bb[o + c] * bw).round();
+          }
+        }
+      }
+    case 'warp':
+      final amp = t * 22;
+      for (var y = 0; y < h; y++) {
+        final dx = (math.sin(y / 26.0) * amp).round();
+        for (var x = 0; x < w; x++) {
+          final o = idx(x, y);
+          final s = idx(x + dx, y);
+          for (var c = 0; c < 4; c++) {
+            out[o + c] = sb[s + c];
+          }
+        }
+      }
+  }
+  return out;
+}
+
+/// The classic (non-AI) Effect set: 'glitch', 'rgb', 'noise', 'tv',
+/// 'ghost', 'strobe', 'tilt', 'warp'. [intensity] 0..1.
+Future<img.Image> applyClassicEffect(
+  img.Image src,
+  String effect, {
+  double intensity = 0.7,
+}) async {
+  final rgba = src.convert(numChannels: 4);
+  final bytes = rgba.getBytes(order: img.ChannelOrder.rgba);
+  final out = await compute(
+    _effectJob,
+    [bytes, src.width, src.height, effect, intensity.clamp(0.0, 1.0)],
+  );
+  return img.Image.fromBytes(
+    width: src.width,
+    height: src.height,
+    bytes: out.buffer,
+    numChannels: 4,
+    order: img.ChannelOrder.rgba,
+  );
+}
+
+/// One freehand stroke for the Doodle tool / mask painting. Points
+/// are normalized 0..1 in image space; [widthFrac] is the brush
+/// diameter as a fraction of the image width.
+class StrokePath {
+  const StrokePath({
+    required this.argb,
+    required this.widthFrac,
+    required this.points,
+  });
+
+  final int argb;
+  final double widthFrac;
+  final List<ui.Offset> points;
+}
+
+/// Stamp [strokes] onto [image] with round brush dabs along every
+/// segment. [alphaOnly] writes alpha=0 dabs instead of colour (the
+/// Cutout eraser). Mutates and returns [image].
+img.Image stampStrokes(
+  img.Image image,
+  List<StrokePath> strokes, {
+  bool alphaOnly = false,
+}) {
+  for (final s in strokes) {
+    if (s.points.isEmpty) continue;
+    final radius =
+        math.max(1, (s.widthFrac * image.width / 2).round());
+    final color = img.ColorRgba8(
+      (s.argb >> 16) & 0xFF,
+      (s.argb >> 8) & 0xFF,
+      s.argb & 0xFF,
+      alphaOnly ? 0 : (s.argb >> 24) & 0xFF,
+    );
+    void dab(double nx, double ny) {
+      final cx = (nx * image.width).round();
+      final cy = (ny * image.height).round();
+      if (alphaOnly) {
+        // img.fillCircle blends colour; for a true alpha erase, set
+        // the pixels directly inside the dab circle.
+        for (var y = cy - radius; y <= cy + radius; y++) {
+          if (y < 0 || y >= image.height) continue;
+          for (var x = cx - radius; x <= cx + radius; x++) {
+            if (x < 0 || x >= image.width) continue;
+            final dx = x - cx;
+            final dy = y - cy;
+            if (dx * dx + dy * dy > radius * radius) continue;
+            final px = image.getPixel(x, y);
+            image.setPixelRgba(x, y, px.r, px.g, px.b, 0);
+          }
+        }
+      } else {
+        img.fillCircle(image, x: cx, y: cy, radius: radius, color: color);
+      }
+    }
+
+    for (var i = 0; i < s.points.length; i++) {
+      final a = s.points[i];
+      if (i == 0) {
+        dab(a.dx, a.dy);
+        continue;
+      }
+      final b = s.points[i - 1];
+      final dist = (a - b).distance;
+      final steps = math.max(1, (dist * image.width / (radius / 2)).ceil());
+      for (var k = 1; k <= steps; k++) {
+        final t = k / steps;
+        dab(b.dx + (a.dx - b.dx) * t, b.dy + (a.dy - b.dy) * t);
+      }
+    }
+  }
+  return image;
+}
+
+/// Bake Doodle strokes into the photo (Doodle tool's Apply).
+img.Image drawDoodle(img.Image src, List<StrokePath> strokes) =>
+    stampStrokes(src, strokes);
+
+/// Build the Mi-GAN remove mask: black image, WHITE dabs where the
+/// user painted (the OnnxImageService flips to the model's
+/// 255=keep convention internally, per the build contract).
+img.Image maskFromStrokes(
+  int width,
+  int height,
+  List<StrokePath> strokes,
+) {
+  final mask = img.Image(width: width, height: height, numChannels: 4);
+  img.fill(mask, color: img.ColorRgba8(0, 0, 0, 255));
+  final white = strokes
+      .map((s) => StrokePath(
+            argb: 0xFFFFFFFF,
+            widthFrac: s.widthFrac,
+            points: s.points,
+          ))
+      .toList();
+  return stampStrokes(mask, white);
+}
+
+/// Composite one PIP/sticker overlay onto [base]: resized to
+/// [PhotoOverlayLayerParams.scaleFrac] of the base width, optionally
+/// rotated, centred at the normalized position (clamped so at least
+/// part of it stays on canvas).
+Future<img.Image> compositeOverlayLayer(
+  img.Image base,
+  PhotoOverlayLayerParams o,
+) async {
+  img.Image? ov;
+  if (o.pngBytes != null) {
+    ov = img.decodeImage(o.pngBytes!);
+  } else if (o.imagePath != null) {
+    final b = await File(o.imagePath!).readAsBytes();
+    ov = img.decodeImage(b);
+  }
+  if (ov == null) return base;
+  final targetW =
+      math.max(8, (o.scaleFrac.clamp(0.05, 1.5) * base.width).round());
+  var resized = img.copyResize(
+    ov.convert(numChannels: 4),
+    width: targetW,
+    interpolation: img.Interpolation.linear,
+  );
+  if (o.rotationDegrees != 0) {
+    resized = img.copyRotate(resized, angle: o.rotationDegrees);
+  }
+  final dstX = (o.centerX * base.width - resized.width / 2)
+      .round()
+      .clamp(-resized.width ~/ 2, base.width - resized.width ~/ 2);
+  final dstY = (o.centerY * base.height - resized.height / 2)
+      .round()
+      .clamp(-resized.height ~/ 2, base.height - resized.height ~/ 2);
+  return img.compositeImage(base, resized, dstX: dstX, dstY: dstY);
+}
+
+/// Extend the canvas to [ratioW]:[ratioH] WITHOUT cropping the
+/// photo (Canvas / Expand tools). The new area is filled by a
+/// cover-scaled copy of the photo itself: blurred ('blur'), flipped
+/// ('mirror') or a solid [fillArgb] ('color'). [scale] shrinks the
+/// photo inside the new canvas (1 = it touches the short sides).
+/// This is plain compositing — NOT generative AI outpainting, and
+/// the UI labels it that way.
+img.Image expandCanvas(
+  img.Image src,
+  int ratioW,
+  int ratioH, {
+  String fill = 'blur',
+  int fillArgb = 0xFF000000,
+  double scale = 1.0,
+}) {
+  final target = ratioW / ratioH;
+  final current = src.width / src.height;
+  if ((target - current).abs() < 0.01 && scale >= 1.0) return src;
+  int cw = src.width;
+  int ch = src.height;
+  if (target > current) {
+    cw = (src.height * target).round();
+  } else {
+    ch = (src.width / target).round();
+  }
+  final canvas = img.Image(width: cw, height: ch, numChannels: 4);
+  if (fill == 'color') {
+    img.fill(
+      canvas,
+      color: img.ColorRgba8(
+        (fillArgb >> 16) & 0xFF,
+        (fillArgb >> 8) & 0xFF,
+        fillArgb & 0xFF,
+        (fillArgb >> 24) & 0xFF,
+      ),
+    );
+  } else {
+    // Cover-fill: scale the photo to cover the canvas, centre-crop.
+    final s = math.max(cw / src.width, ch / src.height);
+    var cover = img.copyResize(
+      src.convert(numChannels: 4),
+      width: (src.width * s).round(),
+      height: (src.height * s).round(),
+      interpolation: img.Interpolation.linear,
+    );
+    cover = img.copyCrop(
+      cover,
+      x: (cover.width - cw) ~/ 2,
+      y: (cover.height - ch) ~/ 2,
+      width: cw,
+      height: ch,
+    );
+    if (fill == 'mirror') cover = img.flipHorizontal(cover);
+    if (fill == 'blur') cover = img.gaussianBlur(cover, radius: 14);
+    img.compositeImage(canvas, cover);
+  }
+  final fgScale = scale.clamp(0.3, 1.0);
+  var fg = src.convert(numChannels: 4);
+  if (fgScale < 1.0) {
+    fg = img.copyResize(
+      fg,
+      width: (src.width * fgScale).round(),
+      height: (src.height * fgScale).round(),
+      interpolation: img.Interpolation.linear,
+    );
+  }
+  return img.compositeImage(
+    canvas,
+    fg,
+    dstX: (cw - fg.width) ~/ 2,
+    dstY: (ch - fg.height) ~/ 2,
+  );
+}
+
+/// Flatten a transparent (cutout) photo onto a solid colour.
+img.Image flattenOnColor(img.Image src, int argb) {
+  final canvas = img.Image(
+    width: src.width,
+    height: src.height,
+    numChannels: 4,
+  );
+  img.fill(
+    canvas,
+    color: img.ColorRgba8(
+      (argb >> 16) & 0xFF,
+      (argb >> 8) & 0xFF,
+      argb & 0xFF,
+      (argb >> 24) & 0xFF,
+    ),
+  );
+  return img.compositeImage(canvas, src.convert(numChannels: 4));
+}
+
+/// Frame tool: a solid border of [widthPx] around the photo.
+img.Image addBorder(img.Image src, int widthPx, int argb) {
+  final b = widthPx.clamp(1, 400);
+  final canvas = img.Image(
+    width: src.width + b * 2,
+    height: src.height + b * 2,
+    numChannels: 4,
+  );
+  img.fill(
+    canvas,
+    color: img.ColorRgba8(
+      (argb >> 16) & 0xFF,
+      (argb >> 8) & 0xFF,
+      argb & 0xFF,
+      (argb >> 24) & 0xFF,
+    ),
+  );
+  return img.compositeImage(
+    canvas,
+    src.convert(numChannels: 4),
+    dstX: b,
+    dstY: b,
+  );
+}
+
+Uint8List _alphaMatteJob(List<dynamic> args) {
+  final bytes = args[0] as Uint8List;
+  final matteBytes = args[1] as Uint8List;
+  final out = Uint8List.fromList(bytes);
+  // The contract matte carries its values in the ALPHA channel. If
+  // a model build ever ships alpha=255 everywhere, fall back to the
+  // red channel so the cutout still works.
+  var alphaVaries = false;
+  for (var i = 3; i < matteBytes.length; i += 4) {
+    if (matteBytes[i] < 250) {
+      alphaVaries = true;
+      break;
+    }
+  }
+  for (var i = 0; i < bytes.length; i += 4) {
+    out[i + 3] = alphaVaries ? matteBytes[i + 3] : matteBytes[i];
+  }
+  return out;
+}
+
+/// Apply an AI alpha matte (OnnxImageService.alphaMatte result) to
+/// the photo: the matte becomes the photo's alpha channel.
+Future<img.Image> applyAlphaMatte(img.Image src, img.Image matte) async {
+  final m = matte.width == src.width && matte.height == src.height
+      ? matte
+      : img.copyResize(
+          matte,
+          width: src.width,
+          height: src.height,
+          interpolation: img.Interpolation.linear,
+        );
+  final rgba = src.convert(numChannels: 4);
+  final bytes = rgba.getBytes(order: img.ChannelOrder.rgba);
+  final mBytes =
+      m.convert(numChannels: 4).getBytes(order: img.ChannelOrder.rgba);
+  final out = await compute(_alphaMatteJob, [bytes, mBytes]);
+  return img.Image.fromBytes(
+    width: src.width,
+    height: src.height,
+    bytes: out.buffer,
+    numChannels: 4,
+    order: img.ChannelOrder.rgba,
+  );
+}
+
+/// Cutout Eraser: paint alpha away along [strokes].
+img.Image applyAlphaErase(img.Image src, List<StrokePath> strokes) =>
+    stampStrokes(src.convert(numChannels: 4), strokes, alphaOnly: true);
+
+Uint8List _outlineJob(List<dynamic> args) {
+  final bytes = args[0] as Uint8List;
+  final w = args[1] as int;
+  final h = args[2] as int;
+  final widthPx = (args[3] as num).round().clamp(1, 40);
+  final argb = args[4] as int;
+  final out = Uint8List.fromList(bytes);
+  bool opaque(int x, int y) {
+    if (x < 0 || y < 0 || x >= w || y >= h) return false;
+    return bytes[(y * w + x) * 4 + 3] > 24;
+  }
+
+  final r = (argb >> 16) & 0xFF;
+  final g = (argb >> 8) & 0xFF;
+  final b = argb & 0xFF;
+  for (var y = 0; y < h; y++) {
+    for (var x = 0; x < w; x++) {
+      if (opaque(x, y)) continue;
+      var near = false;
+      for (var dy = -widthPx; dy <= widthPx && !near; dy += 2) {
+        for (var dx = -widthPx; dx <= widthPx && !near; dx += 2) {
+          if (dx * dx + dy * dy > widthPx * widthPx) continue;
+          if (opaque(x + dx, y + dy)) near = true;
+        }
+      }
+      if (near) {
+        final i = (y * w + x) * 4;
+        out[i] = r;
+        out[i + 1] = g;
+        out[i + 2] = b;
+        out[i + 3] = 255;
+      }
+    }
+  }
+  return out;
+}
+
+/// Cutout Outline: stroke of [widthPx] in [argb] drawn on the
+/// transparent side of the subject's alpha edge.
+Future<img.Image> outlineFromAlpha(
+  img.Image src, {
+  required int widthPx,
+  required int argb,
+}) async {
+  final rgba = src.convert(numChannels: 4);
+  final bytes = rgba.getBytes(order: img.ChannelOrder.rgba);
+  final out = await compute(
+    _outlineJob,
+    [bytes, src.width, src.height, widthPx, argb],
+  );
+  return img.Image.fromBytes(
+    width: src.width,
+    height: src.height,
+    bytes: out.buffer,
+    numChannels: 4,
+    order: img.ChannelOrder.rgba,
+  );
+}
+
+Uint8List _tintJob(List<dynamic> args) {
+  final bytes = args[0] as Uint8List;
+  final w = args[1] as int;
+  final h = args[2] as int;
+  // Ellipses as [cx, cy, rx, ry] in normalized image space.
+  final ellipses = args[3] as List<List<double>>;
+  final argb = args[4] as int;
+  final strength = (args[5] as num).toDouble().clamp(0.0, 1.0);
+  final out = Uint8List.fromList(bytes);
+  final tr = ((argb >> 16) & 0xFF).toDouble();
+  final tg = ((argb >> 8) & 0xFF).toDouble();
+  final tb = (argb & 0xFF).toDouble();
+  for (final e in ellipses) {
+    final cx = e[0] * w;
+    final cy = e[1] * h;
+    final rx = math.max(2.0, e[2] * w);
+    final ry = math.max(2.0, e[3] * h);
+    final x0 = math.max(0, (cx - rx).floor());
+    final x1 = math.min(w - 1, (cx + rx).ceil());
+    final y0 = math.max(0, (cy - ry).floor());
+    final y1 = math.min(h - 1, (cy + ry).ceil());
+    for (var y = y0; y <= y1; y++) {
+      for (var x = x0; x <= x1; x++) {
+        final dx = (x - cx) / rx;
+        final dy = (y - cy) / ry;
+        final d2 = dx * dx + dy * dy;
+        if (d2 > 1) continue;
+        // Feathered edge: full strength in the middle 60%.
+        final weight = ((1 - d2) / 0.4).clamp(0.0, 1.0) * strength;
+        final i = (y * w + x) * 4;
+        out[i] = (bytes[i] * (1 - weight) + tr * weight).round();
+        out[i + 1] = (bytes[i + 1] * (1 - weight) + tg * weight).round();
+        out[i + 2] = (bytes[i + 2] * (1 - weight) + tb * weight).round();
+      }
+    }
+  }
+  return out;
+}
+
+/// Makeup tint: blend [argb] into elliptical regions (lips / cheeks)
+/// with a feathered edge. The caller derives the ellipses from face
+/// bounds — see the photo editor's Makeup panel, which documents
+/// that these are approximations (the face detector in use returns
+/// bounds, not landmarks).
+Future<img.Image> tintEllipses(
+  img.Image src,
+  List<List<double>> ellipses, {
+  required int argb,
+  required double strength,
+}) async {
+  if (ellipses.isEmpty) return src;
+  final rgba = src.convert(numChannels: 4);
+  final bytes = rgba.getBytes(order: img.ChannelOrder.rgba);
+  final out = await compute(
+    _tintJob,
+    [bytes, src.width, src.height, ellipses, argb, strength],
+  );
+  return img.Image.fromBytes(
+    width: src.width,
+    height: src.height,
+    bytes: out.buffer,
+    numChannels: 4,
+    order: img.ChannelOrder.rgba,
+  );
 }
