@@ -21,12 +21,19 @@ library;
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_session.dart';
 import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
+import 'package:image/image.dart' as img;
+import 'package:onnxruntime/onnxruntime.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+
+import 'model_pack_service.dart';
+import 'onnx_image_service.dart';
 
 /// Burn-in quality.
 enum VideoExportQuality {
@@ -360,6 +367,430 @@ class VideoExportService {
       );
     }
     return filters.join(',');
+  }
+
+  // ------------------------------------------------------------------
+  // v1.4.0 — MODNet HQ background removal (export path)
+  // ------------------------------------------------------------------
+
+  /// HQ background removal for ONE exported video: frames are
+  /// sampled at [sampleFps], each frame's alpha matte comes from
+  /// the MODNet ONNX pack via [OnnxImageService.alphaMatte]
+  /// ('modnet', 512×512 — the tool-test battery's PASS verdict for
+  /// video matting, Apache-2.0), the matted RGBA frames are then
+  /// composited over the chosen background with ffmpeg's overlay
+  /// (the matte is held between sampled frames and upsampled to
+  /// 30 fps — the same hold behaviour as the ML Kit path in
+  /// pro_vision.dart, but with the sharper MODNet matte).
+  ///
+  /// Returns the composited MP4 path inside [workDir]. Throws an
+  /// [Exception] with a plain message on any failure (missing pack,
+  /// unprobeable input, ffmpeg failure) — callers keep the previous
+  /// output and fall back to the ML Kit path.
+  static Future<String> modnetRemoveBackground({
+    required String input,
+    required String backgroundKind,
+    String? backgroundColor,
+    String? backgroundImagePath,
+    required Directory workDir,
+    double sampleFps = 5,
+    int width = 480,
+    void Function(double progress)? onProgress,
+    void Function(String step)? onStep,
+  }) async {
+    final packs = ModelPackService.instance;
+    final ready = await packs.ensurePack('modnet');
+    if (!ready) {
+      throw Exception(
+        'MODNet model pack download nahi hua — internet se dobara '
+        'try karein.',
+      );
+    }
+    final size = await probeVideoSize(File(input));
+    if (size == null) {
+      throw Exception('Video ka size probe nahi hua.');
+    }
+    var outW = size.width;
+    var outH = size.height;
+    outW -= outW % 2;
+    outH -= outH % 2;
+    var cutW = width.clamp(2, 480);
+    cutW -= cutW % 2;
+
+    final stamp = DateTime.now().millisecondsSinceEpoch;
+    final framesDir = Directory(p.join(workDir.path, 'modnet_f_$stamp'));
+    final rgbaDir = Directory(p.join(workDir.path, 'modnet_r_$stamp'));
+    await framesDir.create(recursive: true);
+    await rgbaDir.create(recursive: true);
+
+    onStep?.call('Frames…');
+    final extract = await _execute([
+      '-y',
+      '-i',
+      input,
+      '-vf',
+      'fps=$sampleFps,scale=$cutW:-2',
+      p.join(framesDir.path, 'frame_%04d.png'),
+    ]);
+    if (!ReturnCode.isSuccess(await extract.getReturnCode())) {
+      throw Exception('MODNet frame extract fail ho gaya.');
+    }
+    final frameFiles = framesDir
+        .listSync()
+        .whereType<File>()
+        .where((f) => f.path.endsWith('.png'))
+        .toList()
+      ..sort((a, b) => a.path.compareTo(b.path));
+    if (frameFiles.isEmpty) {
+      throw Exception('MODNet ke liye koi frame nahi mila.');
+    }
+
+    onStep?.call('Matte (MODNet)…');
+    img.Image? lastMatte;
+    for (var i = 0; i < frameFiles.length; i++) {
+      final bytes = await frameFiles[i].readAsBytes();
+      final decoded = img.decodeImage(bytes);
+      if (decoded == null) {
+        if (lastMatte == null) {
+          throw Exception('Pehla frame decode nahi hua.');
+        }
+      } else {
+        final matte =
+            await OnnxImageService.instance.alphaMatte('modnet', decoded);
+        if (matte != null) lastMatte = matte;
+        if (lastMatte == null) {
+          throw Exception('MODNet matte nahi bana (pack issue).');
+        }
+      }
+      final toWrite = lastMatte;
+      if (toWrite == null) {
+        throw Exception('MODNet matte nahi bana (pack issue).');
+      }
+      final name = 'frame_${(i + 1).toString().padLeft(4, '0')}.png';
+      await File(p.join(rgbaDir.path, name))
+          .writeAsBytes(img.encodePng(toWrite));
+      onProgress?.call((i + 1) / frameFiles.length * 0.7);
+    }
+
+    onStep?.call('Compositing…');
+    final outPath = p.join(workDir.path, 'modnet_bg_$stamp.mp4');
+    final args = <String>['-y', '-i', input];
+    if (backgroundKind == 'image' &&
+        backgroundImagePath != null &&
+        backgroundImagePath.isNotEmpty) {
+      args.addAll(['-loop', '1', '-framerate', '30', '-i', backgroundImagePath]);
+    } else {
+      var hex = (backgroundColor ?? '#000000').replaceAll('#', '');
+      if (hex.length != 6) hex = '000000';
+      args.addAll([
+        '-f',
+        'lavfi',
+        '-i',
+        'color=c=0x$hex:s=${outW}x$outH:r=30',
+      ]);
+    }
+    args.addAll([
+      '-framerate',
+      '$sampleFps',
+      '-i',
+      p.join(rgbaDir.path, 'frame_%04d.png'),
+      '-filter_complex',
+      '[2:v]fps=30,scale=$outW:$outH:flags=lanczos,format=rgba[fg];'
+          '[1:v]scale=$outW:$outH,format=yuv420p[bg];'
+          '[bg][fg]overlay=0:0:format=auto,format=yuv420p[vout]',
+      '-map',
+      '[vout]',
+      '-map',
+      '0:a?',
+      '-c:v',
+      'libx264',
+      '-preset',
+      'veryfast',
+      '-crf',
+      '23',
+      '-c:a',
+      'copy',
+      '-shortest',
+      '-movflags',
+      '+faststart',
+      outPath,
+    ]);
+    final composite = await _execute(
+      args,
+      onProgress: (v) => onProgress?.call(0.7 + v * 0.3),
+      durationSeconds: size.durationSeconds,
+    );
+    if (!ReturnCode.isSuccess(await composite.getReturnCode())) {
+      final logs = await composite.getAllLogsAsString() ?? '';
+      final tail = logs.length > 400 ? logs.substring(logs.length - 400) : logs;
+      throw Exception('MODNet composite fail: $tail');
+    }
+    onProgress?.call(1);
+    return outPath;
+  }
+
+  // ------------------------------------------------------------------
+  // v1.4.0 — Smooth Slow-Mo (AI): RIFE v4.6 frame interpolation
+  // ------------------------------------------------------------------
+
+  static bool _rifeEnvReady = false;
+
+  /// Flattens an OrtValue payload (typed list or nested lists) into
+  /// a fresh Float32List — same tolerance as OnnxImageService.
+  static Float32List _flattenFloats(Object? value) {
+    if (value is Float32List) return Float32List.fromList(value);
+    if (value is Float64List) return Float32List.fromList(value);
+    if (value is List) {
+      final buf = <double>[];
+      void walk(Object? e) {
+        if (e is List) {
+          for (final s in e) {
+            walk(s);
+          }
+        } else if (e is num) {
+          buf.add(e.toDouble());
+        }
+      }
+
+      walk(value);
+      return Float32List.fromList(buf);
+    }
+    return Float32List(0);
+  }
+
+  /// AI smooth slow-motion for ONE clip file: consecutive frames
+  /// are extracted at 24 fps (processing scale capped at
+  /// 448×256), RIFE v4.6 (the `rife_v46` pack) interpolates the
+  /// midpoint frame of every pair (input tensor [1,7,H,W] =
+  /// frame A + frame B + a 0.5 timestep plane — exactly the
+  /// pre/post-processing verified in
+  /// tool-tests/05-audio-rife/rife/run_rife.py), and the doubled
+  /// frame sequence is re-encoded at the same 24 fps with the
+  /// audio slowed by atempo 0.5 — so the result plays at half
+  /// speed with REAL in-between frames instead of duplicated ones.
+  ///
+  /// Cap: clips up to ~10 s (longer input throws a plain-message
+  /// [Exception]). A missing pack also throws — fail-soft at the
+  /// CALLER, which keeps the original clip and shows the message.
+  /// Returns the slow-mo MP4 path inside [workDir].
+  static Future<String> smoothSlowMoAi({
+    required String inputPath,
+    required Directory workDir,
+    void Function(double progress)? onProgress,
+  }) async {
+    final packs = ModelPackService.instance;
+    final ready = await packs.ensurePack('rife_v46');
+    if (!ready) {
+      throw Exception(
+        'Smooth Slow-Mo ka model pack (rife_v46) available nahi — '
+        'ye feature abhi download nahi ho sakta.',
+      );
+    }
+    final model = await packs.packFile('rife_v46', 'rife_v4.6.onnx');
+    if (model == null) {
+      throw Exception('Smooth Slow-Mo ka model file nahi mila.');
+    }
+    final size = await probeVideoSize(File(inputPath));
+    if (size == null) {
+      throw Exception('Clip ka size probe nahi hua.');
+    }
+    final dur = size.durationSeconds ?? 0;
+    if (dur <= 0 || dur > 10.5) {
+      throw Exception(
+        'Smooth Slow-Mo sirf ~10s tak ki clip par lagta hai '
+        '(ye clip ${dur.toStringAsFixed(1)}s hai).',
+      );
+    }
+    // Processing scale: fit inside 448×256, even dimensions.
+    var sw = size.width > 448 ? 448 : size.width;
+    var sh = (size.height * sw / size.width).round();
+    if (sh > 256) {
+      sh = 256;
+      sw = (size.width * sh / size.height).round();
+    }
+    sw -= sw % 2;
+    sh -= sh % 2;
+    if (sw < 2 || sh < 2) {
+      throw Exception('Clip bohat chhota hai slow-mo ke liye.');
+    }
+    // RIFE wants multiples of 32 — pad by edge replication.
+    final pw = ((sw + 31) ~/ 32) * 32;
+    final ph = ((sh + 31) ~/ 32) * 32;
+
+    final stamp = DateTime.now().millisecondsSinceEpoch;
+    final framesDir = Directory(p.join(workDir.path, 'rife_f_$stamp'));
+    final outDir = Directory(p.join(workDir.path, 'rife_o_$stamp'));
+    await framesDir.create(recursive: true);
+    await outDir.create(recursive: true);
+
+    const fps = 24;
+    final extract = await _execute([
+      '-y',
+      '-i',
+      inputPath,
+      '-vf',
+      'fps=$fps,scale=$sw:$sh',
+      p.join(framesDir.path, 'frame_%04d.png'),
+    ]);
+    if (!ReturnCode.isSuccess(await extract.getReturnCode())) {
+      throw Exception('Slow-mo frame extract fail ho gaya.');
+    }
+    final frameFiles = framesDir
+        .listSync()
+        .whereType<File>()
+        .where((f) => f.path.endsWith('.png'))
+        .toList()
+      ..sort((a, b) => a.path.compareTo(b.path));
+    if (frameFiles.length < 2) {
+      throw Exception('Slow-mo ke liye kam az kam 2 frames chahiye.');
+    }
+    final frames = <img.Image>[];
+    for (final f in frameFiles) {
+      final decoded = img.decodeImage(await f.readAsBytes());
+      if (decoded == null) {
+        throw Exception('Ek frame decode nahi hua.');
+      }
+      frames.add(decoded);
+    }
+
+    if (!_rifeEnvReady) {
+      OrtEnv.instance.init();
+      _rifeEnvReady = true;
+    }
+    final session = OrtSession.fromFile(model, OrtSessionOptions());
+    try {
+      final inputName = session.inputNames.first;
+      var outIndex = 0;
+      Future<void> writeOut(img.Image image) async {
+        outIndex++;
+        final name = 'frame_${outIndex.toString().padLeft(4, '0')}.png';
+        await File(p.join(outDir.path, name))
+            .writeAsBytes(img.encodePng(image));
+      }
+
+      await writeOut(frames.first);
+      for (var i = 0; i < frames.length - 1; i++) {
+        final a = frames[i];
+        final b = frames[i + 1];
+        // Input [1,7,H,W]: A RGB, B RGB, timestep plane 0.5 —
+        // channels in 0..1 (run_rife.py).
+        final data = Float32List(7 * ph * pw);
+        for (var y = 0; y < ph; y++) {
+          final cy = y < sh ? y : sh - 1;
+          for (var x = 0; x < pw; x++) {
+            final cx = x < sw ? x : sw - 1;
+            final idx = y * pw + x;
+            final pa = a.getPixel(cx, cy);
+            final pb = b.getPixel(cx, cy);
+            data[idx] = pa.r.toDouble() / 255;
+            data[ph * pw + idx] = pa.g.toDouble() / 255;
+            data[2 * ph * pw + idx] = pa.b.toDouble() / 255;
+            data[3 * ph * pw + idx] = pb.r.toDouble() / 255;
+            data[4 * ph * pw + idx] = pb.g.toDouble() / 255;
+            data[5 * ph * pw + idx] = pb.b.toDouble() / 255;
+            data[6 * ph * pw + idx] = 0.5;
+          }
+        }
+        final tensor = OrtValueTensor.createTensorWithDataList(
+          data,
+          [1, 7, ph, pw],
+        );
+        final outputs = session.run(OrtRunOptions(), {inputName: tensor});
+        tensor.release();
+        if (outputs.isEmpty || outputs.first == null) {
+          for (final o in outputs) {
+            o?.release();
+          }
+          throw Exception('RIFE se koi output nahi aaya.');
+        }
+        final raw = _flattenFloats((outputs.first! as OrtValueTensor).value);
+        for (final o in outputs) {
+          o?.release();
+        }
+        if (raw.length < 3 * ph * pw) {
+          throw Exception('RIFE output adhoora hai.');
+        }
+        final mid = img.Image(width: sw, height: sh, numChannels: 3);
+        for (var y = 0; y < sh; y++) {
+          for (var x = 0; x < sw; x++) {
+            final idx = y * pw + x;
+            int ch(int plane) =>
+                (raw[plane * ph * pw + idx].clamp(0.0, 1.0) * 255).round();
+            mid.setPixelRgb(x, y, ch(0), ch(1), ch(2));
+          }
+        }
+        await writeOut(mid);
+        await writeOut(b);
+        onProgress?.call((i + 1) / (frames.length - 1) * 0.85);
+      }
+    } finally {
+      session.release();
+    }
+
+    var outW = size.width;
+    var outH = size.height;
+    outW -= outW % 2;
+    outH -= outH % 2;
+    final outPath = p.join(workDir.path, 'slowmo_$stamp.mp4');
+    final encode = await _execute(
+      [
+        '-y',
+        '-framerate',
+        '$fps',
+        '-i',
+        p.join(outDir.path, 'frame_%04d.png'),
+        '-i',
+        inputPath,
+        '-filter_complex',
+        '[0:v]scale=$outW:$outH:flags=lanczos,format=yuv420p[v];'
+            '[1:a]atempo=0.5[a]',
+        '-map',
+        '[v]',
+        '-map',
+        '[a]',
+        '-c:v',
+        'libx264',
+        '-preset',
+        'veryfast',
+        '-crf',
+        '23',
+        '-c:a',
+        'aac',
+        '-b:a',
+        '128k',
+        '-movflags',
+        '+faststart',
+        outPath,
+      ],
+      onProgress: (v) => onProgress?.call(0.85 + v * 0.15),
+      durationSeconds: dur * 2,
+    );
+    if (!ReturnCode.isSuccess(await encode.getReturnCode())) {
+      // No audio track (or atempo failed): re-encode video-only.
+      final silent = await _execute([
+        '-y',
+        '-framerate',
+        '$fps',
+        '-i',
+        p.join(outDir.path, 'frame_%04d.png'),
+        '-vf',
+        'scale=$outW:$outH:flags=lanczos,format=yuv420p',
+        '-c:v',
+        'libx264',
+        '-preset',
+        'veryfast',
+        '-crf',
+        '23',
+        '-movflags',
+        '+faststart',
+        outPath,
+      ]);
+      if (!ReturnCode.isSuccess(await silent.getReturnCode())) {
+        throw Exception('Slow-mo encode fail ho gaya.');
+      }
+    }
+    onProgress?.call(1);
+    return outPath;
   }
 
   static double? _assSeconds(String stamp) {

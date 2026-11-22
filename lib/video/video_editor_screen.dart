@@ -44,7 +44,10 @@ import '../services/caption_service.dart';
 import '../services/pro_editor.dart';
 import '../services/fx_pack.dart';
 import '../services/pro_vision.dart';
+import '../services/audio_enhance_service.dart';
+import '../services/pro_service.dart';
 import '../services/reel_export_service.dart';
+import '../services/urdu_caption_service.dart';
 import '../services/video_export_service.dart';
 
 part 'video_editor_panels.dart';
@@ -65,6 +68,33 @@ class VideoClip {
   bool isPhoto = false;
   bool kenBurns = true;
   bool kbZoomIn = true;
+
+  // v1.4.0 (clip-selected row): per-clip audio state. [volume] is
+  // the clip's own gain (1.0 = unchanged) and [muted] silences the
+  // clip entirely; both are materialised onto a processed copy of
+  // the clip file at export (see _exportInner), the same pattern
+  // the reverse / silence-remove passes already use.
+  double volume = 1;
+  bool muted = false;
+  // v1.4.0 Unlink audio: the clip's audio, extracted to its own
+  // file; the clip itself is muted and the detached file becomes
+  // the music track (when none is picked) so it stays editable.
+  String? detachedAudioPath;
+
+  /// A full copy of this clip (same file + every editable field) —
+  /// the Duplicate op on the clip-selected row.
+  VideoClip copy() {
+    final c = VideoClip(file, duration, aspectRatio);
+    c.trimStart = trimStart;
+    c.trimEnd = trimEnd;
+    c.isPhoto = isPhoto;
+    c.kenBurns = kenBurns;
+    c.kbZoomIn = kbZoomIn;
+    c.volume = volume;
+    c.muted = muted;
+    c.detachedAudioPath = detachedAudioPath;
+    return c;
+  }
 }
 
 class VideoEditorScreen extends StatefulWidget {
@@ -75,10 +105,22 @@ class VideoEditorScreen extends StatefulWidget {
   /// template + ticker + captions, resolved by [buildHandoff] (see
   /// `lib/news/project_handoff.dart`) — instead of dropping it. [preset]
   /// is the project's channel preset (chroma / PIP / logo settings).
-  const VideoEditorScreen({super.key, this.project, this.preset});
+  ///
+  /// Projects hub (v1.4.0): [initialVideoPath], when non-null and the
+  /// file exists, is loaded as the first timeline clip on open — the
+  /// media the user picked in the hub. It is ignored when [project]
+  /// is given (the handoff brings its own clips). Null — every
+  /// existing call site — keeps the plain empty-editor behaviour.
+  const VideoEditorScreen({
+    super.key,
+    this.project,
+    this.preset,
+    this.initialVideoPath,
+  });
 
   final NewsProject? project;
   final ChannelPreset? preset;
+  final String? initialVideoPath;
 
   @override
   State<VideoEditorScreen> createState() => _VideoEditorScreenState();
@@ -148,6 +190,133 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   bool _qualityPicked = false;
   /// §8: this session's AI-tools coin unlock (charged once).
   bool _aiCoinsPaid = false;
+  // ---- v1.4.0 CapCut shell state. ----
+  /// Transport snap toggle: ON = Split cuts at the playhead,
+  /// OFF = Split cuts at the clip midpoint (the v1.3.0 behaviour).
+  bool _snapOn = true;
+  /// Clip-selected row (the context row): true after a timeline
+  /// clip is tapped — the tool zone then shows THAT clip's tools
+  /// instead of the main tool row, until the row's back/✓ closes it.
+  bool _clipRow = false;
+  // ---- v1.4.0 Adjust extras (Colour › Adjust, one shared slider).
+  // These ride their own ffmpeg chain ([_adjustExtraFilter]) next
+  // to the ProGrade values, because ProGrade's field set is fixed.
+  // All defaults are neutral: an untouched export is unchanged.
+  double _adjBrilliance = 0; // -100..100 (gamma + gentle saturation)
+  double _adjSharpen = 0; // 0..100 (unsharp, small radius)
+  double _adjClarity = 0; // 0..100 (unsharp, large radius)
+  double _adjWhites = 0; // -100..100 (curves, top end)
+  double _adjBlacks = 0; // -100..100 (curves, bottom end)
+  double _adjHue = 0; // -180..180 degrees
+  double _adjFade = 0; // 0..100 (lifted black point)
+  double _adjVignette = 0; // 0..100
+  double _adjGrain = 0; // 0..100 (ffmpeg noise)
+  bool _adjAuto = false; // one-tap normalize (auto adjust)
+
+  /// True when any v1.4.0 Adjust extra is off its neutral value.
+  bool get _adjustExtraActive =>
+      _adjAuto ||
+      _adjBrilliance != 0 ||
+      _adjSharpen != 0 ||
+      _adjClarity != 0 ||
+      _adjWhites != 0 ||
+      _adjBlacks != 0 ||
+      _adjHue != 0 ||
+      _adjFade != 0 ||
+      _adjVignette != 0 ||
+      _adjGrain != 0;
+
+  /// The ffmpeg chain for the v1.4.0 Adjust extras ('' = nothing
+  /// set). Every entry is a stock ffmpeg filter: normalize (auto),
+  /// eq gamma/saturation (brilliance), unsharp (sharpen/clarity),
+  /// curves endpoints (whites/blacks/fade), hue, vignette, noise
+  /// (grain). HSL is deliberately NOT here: the bundled ffmpeg has
+  /// no per-hue-range HSL filter, so no fake slider is offered.
+  String _adjustExtraFilter() {
+    final parts = <String>[];
+    String n(double v) {
+      var s = v.toStringAsFixed(3);
+      while (s.contains('.') && s.endsWith('0')) {
+        s = s.substring(0, s.length - 1);
+      }
+      if (s.endsWith('.')) s = s.substring(0, s.length - 1);
+      return s.isEmpty || s == '-0' ? '0' : s;
+    }
+
+    if (_adjAuto) parts.add('normalize');
+    if (_adjBrilliance != 0) {
+      final b = _adjBrilliance.clamp(-100, 100).toDouble();
+      final gamma = math.pow(2, b / 200).toDouble();
+      final sat = 1 + b / 400;
+      parts.add('eq=gamma=${n(gamma)}:saturation=${n(sat)}');
+    }
+    if (_adjSharpen != 0) {
+      parts.add('unsharp=5:5:${n(_adjSharpen.clamp(0, 100) / 50)}');
+    }
+    if (_adjClarity != 0) {
+      parts.add('unsharp=13:13:${n(_adjClarity.clamp(0, 100) / 100)}');
+    }
+    if (_adjWhites != 0 || _adjBlacks != 0 || _adjFade != 0) {
+      final double blackLift =
+          (_adjBlacks.clamp(-100, 100) / 100 * 0.12) +
+              _adjFade.clamp(0, 100) / 100 * 0.15;
+      final double whiteMove = _adjWhites.clamp(-100, 100) / 100 * 0.12;
+      double y(double x) {
+        var v = x + blackLift * (1 - x) * (1 - x) + whiteMove * x * x;
+        if (_adjFade > 0) {
+          v = v * (1 - _adjFade / 100 * 0.3) + _adjFade / 100 * 0.3 * 0.2;
+        }
+        return v.clamp(0.0, 1.0).toDouble();
+      }
+
+      final pts = [0.0, 0.25, 0.5, 0.75, 1.0]
+          .map((x) => '${n(x)}/${y(x).toStringAsFixed(3)}')
+          .join(';');
+      parts.add("curves=master='$pts'");
+    }
+    if (_adjHue != 0) {
+      parts.add('hue=h=${n(_adjHue.clamp(-180, 180).toDouble())}');
+    }
+    if (_adjVignette != 0) {
+      final double angle = 1.5 - _adjVignette.clamp(0, 100) / 100 * 1.1;
+      parts.add('vignette=angle=${n(angle)}');
+    }
+    if (_adjGrain != 0) {
+      final amt = (_adjGrain.clamp(0, 100) / 100 * 40).round();
+      parts.add('noise=alls=$amt:allf=t');
+    }
+    return parts.join(',');
+  }
+
+  /// Reset for the whole Colour look (ProGrade + filters + the
+  /// v1.4.0 Adjust extras) — the Adjust panel's Reset button.
+  void _resetGrade() {
+    setState(() {
+      _proLut = '';
+      _proTemperature = 0;
+      _proTint = 0;
+      _proSaturation = 1;
+      _proVibrance = 1;
+      _proContrast = 1;
+      _proShadows = 0;
+      _proHighlights = 0;
+      _proBrightness = 0;
+      _proExposure = 0;
+      _filter = 'Normal';
+      _filterIntensity = 1;
+      _adjBrilliance = 0;
+      _adjSharpen = 0;
+      _adjClarity = 0;
+      _adjWhites = 0;
+      _adjBlacks = 0;
+      _adjHue = 0;
+      _adjFade = 0;
+      _adjVignette = 0;
+      _adjGrain = 0;
+      _adjAuto = false;
+    });
+    _setStatus('Colour / Adjust reset ho gaya.');
+  }
   /// §6.6 undo/redo snapshot stacks (see _pushHistory).
   final List<String> _undoStack = [];
   final List<String> _redoStack = [];
@@ -315,7 +484,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       _proShadows != 0 ||
       _proHighlights != 0 ||
       _proBrightness != 0 ||
-      _proExposure != 0;
+      _proExposure != 0 ||
+      _adjustExtraActive;
 
   RampPreset? _rampPreset() => switch (_proRamp) {
         'slowMiddle' => RampPreset.slowMiddle,
@@ -824,7 +994,28 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     });
     if (widget.project != null) {
       _loadProject(widget.project!, widget.preset);
+    } else if (widget.initialVideoPath != null) {
+      unawaited(_loadInitialVideo());
     }
+  }
+
+  /// Projects hub (v1.4.0): load [VideoEditorScreen.initialVideoPath]
+  /// as the first timeline clip, through the SAME probe + add path
+  /// as a gallery pick ([_addClipFile]). A missing file is reported
+  /// in the status line and the editor stays open, empty and usable
+  /// — never a crash, never a silent drop.
+  Future<void> _loadInitialVideo() async {
+    final path = widget.initialVideoPath;
+    if (path == null) return;
+    final file = File(path);
+    if (!await file.exists()) {
+      if (mounted) {
+        setState(() => _status = 'Hub wali video nahi mili: $path');
+        _flashStatus();
+      }
+      return;
+    }
+    await _addClipFile(file);
   }
 
   /// Timeline handoff (Phase 7): loads [project] into the editor —
@@ -959,7 +1150,16 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   Future<void> _addClip() async {
     final picked = await _picker.pickVideo(source: ImageSource.gallery);
     if (picked == null) return;
-    final file = File(picked.path);
+    await _addClipFile(File(picked.path));
+  }
+
+  /// Probe [file] (real duration + aspect via a throwaway
+  /// [VideoPlayerController]) and append it as a timeline clip,
+  /// selected, with the preview loaded. The ONE add-media path:
+  /// the gallery picker ([_addClip]), the timeline + tile and the
+  /// Projects hub's initial video ([_loadInitialVideo]) all land
+  /// here, so every entry point behaves identically.
+  Future<void> _addClipFile(File file) async {
     final probe = VideoPlayerController.file(file);
     try {
       await probe.initialize();
@@ -1027,6 +1227,9 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
               'photo': c.isPhoto,
               'kb': c.kenBurns,
               'kbin': c.kbZoomIn,
+              'vol': c.volume,
+              'muted': c.muted,
+              'det': c.detachedAudioPath,
             },
         ],
         'sel': _selected,
@@ -1059,6 +1262,9 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       c.isPhoto = e['photo'] as bool? ?? false;
       c.kenBurns = e['kb'] as bool? ?? true;
       c.kbZoomIn = e['kbin'] as bool? ?? true;
+      c.volume = (e['vol'] as num?)?.toDouble() ?? 1;
+      c.muted = e['muted'] as bool? ?? false;
+      c.detachedAudioPath = e['det'] as String?;
       clips.add(c);
     }
     setState(() {
@@ -1104,6 +1310,370 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       _activeTool = key;
       _panelTab = null;
     });
+  }
+
+  /// v1.4.0: opens a tool panel on a SPECIFIC sub-tab — the main
+  /// tool row's promoted entries (Captions, Filters, Adjust,
+  /// Stickers, Aspect ratio, Background) and every clip-row item
+  /// land on the exact panel that implements them.
+  void _openToolTab(String key, String tab) {
+    setState(() {
+      _activeTool = key;
+      _panelTab = tab;
+    });
+  }
+
+  /// v1.4.0 clip-row op: delete the selected clip (the Trim panel's
+  /// Delete button calls this too — one implementation).
+  Future<void> _deleteSelectedClip() async {
+    if (_clips.isEmpty || _busy) return;
+    _pushHistory();
+    setState(() {
+      _clips.removeAt(_selected);
+      if (_selected >= _clips.length) {
+        _selected = _clips.isEmpty ? 0 : _clips.length - 1;
+      }
+      if (_clips.isEmpty) _clipRow = false;
+    });
+    if (_clips.isNotEmpty) {
+      await _loadPreview();
+    } else {
+      await _controller?.dispose();
+      if (mounted) setState(() => _controller = null);
+    }
+    _setStatus('Clip delete ho gaya — Undo se wapas aa sakta hai.');
+  }
+
+  /// v1.4.0 clip-row op: duplicate the selected clip right after
+  /// itself (same file, trims and per-clip audio state).
+  void _duplicateSelectedClip() {
+    if (_clips.isEmpty) return;
+    _pushHistory();
+    setState(() {
+      _clips.insert(_selected + 1, _clips[_selected].copy());
+      _selected = _selected + 1;
+    });
+    _setStatus('Clip duplicate ho gaya (Clip ${_selected + 1}).');
+    unawaited(_loadPreview());
+  }
+
+  /// v1.4.0 clip-row op: replace the selected clip's media with a
+  /// newly picked video, keeping its slot and (clamped) trims.
+  Future<void> _replaceSelectedClip() async {
+    if (_clips.isEmpty || _busy) return;
+    final picked = await _picker.pickVideo(source: ImageSource.gallery);
+    if (picked == null) return;
+    final file = File(picked.path);
+    final probe = VideoPlayerController.file(file);
+    try {
+      await probe.initialize();
+      final d = probe.value.duration;
+      final aspect = probe.value.aspectRatio;
+      await probe.dispose();
+      _pushHistory();
+      setState(() {
+        final old = _clips[_selected];
+        final nc = VideoClip(file, d, aspect);
+        nc.trimStart = old.trimStart.clamp(0, d.inMilliseconds / 1000);
+        final end = old.effectiveEnd.clamp(0, d.inMilliseconds / 1000);
+        nc.trimEnd = end > nc.trimStart ? end : -1;
+        nc.volume = old.volume;
+        nc.muted = old.muted;
+        _clips[_selected] = nc;
+        _status = 'Clip replace ho gaya (${d.inSeconds}s).';
+      });
+      _flashStatus();
+      await _loadPreview();
+    } catch (e) {
+      await probe.dispose();
+      _setStatus('Replace nahi hua: $e');
+    }
+  }
+
+  /// v1.4.0 clip-row op: unlink the selected clip's audio — the
+  /// audio is extracted to its own file, the clip is muted, and
+  /// the detached file becomes the music track when none is
+  /// picked, so the sound stays on the timeline as its own lane.
+  Future<void> _unlinkSelectedClipAudio() async {
+    if (_clips.isEmpty || _busy) return;
+    final idx = _selected < _clips.length ? _selected : 0;
+    final clip = _clips[idx];
+    if (clip.isPhoto) {
+      _setStatus('Photo clip mein audio nahi hota.');
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final dir = await _workDir();
+      final stamp = DateTime.now().millisecondsSinceEpoch;
+      final out = p.join(dir.path, 'unlinked_$stamp.m4a');
+      final r = await FfmpegService.run(
+        '-ss ${clip.trimStart} -t ${clip.effectiveDuration} '
+        '-i ${FfmpegService.q(clip.file.path)} -vn -c:a aac -b:a 128k '
+        '-y ${FfmpegService.q(out)}',
+      );
+      if (!r.ok) {
+        _setStatus('Unlink nahi hua — clip mein audio nahi mila. ${r.logs}');
+        return;
+      }
+      _pushHistory();
+      setState(() {
+        clip.detachedAudioPath = out;
+        clip.muted = true;
+        if (_musicPath == null) _musicPath = out;
+      });
+      _setStatus(
+        'Audio unlink ho gaya — awaz alag track par hai, clip mute hai.',
+      );
+    } catch (e) {
+      _setStatus('Unlink failed: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// v1.4.0 clip-row audio tools: Reduce noise / Enhance voice on
+  /// the SELECTED clip (AudioEnhanceService). The clip's audio is
+  /// extracted, processed, and muxed back into a processed copy of
+  /// the clip — the processed file replaces the clip's source, so
+  /// preview and export both carry the cleaned audio.
+  Future<void> _enhanceSelectedClipAudio({required bool voice}) async {
+    if (_clips.isEmpty || _busy) return;
+    final idx = _selected < _clips.length ? _selected : 0;
+    final clip = _clips[idx];
+    if (clip.isPhoto) {
+      _setStatus('Photo clip mein audio nahi hota.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _status = voice ? 'Voice enhance ho rahi hai…' : 'Noise kam ho raha hai…';
+    });
+    try {
+      final dir = await _workDir();
+      final stamp = DateTime.now().millisecondsSinceEpoch;
+      final rawWav = p.join(dir.path, 'clipfx_raw_$stamp.wav');
+      final cleanWav = p.join(dir.path, 'clipfx_clean_$stamp.wav');
+      final extract = await FfmpegService.run(
+        '-i ${FfmpegService.q(clip.file.path)} -vn -ac 1 -ar 16000 '
+        '-c:a pcm_s16le -y ${FfmpegService.q(rawWav)}',
+      );
+      if (!extract.ok) {
+        _setStatus('Clip se audio nahi nikla. ${extract.logs}');
+        return;
+      }
+      final ok = voice
+          ? await AudioEnhanceService.instance.enhanceVoice(rawWav, cleanWav)
+          : await AudioEnhanceService.instance.reduceNoise(rawWav, cleanWav);
+      if (!ok || !await File(cleanWav).exists()) {
+        _setStatus(
+          voice
+              ? 'Voice enhance nahi hua — asal audio hi rahega.'
+              : 'Noise reduce nahi hua — asal audio hi rahega.',
+        );
+        return;
+      }
+      final muxed = p.join(dir.path, 'clipfx_$stamp.mp4');
+      final mux = await FfmpegService.run(
+        '-i ${FfmpegService.q(clip.file.path)} '
+        '-i ${FfmpegService.q(cleanWav)} '
+        '-map 0:v -map 1:a -c:v copy -c:a aac -b:a 128k -shortest '
+        '-y ${FfmpegService.q(muxed)}',
+      );
+      if (!mux.ok) {
+        _setStatus('Processed audio wapas nahi laga. ${mux.logs}');
+        return;
+      }
+      _pushHistory();
+      setState(() {
+        final nc = VideoClip(File(muxed), clip.duration, clip.aspectRatio);
+        nc.trimStart = clip.trimStart;
+        nc.trimEnd = clip.trimEnd;
+        nc.volume = clip.volume;
+        nc.muted = clip.muted;
+        nc.detachedAudioPath = clip.detachedAudioPath;
+        _clips[idx] = nc;
+      });
+      _setStatus(
+        voice ? 'Voice enhance ho gayi.' : 'Noise kam ho gaya.',
+      );
+      await _loadPreview();
+    } catch (e) {
+      _setStatus('Audio tool failed: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// v1.4.0 Edit › Speed: Smooth Slow-Mo (AI) — RIFE interpolation
+  /// via [VideoExportService.smoothSlowMoAi] on the selected
+  /// clip's TRIMMED range. The interpolated file (2× duration,
+  /// half speed, real in-between frames) replaces the clip.
+  /// Fail-soft: any failure keeps the original clip + a message.
+  Future<void> _applySlowMoAi() async {
+    if (_clips.isEmpty || _busy) return;
+    final idx = _selected < _clips.length ? _selected : 0;
+    final clip = _clips[idx];
+    if (clip.isPhoto) {
+      _setStatus('Photo clip par slow-mo nahi lagta.');
+      return;
+    }
+    if (clip.effectiveDuration > 10.5) {
+      _setStatus(
+        'Smooth Slow-Mo sirf ~10s tak ki clip par lagta hai — '
+        'pehle clip trim karein.',
+      );
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _status = 'Smooth Slow-Mo (AI) ban raha hai…';
+    });
+    try {
+      final dir = await _workDir();
+      final stamp = DateTime.now().millisecondsSinceEpoch;
+      final seg = p.join(dir.path, 'slowmo_src_$stamp.mp4');
+      final segRes = await FfmpegService.run(
+        '-ss ${clip.trimStart} -t ${clip.effectiveDuration} '
+        '-i ${FfmpegService.q(clip.file.path)} '
+        '-c:v libx264 -preset veryfast -crf 23 -c:a aac -b:a 128k '
+        '-y ${FfmpegService.q(seg)}',
+      );
+      if (!segRes.ok) {
+        _setStatus('Slow-mo ke liye clip tayyar nahi hua. ${segRes.logs}');
+        return;
+      }
+      var lastPct = -1;
+      final outPath = await VideoExportService.smoothSlowMoAi(
+        inputPath: seg,
+        workDir: dir,
+        onProgress: (v) {
+          final pct = (v * 100).round();
+          if (pct != lastPct) {
+            lastPct = pct;
+            _setStatus('Smooth Slow-Mo (AI)… $pct%');
+          }
+        },
+      );
+      _pushHistory();
+      setState(() {
+        final nc = VideoClip(
+          File(outPath),
+          Duration(
+            milliseconds: (clip.effectiveDuration * 2000).round(),
+          ),
+          clip.aspectRatio,
+        );
+        nc.volume = clip.volume;
+        nc.muted = clip.muted;
+        _clips[idx] = nc;
+      });
+      _setStatus('Smooth Slow-Mo tayyar — clip ab 0.5x speed par hai.');
+      await _loadPreview();
+    } catch (e) {
+      _setStatus('Smooth Slow-Mo nahi hua: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// v1.4.0 Captions: 'Urdu (AI)' — Shruti Urdu recognizer via
+  /// [UrduCaptionService] on the selected clip's own file (the
+  /// service extracts the audio itself). Segments land in the
+  /// same [_captions] list the Whisper path fills, so style /
+  /// edit / export behave identically.
+  Future<void> _generateUrduCaptions() async {
+    if (_clips.isEmpty) {
+      _setStatus('Add a video first.');
+      return;
+    }
+    if (_transcribing || _busy) return;
+    final clip = _clips[_selected];
+    setState(() {
+      _transcribing = true;
+      _status = 'Urdu (AI) captions ban rahe hain…';
+    });
+    try {
+      final caps = await UrduCaptionService.instance.transcribe(
+        clip.file.path,
+      );
+      if (!mounted) return;
+      if (caps.isEmpty) {
+        setState(() => _status =
+            'Urdu (AI): koi awaz samajh nahi aayi — ya model pack '
+            'abhi download nahi hua.');
+      } else {
+        setState(() {
+          _captions = caps
+              .map(
+                (c) => CaptionSegment(
+                  c.text,
+                  c.start.inMilliseconds / 1000,
+                  c.end.inMilliseconds / 1000,
+                ),
+              )
+              .toList();
+          _captionsTimelineRelative = false;
+          _status =
+              '${caps.length} Urdu (AI) caption segments ready — Edit se dekh/edit kar sakte hain.';
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _status = 'Urdu (AI) captions failed: $e');
+    } finally {
+      if (mounted) setState(() => _transcribing = false);
+    }
+  }
+
+  /// v1.4.0 top bar search: a real tool index — every editor tool
+  /// by name; tapping one opens its exact panel/tab.
+  Future<void> _showToolSearch() async {
+    final entries = <(String, String, String?)>[
+      ('Edit — Trim / Canvas', 'edit', 'trim'),
+      ('Edit — Speed', 'edit', 'speed'),
+      ('Edit — Beat sync', 'edit', 'beat'),
+      ('Edit — Stabilize', 'edit', 'steady'),
+      ('Edit — Transform', 'edit', 'transform'),
+      ('Audio — Music', 'audio', 'music'),
+      ('Audio — Voice changer', 'audio', 'voice'),
+      ('Audio — Cleanup', 'audio', 'clean'),
+      ('Text', 'text', 'text'),
+      ('Motion titles', 'text', 'titles'),
+      ('Captions', 'text', 'captions'),
+      ('Filters', 'colour', 'filters'),
+      ('Adjust', 'colour', 'adjust'),
+      ('Effects', 'effects', 'effects'),
+      ('Motion tracking', 'effects', 'tracking'),
+      ('Stickers', 'overlay', 'sticker'),
+      ('Keyframes', 'overlay', 'keyframes'),
+      ('Overlay — PIP', 'overlay', 'pip'),
+      ('Background / Chroma key', 'overlay', 'background'),
+      ('Transitions', 'transitions', null),
+      ('News template', 'news', 'template'),
+      ('News text', 'news', 'text'),
+      ('News logo', 'news', 'logo'),
+      ('Clip volume', 'clipVolume', null),
+    ];
+    final picked = await showDialog<(String, String?)>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('Tool search karein'),
+        children: [
+          for (final e in entries)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(ctx, (e.$2, e.$3)),
+              child: Text(e.$1),
+            ),
+        ],
+      ),
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _clipRow = false);
+    if (picked.$2 != null) {
+      _openToolTab(picked.$1, picked.$2!);
+    } else {
+      _openTool(picked.$1);
+    }
   }
 
   /// The stage's LIVE colour matrix (§3/§6.1/§6.2): the chosen
@@ -1291,6 +1861,38 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       final dir = await _workDir();
       final stamp = DateTime.now().millisecondsSinceEpoch;
       var out = p.join(dir.path, 'pve_export_$stamp.mp4');
+      // v1.4.0: per-clip volume / mute materialisation — every clip
+      // whose own gain is off 1.0 or that is muted is replaced by a
+      // processed copy (video stream copied, audio gained/silenced)
+      // before the main pipeline runs, the same replace-in-place
+      // pattern as the reverse / silence passes below. Guarded per
+      // clip: a failure keeps that clip's original file.
+      for (var i = 0; i < _clips.length; i++) {
+        final c = _clips[i];
+        if (c.isPhoto || (c.volume == 1 && !c.muted)) continue;
+        try {
+          final proc = p.join(dir.path, 'clipvol_${stamp}_$i.mp4');
+          final cmd = c.muted
+              ? '-i ${FfmpegService.q(c.file.path)} -c:v copy -an '
+                  '-y ${FfmpegService.q(proc)}'
+              : '-i ${FfmpegService.q(c.file.path)} -c:v copy '
+                  '-af volume=${c.volume.toStringAsFixed(2)} '
+                  '-c:a aac -b:a 128k -y ${FfmpegService.q(proc)}';
+          final r = await FfmpegService.run(cmd);
+          if (r.ok) {
+            final nc = VideoClip(File(proc), c.duration, c.aspectRatio);
+            nc.trimStart = c.trimStart;
+            nc.trimEnd = c.trimEnd;
+            nc.volume = c.volume;
+            nc.muted = c.muted;
+            nc.detachedAudioPath = c.detachedAudioPath;
+            _clips[i] = nc;
+          }
+        } catch (_) {
+          // Keep the original clip — the export must not fail over
+          // a per-clip gain.
+        }
+      }
       if (_clips.isNotEmpty) {
         final int idx = _selected < _clips.length ? _selected : 0;
         VideoClip clip = _clips[idx];
@@ -1542,6 +2144,10 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
               : <RampSegment>[];
       final List<String> extraParts = <String>[];
       if (gradeStr.isNotEmpty) extraParts.add(gradeStr);
+      // v1.4.0 Adjust extras (sharpen / clarity / whites / blacks /
+      // hue / fade / vignette / grain / auto) ride the same chain.
+      final adjustExtra = _adjustExtraFilter();
+      if (adjustExtra.isNotEmpty) extraParts.add(adjustExtra);
       if (hasRamp) extraParts.add(rampSetpts(rampSegs));
       final String shakeStr = shakeFilter(_fxShake);
       if (shakeStr.isNotEmpty) extraParts.add(shakeStr);
@@ -2012,12 +2618,48 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         );
       }
       if (useBgRemover) {
+        // v1.4.0: MODNet HQ path FIRST — the exported video's
+        // frames get MODNet mattes (OnnxImageService) composited
+        // over the chosen background. Any failure falls through to
+        // the long-standing ML Kit selfie-segmentation path below,
+        // so Remove BG never regresses.
+        var modnetDone = false;
         try {
-          _setStatus(
-            'Video background hata rahe hain… (lambi clips par minutes lag sakte hain)',
-          );
+          _setStatus('Video background (MODNet HQ) hata rahe hain…');
           var lastPct = -1;
-          final bgOut = await removeVideoBackground(
+          final modnetOut = await VideoExportService.modnetRemoveBackground(
+            input: out,
+            backgroundKind: _proBgKind,
+            backgroundColor: _proBgColor,
+            backgroundImagePath:
+                _proBgKind == 'image' ? _proBgImage : null,
+            workDir: dir,
+            onProgress: (v) {
+              final pct = (v * 100).round();
+              if (pct != lastPct) {
+                lastPct = pct;
+                _setStatus(
+                  'MODNet BG remover… $pct% done, ${100 - pct}% remaining',
+                );
+              }
+            },
+            onStep: (s) => _setStatus(s),
+          );
+          out = modnetOut;
+          modnetDone = true;
+          _setStatus('Video background removed (MODNet HQ).');
+        } catch (e) {
+          _setStatus(
+            'Note: MODNet BG fail ($e) — ML Kit wala tareeqa use ho raha hai.',
+          );
+        }
+        if (!modnetDone) {
+          try {
+            _setStatus(
+              'Video background hata rahe hain… (lambi clips par minutes lag sakte hain)',
+            );
+            var lastPct = -1;
+            final bgOut = await removeVideoBackground(
             input: out,
             backgroundKind: _proBgKind,
             backgroundColor: _proBgColor,
@@ -2035,12 +2677,13 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
             },
             onStep: (s) => _setStatus(s),
           );
-          out = bgOut;
-          _setStatus('Video background removed.');
-        } catch (e) {
-          _setStatus(
-            'Note: video BG remover fail ho gaya ($e), pichli video save ho rahi hai.',
-          );
+            out = bgOut;
+            _setStatus('Video background removed.');
+          } catch (e) {
+            _setStatus(
+              'Note: video BG remover fail ho gaya ($e), pichli video save ho rahi hai.',
+            );
+          }
         }
       } else if (_proChroma) {
         try {
@@ -2502,6 +3145,17 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           );
     if (quality == null || !mounted) return;
     _fxQuality = quality;
+    // v1.4.0 PRO: 1080p / 4K exports carry the double-ad gate for
+    // free users (two back-to-back interstitials before the render
+    // starts — the ad service's own 120 s interval may suppress
+    // the second when one was just shown). Pro subscribers
+    // (ProService.proActive) skip the gate entirely.
+    if (quality >= 1 && !ProService.instance.proActive) {
+      _setStatus('Ads chal rahe hain — phir export shuru hoga…');
+      await UnityAdsService.showInterstitialAd();
+      await UnityAdsService.showInterstitialAd();
+      if (!mounted) return;
+    }
     setState(() {
       _busy = true;
       _status = 'Exporting…';
@@ -3161,8 +3815,22 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       _setStatus('Clip too short to split.');
       return;
     }
-    final mid = clip.trimStart + clip.effectiveDuration / 2;
+    // v1.4.0: snap ON = split at the playhead (CapCut behaviour)
+    // when it sits inside the clip's trimmed range; snap OFF (or
+    // no usable playhead) = the v1.3.0 midpoint split.
+    var mid = clip.trimStart + clip.effectiveDuration / 2;
+    final ctrl = _controller;
+    if (_snapOn && ctrl != null && ctrl.value.isInitialized) {
+      // The preview plays the clip FILE, so the playhead is
+      // already a file time inside the trimmed range.
+      final at = ctrl.value.position.inMilliseconds / 1000;
+      if (at > clip.trimStart + 0.5 && at < clip.effectiveEnd - 0.5) {
+        mid = at;
+      }
+    }
     final second = VideoClip(clip.file, clip.duration, clip.aspectRatio);
+    second.volume = clip.volume;
+    second.muted = clip.muted;
     second.trimStart = mid;
     second.trimEnd = clip.effectiveEnd;
     _pushHistory();
@@ -3295,13 +3963,14 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     _scheduleChromaPreview();
   }
 
-  Widget _railButton(String key, String label, IconData icon) {
-    final selected = _activeTool == key;
+  Widget _railButton(String key, String label, IconData icon,
+      {String? tab}) {
+    final selected = _activeTool == key && (tab == null || _panelTab == tab);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: () => _openTool(key),
+        onTap: () => tab == null ? _openTool(key) : _openToolTab(key, tab),
         child: Container(
           width: 76,
           padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
@@ -3328,6 +3997,180 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     );
   }
 
+  /// One item of the clip-selected row (mockup S4b): icon +
+  /// label, red tint for Delete.
+  Widget _clipRowItem(
+    IconData icon,
+    String label,
+    VoidCallback? onTap, {
+    bool danger = false,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Container(
+          width: 76,
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+          decoration: BoxDecoration(
+            color: const Color(0xFF232323),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon,
+                  size: 24,
+                  color: danger ? Colors.redAccent : Colors.white),
+              const SizedBox(height: 4),
+              Text(
+                label,
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: danger ? Colors.redAccent : Colors.white,
+                  fontSize: 11,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// v1.4.0 CLIP-SELECTED ROW (mockup S4b — the context row that
+  /// did not exist before): shown in the tool zone while a clip
+  /// is selected from the timeline. Every item either runs its op
+  /// immediately (Split / Duplicate / Delete / Freeze / Extract /
+  /// Unlink / Reduce noise / Enhance voice) or opens the existing
+  /// panel that implements it (Volume → clip-volume panel; Speed /
+  /// Beats / Reverse → Edit tabs; Adjust / Filters → Colour tabs;
+  /// Animations → Overlay › Keyframes; Crop / Transform / Opacity
+  /// → Edit › Transform; Overlay / Mask → Overlay › PIP; Remove BG
+  /// → Overlay › Background; Stabilize → Edit › Steady; Retouch →
+  /// Colour › Adjust, the video grading panel — there is no
+  /// dedicated video retouch engine in the codebase).
+  Widget _clipToolRow() {
+    final busy = _busy;
+    return Container(
+      key: const ValueKey<String>('video-clip-row'),
+      color: const Color(0xFF1B1B1B),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 6, 12, 2),
+            child: Row(
+              children: [
+                IconButton(
+                  tooltip: 'Back to tools',
+                  onPressed: () => setState(() => _clipRow = false),
+                  icon: const Icon(Icons.arrow_back, color: Colors.white),
+                ),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: TjProTheme.gold,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    'Clip ${_selected + 1} selected',
+                    style: const TextStyle(
+                      color: Colors.black,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                const Spacer(),
+                IconButton(
+                  tooltip: 'Done',
+                  onPressed: () => setState(() => _clipRow = false),
+                  icon: const Icon(Icons.check_circle,
+                      color: TjProTheme.gold, size: 26),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(
+            height: 88,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              children: [
+                _clipRowItem(Icons.content_cut, 'Split',
+                    busy ? null : _splitSelectedClip),
+                _clipRowItem(Icons.volume_up, 'Volume',
+                    () => _openTool('clipVolume')),
+                _clipRowItem(Icons.animation, 'Animations',
+                    () => _openToolTab('overlay', 'keyframes')),
+                _clipRowItem(Icons.auto_awesome, 'Effects',
+                    () => _openTool('effects')),
+                _clipRowItem(Icons.delete_outline, 'Delete',
+                    busy ? null : () => unawaited(_deleteSelectedClip()),
+                    danger: true),
+                _clipRowItem(
+                    Icons.speed, 'Speed', () => _openToolTab('edit', 'speed')),
+                _clipRowItem(Icons.graphic_eq, 'Beats',
+                    () => _openToolTab('edit', 'beat')),
+                _clipRowItem(
+                    Icons.crop, 'Crop', () => _openToolTab('edit', 'transform')),
+                _clipRowItem(Icons.copy, 'Duplicate',
+                    busy ? null : _duplicateSelectedClip),
+                _clipRowItem(Icons.find_replace, 'Replace',
+                    busy ? null : () => unawaited(_replaceSelectedClip())),
+                _clipRowItem(Icons.picture_in_picture_alt, 'Overlay',
+                    () => _openToolTab('overlay', 'pip')),
+                _clipRowItem(
+                    Icons.tune, 'Adjust', () => _openToolTab('colour', 'adjust')),
+                _clipRowItem(Icons.photo_filter, 'Filters',
+                    () => _openToolTab('colour', 'filters')),
+                _clipRowItem(Icons.face_retouching_natural, 'Retouch',
+                    () => _openToolTab('colour', 'adjust')),
+                _clipRowItem(Icons.person_remove, 'Remove BG',
+                    () => _openToolTab('overlay', 'background')),
+                _clipRowItem(Icons.opacity, 'Opacity',
+                    () => _openToolTab('edit', 'transform')),
+                _clipRowItem(Icons.ac_unit, 'Freeze',
+                    busy ? null : () => unawaited(_freezeFrameInsert())),
+                _clipRowItem(Icons.history, 'Reverse',
+                    () => _openToolTab('edit', 'speed')),
+                _clipRowItem(Icons.mask, 'Mask',
+                    () => _openToolTab('overlay', 'pip')),
+                _clipRowItem(Icons.audio_file_outlined, 'Extract audio',
+                    busy ? null : () => unawaited(_extractClipAudio())),
+                _clipRowItem(Icons.link_off, 'Unlink audio',
+                    busy ? null : () => unawaited(_unlinkSelectedClipAudio())),
+                _clipRowItem(
+                    Icons.noise_control_off,
+                    'Reduce noise',
+                    busy
+                        ? null
+                        : () => unawaited(
+                            _enhanceSelectedClipAudio(voice: false))),
+                _clipRowItem(
+                    Icons.record_voice_over,
+                    'Enhance voice',
+                    busy
+                        ? null
+                        : () =>
+                            unawaited(_enhanceSelectedClipAudio(voice: true))),
+                _clipRowItem(Icons.videocam, 'Stabilize',
+                    () => _openToolTab('edit', 'steady')),
+                _clipRowItem(Icons.transform, 'Transform',
+                    () => _openToolTab('edit', 'transform')),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// Display name for a tool key (used in the panel header).
   String _toolDisplayName(String key) {
     const Map<String, String> names = <String, String>{
@@ -3339,6 +4182,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       'overlay': 'Overlay',
       'transitions': 'Transitions',
       'news': 'News',
+      'clipVolume': 'Clip Volume',
     };
     return names[key] ?? key;
   }
@@ -3405,7 +4249,24 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         backgroundColor: const Color(0xFF121212),
         appBar: AppBar(
           backgroundColor: const Color(0xFF1E1E1E),
-          title: const Text('TJ Pro — Video Editor'),
+          // v1.4.0 CapCut top bar (mockup S4a): ✕ + search on the
+          // left, quality selector + Export on the right — no title.
+          leadingWidth: 104,
+          leading: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                tooltip: 'Close editor',
+                icon: const Icon(Icons.close, color: Colors.white),
+                onPressed: () => Navigator.of(context).maybePop(),
+              ),
+              IconButton(
+                tooltip: 'Search tools',
+                icon: const Icon(Icons.search, color: Colors.white),
+                onPressed: _busy ? null : _showToolSearch,
+              ),
+            ],
+          ),
           actions: [
             // Export-quality pill (§3): tap to set the quality
             // ahead of time; Export then skips its dialog.
@@ -3695,6 +4556,22 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
                                   color: Colors.white, fontSize: 12),
                             ),
                             const Spacer(),
+                            // v1.4.0 transport: snap toggle (Split
+                            // at playhead when ON).
+                            IconButton(
+                              tooltip: _snapOn
+                                  ? 'Snap ON — Split playhead par katega'
+                                  : 'Snap OFF — Split darmiyan se katega',
+                              onPressed: () =>
+                                  setState(() => _snapOn = !_snapOn),
+                              icon: Icon(
+                                Icons.push_pin,
+                                color: _snapOn
+                                    ? TjProTheme.gold
+                                    : Colors.white54,
+                                size: 20,
+                              ),
+                            ),
                             IconButton(
                               tooltip: 'Fullscreen',
                               onPressed: ready ? _openFullscreen : null,
@@ -3731,8 +4608,10 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
                   );
                 },
                 child: _activeTool == null
-                    ? Container(
-                        key: const ValueKey<String>('video-rail'),
+                    ? (_clipRow && _clips.isNotEmpty
+                        ? _clipToolRow()
+                        : Container(
+                            key: const ValueKey<String>('video-rail'),
                         color: const Color(0xFF1B1B1B),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -3753,18 +4632,42 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 8, vertical: 6),
                                 children: [
+                                  // v1.4.0 MAIN TOOL ROW (mockup
+                                  // S4a): Edit, Audio, Text, Effects,
+                                  // Overlay, Captions, Filters,
+                                  // Adjust, Stickers, Aspect ratio,
+                                  // Background — plus the existing
+                                  // Transitions + News (nothing is
+                                  // removed). Promoted entries open
+                                  // the SAME panels on their tab.
                                   _railButton(
                                       'edit', 'Edit', Icons.content_cut),
                                   _railButton(
                                       'audio', 'Audio', Icons.music_note),
                                   _railButton(
                                       'text', 'Text', Icons.text_fields),
-                                  _railButton(
-                                      'colour', 'Colour', Icons.palette),
                                   _railButton('effects', 'Effects',
                                       Icons.auto_awesome),
                                   _railButton(
                                       'overlay', 'Overlay', Icons.layers),
+                                  _railButton('text', 'Captions',
+                                      Icons.closed_caption,
+                                      tab: 'captions'),
+                                  _railButton('colour', 'Filters',
+                                      Icons.photo_filter,
+                                      tab: 'filters'),
+                                  _railButton(
+                                      'colour', 'Adjust', Icons.tune,
+                                      tab: 'adjust'),
+                                  _railButton('overlay', 'Stickers',
+                                      Icons.emoji_emotions,
+                                      tab: 'sticker'),
+                                  _railButton('edit', 'Aspect ratio',
+                                      Icons.aspect_ratio,
+                                      tab: 'trim'),
+                                  _railButton('overlay', 'Background',
+                                      Icons.wallpaper,
+                                      tab: 'background'),
                                   _railButton('transitions', 'Transitions',
                                       Icons.swap_horiz),
                                   _railButton(
@@ -3774,7 +4677,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
                             ),
                           ],
                         ),
-                      )
+                          ))
                     : Container(
                         key: ValueKey<String>('video-panel-${_activeTool!}'),
                         color: const Color(0xFF121212),

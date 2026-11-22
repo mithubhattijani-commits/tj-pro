@@ -212,6 +212,23 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
             return [
               ..._panelBody('speed'),
               if (_proRamp == 'Custom') ..._customRampWidgets(),
+              _sectionTitle('Smooth Slow-Mo (AI)'),
+              const Text(
+                'RIFE AI har frame ke darmiyan naya frame banata hai '
+                '— 0.5x slow-mo bilkul smooth. Sirf ~10s tak ki '
+                'selected clip par; model pack (rife_v46) chahiye.',
+                style: TextStyle(color: Colors.grey, fontSize: 12),
+              ),
+              const SizedBox(height: 6),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _busy ? null : _applySlowMoAi,
+                  icon: const Icon(Icons.slow_motion_video),
+                  label: const Text('Smooth Slow-Mo (AI) lagayein'),
+                ),
+              ),
+              const Divider(height: 32),
             ];
           case 'beat':
             return _panelBody('beats');
@@ -263,6 +280,29 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
           case 'captions':
             return [
               ..._panelBody('captions'),
+              _sectionTitle('Urdu (AI) captions'),
+              const Text(
+                'Shruti Urdu AI model (on-device) se Urdu captions — '
+                'Whisper wale option se alag, Urdu ke liye trained. '
+                'Model pack pehli dafa download hota hai.',
+                style: TextStyle(color: Colors.grey, fontSize: 12),
+              ),
+              const SizedBox(height: 6),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: (_transcribing || _busy)
+                      ? null
+                      : _generateUrduCaptions,
+                  icon: const Icon(Icons.closed_caption, size: 18),
+                  label: Text(
+                    _transcribing
+                        ? 'Captions ban rahe hain…'
+                        : 'Urdu (AI) captions banayein',
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
               ListTile(
                 leading: const Icon(Icons.translate),
                 title: const Text('Translate captions'),
@@ -287,8 +327,10 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
         }
       case 'colour':
         return _currentTab == 'adjust'
-            ? _legacyPanelChildren('gradingOne')
+            ? _adjustPanelChildren()
             : _legacyPanelChildren('filtersRow');
+      case 'clipVolume':
+        return _clipVolumeChildren();
       case 'effects':
         return _currentTab == 'tracking'
             ? _panelBody('tracking')
@@ -715,27 +757,7 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
               label: const Text('Extract audio'),
             ),
             TextButton.icon(
-              onPressed: _busy
-                  ? null
-                  : () async {
-                      _pushHistory();
-                      setState(() {
-                        _clips.removeAt(_selected);
-                        if (_selected >= _clips.length) {
-                          _selected =
-                              _clips.isEmpty ? 0 : _clips.length - 1;
-                        }
-                      });
-                      if (_clips.isNotEmpty) {
-                        await _loadPreview();
-                      } else {
-                        await _controller?.dispose();
-                        setState(() => _controller = null);
-                      }
-                      _setStatus(
-                        'Clip delete ho gaya — Undo se wapas aa sakta hai.',
-                      );
-                    },
+              onPressed: _busy ? null : _deleteSelectedClip,
               icon: const Icon(Icons.delete_outline, size: 18),
               label: const Text('Delete'),
             ),
@@ -1825,6 +1847,29 @@ const Text('Auto Captions (CapCut-style)',
                 onChanged: (v) => setState(() => _proChroma = v),
               ),
               if (_proChroma) ...[
+                // v1.4.0 (brief): 'Drag to select color' — the
+                // circular picker over the preview frame (the
+                // eyedropper dialog samples the exact tapped pixel
+                // and keys it live). Below it ONLY the two CapCut
+                // sliders are primary: Intensity (= Similarity) and
+                // Shadow (= Blend); Spill/Edge stay as the existing
+                // advanced controls (nothing is removed).
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _eyedropperPick,
+                    icon: const Icon(Icons.colorize),
+                    label: const Text('Drag to select color'),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Intensity = Similarity slider, Shadow = Blend '
+                  'slider (neeche) — rang select karte hi live '
+                  'preview update hota hai.',
+                  style: TextStyle(color: Colors.grey, fontSize: 12),
+                ),
+                const SizedBox(height: 8),
                 const Text('Key color — preset ya eyedropper se sample karein'),
                 Row(
                   children: [
@@ -2051,7 +2096,8 @@ const Text('Auto Captions (CapCut-style)',
                 title: const Text('Video background remover (ML)'),
                 subtitle: const Text(
                   'Premium AI: 50 coins se unlock hoga (is session '
-                  'ke liye).',
+                  'ke liye). Export mein pehle MODNet HQ matte lagta '
+                  'hai; live preview ML Kit segmentation se hai.',
                 ),
                 value: _proBgRemove,
                 onChanged: _onBgRemoverChanged,
@@ -2616,6 +2662,131 @@ const Text('Auto Captions (CapCut-style)',
     }
   }
 
+  /// v1.4.0 clip-selected row › Volume: the SELECTED clip's own
+  /// gain + mute (materialised at export — see _exportInner) and
+  /// its unlink state.
+  List<Widget> _clipVolumeChildren() {
+    final clip = _clips.isEmpty ? null : _clips[_selected];
+    if (clip == null) {
+      return const [
+        Text(
+          'Pehle timeline se clip select karein.',
+          style: TextStyle(color: Colors.grey),
+        ),
+      ];
+    }
+    return [
+      _sectionTitle('Clip ${_selected + 1} — volume'),
+      _ProSlider(
+        label: 'Clip volume',
+        value: clip.volume,
+        min: 0,
+        max: 1.5,
+        divisions: 30,
+        onChanged: (v) => setState(() => clip.volume = v),
+      ),
+      SwitchListTile(
+        title: const Text('Mute clip'),
+        subtitle: const Text('Is clip ki awaz export mein nahi aayegi.'),
+        value: clip.muted,
+        onChanged: (v) => setState(() => clip.muted = v),
+      ),
+      if (clip.detachedAudioPath != null)
+        Text(
+          'Audio unlinked hai: ${p.basename(clip.detachedAudioPath!)} '
+          '(alag track par hai).',
+          style: const TextStyle(color: Colors.grey, fontSize: 12),
+        ),
+      const Text(
+        'Volume sirf is clip par lagta hai — baqi clips ki awaz '
+        'apni jagah rehti hai.',
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      const Divider(height: 32),
+    ];
+  }
+
+  /// v1.4.0 Colour › Adjust (brief: tabs Filters | Adjust — the
+  /// tabs live in [_panelTabs]; here: the LUT rail, ONE circular
+  /// icon row of adjust items, ONE shared slider, Reset + ✓ (the
+  /// panel header's Done is the ✓). 'Auto adjust' is a toggle in
+  /// the row (ffmpeg normalize at export). HSL is not offered:
+  /// the bundled ffmpeg has no per-hue-range HSL filter, and a
+  /// fake slider is worse than none (see _adjustExtraFilter).
+  List<Widget> _adjustPanelChildren() {
+    return [
+      const Text('Adjust — ek waqt mein ek slider',
+          style: TextStyle(fontWeight: FontWeight.bold)),
+      const SizedBox(height: 8),
+      const Text('LUT look'),
+      const SizedBox(height: 4),
+      _iconChoiceRail([
+        for (final e in proLuts)
+          _iconChoiceItem(
+            icon: (e['name'] ?? '').isEmpty
+                ? Icons.block
+                : Icons.photo_filter,
+            label: (e['name'] ?? '').isEmpty ? 'None' : e['name']!,
+            selected: _proLut == (e['name'] ?? ''),
+            onTap: () => setState(() => _proLut = e['name'] ?? ''),
+          ),
+      ]),
+      const SizedBox(height: 8),
+      _iconChoiceRail([
+        _iconChoiceItem(
+          icon: Icons.auto_fix_high,
+          label: 'Auto adjust',
+          selected: _adjAuto,
+          onTap: () => setState(() => _adjAuto = !_adjAuto),
+        ),
+        for (final e in const [
+          ('Brightness', Icons.brightness_6),
+          ('Contrast', Icons.contrast),
+          ('Saturation', Icons.palette),
+          ('Brilliance', Icons.lightbulb_outline),
+          ('Sharpen', Icons.details),
+          ('Clarity', Icons.filter_drama_outlined),
+          ('Highlights', Icons.light_mode),
+          ('Shadows', Icons.dark_mode),
+          ('Whites', Icons.wb_sunny),
+          ('Blacks', Icons.nightlight_round),
+          ('Temperature', Icons.thermostat),
+          ('Tint', Icons.colorize),
+          ('Vibrance', Icons.color_lens),
+          ('Exposure', Icons.exposure),
+          ('Hue', Icons.gradient),
+          ('Fade', Icons.waves),
+          ('Vignette', Icons.vignette),
+          ('Grain', Icons.grain),
+        ])
+          _iconChoiceItem(
+            icon: e.$2,
+            label: e.$1,
+            selected: _gradeSlider == e.$1,
+            onTap: () => setState(() => _gradeSlider = e.$1),
+          ),
+      ]),
+      const SizedBox(height: 8),
+      _gradeSliderWidget(),
+      const SizedBox(height: 4),
+      Row(
+        children: [
+          TextButton.icon(
+            onPressed: _resetGrade,
+            icon: const Icon(Icons.restart_alt, size: 18),
+            label: const Text('Reset'),
+          ),
+          const Spacer(),
+          const Text(
+            'Har item per selected clip ke export par lagta hai.',
+            style: TextStyle(color: Colors.grey, fontSize: 11),
+          ),
+        ],
+      ),
+      const Divider(height: 32),
+    ];
+  }
+
   /// The ONE grade slider currently picked on Colour › Adjust.
   Widget _gradeSliderWidget() {
     switch (_gradeSlider) {
@@ -2695,6 +2866,98 @@ const Text('Auto Captions (CapCut-style)',
           divisions: 40,
           digits: 0,
           onChanged: (v) => setState(() => _proBrightness = v),
+        );
+      // v1.4.0 Adjust extras — one shared slider, values ride
+      // _adjustExtraFilter() at export.
+      case 'Brilliance':
+        return _ProSlider(
+          label: 'Brilliance',
+          value: _adjBrilliance,
+          min: -100,
+          max: 100,
+          divisions: 40,
+          digits: 0,
+          onChanged: (v) => setState(() => _adjBrilliance = v),
+        );
+      case 'Sharpen':
+        return _ProSlider(
+          label: 'Sharpen',
+          value: _adjSharpen,
+          min: 0,
+          max: 100,
+          divisions: 20,
+          digits: 0,
+          onChanged: (v) => setState(() => _adjSharpen = v),
+        );
+      case 'Clarity':
+        return _ProSlider(
+          label: 'Clarity',
+          value: _adjClarity,
+          min: 0,
+          max: 100,
+          divisions: 20,
+          digits: 0,
+          onChanged: (v) => setState(() => _adjClarity = v),
+        );
+      case 'Whites':
+        return _ProSlider(
+          label: 'Whites',
+          value: _adjWhites,
+          min: -100,
+          max: 100,
+          divisions: 40,
+          digits: 0,
+          onChanged: (v) => setState(() => _adjWhites = v),
+        );
+      case 'Blacks':
+        return _ProSlider(
+          label: 'Blacks',
+          value: _adjBlacks,
+          min: -100,
+          max: 100,
+          divisions: 40,
+          digits: 0,
+          onChanged: (v) => setState(() => _adjBlacks = v),
+        );
+      case 'Hue':
+        return _ProSlider(
+          label: 'Hue (deg)',
+          value: _adjHue,
+          min: -180,
+          max: 180,
+          divisions: 72,
+          digits: 0,
+          onChanged: (v) => setState(() => _adjHue = v),
+        );
+      case 'Fade':
+        return _ProSlider(
+          label: 'Fade',
+          value: _adjFade,
+          min: 0,
+          max: 100,
+          divisions: 20,
+          digits: 0,
+          onChanged: (v) => setState(() => _adjFade = v),
+        );
+      case 'Vignette':
+        return _ProSlider(
+          label: 'Vignette',
+          value: _adjVignette,
+          min: 0,
+          max: 100,
+          divisions: 20,
+          digits: 0,
+          onChanged: (v) => setState(() => _adjVignette = v),
+        );
+      case 'Grain':
+        return _ProSlider(
+          label: 'Grain',
+          value: _adjGrain,
+          min: 0,
+          max: 100,
+          divisions: 20,
+          digits: 0,
+          onChanged: (v) => setState(() => _adjGrain = v),
         );
       default:
         return _ProSlider(
@@ -2795,6 +3058,48 @@ const Text('Auto Captions (CapCut-style)',
                   const AlwaysStoppedAnimation<Color>(TjProTheme.gold),
             ),
           ),
+          // v1.4.0 (mockup S4a): LEFT RAIL — Mute clip + Cover —
+          // beside the filmstrip + lanes column.
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Column(
+                children: [
+                  _iconChoiceItem(
+                    icon: (clip != null && clip.muted)
+                        ? Icons.volume_off
+                        : Icons.volume_up,
+                    label: 'Mute',
+                    selected: clip != null && clip.muted,
+                    onTap: clip == null
+                        ? null
+                        : () {
+                            final c = _clips[_selected];
+                            _pushHistory();
+                            setState(() => c.muted = !c.muted);
+                            _setStatus(
+                              c.muted
+                                  ? 'Clip mute ho gaya (export mein awaz nahi aayegi).'
+                                  : 'Clip unmute ho gaya.',
+                            );
+                          },
+                  ),
+                  const SizedBox(height: 6),
+                  _iconChoiceItem(
+                    icon: Icons.image_outlined,
+                    label: 'Cover',
+                    selected: false,
+                    onTap: _clips.isEmpty
+                        ? null
+                        : () => unawaited(_saveFrameSnapshot()),
+                  ),
+                ],
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
           // Filmstrip track + the + tiles at its END.
           SizedBox(
             height: 58,
@@ -2932,7 +3237,36 @@ const Text('Auto Captions (CapCut-style)',
                 ),
               ),
             ),
+          // v1.4.0: the EMPTY text lane — a plain "+ Add text" row
+          // (mockup S4a) when no text/captions exist yet.
+          if (_text.trim().isEmpty && _captions.isEmpty) ...[
+            const SizedBox(height: 6),
+            InkWell(
+              onTap: () => _openTool('text'),
+              child: Container(
+                height: 26,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: Colors.white24),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.add, size: 14, color: Colors.white54),
+                    SizedBox(width: 6),
+                    Text('Add text',
+                        style:
+                            TextStyle(color: Colors.white54, fontSize: 11)),
+                  ],
+                ),
+              ),
+            ),
           ],
+                  ],
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -2978,7 +3312,12 @@ const Text('Auto Captions (CapCut-style)',
 
     return GestureDetector(
       onTap: () async {
-        setState(() => _selected = i);
+        // v1.4.0: tapping a clip SELECTS it and swaps the tool
+        // zone to the clip-selected row (mockup S4b).
+        setState(() {
+          _selected = i;
+          _clipRow = true;
+        });
         await _loadPreview();
       },
       child: Container(

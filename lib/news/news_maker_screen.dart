@@ -41,13 +41,19 @@ library;
 import 'dart:async';
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+import 'package:record/record.dart';
 
 import '../services/asset_download_service.dart';
 import '../services/coin_service.dart';
 import '../services/gemini_voice_service.dart';
+import '../services/pro_service.dart';
 import '../services/tts_processing.dart';
+import '../services/tts_studio_service.dart';
 import 'breaking_templates.dart';
 import 'caption_studio_screen.dart';
 import 'channel_preset.dart';
@@ -88,6 +94,12 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   bool _voiceBusy = false;
   String _voiceStatus = 'Abhi voice nahi bani.';
   int? _voiceRemaining;
+
+  // v1.4.0 audio trio (requirements #6): Record / Import /
+  // Text se Audio — all three land in the SAME project voiceover
+  // slot (project.voiceoverPath) the Gemini flow already uses.
+  final AudioRecorder _recorder = AudioRecorder();
+  bool _recording = false;
 
   String _saveStatus = '';
   Timer? _saveTimer;
@@ -156,9 +168,206 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   @override
   void dispose() {
     _saveTimer?.cancel();
+    unawaited(_recorder.dispose());
     _tehreerController.dispose();
     _tickerController.dispose();
     super.dispose();
+  }
+
+  /// v1.4.0 audio trio: the ONE place every audio source lands —
+  /// sets the project's voiceover slot, re-syncs the karaoke
+  /// subtitles against the real duration when the tehreer exists,
+  /// updates the status line and autosaves.
+  Future<void> _setProjectVoiceover(
+    String path,
+    double? durationSec,
+    String sourceLabel,
+  ) async {
+    final project = _project;
+    if (project == null) return;
+    var syncNote = '';
+    final text = _tehreerController.text.trim();
+    if (durationSec != null && durationSec > 0 && text.isNotEmpty) {
+      project.subtitles = syncSubtitlesToVoiceover(text, durationSec);
+      syncNote = ' Subtitles voiceover se sync ho gaye.';
+    }
+    setState(() {
+      project.voiceoverPath = path;
+      project.voiceoverDurationSec = durationSec;
+      _voiceStatus = '$sourceLabel tayyar hai.$syncNote';
+    });
+    _scheduleSave();
+  }
+
+  /// Trio option 1 — Record: mic recording (record package) saved
+  /// as WAV in the app's documents folder; stopping the recording
+  /// attaches it as the project voiceover. The existing
+  /// VoicePreviewPlayer below previews it.
+  Future<void> _toggleRecord() async {
+    final project = _project;
+    if (project == null || _voiceBusy) return;
+    if (_recording) {
+      final path = await _recorder.stop();
+      if (!mounted) return;
+      setState(() => _recording = false);
+      if (path == null) {
+        _showMessage('Recording save nahi hui.');
+        return;
+      }
+      final bytes = await File(path).readAsBytes();
+      final dur = audioDurationSeconds(bytes, 'wav');
+      await _setProjectVoiceover(
+        path,
+        dur > 0 ? dur : null,
+        'Apni recording',
+      );
+      return;
+    }
+    if (!await _recorder.hasPermission()) {
+      _showMessage('Mic ki permission chahiye recording ke liye.');
+      return;
+    }
+    final docs = await getApplicationDocumentsDirectory();
+    final dir = Directory(p.join(docs.path, 'news_audio'));
+    if (!await dir.exists()) await dir.create(recursive: true);
+    final path = p.join(
+      dir.path,
+      'voice_${DateTime.now().millisecondsSinceEpoch}.wav',
+    );
+    await _recorder.start(
+      const RecordConfig(encoder: AudioEncoder.wav),
+      path: path,
+    );
+    if (!mounted) return;
+    setState(() {
+      _recording = true;
+      _voiceStatus = 'Recording ho rahi hai… Stop dabayein jab ho jaye.';
+    });
+  }
+
+  /// Trio option 2 — Import: pick an audio file from the phone;
+  /// it is copied into the app's documents folder (picker cache
+  /// paths can be cleaned by the OS) and set as the voiceover.
+  Future<void> _importAudio() async {
+    final project = _project;
+    if (project == null || _voiceBusy) return;
+    final files = await FilePicker.pickFiles(type: FileType.audio);
+    if (files.isEmpty || files.first.path == null) return;
+    final src = File(files.first.path!);
+    try {
+      final docs = await getApplicationDocumentsDirectory();
+      final dir = Directory(p.join(docs.path, 'news_audio'));
+      if (!await dir.exists()) await dir.create(recursive: true);
+      final ext = p.extension(src.path).replaceAll('.', '').toLowerCase();
+      final dest = p.join(
+        dir.path,
+        'import_${DateTime.now().millisecondsSinceEpoch}'
+        '${ext.isEmpty ? '' : '.$ext'}',
+      );
+      await src.copy(dest);
+      final bytes = await File(dest).readAsBytes();
+      final dur = audioDurationSeconds(bytes, ext.isEmpty ? 'wav' : ext);
+      await _setProjectVoiceover(
+        dest,
+        dur > 0 ? dur : null,
+        'Import ki gayi audio (${p.basename(src.path)})',
+      );
+    } catch (e) {
+      _showMessage('Audio import nahi hui: $e');
+    }
+  }
+
+  /// Trio option 3 (free-TTS half) — Text se Audio via the free
+  /// Edge voices in [TtsStudioService] (Asad/Uzma, matched to the
+  /// selected Gemini voice's gender). COSTS COINS like the Gemini
+  /// path ([CoinFeature.voiceover], charged when the result is
+  /// not a cache hit); a failed spend attaches nothing.
+  Future<void> _buildFreeTtsVoice() async {
+    final project = _project;
+    if (project == null || _voiceBusy) return;
+    final text = _tehreerController.text.trim();
+    if (text.isEmpty) {
+      _showMessage('Pehle tehreer likhein.');
+      return;
+    }
+    setState(() {
+      _voiceBusy = true;
+      _voiceStatus = 'Free TTS se voice ban rahi hai…';
+    });
+    try {
+      final result = await TtsStudioService().generate(
+        text,
+        voice: _voice == GeminiVoice.charon
+            ? StudioVoice.asad
+            : StudioVoice.uzma,
+        controls: TtsControls(
+          speed: project.voiceSpeed,
+          pauseSeconds: project.voicePauseSec,
+        ),
+        music: project.voiceMusic,
+      );
+      if (!result.cached) {
+        final spendResult =
+            await CoinService.instance.spend(CoinFeature.voiceover);
+        if (!spendResult.ok) {
+          if (!mounted) return;
+          setState(() {
+            _voiceBusy = false;
+            _voiceStatus = 'Voiceover ke liye 50 coins chahiye — '
+                'balance kam hai. Watch Ads se coins kamayein.';
+          });
+          _showMessage(
+            'Coins kam hain — voiceover ke liye 50 coins chahiye.',
+          );
+          return;
+        }
+      }
+      final path = result.filePath;
+      if (path == null) {
+        throw Exception('Audio file save nahi hui.');
+      }
+      if (!mounted) return;
+      setState(() => _voiceBusy = false);
+      await _setProjectVoiceover(
+        path,
+        result.durationSec > 0 ? result.durationSec : null,
+        result.cached ? 'Free TTS voice (cached — 0 coins)' : 'Free TTS voice',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _voiceBusy = false;
+        _voiceStatus = 'Free TTS voice nahi bani: $e';
+      });
+    }
+  }
+
+  /// Trio option 3 — chooser: Gemini AI voice (the existing flow
+  /// below) or the free Edge TTS voices. Both cost coins for a new
+  /// voice; both land in the same voiceover slot.
+  Future<void> _showTextToAudioChooser() async {
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('Text se Audio — engine chunein'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, 'gemini'),
+            child: const Text('Gemini AI voice (50 coins)'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, 'free'),
+            child: const Text('Free TTS — Asad/Uzma (50 coins)'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (choice == 'gemini') {
+      await _buildVoice();
+    } else if (choice == 'free') {
+      await _buildFreeTtsVoice();
+    }
   }
 
   void _showMessage(String message) {
@@ -560,6 +769,78 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           ],
         ),
         const SizedBox(height: 20),
+        // v1.4.0 audio trio (requirements #6): Record / Import /
+        // Text se Audio — teeno ek hi voiceover slot mein jate
+        // hain; jo bhi source ho, neeche wala preview player aur
+        // export usi ko use karte hain.
+        const Text(
+          'Audio — 3 options',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: FilledButton.icon(
+                key: const Key('audioRecordButton'),
+                onPressed: _voiceBusy ? null : _toggleRecord,
+                icon: Icon(_recording ? Icons.stop : Icons.mic),
+                label: Text(_recording ? 'Stop' : 'Record'),
+                style: FilledButton.styleFrom(
+                  backgroundColor:
+                      _recording ? Colors.redAccent : const Color(0xFF7C3AED),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: OutlinedButton.icon(
+                key: const Key('audioImportButton'),
+                onPressed: _voiceBusy ? null : _importAudio,
+                icon: const Icon(Icons.audio_file_outlined),
+                label: const Text('Import'),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: OutlinedButton.icon(
+                key: const Key('audioTtsButton'),
+                onPressed: _voiceBusy ? null : _showTextToAudioChooser,
+                icon: const Icon(Icons.record_voice_over_outlined),
+                label: const Text('Text se Audio'),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
+            ),
+          ],
+        ),
+        if (_recording)
+          const Padding(
+            padding: EdgeInsets.only(top: 6),
+            child: Row(
+              children: [
+                Icon(Icons.fiber_manual_record,
+                    color: Colors.redAccent, size: 14),
+                SizedBox(width: 6),
+                Text(
+                  'Recording ho rahi hai… Stop dabane par voiceover lag jayega.',
+                  style: TextStyle(color: Colors.redAccent, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+        const Text(
+          'Record = apni awaz, Import = phone se audio file, '
+          'Text se Audio = tehreer se AI voice (nayi voice par '
+          '50 coins). Teeno ka result neeche preview mein sun sakte hain.',
+          style: TextStyle(color: Colors.grey, fontSize: 12),
+        ),
+        const SizedBox(height: 20),
         const Text(
           'Voiceover — Gemini',
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
@@ -678,6 +959,17 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             child: Text(
               'Aaj ki voice limit: $_voiceRemaining / 5 baaki',
               style: const TextStyle(color: Colors.grey, fontSize: 12),
+            ),
+          ),
+        // v1.4.0 PRO: Pro users get the raised daily AI-voice cap
+        // (ProService.limitFor — free 5/day, Pro 25/day).
+        if (ProService.instance.proActive)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(
+              'Pro active: AI voice ki roz limit '
+              '${ProService.instance.limitFor(5, 25)}/day hai.',
+              style: const TextStyle(color: Colors.amber, fontSize: 12),
             ),
           ),
         const SizedBox(height: 8),
