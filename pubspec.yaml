@@ -87,7 +87,7 @@ flutter:
     # export always has it (the on-demand URL stays empty). The
     # binary is uploaded separately — this entry names its path.
     - assets/templates/nigraan_intro.mp4
-        - assets/fonts/DejaVuSans-Bold.ttf
+    - assets/fonts/DejaVuSans-Bold.ttf
     - assets/music/news_music_1.mp3
     - assets/music/news_music_2.mp3
     - assets/music/news_music_3.mp3

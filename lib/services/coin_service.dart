@@ -311,6 +311,33 @@ class CoinService {
     }
   }
 
+  /// Mirror a Share & Earn referral credit LOCALLY after the claim
+  /// succeeded server-side (the `tjpro_claim_referral_rewards` RPC
+  /// already wrote the ledger rows — ReferralService follows with a
+  /// [syncFromServer] so the server SUM stays the truth; this local
+  /// mirror only makes the balance move instantly). In the RPC-
+  /// missing fallback the claim was a table flip only, and this
+  /// local credit is the balance until the SQL is fully applied.
+  /// Never throws.
+  Future<void> creditReferralReward(int coins) async {
+    if (coins <= 0) return;
+    try {
+      _prefs ??= await SharedPreferences.getInstance();
+      _setBalance(balance.value + coins);
+      await _appendLocalHistory(
+        CoinLedgerEntry(
+          amountCoins: coins,
+          type: 'tjpro_referral',
+          reason: CoinCosts.reasonReferral,
+          createdAt: DateTime.now(),
+        ),
+      );
+    } catch (_) {
+      // A failed local mirror never breaks the claim flow; the
+      // server ledger (RPC path) still holds the coins.
+    }
+  }
+
   /// Spend coins for a feature. The server re-validates the balance
   /// and debits the ledger; admins are waived server-side (no debit,
   /// still `ok: true`). Returns a [CoinSpendResult] the caller must
@@ -507,6 +534,11 @@ class CoinCosts {
 
   /// Ledger reason recorded for the daily free claim.
   static const String reasonDaily = 'daily_free';
+
+  /// Ledger reason recorded for a Share & Earn referral credit
+  /// (server ledger rows written by the claim RPC use the same
+  /// reason family: type 'tjpro_referral').
+  static const String reasonReferral = 'referral_reward';
 
   static int costFor(CoinFeature feature) {
     switch (feature) {

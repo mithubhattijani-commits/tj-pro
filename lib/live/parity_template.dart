@@ -1,26 +1,45 @@
-/// Final Template parity (v1.3.0, brief §9) — the ONE source of
-/// truth for the REAL Nigraan final template, as produced by the
-/// channel's own pipeline (house style v8, user-approved
-/// 14 Nov 2026; `make_reel.py` portrait + `make_news_video.py`
-/// landscape in the 20 Nov backup pack).
+/// Final Template designs (v1.3.0, brief §9 + the 22 Nov 2026
+/// rework) — the ONE source of truth for the Final template's two
+/// selectable designs.
 ///
-/// The reference is TWO flush bottom ribbons of equal height —
-/// Urdu #3D5AFE over English #EF0017 — both scrolling (Urdu
-/// rightward, English leftward, gold-dot separators), black chips
-/// with GOLD text (بریکنگ نیوز at the RIGHT of the Urdu ribbon,
-/// HEADLINES at the LEFT of the English ribbon), the rotating logo
-/// at bottom-right with its visible width 17.1% of the frame, and
-/// directly under it a dark capsule that FLIPS between a ticking
-/// PKT clock (drawtext `%{pts:localtime:%r}` over epoch-shifted
-/// PTS) and the Urdu date, ~3 s each. No top ribbon in the parity
-/// preset (it stays in the app as an optional extra), no end card.
+/// DEFAULT — 'final3' (user-confirmed 22 Nov 2026, "same rang"):
+/// the PUBLIC-News-style THREE-ribbon bottom stack measured from
+/// the user's reference frame (720x119 crop): TOP ribbon slightly
+/// thinner, dark navy (sampled (3,37,114)), carrying the
+/// current/related URDU headline; MIDDLE ribbon the THICKEST, red
+/// (sampled (136,12,3)), carrying the national URDU headline;
+/// BOTTOM ribbon dark navy-black (sampled (8,30,70)) carrying the
+/// international ENGLISH text as a continuously scrolling ticker.
+/// Ribbon heights ratio 31:43:28 (fractions of frame WIDTH). The
+/// rotating logo block sits at the RIGHT of the stack (visible
+/// width 110/720 of the frame, poking ~7/720 above the stack top)
+/// with the DATE capsule directly under it. No chips, no gold
+/// edges — the ribbons are full-width headline bars and the logo
+/// stack overlaps their right end. The Urdu ribbons carry their
+/// headlines pinned (right-aligned) and scroll only when the text
+/// overflows the text window left of the logo stack.
+///
+/// VARIANT — 'classic2': the v1.3.0 parity design, kept selectable:
+/// TWO flush bottom ribbons of equal height — Urdu #3D5AFE over
+/// English #EF0017 — both scrolling (Urdu rightward, English
+/// leftward, gold-dot separators), black chips with GOLD text
+/// (بریکنگ نیوز at the RIGHT of the Urdu ribbon, HEADLINES at the
+/// LEFT of the English ribbon), the rotating logo at bottom-right
+/// with its visible width 17.1% of the frame, and directly under
+/// it a dark capsule that FLIPS between a ticking PKT clock
+/// (drawtext `%{pts:localtime:%r}` over epoch-shifted PTS) and the
+/// Urdu date, ~3 s each. Its reference is the channel's own
+/// pipeline output (house style v8, user-approved 14 Nov 2026;
+/// `make_reel.py` portrait + `make_news_video.py` landscape in the
+/// 20 Nov backup pack).
 ///
 /// This file holds: the pure [ParityGeometry], the dart:ui PNG
 /// layer renderers (ribbon backgrounds, scrolling ticker strips,
-/// chips, capsule bar + date face, the optional top-ribbon still),
-/// and the FFmpeg command builder that animates them. The widget
-/// preview (nigraan_final_preview.dart) and the PIL tasalli check
-/// use the same constants.
+/// static headline bars, chips, capsule bar + date face, the
+/// classic optional top-ribbon still), and the FFmpeg command
+/// builder that animates them. The widget preview
+/// (nigraan_final_preview.dart) and the PIL tasalli check use the
+/// same constants.
 library;
 
 import 'dart:io';
@@ -41,8 +60,21 @@ const int kParityGold = 0xFFF5C542;
 /// the fallback when a preset colour is unset.
 const int kParityUrduColor = 0xFF3D5AFE;
 
-/// English ribbon colour (#EF0017).
+/// English ribbon colour (#EF0017) — classic2 design.
 const int kParityEnglishColor = 0xFFEF0017;
+
+/// Which Final-template design a [ParityGeometry] describes.
+/// Mirrors [ChannelPreset.finalVariant] ('final3' / 'classic2').
+enum ParityVariant {
+  /// The default 3-ribbon PUBLIC-style stack (22 Nov 2026).
+  final3,
+
+  /// The v1.3.0 2-ribbon parity design.
+  classic2;
+
+  static ParityVariant fromId(String? id) =>
+      id == kFinalVariantClassic2 ? ParityVariant.classic2 : ParityVariant.final3;
+}
 
 /// Pure reference geometry for a [width]x[height] frame.
 ///
@@ -51,11 +83,24 @@ const int kParityEnglishColor = 0xFFEF0017;
 /// the scale against the orientation's reference width, so the
 /// geometry reproduces both renderers exactly at their native
 /// sizes and interpolates proportionally elsewhere.
+///
+/// The 'classic2' getters reproduce the v1.3.0 2-ribbon design;
+/// the `f3*` getters + the variant-aware logo/capsule getters
+/// describe the default 'final3' stack, whose proportions were
+/// measured from the user's PUBLIC News frame (720x119 crop of a
+/// 16:9 frame): ribbon heights 31:43:28 and the logo block 110
+/// wide, all as fractions of the frame WIDTH (720 in the crop).
 class ParityGeometry {
-  ParityGeometry(this.width, this.height);
+  ParityGeometry(this.width, this.height,
+      {this.variant = ParityVariant.classic2});
 
   final double width;
   final double height;
+
+  /// Which Final design this geometry describes.
+  final ParityVariant variant;
+
+  bool get isFinal3 => variant == ParityVariant.final3;
 
   bool get portrait => height >= width;
 
@@ -78,9 +123,11 @@ class ParityGeometry {
   double get englishChipW =>
       portrait ? width * (220 / 1080) : width * (260 / 1280);
 
-  /// The logo's VISIBLE width: 185 px at 1080 wide, 219 at 1280
-  /// (both ≈17.1% of the frame width).
-  double get logoVisibleW => width * (185 / 1080);
+  /// The logo's VISIBLE width: classic2 — 185 px at 1080 wide,
+  /// 219 at 1280 (both ≈17.1% of the frame width); final3 — the
+  /// reference block's 110 px at 720 wide (15.3%).
+  double get logoVisibleW =>
+      isFinal3 ? width * (110 / 720) : width * (185 / 1080);
 
   /// The alpha .mov's union crop (488:382:195:57) scaled so its
   /// visible content (422x347 inside the crop, offset 29,13,
@@ -91,13 +138,18 @@ class ParityGeometry {
   double get logoVisibleBot => 360 * logoVisibleW / 422;
   double get logoVisibleH => 347 * logoVisibleW / 422;
 
-  /// Right margin of the logo/capsule stack (24 px at reference).
-  double get logoMargin => 24 * s;
+  /// Right margin of the logo/capsule stack: classic2 — 24 px at
+  /// reference; final3 — the reference block is FLUSH with the
+  /// frame's right edge (margin 0).
+  double get logoMargin => isFinal3 ? 0 : 24 * s;
 
-  /// Capsule: same width as the visible logo; height 47 px
-  /// (portrait) / 39 px (landscape).
+  /// Capsule: same width as the visible logo; height — classic2:
+  /// 47 px (portrait) / 39 px (landscape); final3: the reference
+  /// date box's 14 px at 720 wide.
   double get capsuleW => logoVisibleW;
-  double get capsuleH => portrait ? height * (47 / 1920) : height * (39 / 720);
+  double get capsuleH => isFinal3
+      ? width * (14 / 720)
+      : (portrait ? height * (47 / 1920) : height * (39 / 720));
 
   // ---- Rects (frame coordinates) ----
 
@@ -114,21 +166,38 @@ class ParityGeometry {
   ui.Rect get englishChip =>
       ui.Rect.fromLTWH(0, englishStrip.top, englishChipW, ribbonH);
 
-  /// Capsule bottom edge sits ON the Urdu ribbon's top edge.
-  ui.Rect get capsule => ui.Rect.fromLTWH(
-        width - logoMargin - capsuleW,
-        urduStrip.top - capsuleH,
-        capsuleW,
-        capsuleH,
-      );
+  /// Capsule position. classic2: its bottom edge sits ON the Urdu
+  /// ribbon's top edge, logo above it. final3: the capsule hangs
+  /// directly UNDER the logo at the right of the stack (the
+  /// reference's date box under the logo block).
+  ui.Rect get capsule => isFinal3
+      ? ui.Rect.fromLTWH(
+          width - logoVisibleW,
+          f3LogoTop + logoVisibleH,
+          capsuleW,
+          capsuleH,
+        )
+      : ui.Rect.fromLTWH(
+          width - logoMargin - capsuleW,
+          urduStrip.top - capsuleH,
+          capsuleW,
+          capsuleH,
+        );
 
   /// Where the logo's VISIBLE content lands.
-  ui.Rect get logoVisible => ui.Rect.fromLTWH(
-        capsule.left,
-        capsule.top - logoVisibleH,
-        logoVisibleW,
-        logoVisibleH,
-      );
+  ui.Rect get logoVisible => isFinal3
+      ? ui.Rect.fromLTWH(
+          width - logoVisibleW,
+          f3LogoTop,
+          logoVisibleW,
+          logoVisibleH,
+        )
+      : ui.Rect.fromLTWH(
+          capsule.left,
+          capsule.top - logoVisibleH,
+          logoVisibleW,
+          logoVisibleH,
+        );
 
   /// Overlay position for the scaled .mov crop: its visible part
   /// must land exactly on [logoVisible].
@@ -158,6 +227,47 @@ class ParityGeometry {
   /// Scroll window of a ribbon = frame width minus its chip.
   double urduWindowW() => width - urduChipW;
   double englishWindowW() => width - englishChipW;
+
+  // ---- Final 3-Ribbon geometry (variant final3) ----
+  // Measured from the user's PUBLIC News frame (720x119 crop):
+  // ribbon heights 31 (top) : 43 (middle) : 28 (bottom), logo
+  // block 110 wide poking 7 above the stack top, date box 14
+  // high — all in crop px, i.e. fractions of the frame WIDTH.
+
+  double get f3TopH => width * (31 / 720);
+  double get f3MidH => width * (43 / 720);
+  double get f3BotH => width * (28 / 720);
+
+  /// Top edge of the whole 3-ribbon stack.
+  double get f3StackTop => height - f3TopH - f3MidH - f3BotH;
+
+  ui.Rect get f3TopStrip =>
+      ui.Rect.fromLTWH(0, f3StackTop, width, f3TopH);
+  ui.Rect get f3MidStrip =>
+      ui.Rect.fromLTWH(0, f3StackTop + f3TopH, width, f3MidH);
+  ui.Rect get f3BotStrip =>
+      ui.Rect.fromLTWH(0, height - f3BotH, width, f3BotH);
+
+  /// How far the logo block pokes above the stack top in the
+  /// reference (its border starts ~7 crop px above the top
+  /// ribbon's top edge).
+  double get f3Poke => width * (7 / 720);
+
+  /// Top edge of the logo's visible box (final3).
+  double get f3LogoTop => f3StackTop - f3Poke;
+
+  /// Text window of the two Urdu ribbons: from the left edge to
+  /// the logo stack (their headlines end at the logo block, like
+  /// the reference). The bottom ticker runs the full width.
+  double get f3TextWindowW => width - logoVisibleW;
+
+  /// Ribbon text sizes (fractions of each ribbon's own height —
+  /// the reference's headline ink fills roughly half its ribbon).
+  double get f3TopFontAr => f3TopH * 0.52;
+  double get f3TopFontLat => f3TopH * 0.42;
+  double get f3MidFontAr => f3MidH * 0.56;
+  double get f3MidFontLat => f3MidH * 0.45;
+  double get f3BotFont => f3BotH * 0.53;
 }
 
 /// Splits a ribbon's text into headlines: the app stores one string
@@ -203,6 +313,15 @@ String parityUrduDate(DateTime d) {
   return '$weekday ${d.day} ${_urduMonths[(d.month - 1).clamp(0, 11)]} ${d.year}';
 }
 
+/// The final3 capsule's DATE face: the SHORT Urdu date (weekday +
+/// day + month, no year) — the reference's date box is a thin
+/// strip ("Thu 19-Nov"), so the long date would shrink to
+/// illegibility inside it.
+String parityShortUrduDate(DateTime d) {
+  final weekday = _urduWeekdays[(d.weekday - 1).clamp(0, 6)];
+  return '$weekday ${d.day} ${_urduMonths[(d.month - 1).clamp(0, 11)]}';
+}
+
 /// The capsule's TIME face text (for previews): 12-hour with
 /// seconds, e.g. `08:55:20 PM` — the `%r` format the export's
 /// drawtext clock renders.
@@ -224,6 +343,8 @@ bool _hasArabic(String text) =>
   required bool urdu,
   required bool fontReady,
   required ParityGeometry g,
+  double? fontAr,
+  double? fontLat,
 }) {
   final builder = ui.ParagraphBuilder(
     ui.ParagraphStyle(
@@ -262,7 +383,9 @@ bool _hasArabic(String text) =>
     builder.pushStyle(
       ui.TextStyle(
         color: const ui.Color(0xFFFFFFFF),
-        fontSize: arabic ? g.urduFontAr : (urdu ? g.urduFontLat : g.englishFont),
+        fontSize: arabic
+            ? (fontAr ?? g.urduFontAr)
+            : (fontLat ?? (urdu ? g.urduFontLat : g.englishFont)),
         fontWeight: ui.FontWeight.bold,
         fontFamily: arabic && fontReady
             ? AssetDownloadService.kasheedaFamily
@@ -294,27 +417,35 @@ Future<File> _writePng(
 }
 
 /// Ribbon background layer (W x ribbonH): solid ribbon colour +
-/// the gold top edge. [color] is the preset's ribbon colour.
+/// the gold top edge (classic2 only — the final3 ribbons have no
+/// gold edge; pass [goldEdge] false). [color] is the resolved
+/// ribbon colour (see [ChannelPreset.designTopColor] etc.).
 Future<File> renderParityRibbonBg({
   required Directory dir,
   required ParityGeometry g,
   required bool urdu,
   required int color,
+  bool goldEdge = true,
+  double? height,
+  String? name,
 }) async {
   final recorder = ui.PictureRecorder();
   final canvas = ui.Canvas(recorder);
-  final rect = ui.Rect.fromLTWH(0, 0, g.width, g.ribbonH);
+  final h = height ?? g.ribbonH;
+  final rect = ui.Rect.fromLTWH(0, 0, g.width, h);
   canvas.drawRect(rect, ui.Paint()..color = ui.Color(color));
-  canvas.drawRect(
-    ui.Rect.fromLTWH(0, 0, g.width, g.goldEdge),
-    ui.Paint()..color = const ui.Color(kParityGold),
-  );
+  if (goldEdge) {
+    canvas.drawRect(
+      ui.Rect.fromLTWH(0, 0, g.width, g.goldEdge),
+      ui.Paint()..color = const ui.Color(kParityGold),
+    );
+  }
   return _writePng(
     recorder,
     g.width.round(),
-    g.ribbonH.ceil(),
+    h.ceil(),
     dir,
-    urdu ? 'parity_t1bg.png' : 'parity_t2bg.png',
+    name ?? (urdu ? 'parity_t1bg.png' : 'parity_t2bg.png'),
   );
 }
 
@@ -392,9 +523,23 @@ Future<(File, double)> renderParityStrip({
   required bool urdu,
   required List<String> headlines,
   required bool fontReady,
+  double? ribbonH,
+  double? windowW,
+  int dotColor = kParityGold,
+  double? fontAr,
+  double? fontLat,
+  String? name,
 }) async {
+  final rH = ribbonH ?? g.ribbonH;
   (ui.Paragraph, double, bool) buildOne(String h) {
-    final r = _headlineParagraph(h, urdu: urdu, fontReady: fontReady, g: g);
+    final r = _headlineParagraph(
+      h,
+      urdu: urdu,
+      fontReady: fontReady,
+      g: g,
+      fontAr: fontAr,
+      fontLat: fontLat,
+    );
     return (r.$1, r.$2, _hasArabic(h));
   }
 
@@ -403,19 +548,19 @@ Future<(File, double)> renderParityStrip({
   ];
   final seqOnce = paras.fold<double>(0, (a, e) => a + e.$2 + 4) +
       g.sepSlot * paras.length;
-  final window = urdu ? g.urduWindowW() : g.englishWindowW();
+  final window = windowW ?? (urdu ? g.urduWindowW() : g.englishWindowW());
   var reps = 1;
   while (seqOnce * reps < window * 2) {
     reps++;
   }
   final sw = seqOnce * reps;
   final stripW = (sw * 2).ceil();
-  final stripH = g.ribbonH.ceil();
+  final stripH = rH.ceil();
   final recorder = ui.PictureRecorder();
   final canvas = ui.Canvas(recorder);
-  final gold = ui.Paint()..color = const ui.Color(kParityGold);
+  final gold = ui.Paint()..color = ui.Color(dotColor);
   void drawDot(double cx) {
-    canvas.drawCircle(ui.Offset(cx, g.ribbonH / 2), g.dotR, gold);
+    canvas.drawCircle(ui.Offset(cx, rH / 2), g.dotR, gold);
   }
 
   void drawHeadline((ui.Paragraph, double, bool) e, double x) {
@@ -423,8 +568,8 @@ Future<(File, double)> renderParityStrip({
     // Ink-centred like the reference; Nastaleeq ink sits high in
     // its line box, so Arabic headlines nudge down a touch (the
     // same convention as the still renderer).
-    final y = (g.ribbonH - para.height) / 2 +
-        (arabic ? g.ribbonH * 0.06 : 0);
+    final y = (rH - para.height) / 2 +
+        (arabic ? rH * 0.06 : 0);
     canvas.drawParagraph(para, ui.Offset(x, y));
   }
 
@@ -458,14 +603,95 @@ Future<(File, double)> renderParityStrip({
     stripW,
     stripH,
     dir,
-    urdu ? 'parity_t1strip.png' : 'parity_t2strip.png',
+    name ?? (urdu ? 'parity_t1strip.png' : 'parity_t2strip.png'),
   );
   return (file, sw);
 }
 
-/// Capsule bar layer (full frame): dark translucent rounded bar
-/// with a gold top line, at the capsule rect. Both clock faces are
-/// drawn over it (drawtext time / PNG date).
+/// The ink width of ONE pass of [headlines] (no repetition) at a
+/// ribbon's font sizes — the final3 Urdu ribbons compare this
+/// against their text window to decide pinned vs scrolling.
+double paritySequenceWidth({
+  required ParityGeometry g,
+  required bool urdu,
+  required List<String> headlines,
+  required bool fontReady,
+  double? fontAr,
+  double? fontLat,
+}) {
+  var w = 0.0;
+  for (final h in headlines) {
+    final r = _headlineParagraph(
+      h,
+      urdu: urdu,
+      fontReady: fontReady,
+      g: g,
+      fontAr: fontAr,
+      fontLat: fontLat,
+    );
+    w += r.$2 + 4;
+  }
+  return w + g.sepSlot * headlines.length;
+}
+
+/// A final3 Urdu ribbon's STATIC headline layer (full frame
+/// width x ribbonH, transparent): the headlines drawn ONCE,
+/// right-aligned so the last headline's ink ends at the text
+/// window's right edge (the logo stack boundary), like the
+/// reference. Used when the sequence fits the window; longer
+/// sequences scroll via [renderParityStrip] instead.
+Future<File> renderParityHeadlineStill({
+  required Directory dir,
+  required ParityGeometry g,
+  required List<String> headlines,
+  required bool fontReady,
+  required double ribbonH,
+  required double windowW,
+  required double fontAr,
+  required double fontLat,
+  required String name,
+}) async {
+  final recorder = ui.PictureRecorder();
+  final canvas = ui.Canvas(recorder);
+  // Build right-to-left: cursor at the window's right edge (with
+  // a small inset), each headline placed left of the previous,
+  // white dot separator between them (the final3 separators are
+  // white, like the reference's bullets).
+  var x = windowW - 4 * g.s;
+  final dotPaint = ui.Paint()..color = const ui.Color(0xFFFFFFFF);
+  for (var i = headlines.length - 1; i >= 0; i--) {
+    final (para, inkW, arabic) = () {
+      final r = _headlineParagraph(
+        headlines[i],
+        urdu: true,
+        fontReady: fontReady,
+        g: g,
+        fontAr: fontAr,
+        fontLat: fontLat,
+      );
+      return (r.$1, r.$2, _hasArabic(headlines[i]));
+    }();
+    x -= inkW + 4;
+    final y = (ribbonH - para.height) / 2 + (arabic ? ribbonH * 0.06 : 0);
+    canvas.drawParagraph(para, ui.Offset(x, y));
+    if (i > 0) {
+      x -= g.sepSlot;
+      canvas.drawCircle(ui.Offset(x + g.sepSlot / 2, ribbonH / 2), g.dotR, dotPaint);
+    }
+  }
+  return _writePng(
+    recorder,
+    g.width.round(),
+    ribbonH.ceil(),
+    dir,
+    name,
+  );
+}
+
+/// Capsule bar layer (full frame): classic2 — dark translucent
+/// rounded bar with a gold top line; final3 — the reference's
+/// solid black date box with a small radius and NO gold line.
+/// Both clock faces are drawn over it (drawtext time / PNG date).
 Future<File> renderParityCapsuleBar({
   required Directory dir,
   required ParityGeometry g,
@@ -473,6 +699,20 @@ Future<File> renderParityCapsuleBar({
   final recorder = ui.PictureRecorder();
   final canvas = ui.Canvas(recorder);
   final cap = g.capsule;
+  if (g.isFinal3) {
+    final rrect = ui.RRect.fromRectAndRadius(
+      cap,
+      ui.Radius.circular(2 * g.s),
+    );
+    canvas.drawRRect(rrect, ui.Paint()..color = const ui.Color(0xFF000000));
+    return _writePng(
+      recorder,
+      g.width.round(),
+      g.height.round(),
+      dir,
+      'parity_capbar.png',
+    );
+  }
   final rrect = ui.RRect.fromRectAndRadius(
     cap,
     ui.Radius.circular(8 * g.s),
@@ -506,8 +746,10 @@ Future<File> renderParityCapsuleDate({
   final recorder = ui.PictureRecorder();
   final canvas = ui.Canvas(recorder);
   final cap = g.capsule;
-  final text = parityUrduDate(now);
-  var size = 30 * g.s;
+  // final3's thin date box takes the SHORT date (the reference's
+  // "Thu 19-Nov" strip); classic2 keeps the long Urdu date.
+  final text = g.isFinal3 ? parityShortUrduDate(now) : parityUrduDate(now);
+  var size = g.isFinal3 ? cap.height * 0.76 : 30 * g.s;
   ui.Paragraph para;
   while (true) {
     final builder = ui.ParagraphBuilder(
@@ -529,7 +771,8 @@ Future<File> renderParityCapsuleDate({
     builder.addText(text);
     para = builder.build();
     para.layout(const ui.ParagraphConstraints(width: double.infinity));
-    if (para.maxIntrinsicWidth <= cap.width - 20 * g.s || size <= 18 * g.s) {
+    final floor = g.isFinal3 ? 8 * g.s : 18 * g.s;
+    if (para.maxIntrinsicWidth <= cap.width - 20 * g.s || size <= floor) {
       break;
     }
     size -= 2 * g.s;
@@ -609,43 +852,84 @@ Future<File> renderParityTopRibbon({
   );
 }
 
+/// One ribbon's rendered layers for a parity export.
+class ParityRibbonAssets {
+  const ParityRibbonAssets({
+    required this.bg,
+    required this.y,
+    this.strip,
+    this.period = 0,
+    this.still,
+    this.chip,
+    this.scrollRight = false,
+    this.windowW = 0,
+    this.chipW = 0,
+  });
+
+  /// Background layer (frame width x ribbon height).
+  final File bg;
+
+  /// Overlay y of the bg / strip / still / chip.
+  final double y;
+
+  /// Scrolling strip PNG (null when the ribbon is static).
+  final File? strip;
+
+  /// Scroll period of [strip] (its sequence width).
+  final double period;
+
+  /// Static headline layer (final3 Urdu ribbons whose text fits
+  /// their window — they are pinned, not scrolling).
+  final File? still;
+
+  /// Chip layer (classic2 only; final3 has no chips).
+  final File? chip;
+
+  /// Strip motion: true = the Urdu formula (content moves
+  /// RIGHT, starting from [windowW] − 2·period), false = the
+  /// English formula (content moves LEFT, starting after
+  /// [chipW]).
+  final bool scrollRight;
+
+  /// Scroll window width (the Urdu formula's base).
+  final double windowW;
+
+  /// Chip width the English formula starts after (classic2
+  /// English ribbon; 0 for final3's chipless bottom ticker).
+  final double chipW;
+}
+
 /// All rendered layers for one parity export.
 class ParityAssets {
   const ParityAssets({
     required this.geometry,
-    required this.t1bg,
-    required this.t1strip,
-    required this.t1Period,
-    required this.t1top,
-    required this.t2bg,
-    required this.t2strip,
-    required this.t2Period,
-    required this.t2top,
+    required this.ribbons,
     required this.capBar,
     required this.capDate,
     required this.topRibbon,
   });
 
   final ParityGeometry geometry;
-  final File t1bg;
-  final File t1strip;
-  final double t1Period;
-  final File t1top;
-  final File t2bg;
-  final File t2strip;
-  final double t2Period;
-  final File t2top;
+
+  /// Ribbons in top-to-bottom stack order: classic2 =
+  /// [urdu, english]; final3 = [top, mid, bot].
+  final List<ParityRibbonAssets> ribbons;
+
   final File capBar;
   final File capDate;
 
-  /// Null unless the preset's optional top ribbon is enabled.
+  /// The classic2 OPTIONAL frame-top ribbon as a still layer.
+  /// Null when disabled, and always null in final3 (its top
+  /// ribbon lives in the stack, never at the frame top).
   final File? topRibbon;
 }
 
-/// Renders every parity layer for [preset] at [width]x[height].
-/// Urdu/English ribbon texts come from the preset's ribbons
-/// (falling back to the breaking headline / a placeholder line so
-/// the ribbons never render empty in a stock export).
+/// Renders every parity layer for [preset] at [width]x[height],
+/// in the preset's Final design ([ChannelPreset.finalVariant]).
+/// Ribbon texts come from the preset's ribbons (falling back to
+/// a placeholder line so the ribbons never render empty in a
+/// stock export); [urduText]/[englishText] override the middle /
+/// bottom ribbon texts (the reel export's per-story fills).
 Future<ParityAssets> renderParityAssets({
   required Directory dir,
   required ChannelPreset preset,
@@ -656,42 +940,18 @@ Future<ParityAssets> renderParityAssets({
   String urduText = '',
   String englishText = '',
 }) async {
-  final g = ParityGeometry(width.toDouble(), height.toDouble());
+  final variant = ParityVariant.fromId(preset.finalVariant);
+  final g = ParityGeometry(
+    width.toDouble(),
+    height.toDouble(),
+    variant: variant,
+  );
   final urdu = urduText.trim().isNotEmpty
       ? urduText.trim()
       : preset.urduRibbon.text.trim();
   final english = englishText.trim().isNotEmpty
       ? englishText.trim()
       : preset.englishRibbon.text.trim();
-  final t1bg = await renderParityRibbonBg(
-    dir: dir,
-    g: g,
-    urdu: true,
-    color: preset.urduRibbon.color,
-  );
-  final (t1strip, t1Period) = await renderParityStrip(
-    dir: dir,
-    g: g,
-    urdu: true,
-    headlines: paritySplitHeadlines(urdu.isEmpty ? 'قومی خبریں' : urdu),
-    fontReady: fontReady,
-  );
-  final t1top = await renderParityChip(dir: dir, g: g, urdu: true, fontReady: fontReady);
-  final t2bg = await renderParityRibbonBg(
-    dir: dir,
-    g: g,
-    urdu: false,
-    color: preset.englishRibbon.color,
-  );
-  final (t2strip, t2Period) = await renderParityStrip(
-    dir: dir,
-    g: g,
-    urdu: false,
-    headlines:
-        paritySplitHeadlines(english.isEmpty ? 'International headlines' : english),
-    fontReady: fontReady,
-  );
-  final t2top = await renderParityChip(dir: dir, g: g, urdu: false, fontReady: fontReady);
   final capBar = await renderParityCapsuleBar(dir: dir, g: g);
   final capDate = await renderParityCapsuleDate(
     dir: dir,
@@ -699,39 +959,227 @@ Future<ParityAssets> renderParityAssets({
     now: now,
     fontReady: fontReady,
   );
-  final top = preset.topRibbon.enabled
-      ? await renderParityTopRibbon(
-          dir: dir,
-          g: g,
-          preset: preset,
-          fontReady: fontReady,
-        )
-      : null;
+
+  if (variant == ParityVariant.classic2) {
+    final t1bg = await renderParityRibbonBg(
+      dir: dir,
+      g: g,
+      urdu: true,
+      color: preset.designUrduColor,
+    );
+    final (t1strip, t1Period) = await renderParityStrip(
+      dir: dir,
+      g: g,
+      urdu: true,
+      headlines: paritySplitHeadlines(urdu.isEmpty ? 'قومی خبریں' : urdu),
+      fontReady: fontReady,
+    );
+    final t1top = await renderParityChip(
+        dir: dir, g: g, urdu: true, fontReady: fontReady);
+    final t2bg = await renderParityRibbonBg(
+      dir: dir,
+      g: g,
+      urdu: false,
+      color: preset.designEnglishColor,
+    );
+    final (t2strip, t2Period) = await renderParityStrip(
+      dir: dir,
+      g: g,
+      urdu: false,
+      headlines: paritySplitHeadlines(
+          english.isEmpty ? 'International headlines' : english),
+      fontReady: fontReady,
+    );
+    final t2top = await renderParityChip(
+        dir: dir, g: g, urdu: false, fontReady: fontReady);
+    final top = preset.topRibbon.enabled
+        ? await renderParityTopRibbon(
+            dir: dir,
+            g: g,
+            preset: preset,
+            fontReady: fontReady,
+          )
+        : null;
+    return ParityAssets(
+      geometry: g,
+      ribbons: [
+        ParityRibbonAssets(
+          bg: t1bg,
+          y: g.urduStrip.top,
+          strip: t1strip,
+          period: t1Period,
+          chip: t1top,
+          scrollRight: true,
+          windowW: g.urduWindowW(),
+        ),
+        ParityRibbonAssets(
+          bg: t2bg,
+          y: g.englishStrip.top,
+          strip: t2strip,
+          period: t2Period,
+          chip: t2top,
+          chipW: g.englishChipW,
+        ),
+      ],
+      capBar: capBar,
+      capDate: capDate,
+      topRibbon: top,
+    );
+  }
+
+  // ---- final3 (default): the 3-ribbon PUBLIC-style stack. ----
+  final topText = preset.topRibbon.text.trim();
+  final topBg = await renderParityRibbonBg(
+    dir: dir,
+    g: g,
+    urdu: true,
+    color: preset.designTopColor,
+    goldEdge: false,
+    height: g.f3TopH,
+    name: 'parity_f3topbg.png',
+  );
+  final midBg = await renderParityRibbonBg(
+    dir: dir,
+    g: g,
+    urdu: true,
+    color: preset.designUrduColor,
+    goldEdge: false,
+    height: g.f3MidH,
+    name: 'parity_f3midbg.png',
+  );
+  final botBg = await renderParityRibbonBg(
+    dir: dir,
+    g: g,
+    urdu: false,
+    color: preset.designEnglishColor,
+    goldEdge: false,
+    height: g.f3BotH,
+    name: 'parity_f3botbg.png',
+  );
+
+  // One Urdu stack ribbon: pinned still when its headlines fit
+  // the text window, a looping strip when they overflow.
+  Future<ParityRibbonAssets> urduStackRibbon({
+    required File bg,
+    required double y,
+    required double ribbonH,
+    required String text,
+    required String fallback,
+    required double fontAr,
+    required double fontLat,
+    required String tag,
+  }) async {
+    final headlines =
+        paritySplitHeadlines(text.isEmpty ? fallback : text);
+    final seqW = paritySequenceWidth(
+      g: g,
+      urdu: true,
+      headlines: headlines,
+      fontReady: fontReady,
+      fontAr: fontAr,
+      fontLat: fontLat,
+    );
+    if (seqW <= g.f3TextWindowW) {
+      final still = await renderParityHeadlineStill(
+        dir: dir,
+        g: g,
+        headlines: headlines,
+        fontReady: fontReady,
+        ribbonH: ribbonH,
+        windowW: g.f3TextWindowW,
+        fontAr: fontAr,
+        fontLat: fontLat,
+        name: 'parity_f3${tag}still.png',
+      );
+      return ParityRibbonAssets(bg: bg, y: y, still: still);
+    }
+    final (strip, period) = await renderParityStrip(
+      dir: dir,
+      g: g,
+      urdu: true,
+      headlines: headlines,
+      fontReady: fontReady,
+      ribbonH: ribbonH,
+      windowW: g.f3TextWindowW,
+      dotColor: 0xFFFFFFFF,
+      fontAr: fontAr,
+      fontLat: fontLat,
+      name: 'parity_f3${tag}strip.png',
+    );
+    return ParityRibbonAssets(
+      bg: bg,
+      y: y,
+      strip: strip,
+      period: period,
+      scrollRight: true,
+      windowW: g.f3TextWindowW,
+    );
+  }
+
+  final top = await urduStackRibbon(
+    bg: topBg,
+    y: g.f3TopStrip.top,
+    ribbonH: g.f3TopH,
+    text: topText,
+    fallback: 'موجودہ خبر',
+    fontAr: g.f3TopFontAr,
+    fontLat: g.f3TopFontLat,
+    tag: 'top',
+  );
+  final mid = await urduStackRibbon(
+    bg: midBg,
+    y: g.f3MidStrip.top,
+    ribbonH: g.f3MidH,
+    text: urdu,
+    fallback: 'قومی خبریں',
+    fontAr: g.f3MidFontAr,
+    fontLat: g.f3MidFontLat,
+    tag: 'mid',
+  );
+  // Bottom: the international ENGLISH ticker — always scrolling,
+  // full width, white dot separators.
+  final (botStrip, botPeriod) = await renderParityStrip(
+    dir: dir,
+    g: g,
+    urdu: false,
+    headlines: paritySplitHeadlines(
+        english.isEmpty ? 'International headlines' : english),
+    fontReady: fontReady,
+    ribbonH: g.f3BotH,
+    windowW: g.width,
+    dotColor: 0xFFFFFFFF,
+    fontAr: g.f3BotFont,
+    fontLat: g.f3BotFont,
+    name: 'parity_f3botstrip.png',
+  );
+  final bot = ParityRibbonAssets(
+    bg: botBg,
+    y: g.f3BotStrip.top,
+    strip: botStrip,
+    period: botPeriod,
+    windowW: g.width,
+  );
   return ParityAssets(
     geometry: g,
-    t1bg: t1bg,
-    t1strip: t1strip,
-    t1Period: t1Period,
-    t1top: t1top,
-    t2bg: t2bg,
-    t2strip: t2strip,
-    t2Period: t2Period,
-    t2top: t2top,
+    ribbons: [top, mid, bot],
     capBar: capBar,
     capDate: capDate,
-    topRibbon: top,
+    topRibbon: null,
   );
 }
 
 String _n(double v) =>
     v.toStringAsFixed(2).replaceAll(RegExp(r'\.?0+$'), '');
 
-/// The animated parity overlay command (brief §9 criteria 1–6):
-/// both ribbons scroll seamlessly in the reference directions, the
-/// logo stack sits bottom-right flush on the ribbons (the .mov is
-/// ping-ponged and overlaid TWICE, as the reference), the capsule
-/// flips TIME (drawtext over epoch-shifted PTS, ticking 1 s per
-/// video second) ↔ DATE every ~3 s.
+/// The animated parity overlay command: the ribbons scroll
+/// seamlessly in the reference directions (classic2: both;
+/// final3: the bottom ticker always, the Urdu ribbons only when
+/// their text overflows), the logo stack sits at the right (the
+/// .mov is ping-ponged and overlaid TWICE, as the reference), and
+/// the capsule flips DATE ↔ TIME (drawtext over epoch-shifted
+/// PTS, ticking 1 s per video second) every ~3 s — classic2 shows
+/// TIME first, final3 shows DATE first (its reference box is a
+/// date box).
 ///
 /// Logo source — exactly one of:
 /// * [logoMovPath]: the pre-rendered alpha .mov (reference crop).
@@ -763,12 +1211,15 @@ String buildParityTemplateCommand({
     return idx++;
   }
 
-  final iT1bg = next(assets.t1bg);
-  final iT1strip = next(assets.t1strip);
-  final iT1top = next(assets.t1top);
-  final iT2bg = next(assets.t2bg);
-  final iT2strip = next(assets.t2strip);
-  final iT2top = next(assets.t2top);
+  // Assign an input index per layer, in stack order.
+  final ribbonInputs = <(ParityRibbonAssets, int, int?, int?, int?)>[];
+  for (final r in assets.ribbons) {
+    final iBg = next(r.bg);
+    final iStrip = r.strip == null ? null : next(r.strip!);
+    final iStill = r.still == null ? null : next(r.still!);
+    final iChip = r.chip == null ? null : next(r.chip!);
+    ribbonInputs.add((r, iBg, iStrip, iStill, iChip));
+  }
   final iCapBar = next(assets.capBar);
   final iCapDate = next(assets.capDate);
   final iTop = assets.topRibbon == null ? null : next(assets.topRibbon!);
@@ -785,16 +1236,6 @@ String buildParityTemplateCommand({
   }
 
   final speed = _n(g.scrollSpeed);
-  final y1 = _n(g.urduStrip.top);
-  final y2 = _n(g.englishStrip.top);
-  // Reference overlay-x formulas (make_reel.py): Urdu strip starts
-  // at (window − 2·sw) and advances mod(t·speed, sw) — content
-  // moves RIGHT; English starts at its chip width and retreats —
-  // content moves LEFT.
-  final urduX =
-      '${_n(g.urduWindowW() - 2 * assets.t1Period)}+mod(t*$speed\\,${_n(assets.t1Period)})';
-  final englishX =
-      '${_n(g.englishChipW)}-mod(t*$speed\\,${_n(assets.t2Period)})';
 
   final fc = StringBuffer();
   var cur = '[0:v]';
@@ -807,14 +1248,29 @@ String buildParityTemplateCommand({
     return cur;
   }
 
-  step('[$iT1bg:v]overlay=0:$y1');
-  step('[$iT1strip:v]overlay=x=\'$urduX\':y=$y1');
-  step('[$iT1top:v]overlay=0:$y1');
-  step('[$iT2bg:v]overlay=0:$y2');
-  step('[$iT2strip:v]overlay=x=\'$englishX\':y=$y2');
-  step('[$iT2top:v]overlay=0:$y2');
+  // Reference overlay-x formulas (make_reel.py): an RTL strip
+  // starts at (window − 2·period) and advances mod(t·speed,
+  // period) — content moves RIGHT; an LTR strip starts after its
+  // chip and retreats — content moves LEFT.
+  for (final (r, iBg, iStrip, iStill, iChip) in ribbonInputs) {
+    final y = _n(r.y);
+    step('[$iBg:v]overlay=0:$y');
+    if (iStill != null) {
+      step('[$iStill:v]overlay=0:$y');
+    } else if (iStrip != null) {
+      final x = r.scrollRight
+          ? '${_n(r.windowW - 2 * r.period)}+mod(t*$speed\\,${_n(r.period)})'
+          : '${_n(r.chipW)}-mod(t*$speed\\,${_n(r.period)})';
+      step("[$iStrip:v]overlay=x='$x':y=$y");
+    }
+    if (iChip != null) {
+      step('[$iChip:v]overlay=0:$y');
+    }
+  }
   step('[$iCapBar:v]overlay=0:0');
-  step("[$iCapDate:v]overlay=0:0:enable='gte(mod(t\\,6)\\,3)'");
+  // Capsule faces: classic2 = TIME 0–3 s, DATE 3–6 s; final3 =
+  // DATE first (its box is a date box), TIME second.
+  step("[$iCapDate:v]overlay=0:0:enable='${g.isFinal3 ? 'lt' : 'gte'}(mod(t\\,6)\\,3)'");
   if (iTop != null) {
     step('[$iTop:v]overlay=0:0');
   }
@@ -859,7 +1315,7 @@ String buildParityTemplateCommand({
         ':fontsize=${g.clockFont.round()}:fontcolor=white'
         ":x='$capCx-text_w/2'"
         ":y='$capY+(${_n(g.capsuleH)}-text_h)/2'"
-        ":enable='lt(mod(t-$epochMod\\,6)\\,3)'[sh2];"
+        ":enable='${g.isFinal3 ? 'gte' : 'lt'}(mod(t-$epochMod\\,6)\\,3)'[sh2];"
         '[sh2]setpts=PTS-STARTPTS[vout]';
     videoLabel = '[vout]';
   } else {
@@ -882,9 +1338,9 @@ String buildParityTemplateCommand({
   return buf.toString();
 }
 
-/// True when [preset] is the stock Nigraan TV parity preset (the
-/// Final template with the top ribbon off — criterion 2). The
-/// animated pass itself runs for every 'nigraanFinal' export; this
-/// helper is for callers that need the strict-parity check.
+/// True when [preset] uses a Final parity design (either the
+/// default 'final3' stack or the 'classic2' 2-ribbon variant).
+/// The animated pass runs for every 'nigraanFinal' export; this
+/// helper is for callers that need the design check.
 bool isParityPreset(ChannelPreset preset) =>
-    preset.templateKind == 'nigraanFinal' && !preset.topRibbon.enabled;
+    preset.templateKind == 'nigraanFinal';

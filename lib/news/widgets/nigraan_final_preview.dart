@@ -11,6 +11,13 @@
 /// preview IMMEDIATELY, with no extra step. Since v1.3.0 the two
 /// bottom ribbons scroll in the preview too, exactly like the
 /// export (Urdu rightward, English leftward).
+///
+/// Two Final designs (the preset's `finalVariant`): the DEFAULT
+/// 'final3' 3-ribbon stack (navy current-Urdu ribbon on a thick
+/// red national-Urdu ribbon on a dark English ticker, logo + DATE
+/// capsule at the stack's right) and 'classic2', the v1.3.0
+/// 2-ribbon parity design. This widget branches on the variant;
+/// the geometry comes from the same [ParityGeometry] either way.
 library;
 
 import 'dart:async';
@@ -182,15 +189,22 @@ double fitPreviewChipFontSize(String text, double fontSize, double maxWidth) {
 
 /// Full template preview (9:16 frame).
 ///
-/// v1.3.0 (§9 Final-template parity): the preview now mirrors the
-/// REAL reference template — the same geometry the export renders
-/// ([ParityGeometry] in lib/live/parity_template.dart): two FLUSH,
-/// equal-height bottom ribbons; the Urdu chip at the RIGHT with
-/// GOLD text; the English chip at the left with GOLD text; BOTH
-/// ribbons SCROLL (Urdu rightward, English leftward) with gold-dot
-/// separators; the logo sits bottom-right with the flipping
-/// TIME (with seconds) <-> Urdu DATE capsule directly under it.
-/// The optional top ticker still scrolls at the top. Ribbon
+/// The preview mirrors the template the export renders — the
+/// same geometry ([ParityGeometry] in lib/live/parity_template.dart)
+/// for BOTH Final designs. classic2 (v1.3.0 §9 parity): two
+/// FLUSH, equal-height bottom ribbons; the Urdu chip at the RIGHT
+/// with GOLD text; the English chip at the left with GOLD text;
+/// BOTH ribbons SCROLL (Urdu rightward, English leftward) with
+/// gold-dot separators; the logo sits bottom-right with the
+/// flipping TIME (with seconds) <-> Urdu DATE capsule directly
+/// under it; the optional top ticker scrolls at the frame top.
+/// final3 (the DEFAULT, 22 Nov 2026): the 3-ribbon bottom stack
+/// — navy current-Urdu ribbon (thinner), thick red national-Urdu
+/// ribbon, dark English ticker scrolling continuously; the Urdu
+/// headlines sit pinned right-aligned when they fit the window
+/// left of the logo stack and scroll on overflow; NO chips; the
+/// logo pokes above the stack's top-right with the DATE-first
+/// capsule hanging under it. Ribbon
 /// heights carry a small legibility floor at preview sizes (the
 /// export uses the exact fractions).
 class NigraanFinalPreview extends StatelessWidget {
@@ -218,14 +232,28 @@ class NigraanFinalPreview extends StatelessWidget {
     final h = height;
     final w = h * 9 / 16;
     // Parity fractions at preview scale (reference 1080x1920).
-    final g = ParityGeometry(1080, 1920);
+    final isFinal3 = preset.finalIs3Ribbon;
+    final g = ParityGeometry(
+      1080,
+      1920,
+      variant: isFinal3 ? ParityVariant.final3 : ParityVariant.classic2,
+    );
     final scaleW = w / 1080;
-    final ribbonH = (g.ribbonH * (h / 1920)).clamp(22.0, 200.0);
+    final scaleH = h / 1920;
+    final ribbonH = (g.ribbonH * scaleH).clamp(22.0, 200.0);
+    // Final3 stack heights at preview scale (same fractions).
+    final f3TopH = (g.f3TopH * scaleH).clamp(12.0, 200.0);
+    final f3MidH = (g.f3MidH * scaleH).clamp(18.0, 200.0);
+    final f3BotH = (g.f3BotH * scaleH).clamp(12.0, 200.0);
+    final f3Poke = g.f3Poke * scaleH;
     final tickerH = (h * 0.055).clamp(26.0, 44.0);
     const gap = 6.0;
     final ltH = (h * 0.10).clamp(36.0, 200.0);
 
-    final showTicker = preset.topRibbon.enabled;
+    // classic2: the top ribbon is the FRAME-TOP ticker. final3:
+    // it is the stack's TOP ribbon instead (showTop).
+    final showTicker = !isFinal3 && preset.topRibbon.enabled;
+    final showTop = isFinal3 && preset.topRibbon.enabled;
     final showUrdu = preset.urduRibbon.enabled;
     final showEnglish = preset.englishRibbon.enabled;
     final hasLowerThird = preset.showLowerThird &&
@@ -234,10 +262,15 @@ class NigraanFinalPreview extends StatelessWidget {
     final hasInterviewPlate = preset.showInterviewPlate &&
         preset.interviewName.trim().isNotEmpty;
 
-    // Flush stack: English at the very bottom, Urdu directly on it.
-    final englishTop = h - ribbonH;
-    final urduTop = (showEnglish ? englishTop : h) - ribbonH;
-    final ribbonsTop = showUrdu ? urduTop : (showEnglish ? englishTop : h);
+    // Flush stack: English at the very bottom, Urdu directly on
+    // it, and (final3) the top ribbon directly on the Urdu one.
+    final midH = isFinal3 ? f3MidH : ribbonH;
+    final botH = isFinal3 ? f3BotH : ribbonH;
+    final englishTop = h - botH;
+    final urduTop = (showEnglish ? englishTop : h) - midH;
+    final stackBelowTop = showUrdu ? urduTop : (showEnglish ? englishTop : h);
+    final topStackTop = stackBelowTop - f3TopH;
+    final ribbonsTop = showTop ? topStackTop : stackBelowTop;
     final lowerThirdTop = ribbonsTop - gap - ltH;
     final plateH = (h * 0.08).clamp(56.0, 120.0);
     final interviewTop =
@@ -245,7 +278,8 @@ class NigraanFinalPreview extends StatelessWidget {
 
     final logoW = g.logoVisibleW * scaleW;
     final logoH = logoW * 347 / 422;
-    final capsuleH = (g.capsuleH * (h / 1920)).clamp(15.0, 200.0);
+    final capsuleH =
+        (g.capsuleH * scaleH).clamp(isFinal3 ? 9.0 : 15.0, 200.0);
     final logoRight = g.logoMargin * scaleW;
 
     TextStyle topStyle(RibbonConfig ribbon, double stripH) {
@@ -328,6 +362,52 @@ class NigraanFinalPreview extends StatelessWidget {
               child: Container(width: 1.5, color: const Color(0xFFF5C542)),
             ),
           ],
+        ),
+      );
+    }
+
+    // Final3 Urdu ribbon content: the headline sits PINNED,
+    // right-aligned, when its sequence fits the text window left
+    // of the logo stack; longer text scrolls (RTL, rightward) —
+    // the same still-vs-scroll decision the export makes
+    // (paritySequenceWidth vs the text window).
+    Widget f3UrduContent({
+      required String text,
+      required String fallback,
+      required double fontSize,
+    }) {
+      final shown = text.isEmpty ? fallback : text;
+      final style = TextStyle(
+        color: Colors.white,
+        fontSize: fontSize,
+        fontWeight: FontWeight.bold,
+        fontFamily: _kasheeda(text),
+      );
+      final parts = paritySplitHeadlines(shown);
+      final seq = parts.isEmpty ? shown : '${parts.join('  ●  ')}  ●  ';
+      final windowW = w - logoW;
+      final fits = measurePreviewTextWidth(seq, style) <= windowW - 16;
+      if (fits) {
+        return Container(
+          alignment: Alignment.centerRight,
+          padding: EdgeInsets.only(right: logoW + 8, left: 8),
+          child: Text(
+            shown,
+            style: style,
+            maxLines: 1,
+            softWrap: false,
+            overflow: TextOverflow.ellipsis,
+            textDirection: TextDirection.rtl,
+          ),
+        );
+      }
+      return Padding(
+        padding: EdgeInsets.only(right: logoW),
+        child: _ParityScrollText(
+          text: shown,
+          rtl: true,
+          speedPxPerSec: g.scrollSpeed * scaleW,
+          style: style,
         ),
       );
     }
@@ -567,14 +647,158 @@ class NigraanFinalPreview extends StatelessWidget {
                 ),
               ),
             ),
-          // Logo + flipping capsule stack, bottom-right, sitting
-          // directly on the ribbons (v1.3.0 parity).
+          if (showUrdu)
+            Positioned(
+              key: const Key('preview-middle-ribbon'),
+              top: urduTop,
+              left: 0,
+              right: 0,
+              height: midH,
+              child: isFinal3
+                  ? Container(
+                      color: Color(preset.designUrduColor),
+                      child: f3UrduContent(
+                        text: preset.urduRibbon.text,
+                        fallback: 'قومی خبریں',
+                        fontSize: f3MidH * 0.56,
+                      ),
+                    )
+                  : Container(
+                      color: Color(preset.urduRibbon.color),
+                      child: Column(
+                        children: [
+                          Container(
+                              height: 2,
+                              color: const Color(0xFFF5C542)),
+                          Expanded(
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: _ParityScrollText(
+                                    text: preset.urduRibbon.text.isEmpty
+                                        ? 'قومی خبریں'
+                                        : preset.urduRibbon.text,
+                                    rtl: true,
+                                    speedPxPerSec: g.scrollSpeed * scaleW,
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: ribbonH * 0.5625,
+                                      fontWeight: FontWeight.bold,
+                                      fontFamily: _kasheeda(
+                                          preset.urduRibbon.text),
+                                    ),
+                                  ),
+                                ),
+                                if (preset.showBreakingBanner)
+                                  parityChip(
+                                    label:
+                                        NigraanFinalLayout.urduChipText,
+                                    widthPx: g.urduChipW * scaleW,
+                                    dividerOnLeft: true,
+                                    fontFamily: _kasheeda(
+                                      NigraanFinalLayout.urduChipText,
+                                    ),
+                                    fontSize: ribbonH * 0.45,
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+            ),
+          if (showEnglish)
+            Positioned(
+              key: const Key('preview-english-ribbon'),
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: botH,
+              child: isFinal3
+                  ? Container(
+                      color: Color(preset.designEnglishColor),
+                      child: _ParityScrollText(
+                        text: preset.englishRibbon.text.isEmpty
+                            ? 'International headlines'
+                            : preset.englishRibbon.text,
+                        rtl: false,
+                        speedPxPerSec: g.scrollSpeed * scaleW,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ).copyWith(fontSize: f3BotH * 0.53),
+                      ),
+                    )
+                  : Container(
+                      color: Color(preset.englishRibbon.color),
+                      child: Column(
+                        children: [
+                          Container(
+                              height: 2,
+                              color: const Color(0xFFF5C542)),
+                          Expanded(
+                            child: Row(
+                              children: [
+                                parityChip(
+                                  label:
+                                      NigraanFinalLayout.englishChipText,
+                                  widthPx: g.englishChipW * scaleW,
+                                  dividerOnLeft: false,
+                                  fontSize: ribbonH * 0.45,
+                                ),
+                                Expanded(
+                                  child: _ParityScrollText(
+                                    text: preset.englishRibbon.text.isEmpty
+                                        ? 'International headlines'
+                                        : preset.englishRibbon.text,
+                                    rtl: false,
+                                    speedPxPerSec: g.scrollSpeed * scaleW,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                    ).copyWith(
+                                        fontSize: ribbonH * 0.53),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+            ),
+          if (showTop)
+            Positioned(
+              key: const Key('preview-top-stack-ribbon'),
+              top: topStackTop,
+              left: 0,
+              right: 0,
+              height: f3TopH,
+              child: Container(
+                color: Color(preset.designTopColor),
+                child: f3UrduContent(
+                  text: preset.topRibbon.text,
+                  fallback: 'موجودہ خبر',
+                  fontSize: f3TopH * 0.52,
+                ),
+              ),
+            ),
+          // Logo + flipping capsule stack — painted AFTER the
+          // ribbons so it lands ON TOP of them. classic2:
+          // bottom-right, the capsule sitting directly on the
+          // ribbons (v1.3.0 parity). final3: at the RIGHT of the
+          // stack — the logo pokes slightly above the stack top
+          // and the DATE capsule hangs directly under it, over
+          // the ribbons' right end.
           Positioned(
             key: const Key('preview-logo-bug'),
             right: logoRight,
-            bottom: (showUrdu || showEnglish)
-                ? (h - ribbonsTop) + capsuleH
-                : capsuleH + 4,
+            top: isFinal3 ? ribbonsTop - f3Poke : null,
+            bottom: isFinal3
+                ? null
+                : ((showUrdu || showEnglish)
+                    ? (h - ribbonsTop) + capsuleH
+                    : capsuleH + 4),
             child: _ParityLogoBox(
               logoPath: preset.logoPath,
               initial: initial,
@@ -584,102 +808,19 @@ class NigraanFinalPreview extends StatelessWidget {
           ),
           Positioned(
             right: logoRight,
-            bottom: showUrdu || showEnglish ? h - ribbonsTop : 4,
+            top: isFinal3 ? ribbonsTop - f3Poke + logoH : null,
+            bottom: isFinal3
+                ? null
+                : (showUrdu || showEnglish ? h - ribbonsTop : 4),
             child: _ParityCapsule(
               width: logoW,
               height: capsuleH,
               fontReady: fontReady,
+              dateFirst: isFinal3,
+              goldLine: !isFinal3,
+              shortDate: isFinal3,
             ),
           ),
-          if (showUrdu)
-            Positioned(
-              key: const Key('preview-middle-ribbon'),
-              top: urduTop,
-              left: 0,
-              right: 0,
-              height: ribbonH,
-              child: Container(
-                color: Color(preset.urduRibbon.color),
-                child: Column(
-                  children: [
-                    Container(height: 2, color: const Color(0xFFF5C542)),
-                    Expanded(
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: _ParityScrollText(
-                              text: preset.urduRibbon.text.isEmpty
-                                  ? 'قومی خبریں'
-                                  : preset.urduRibbon.text,
-                              rtl: true,
-                              speedPxPerSec: g.scrollSpeed * scaleW,
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: ribbonH * 0.5625,
-                                fontWeight: FontWeight.bold,
-                                fontFamily:
-                                    _kasheeda(preset.urduRibbon.text),
-                              ),
-                            ),
-                          ),
-                          if (preset.showBreakingBanner)
-                            parityChip(
-                              label: NigraanFinalLayout.urduChipText,
-                              widthPx: g.urduChipW * scaleW,
-                              dividerOnLeft: true,
-                              fontFamily: _kasheeda(
-                                NigraanFinalLayout.urduChipText,
-                              ),
-                              fontSize: ribbonH * 0.45,
-                            ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          if (showEnglish)
-            Positioned(
-              key: const Key('preview-english-ribbon'),
-              left: 0,
-              right: 0,
-              bottom: 0,
-              height: ribbonH,
-              child: Container(
-                color: Color(preset.englishRibbon.color),
-                child: Column(
-                  children: [
-                    Container(height: 2, color: const Color(0xFFF5C542)),
-                    Expanded(
-                      child: Row(
-                        children: [
-                          parityChip(
-                            label: NigraanFinalLayout.englishChipText,
-                            widthPx: g.englishChipW * scaleW,
-                            dividerOnLeft: false,
-                            fontSize: ribbonH * 0.45,
-                          ),
-                          Expanded(
-                            child: _ParityScrollText(
-                              text: preset.englishRibbon.text.isEmpty
-                                  ? 'International headlines'
-                                  : preset.englishRibbon.text,
-                              rtl: false,
-                              speedPxPerSec: g.scrollSpeed * scaleW,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                              ).copyWith(fontSize: ribbonH * 0.53),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
           if (preset.pipEnabled)
             PipInset(
               position: preset.pipPosition,
@@ -699,8 +840,9 @@ class NigraanFinalPreview extends StatelessWidget {
 }
 
 /// The parity logo box: the picked logo image fitted into the
-/// reference's VISIBLE box (185/1080 wide, 422:347), or the
-/// channel initial tile when no logo is picked.
+/// design's VISIBLE box (classic2: 185/1080 wide, 422:347;
+/// final3: 110/720 wide, same aspect), or the channel initial
+/// tile when no logo is picked.
 class _ParityLogoBox extends StatelessWidget {
   const _ParityLogoBox({
     required this.logoPath,
@@ -750,19 +892,28 @@ class _ParityLogoBox extends StatelessWidget {
       );
 }
 
-/// The flipping TIME <-> Urdu DATE capsule (3s per face), black at
-/// 67% alpha with a gold top line — the widget twin of the export's
-/// drawtext clock + date PNG pair.
+/// The flipping TIME <-> Urdu DATE capsule (3s per face) — the
+/// widget twin of the export's drawtext clock + date PNG pair.
+/// classic2: black at 67% alpha with a gold top line, TIME face
+/// first, full date (with year). final3: the reference's solid
+/// black date box (no gold line), DATE face first, short date
+/// (no year — the box is thin).
 class _ParityCapsule extends StatefulWidget {
   const _ParityCapsule({
     required this.width,
     required this.height,
     required this.fontReady,
+    this.dateFirst = false,
+    this.goldLine = true,
+    this.shortDate = false,
   });
 
   final double width;
   final double height;
   final bool fontReady;
+  final bool dateFirst;
+  final bool goldLine;
+  final bool shortDate;
 
   @override
   State<_ParityCapsule> createState() => _ParityCapsuleState();
@@ -770,7 +921,7 @@ class _ParityCapsule extends StatefulWidget {
 
 class _ParityCapsuleState extends State<_ParityCapsule> {
   Timer? _timer;
-  bool _showDate = false;
+  late bool _showDate = widget.dateFirst;
 
   @override
   void initState() {
@@ -796,18 +947,24 @@ class _ParityCapsuleState extends State<_ParityCapsule> {
       width: widget.width,
       height: widget.height,
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.67),
-        borderRadius: BorderRadius.circular(4),
-        border: const Border(
-          top: BorderSide(color: Color(0xFFF5C542), width: 2),
-        ),
+        color: widget.goldLine
+            ? Colors.black.withValues(alpha: 0.67)
+            : Colors.black,
+        borderRadius: BorderRadius.circular(widget.goldLine ? 4 : 2),
+        border: widget.goldLine
+            ? const Border(
+                top: BorderSide(color: Color(0xFFF5C542), width: 2),
+              )
+            : null,
       ),
       alignment: Alignment.center,
       child: _showDate
           ? FittedBox(
               fit: BoxFit.scaleDown,
               child: Text(
-                parityUrduDate(now),
+                widget.shortDate
+                    ? parityShortUrduDate(now)
+                    : parityUrduDate(now),
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: widget.height * 0.55,

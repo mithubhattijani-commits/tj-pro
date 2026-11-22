@@ -31,6 +31,22 @@ import java.io.File
 class MainActivity : FlutterActivity() {
     private val channelName = "tj_pro/updater"
 
+    // Share & Earn referral links ("tj_pro/referral"): the https App
+    // Link (nigraantv.xyz/apps/tj-pro?ref=CODE) and the custom scheme
+    // (tjpro://ref/CODE), both declared in AndroidManifest.xml.
+    // - getInitialLink: the VIEW intent that launched the activity.
+    // - onLink (native -> Dart): a link that arrived via onNewIntent
+    //   while the app was already running (singleTop).
+    // - getInstallReferrer: intentionally NOT implemented yet
+    //   (ready-to-add). Dart treats notImplemented as "no referrer".
+    //   To add it: add `implementation("com.android.installreferrer:installreferrer:2.2")`
+    //   to android/app/build.gradle.kts dependencies, then answer
+    //   this method with InstallReferrerClient's getInstallReferrer()
+    //   string (it carries `ref=CODE` from the Play Store URL).
+    private val referralChannelName = "tj_pro/referral"
+    private var referralChannel: MethodChannel? = null
+    private var launchLink: String? = null
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
@@ -150,5 +166,27 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        // Share & Earn: referral deep-link channel (see field docs).
+        launchLink = intent?.dataString
+        referralChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            referralChannelName,
+        )
+        referralChannel?.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "getInitialLink" -> result.success(launchLink)
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        val data = intent.dataString
+        if (data != null) {
+            launchLink = data
+            referralChannel?.invokeMethod("onLink", data)
+        }
     }
 }

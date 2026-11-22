@@ -318,6 +318,28 @@ class SupabaseService {
     }
   }
 
+  /// Claim Share & Earn referral rewards (server-side). Calls the
+  /// `tjpro_claim_referral_rewards` Postgres RPC (security definer,
+  /// see supabase-followups/referral-sql.sql): it atomically flips
+  /// this user's qualified + unclaimed referral events to claimed
+  /// and inserts the +100 ledger rows, so claim-once is enforced by
+  /// the database, not the client. Returns the RPC's jsonb result
+  /// ({ok, coins, count}), or null when the function does not exist
+  /// yet / is unreachable — the caller (ReferralService) then falls
+  /// back to a conditional table claim. Never throws.
+  static Future<Map<String, dynamic>?> claimReferralRewardsRpc() async {
+    if (!isReady) return null;
+    try {
+      final res = await _guard(
+        () => client.rpc('tjpro_claim_referral_rewards'),
+      );
+      if (res is Map) return Map<String, dynamic>.from(res);
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Spend coins (server-side validation). The server re-checks the
   /// ledger balance and only then inserts a negative entry; admins
   /// are exempt server-side (no debit, still `ok: true`). Returns the

@@ -12,10 +12,12 @@ import 'theme.dart';
 
 import 'news/coins_screen.dart';
 import 'news/login_screen.dart';
+import 'news/share_earn_screen.dart';
 import 'photo/photo_editor_screen.dart';
 import 'app_config.dart';
 import 'services/auth_service.dart';
 import 'services/coin_service.dart';
+import 'services/referral_service.dart';
 import 'services/remote_config_service.dart';
 import 'services/unity_ads_service.dart';
 import 'services/update_service.dart';
@@ -46,6 +48,10 @@ Future<void> main() async {
   // the app-bar coins pill is correct on first paint.
   await AuthService.init();
   await CoinService.instance.load();
+  // Share & Earn (v1.3.0): referral capture (deep link / clipboard),
+  // first-ad hook, and the on-open reward claim. Fully fail-soft and
+  // backgrounded — it can never delay or break startup.
+  unawaited(ReferralService.instance.init());
   runApp(const PhotoVideoEditorApp());
 }
 
@@ -403,6 +409,29 @@ class _HomeScreenState extends State<HomeScreen> {
                   context,
                   MaterialPageRoute(
                     builder: (_) => const CoinsScreen(),
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 16),
+          // Share & Earn (v1.3.0): the referral entry — its own
+          // tidy card (NOT a revival of the removed ad-unlock card).
+          // Opens the Share & Earn screen: my code + link, Share
+          // button, joined/earned stats, reward claim.
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.group_add),
+              title: const Text('Share & Earn'),
+              subtitle: const Text(
+                'Apna link share karein — har naye user par 100 coins.',
+              ),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 18),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const ShareEarnScreen(),
                   ),
                 );
               },

@@ -415,7 +415,7 @@ class _TemplateStudioScreenState extends State<TemplateStudioScreen> {
               preset: preset,
               kind: kTemplateFinal,
               label: 'Final 3-Ribbon',
-              colors: const [0xFF01B0FF, 0xFF3D5AFE, 0xFFEF0017],
+              colors: const [0xFF032572, 0xFF880C03, 0xFF081E46],
             ),
             const SizedBox(width: 8),
             _templateCard(
@@ -450,6 +450,46 @@ class _TemplateStudioScreenState extends State<TemplateStudioScreen> {
                 },
               );
             }).toList(),
+          ),
+        ],
+        if (preset.templateKind == kTemplateFinal) ...[
+          const SizedBox(height: 12),
+          // Final design variant (22 Nov 2026): the DEFAULT
+          // 3-ribbon stack measured from the user's reference
+          // frame, or the v1.3.0 Classic 2-Ribbon parity design.
+          // Switching re-renders the preview AND the export.
+          const Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'Final design',
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              ChoiceChip(
+                key: const Key('finalVariant-final3'),
+                label: const Text('Final 3-Ribbon'),
+                selected: preset.finalVariant == kFinalVariant3,
+                onSelected: (_) {
+                  setState(() => preset.finalVariant = kFinalVariant3);
+                  _scheduleSave();
+                },
+              ),
+              ChoiceChip(
+                key: const Key('finalVariant-classic2'),
+                label: const Text('Classic 2-Ribbon'),
+                selected: preset.finalVariant == kFinalVariantClassic2,
+                onSelected: (_) {
+                  setState(
+                      () => preset.finalVariant = kFinalVariantClassic2);
+                  _scheduleSave();
+                },
+              ),
+            ],
           ),
         ],
         const SizedBox(height: 12),

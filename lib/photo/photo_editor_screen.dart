@@ -963,6 +963,88 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     );
   }
 
+  /// One icon+label choice item — the global UI rule (user order
+  /// 22 Nov 2026): every choice inside a tool is an icon above a
+  /// label, in a horizontal swipeable row, never bare text.
+  /// Mirrors [_photoRailButton]'s look (accent when selected).
+  Widget _photoIconChoiceItem({
+    required IconData icon,
+    required String label,
+    required bool selected,
+    required VoidCallback? onTap,
+    Color? iconColor,
+    TextStyle? labelStyle,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 3),
+      child: Opacity(
+        opacity: onTap == null ? 0.4 : 1,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: onTap,
+          child: Container(
+            width: 62,
+            padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 3),
+            decoration: BoxDecoration(
+              color: selected ? _accent : const Color(0xFF232323),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 21, color: iconColor ?? Colors.white),
+                const SizedBox(height: 3),
+                Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: labelStyle ??
+                      const TextStyle(color: Colors.white, fontSize: 10),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// A horizontal scrollable row of [_photoIconChoiceItem]s —
+  /// swipe left/right and more options keep appearing; nothing is
+  /// buried in a dropdown or a wrapped stack.
+  Widget _photoIconChoiceRail(List<Widget> items) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(children: items),
+    );
+  }
+
+  /// Icon for a (tool, sub-tab) pair in the photo editor (global
+  /// UI rule — every sub-option carries a related icon).
+  IconData _photoTabIcon(String tool, String tab) {
+    switch ((tool, tab)) {
+      case ('crop', 'ratio'):
+        return Icons.aspect_ratio;
+      case ('crop', 'straighten'):
+        return Icons.straighten;
+      case ('adjust', 'light'):
+        return Icons.light_mode;
+      case ('adjust', 'colour'):
+        return Icons.palette;
+      case ('adjust', 'detail'):
+        return Icons.grain;
+      case ('text', 'write'):
+        return Icons.edit;
+      case ('text', 'style'):
+        return Icons.style;
+      case ('text', 'effects'):
+        return Icons.auto_awesome;
+      default:
+        return Icons.circle_outlined;
+    }
+  }
+
   /// Display name for a photo tool key (used in the panel header).
   String _photoToolDisplayName(String key) {
     const Map<String, String> names = <String, String>{
@@ -1197,16 +1279,17 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     }
   }
 
-  /// Font selection chip with a live preview of the font style.
+  /// Font selection item with a live preview of the font style
+  /// (global UI rule: icon + label — the label itself is rendered
+  /// in the font it selects, so the preview survives).
   Widget _fontChip(String key, String label) {
     final bool selected = _textFont == key;
-    return ChoiceChip(
-      label: Text(
-        label,
-        style: _fontStyle(key, color: Colors.white, fontSize: 13),
-      ),
+    return _photoIconChoiceItem(
+      icon: Icons.font_download_outlined,
+      label: label,
+      labelStyle: _fontStyle(key, color: Colors.white, fontSize: 11),
       selected: selected,
-      onSelected: (_) => setState(() => _textFont = key),
+      onTap: () => setState(() => _textFont = key),
     );
   }
 
@@ -1399,22 +1482,15 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     final current = _currentPhotoTab;
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            for (final t in tabs)
-              Padding(
-                padding: const EdgeInsets.only(right: 6),
-                child: ChoiceChip(
-                  label: Text(t.$2),
-                  selected: current == t.$1,
-                  onSelected: (_) => setState(() => _photoTab = t.$1),
-                ),
-              ),
-          ],
-        ),
-      ),
+      child: _photoIconChoiceRail([
+        for (final t in tabs)
+          _photoIconChoiceItem(
+            icon: _photoTabIcon(_activePhotoTool, t.$1),
+            label: t.$2,
+            selected: current == t.$1,
+            onTap: () => setState(() => _photoTab = t.$1),
+          ),
+      ]),
     );
   }
 
@@ -1506,51 +1582,34 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
             style: TextStyle(color: Colors.grey, fontSize: 12),
           ),
           const SizedBox(height: 6),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              ActionChip(
-                label: const Text('Free'),
-                onPressed: file == null || _busy
+          _photoIconChoiceRail([
+            _photoIconChoiceItem(
+              icon: Icons.crop_free,
+              label: 'Free',
+              selected: false,
+              onTap: file == null || _busy
+                  ? null
+                  : () {
+                      setState(() => _cropPreset = 'free');
+                      _crop();
+                    },
+            ),
+            for (final e in const [
+              ('9:16', 9, 16, Icons.crop_portrait),
+              ('1:1', 1, 1, Icons.crop_square),
+              ('16:9', 16, 9, Icons.crop_landscape),
+              ('4:5', 4, 5, Icons.crop_portrait),
+              ('3:4', 3, 4, Icons.crop_portrait),
+            ])
+              _photoIconChoiceItem(
+                icon: e.$4,
+                label: e.$1,
+                selected: false,
+                onTap: file == null || _busy
                     ? null
-                    : () {
-                        setState(() => _cropPreset = 'free');
-                        _crop();
-                      },
+                    : () => _quickRatioCrop(e.$1, e.$2, e.$3),
               ),
-              ActionChip(
-                label: const Text('9:16'),
-                onPressed: file == null || _busy
-                    ? null
-                    : () => _quickRatioCrop('9:16', 9, 16),
-              ),
-              ActionChip(
-                label: const Text('1:1'),
-                onPressed: file == null || _busy
-                    ? null
-                    : () => _quickRatioCrop('1:1', 1, 1),
-              ),
-              ActionChip(
-                label: const Text('16:9'),
-                onPressed: file == null || _busy
-                    ? null
-                    : () => _quickRatioCrop('16:9', 16, 9),
-              ),
-              ActionChip(
-                label: const Text('4:5'),
-                onPressed: file == null || _busy
-                    ? null
-                    : () => _quickRatioCrop('4:5', 4, 5),
-              ),
-              ActionChip(
-                label: const Text('3:4'),
-                onPressed: file == null || _busy
-                    ? null
-                    : () => _quickRatioCrop('3:4', 3, 4),
-              ),
-            ],
-          ),
+          ]),
           const Divider(height: 24),
           const Text('Rotate & flip',
               style: TextStyle(fontWeight: FontWeight.bold)),
@@ -1855,42 +1914,22 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
           const Text('Templates',
               style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              ChoiceChip(
-                label: const Text('Classic'),
+          _photoIconChoiceRail([
+            for (final e in const [
+              ('classic', 'Classic', Icons.text_fields),
+              ('neon', 'Neon', Icons.lightbulb_outline),
+              ('breaking', 'Breaking', Icons.newspaper),
+              ('elegant', 'Elegant', Icons.diamond),
+              ('urdu', 'Urdu', Icons.translate),
+              ('script', 'Script', Icons.history_edu),
+            ])
+              _photoIconChoiceItem(
+                icon: e.$3,
+                label: e.$2,
                 selected: false,
-                onSelected: (_) => _applyTextTemplate('classic'),
+                onTap: () => _applyTextTemplate(e.$1),
               ),
-              ChoiceChip(
-                label: const Text('Neon'),
-                selected: false,
-                onSelected: (_) => _applyTextTemplate('neon'),
-              ),
-              ChoiceChip(
-                label: const Text('Breaking'),
-                selected: false,
-                onSelected: (_) => _applyTextTemplate('breaking'),
-              ),
-              ChoiceChip(
-                label: const Text('Elegant'),
-                selected: false,
-                onSelected: (_) => _applyTextTemplate('elegant'),
-              ),
-              ChoiceChip(
-                label: const Text('Urdu'),
-                selected: false,
-                onSelected: (_) => _applyTextTemplate('urdu'),
-              ),
-              ChoiceChip(
-                label: const Text('Script'),
-                selected: false,
-                onSelected: (_) => _applyTextTemplate('script'),
-              ),
-            ],
-          ),
+          ]),
           const SizedBox(height: 12),
           // ---- Font picker ----
           const Text('Font', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -1898,32 +1937,24 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
           const Text('Urdu',
               style: TextStyle(color: Colors.grey, fontSize: 12)),
           const SizedBox(height: 4),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _fontChip('default', 'Default'),
-              _fontChip('nastaliq', 'Nastaliq'),
-              _fontChip('naskh', 'Naskh'),
-              _fontChip('kufi', 'Kufi'),
-              _fontChip('gulzar', 'Gulzar'),
-            ],
-          ),
+          _photoIconChoiceRail([
+            _fontChip('default', 'Default'),
+            _fontChip('nastaliq', 'Nastaliq'),
+            _fontChip('naskh', 'Naskh'),
+            _fontChip('kufi', 'Kufi'),
+            _fontChip('gulzar', 'Gulzar'),
+          ]),
           const SizedBox(height: 8),
           const Text('English',
               style: TextStyle(color: Colors.grey, fontSize: 12)),
           const SizedBox(height: 4),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _fontChip('roboto', 'Roboto'),
-              _fontChip('merriweather', 'Serif'),
-              _fontChip('dancing', 'Script'),
-              _fontChip('bebas', 'Display'),
-              _fontChip('pacifico', 'Pacifico'),
-            ],
-          ),
+          _photoIconChoiceRail([
+            _fontChip('roboto', 'Roboto'),
+            _fontChip('merriweather', 'Serif'),
+            _fontChip('dancing', 'Script'),
+            _fontChip('bebas', 'Display'),
+            _fontChip('pacifico', 'Pacifico'),
+          ]),
           const SizedBox(height: 12),
           // ---- Color ----
           Row(
@@ -1969,18 +2000,17 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
           // ---- Bold / Italic / Alignment ----
           Row(
             children: [
-              FilterChip(
-                label: const Text('B',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
+              _photoIconChoiceItem(
+                icon: Icons.format_bold,
+                label: 'Bold',
                 selected: _textBold,
-                onSelected: (v) => setState(() => _textBold = v),
+                onTap: () => setState(() => _textBold = !_textBold),
               ),
-              const SizedBox(width: 8),
-              FilterChip(
-                label: const Text('I',
-                    style: TextStyle(fontStyle: FontStyle.italic)),
+              _photoIconChoiceItem(
+                icon: Icons.format_italic,
+                label: 'Italic',
                 selected: _textItalic,
-                onSelected: (v) => setState(() => _textItalic = v),
+                onTap: () => setState(() => _textItalic = !_textItalic),
               ),
               const SizedBox(width: 8),
               const Text('Align:'),
@@ -2035,32 +2065,32 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
           // ---- Effects: Shadow / Glow / Outline / Ribbon ----
           const Text('Effects', style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              FilterChip(
-                label: const Text('Shadow'),
-                selected: _textShadow,
-                onSelected: (v) => setState(() => _textShadow = v),
-              ),
-              FilterChip(
-                label: const Text('Glow'),
-                selected: _textGlow,
-                onSelected: (v) => setState(() => _textGlow = v),
-              ),
-              FilterChip(
-                label: const Text('Outline'),
-                selected: _textOutline,
-                onSelected: (v) => setState(() => _textOutline = v),
-              ),
-              FilterChip(
-                label: const Text('Ribbon'),
-                selected: _textBg,
-                onSelected: (v) => setState(() => _textBg = v),
-              ),
-            ],
-          ),
+          _photoIconChoiceRail([
+            _photoIconChoiceItem(
+              icon: Icons.blur_circular,
+              label: 'Shadow',
+              selected: _textShadow,
+              onTap: () => setState(() => _textShadow = !_textShadow),
+            ),
+            _photoIconChoiceItem(
+              icon: Icons.flare,
+              label: 'Glow',
+              selected: _textGlow,
+              onTap: () => setState(() => _textGlow = !_textGlow),
+            ),
+            _photoIconChoiceItem(
+              icon: Icons.border_outer,
+              label: 'Outline',
+              selected: _textOutline,
+              onTap: () => setState(() => _textOutline = !_textOutline),
+            ),
+            _photoIconChoiceItem(
+              icon: Icons.bookmark,
+              label: 'Ribbon',
+              selected: _textBg,
+              onTap: () => setState(() => _textBg = !_textBg),
+            ),
+          ]),
           if (_textOutline) ...[
             const SizedBox(height: 8),
             Row(
@@ -2141,8 +2171,8 @@ if (AppConfig.aiToolsEnabled) ...[
                 style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 4),
             const Text(
-              'Har AI tool Premium hai — pehli dafa ek short ad se '
-              'unlock hoga.',
+              'Har AI tool Premium hai — pehli dafa 50 coins se '
+              'unlock hoga (is session ke liye).',
               style: TextStyle(color: Colors.grey, fontSize: 12),
             ),
             const SizedBox(height: 8),
@@ -2321,7 +2351,7 @@ if (AppConfig.aiToolsEnabled) ...[
             style: TextStyle(color: Colors.grey, fontSize: 12),
           ),
           const SizedBox(height: 12),
-          // Color selector chips.
+          // Color selector — icon rail (the icon IS the colour).
           Builder(
             builder: (BuildContext context) {
               const List<String> colorNames = <String>[
@@ -2332,31 +2362,14 @@ if (AppConfig.aiToolsEnabled) ...[
                 Colors.red, Colors.orange, Colors.yellow, Colors.green,
                 Colors.cyan, Colors.blue, Colors.purple, Colors.pink,
               ];
-              return Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: List<Widget>.generate(8, (int i) {
-                  final bool selected = _hslSelectedColor == i;
-                  return ChoiceChip(
-                    label: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: 12,
-                          height: 12,
-                          decoration: BoxDecoration(
-                            color: colorDots[i],
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        Text(colorNames[i],
-                            style: const TextStyle(fontSize: 12)),
-                      ],
-                    ),
-                    selected: selected,
-                    onSelected: (_) =>
-                        setState(() => _hslSelectedColor = i),
+              return _photoIconChoiceRail(
+                List<Widget>.generate(8, (int i) {
+                  return _photoIconChoiceItem(
+                    icon: Icons.circle,
+                    iconColor: colorDots[i],
+                    label: colorNames[i],
+                    selected: _hslSelectedColor == i,
+                    onTap: () => setState(() => _hslSelectedColor = i),
                   );
                 }),
               );

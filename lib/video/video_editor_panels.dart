@@ -113,29 +113,78 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
     return tabs.first.$1;
   }
 
-  /// The sub-tab chip row under the panel header (§3).
+  /// Icon for a (tool, sub-tab) pair — the global UI rule (user
+  /// order 22 Nov 2026): every sub-option carries its own small
+  /// related icon, never bare text alone.
+  IconData _tabIcon(String tool, String tab) {
+    switch ((tool, tab)) {
+      case ('edit', 'trim'):
+        return Icons.content_cut;
+      case ('edit', 'speed'):
+        return Icons.speed;
+      case ('edit', 'beat'):
+        return Icons.music_note;
+      case ('edit', 'steady'):
+        return Icons.videocam;
+      case ('edit', 'transform'):
+        return Icons.transform;
+      case ('audio', 'music'):
+        return Icons.music_note;
+      case ('audio', 'voice'):
+        return Icons.mic;
+      case ('audio', 'clean'):
+        return Icons.cleaning_services;
+      case ('text', 'text'):
+        return Icons.text_fields;
+      case ('text', 'titles'):
+        return Icons.title;
+      case ('text', 'captions'):
+        return Icons.closed_caption;
+      case ('colour', 'filters'):
+        return Icons.photo_filter;
+      case ('colour', 'adjust'):
+        return Icons.tune;
+      case ('effects', 'effects'):
+        return Icons.auto_awesome;
+      case ('effects', 'tracking'):
+        return Icons.gps_fixed;
+      case ('overlay', 'sticker'):
+        return Icons.emoji_emotions;
+      case ('overlay', 'keyframes'):
+        return Icons.animation;
+      case ('overlay', 'pip'):
+        return Icons.picture_in_picture_alt;
+      case ('overlay', 'background'):
+        return Icons.wallpaper;
+      case ('news', 'template'):
+        return Icons.newspaper;
+      case ('news', 'text'):
+        return Icons.text_fields;
+      case ('news', 'logo'):
+        return Icons.image;
+      default:
+        return Icons.circle_outlined;
+    }
+  }
+
+  /// The sub-tab row under the panel header (§3): ONE horizontal
+  /// swipeable line of icon+label items (global UI rule) — the
+  /// same visual language as the main tool rail.
   Widget _panelTabRow() {
     final tabs = _panelTabs();
     if (tabs.length < 2) return const SizedBox.shrink();
     final current = _currentTab;
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            for (final t in tabs)
-              Padding(
-                padding: const EdgeInsets.only(right: 6),
-                child: ChoiceChip(
-                  label: Text(t.$2),
-                  selected: current == t.$1,
-                  onSelected: (_) => setState(() => _panelTab = t.$1),
-                ),
-              ),
-          ],
-        ),
-      ),
+      child: _iconChoiceRail([
+        for (final t in tabs)
+          _iconChoiceItem(
+            icon: _tabIcon(_activeTool ?? '', t.$1),
+            label: t.$2,
+            selected: current == t.$1,
+            onTap: () => setState(() => _panelTab = t.$1),
+          ),
+      ]),
     );
   }
 
@@ -262,24 +311,22 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
         return [
           ..._panelBody('transitions'),
           _sectionTitle('Duration presets'),
-          Wrap(
-            spacing: 6,
-            children: [
-              for (final e in const [
-                ('Quick', 0.3),
-                ('Smooth', 0.5),
-                ('Long', 1.0),
-              ])
-                ChoiceChip(
-                  label: Text('${e.$1} — ${e.$2}s'),
-                  selected: _crossfade && _proTransitionDur == e.$2,
-                  onSelected: (_) => setState(() {
-                    _proTransitionDur = e.$2;
-                    _crossfade = true;
-                  }),
-                ),
-            ],
-          ),
+          _iconChoiceRail([
+            for (final e in const [
+              ('Quick', 0.3, Icons.flash_on),
+              ('Smooth', 0.5, Icons.waves),
+              ('Long', 1.0, Icons.hourglass_bottom),
+            ])
+              _iconChoiceItem(
+                icon: e.$3,
+                label: '${e.$1} — ${e.$2}s',
+                selected: _crossfade && _proTransitionDur == e.$2,
+                onTap: () => setState(() {
+                  _proTransitionDur = e.$2;
+                  _crossfade = true;
+                }),
+              ),
+          ]),
           const SizedBox(height: 8),
         ];
       case 'news':
@@ -435,18 +482,20 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
         const Text('Motion easing',
             style: TextStyle(fontWeight: FontWeight.bold)),
         const SizedBox(height: 6),
-        Wrap(
-          spacing: 6,
-          runSpacing: 6,
-          children: [
-            for (final e in KeyframeEasing.values)
-              ChoiceChip(
-                label: Text(keyframeEasingLabel(e).split(' (').first),
-                selected: _kfEasing == e,
-                onSelected: (_) => setState(() => _kfEasing = e),
-              ),
-          ],
-        ),
+        _iconChoiceRail([
+          for (final e in KeyframeEasing.values)
+            _iconChoiceItem(
+              icon: switch (e) {
+                KeyframeEasing.linear => Icons.trending_flat,
+                KeyframeEasing.easeIn => Icons.trending_up,
+                KeyframeEasing.easeOut => Icons.trending_down,
+                KeyframeEasing.easeInOut => Icons.show_chart,
+              },
+              label: keyframeEasingLabel(e).split(' (').first,
+              selected: _kfEasing == e,
+              onTap: () => setState(() => _kfEasing = e),
+            ),
+        ]),
         Container(
           height: 56,
           margin: const EdgeInsets.symmetric(vertical: 6),
@@ -474,7 +523,12 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
     ];
   }
 
-  /// Overlay › PIP extras (§6.11): opacity + circle mask.
+  /// Overlay › PIP extras (§6.11 + completion fix, user order
+  /// 22 Nov 2026): opacity, blend mode, mask shape, feather,
+  /// invert — every choice an icon+label rail (global UI rule).
+  /// The blend keys ARE ffmpeg's blend mode names; 'normal' takes
+  /// the plain overlay path. The mask keys map 1:1 onto the
+  /// generated mask PNG (preview + export share it).
   List<Widget> _pipExtras() {
     if (!_fxPip) return const [];
     return [
@@ -487,27 +541,76 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
         divisions: 18,
         onChanged: (v) => setState(() => _pipOpacity = v),
       ),
-      Row(
-        children: [
-          const Text('Mask'),
-          const SizedBox(width: 12),
-          ChoiceChip(
-            label: const Text('None'),
-            selected: _pipMask == 'none',
-            onSelected: (_) => setState(() => _pipMask = 'none'),
+      const Text('Blend mode'),
+      const SizedBox(height: 4),
+      _iconChoiceRail([
+        for (final e in const [
+          ('normal', 'Normal', Icons.picture_in_picture_alt),
+          ('multiply', 'Multiply', Icons.layers),
+          ('screen', 'Screen', Icons.light_mode),
+          ('overlay', 'Overlay', Icons.contrast),
+          ('softlight', 'Soft Light', Icons.blur_on),
+          ('hardlight', 'Hard Light', Icons.flash_on),
+          ('darken', 'Darken', Icons.dark_mode),
+          ('lighten', 'Lighten', Icons.brightness_high),
+          ('difference', 'Difference', Icons.compare_arrows),
+          ('dodge', 'Color Dodge', Icons.wb_sunny),
+          ('burn', 'Color Burn', Icons.local_fire_department),
+        ])
+          _iconChoiceItem(
+            icon: e.$3,
+            label: e.$2,
+            selected: _pipBlend == e.$1,
+            onTap: () => setState(() => _pipBlend = e.$1),
           ),
-          const SizedBox(width: 6),
-          ChoiceChip(
-            label: const Text('Circle'),
-            selected: _pipMask == 'circle',
-            onSelected: (_) => setState(() => _pipMask = 'circle'),
+      ]),
+      const SizedBox(height: 8),
+      const Text('Mask'),
+      const SizedBox(height: 4),
+      _iconChoiceRail([
+        for (final e in const [
+          ('none', 'None', Icons.block),
+          ('circle', 'Circle', Icons.circle_outlined),
+          ('rect', 'Rectangle', Icons.crop_square),
+          ('roundrect', 'Rounded', Icons.rounded_corner),
+          ('heart', 'Heart', Icons.favorite),
+          ('star', 'Star', Icons.star),
+          ('linear', 'Linear', Icons.gradient),
+          ('radial', 'Radial', Icons.radio_button_checked),
+        ])
+          _iconChoiceItem(
+            icon: e.$3,
+            label: e.$2,
+            selected: _pipMask == e.$1,
+            onTap: () => setState(() => _pipMask = e.$1),
           ),
-        ],
-      ),
+      ]),
+      if (_pipMask != 'none') ...[
+        _ProSlider(
+          label: 'Mask feather (kinara soft)',
+          value: _pipMaskFeather,
+          min: 0,
+          max: 1,
+          divisions: 20,
+          onChanged: (v) => setState(() => _pipMaskFeather = v),
+        ),
+        Row(
+          children: [
+            const Text('Mask invert'),
+            const SizedBox(width: 10),
+            _iconChoiceItem(
+              icon: Icons.invert_colors,
+              label: 'Invert',
+              selected: _pipMaskInvert,
+              onTap: () => setState(() => _pipMaskInvert = !_pipMaskInvert),
+            ),
+          ],
+        ),
+      ],
       const Text(
-        'Blend modes nahi diye gaye: ffmpeg ka blend filter inset '
-        'ki alpha nahi maanta, is liye woh jhoota option hota. '
-        'Opacity + circle mask asal alpha ke saath lagte hain.',
+        'Blend mode inset ke andar hi lagta hai — bahar ka frame '
+        'asal rehta hai. Mask, feather aur blend stage preview mein '
+        'live dikhte hain, export mein wohi result aata hai.',
         style: TextStyle(color: Colors.grey, fontSize: 12),
       ),
       const Divider(height: 32),
@@ -640,65 +743,56 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
         ),
       ],
       _sectionTitle('Canvas'),
-      SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            const Icon(Icons.crop, size: 16, color: Colors.white70),
-            const SizedBox(width: 6),
-            for (final a in const ['Original', '9:16', '16:9', '1:1'])
-              Padding(
-                padding: const EdgeInsets.only(right: 6),
-                child: ChoiceChip(
-                  label: Text(a),
-                  selected: _aspect == a,
-                  onSelected: (_) => setState(() => _aspect = a),
-                ),
-              ),
-          ],
-        ),
-      ),
+      _iconChoiceRail([
+        for (final a in const [
+          ('Original', Icons.photo_size_select_actual),
+          ('9:16', Icons.crop_portrait),
+          ('16:9', Icons.crop_landscape),
+          ('1:1', Icons.crop_square),
+        ])
+          _iconChoiceItem(
+            icon: a.$2,
+            label: a.$1,
+            selected: _aspect == a.$1,
+            onTap: () => setState(() => _aspect = a.$1),
+          ),
+      ]),
       const SizedBox(height: 6),
-      Row(
-        children: [
-          const Text('Fill'),
-          const SizedBox(width: 10),
+      const Text('Fill'),
+      const SizedBox(height: 4),
+      _iconChoiceRail([
+        for (final e in const [
+          ('none', 'Crop', Icons.crop),
+          ('blur', 'Blur', Icons.blur_on),
+          ('color', 'Colour', Icons.palette),
+        ])
+          _iconChoiceItem(
+            icon: e.$3,
+            label: e.$2,
+            selected: _canvasFill == e.$1,
+            onTap: () => setState(() => _canvasFill = e.$1),
+          ),
+      ]),
+      if (_canvasFill == 'color') ...[
+        const SizedBox(height: 6),
+        const Text('Fill colour'),
+        const SizedBox(height: 4),
+        _iconChoiceRail([
           for (final e in const [
-            ('none', 'Crop'),
-            ('blur', 'Blur'),
-            ('color', 'Colour'),
+            ('black', 'Black', Color(0xFF000000)),
+            ('white', 'White', Color(0xFFFFFFFF)),
+            ('0x1A1A2E', 'Navy', Color(0xFF1A1A2E)),
+            ('0x7C3AED', 'Purple', Color(0xFF7C3AED)),
           ])
-            Padding(
-              padding: const EdgeInsets.only(right: 6),
-              child: ChoiceChip(
-                label: Text(e.$2),
-                selected: _canvasFill == e.$1,
-                onSelected: (_) => setState(() => _canvasFill = e.$1),
-              ),
+            _iconChoiceItem(
+              icon: Icons.circle,
+              iconColor: e.$3,
+              label: e.$2,
+              selected: _canvasFillColor == e.$1,
+              onTap: () => setState(() => _canvasFillColor = e.$1),
             ),
-        ],
-      ),
-      if (_canvasFill == 'color')
-        Row(
-          children: [
-            const Text('Fill colour'),
-            const SizedBox(width: 10),
-            for (final e in const [
-              ('black', 'Black'),
-              ('white', 'White'),
-              ('0x1A1A2E', 'Navy'),
-              ('0x7C3AED', 'Purple'),
-            ])
-              Padding(
-                padding: const EdgeInsets.only(right: 6),
-                child: ChoiceChip(
-                  label: Text(e.$2),
-                  selected: _canvasFillColor == e.$1,
-                  onSelected: (_) => setState(() => _canvasFillColor = e.$1),
-                ),
-              ),
-          ],
-        ),
+        ]),
+      ],
       _sectionTitle('Intro / outro attach'),
       Row(
         children: [
@@ -832,23 +926,22 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
           value: clip.kenBurns,
           onChanged: (v) => setState(() => clip.kenBurns = v),
         ),
-        Row(
-          children: [
-            const Text('Zoom'),
-            const SizedBox(width: 10),
-            ChoiceChip(
-              label: const Text('Zoom in'),
-              selected: clip.kbZoomIn,
-              onSelected: (_) => setState(() => clip.kbZoomIn = true),
-            ),
-            const SizedBox(width: 6),
-            ChoiceChip(
-              label: const Text('Zoom out'),
-              selected: !clip.kbZoomIn,
-              onSelected: (_) => setState(() => clip.kbZoomIn = false),
-            ),
-          ],
-        ),
+        const Text('Zoom'),
+        const SizedBox(height: 4),
+        _iconChoiceRail([
+          _iconChoiceItem(
+            icon: Icons.zoom_in,
+            label: 'Zoom in',
+            selected: clip.kbZoomIn,
+            onTap: () => setState(() => clip.kbZoomIn = true),
+          ),
+          _iconChoiceItem(
+            icon: Icons.zoom_out,
+            label: 'Zoom out',
+            selected: !clip.kbZoomIn,
+            onTap: () => setState(() => clip.kbZoomIn = false),
+          ),
+        ]),
         _ProSlider(
           label: 'Photo duration (s)',
           value: clip.duration.inMilliseconds / 1000,
@@ -891,23 +984,24 @@ TextField(
                 onChanged: (v) => setState(() => _proSticker = v),
               ),
               const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                initialValue: _proStickerPreset,
-                decoration: const InputDecoration(
-                  labelText: 'Sticker preset',
-                ),
-                items: const [
-                  'fadeIn',
-                  'slideLeft',
-                  'slideRight',
-                  'slideUp',
-                  'zoomPop',
-                ]
-                    .map((s) => DropdownMenuItem(value: s, child: Text(s)))
-                    .toList(),
-                onChanged: (v) =>
-                    setState(() => _proStickerPreset = v ?? 'fadeIn'),
-              ),
+              const Text('Sticker preset'),
+              const SizedBox(height: 4),
+              _iconChoiceRail([
+                for (final e in const [
+                  ('fadeIn', Icons.gradient),
+                  ('slideLeft', Icons.arrow_back),
+                  ('slideRight', Icons.arrow_forward),
+                  ('slideUp', Icons.arrow_upward),
+                  ('zoomPop', Icons.zoom_in),
+                ])
+                  _iconChoiceItem(
+                    icon: e.$2,
+                    label: e.$1,
+                    selected: _proStickerPreset == e.$1,
+                    onTap: () =>
+                        setState(() => _proStickerPreset = e.$1),
+                  ),
+              ]),
               const Divider(height: 32),
           const SizedBox(height: 12),
           const Text(
@@ -1035,21 +1129,23 @@ TextField(
           const Divider(height: 32),
           const Text('Shake effect',
               style: TextStyle(fontWeight: FontWeight.bold)),
-          DropdownButtonFormField<ShakeFx>(
-            initialValue: _fxShake,
-            decoration: const InputDecoration(labelText: 'Shake intensity'),
-            items: const [
-              DropdownMenuItem(value: ShakeFx.none, child: Text('None')),
-              DropdownMenuItem(value: ShakeFx.light, child: Text('Light')),
-              DropdownMenuItem(value: ShakeFx.medium, child: Text('Medium')),
-              DropdownMenuItem(value: ShakeFx.strong, child: Text('Strong')),
-            ],
-            onChanged: (ShakeFx? v) {
-              setState(() {
-                _fxShake = v ?? ShakeFx.none;
-              });
-            },
-          ),
+          const SizedBox(height: 4),
+          const Text('Shake intensity'),
+          const SizedBox(height: 4),
+          _iconChoiceRail([
+            for (final e in const [
+              (ShakeFx.none, 'None', Icons.block),
+              (ShakeFx.light, 'Light', Icons.air),
+              (ShakeFx.medium, 'Medium', Icons.waves),
+              (ShakeFx.strong, 'Strong', Icons.vibration),
+            ])
+              _iconChoiceItem(
+                icon: e.$3,
+                label: e.$2,
+                selected: _fxShake == e.$1,
+                onTap: () => setState(() => _fxShake = e.$1),
+              ),
+          ]),
           const SizedBox(height: 8),
         ];
       case 'titles':
@@ -1066,50 +1162,39 @@ TextField(
                 onChanged: (v) => setState(() => _proTitle = v),
               ),
               const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      initialValue: _proTitlePreset,
-                      decoration: const InputDecoration(
-                        labelText: 'Title preset',
-                      ),
-                      items: const [
-                        'fadeIn',
-                        'slideLeft',
-                        'slideRight',
-                        'slideUp',
-                        'zoomPop',
-                      ]
-                          .map((s) => DropdownMenuItem(
-                                value: s,
-                                child: Text(s),
-                              ))
-                          .toList(),
-                      onChanged: (v) =>
-                          setState(() => _proTitlePreset = v ?? 'fadeIn'),
-                    ),
+              const Text('Title preset'),
+              const SizedBox(height: 4),
+              _iconChoiceRail([
+                for (final e in const [
+                  ('fadeIn', Icons.gradient),
+                  ('slideLeft', Icons.arrow_back),
+                  ('slideRight', Icons.arrow_forward),
+                  ('slideUp', Icons.arrow_upward),
+                  ('zoomPop', Icons.zoom_in),
+                ])
+                  _iconChoiceItem(
+                    icon: e.$2,
+                    label: e.$1,
+                    selected: _proTitlePreset == e.$1,
+                    onTap: () => setState(() => _proTitlePreset = e.$1),
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      initialValue: _proTitlePosition,
-                      decoration: const InputDecoration(
-                        labelText: 'Title position',
-                      ),
-                      items: const ['topCenter', 'center', 'bottomCenter']
-                          .map((s) => DropdownMenuItem(
-                                value: s,
-                                child: Text(s),
-                              ))
-                          .toList(),
-                      onChanged: (v) => setState(
-                        () => _proTitlePosition = v ?? 'bottomCenter',
-                      ),
-                    ),
+              ]),
+              const SizedBox(height: 8),
+              const Text('Title position'),
+              const SizedBox(height: 4),
+              _iconChoiceRail([
+                for (final e in const [
+                  ('topCenter', 'Top', Icons.vertical_align_top),
+                  ('center', 'Center', Icons.vertical_align_center),
+                  ('bottomCenter', 'Bottom', Icons.vertical_align_bottom),
+                ])
+                  _iconChoiceItem(
+                    icon: e.$3,
+                    label: e.$2,
+                    selected: _proTitlePosition == e.$1,
+                    onTap: () => setState(() => _proTitlePosition = e.$1),
                   ),
-                ],
-              ),
+              ]),
               const SizedBox(height: 8),
           const Divider(height: 32),
         ];
@@ -1119,14 +1204,24 @@ TextField(
               style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
 // Speed / filter / aspect
-          DropdownButtonFormField<String>(
-            initialValue: _filter,
-            decoration: const InputDecoration(labelText: 'Filter'),
-            items: const ['Normal', 'Warm', 'Cool', 'B&W', 'Vivid', 'Sepia']
-                .map((f) => DropdownMenuItem(value: f, child: Text(f)))
-                .toList(),
-            onChanged: (v) => setState(() => _filter = v ?? 'Normal'),
-          ),
+          const Text('Filter'),
+          const SizedBox(height: 4),
+          _iconChoiceRail([
+            for (final e in const [
+              ('Normal', Icons.photo),
+              ('Warm', Icons.wb_sunny),
+              ('Cool', Icons.ac_unit),
+              ('B&W', Icons.filter_b_and_w),
+              ('Vivid', Icons.palette),
+              ('Sepia', Icons.history),
+            ])
+              _iconChoiceItem(
+                icon: e.$2,
+                label: e.$1,
+                selected: _filter == e.$1,
+                onTap: () => setState(() => _filter = e.$1),
+              ),
+          ]),
           const SizedBox(height: 8),
         ];
       case 'audio':
@@ -1202,22 +1297,24 @@ TextField(
           const Divider(height: 32),
           const Text('Voice changer',
               style: TextStyle(fontWeight: FontWeight.bold)),
-          DropdownButtonFormField<VoiceFx>(
-            initialValue: _fxVoice,
-            decoration: const InputDecoration(labelText: 'Voice effect'),
-            items: const [
-              DropdownMenuItem(value: VoiceFx.none, child: Text('None')),
-              DropdownMenuItem(value: VoiceFx.chipmunk, child: Text('Chipmunk')),
-              DropdownMenuItem(value: VoiceFx.deepVoice, child: Text('Deep voice')),
-              DropdownMenuItem(value: VoiceFx.robot, child: Text('Robot')),
-              DropdownMenuItem(value: VoiceFx.echo, child: Text('Echo')),
-            ],
-            onChanged: (VoiceFx? v) {
-              setState(() {
-                _fxVoice = v ?? VoiceFx.none;
-              });
-            },
-          ),
+          const SizedBox(height: 4),
+          const Text('Voice effect'),
+          const SizedBox(height: 4),
+          _iconChoiceRail([
+            for (final e in const [
+              (VoiceFx.none, 'None', Icons.voice_over_off),
+              (VoiceFx.chipmunk, 'Chipmunk', Icons.pets),
+              (VoiceFx.deepVoice, 'Deep voice', Icons.graphic_eq),
+              (VoiceFx.robot, 'Robot', Icons.smart_toy),
+              (VoiceFx.echo, 'Echo', Icons.waves),
+            ])
+              _iconChoiceItem(
+                icon: e.$3,
+                label: e.$2,
+                selected: _fxVoice == e.$1,
+                onTap: () => setState(() => _fxVoice = e.$1),
+              ),
+          ]),
           _ProSlider(
             label: 'Fade in (s)',
             value: _fxFadeIn,
@@ -1275,35 +1372,45 @@ TextField(
               style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
 // Speed / filter / aspect
-          DropdownButtonFormField<double>(
-            initialValue: _speed,
-            decoration: const InputDecoration(labelText: 'Speed'),
-            items: const [0.5, 0.75, 1.0, 1.5, 2.0]
-                .map((s) => DropdownMenuItem(
-                      value: s,
-                      child: Text('${s}x'),
-                    ))
-                .toList(),
-            onChanged: (v) => setState(() => _speed = v ?? 1.0),
-          ),
+          const Text('Speed'),
+          const SizedBox(height: 4),
+          _iconChoiceRail([
+            for (final e in const [
+              (0.5, Icons.slow_motion_video),
+              (0.75, Icons.speed),
+              (1.0, Icons.play_arrow),
+              (1.5, Icons.fast_forward),
+              (2.0, Icons.double_arrow),
+            ])
+              _iconChoiceItem(
+                icon: e.$2,
+                label: '${e.$1}x',
+                selected: _speed == e.$1,
+                onTap: () => setState(() => _speed = e.$1),
+              ),
+          ]),
 // Speed ramp.
               const Text('Speed ramp',
                   style: TextStyle(fontWeight: FontWeight.bold)),
-              DropdownButtonFormField<String>(
-                initialValue: _proRamp,
-                decoration: const InputDecoration(labelText: 'Ramp preset'),
-                items: const [
-                  'None',
-                  'slowMiddle',
-                  'slowStart',
-                  'slowEnd',
-                  'pulse',
-                  'Custom',
-                ]
-                    .map((s) => DropdownMenuItem(value: s, child: Text(s)))
-                    .toList(),
-                onChanged: (v) => setState(() => _proRamp = v ?? 'None'),
-              ),
+              const SizedBox(height: 4),
+              const Text('Ramp preset'),
+              const SizedBox(height: 4),
+              _iconChoiceRail([
+                for (final e in const [
+                  ('None', Icons.block),
+                  ('slowMiddle', Icons.compress),
+                  ('slowStart', Icons.trending_down),
+                  ('slowEnd', Icons.trending_up),
+                  ('pulse', Icons.show_chart),
+                  ('Custom', Icons.tune),
+                ])
+                  _iconChoiceItem(
+                    icon: e.$2,
+                    label: e.$1,
+                    selected: _proRamp == e.$1,
+                    onTap: () => setState(() => _proRamp = e.$1),
+                  ),
+              ]),
               const Text(
                 'Note: ramp on ho to fixed Speed dropdown ignore ho jata hai.',
                 style: TextStyle(color: Colors.grey),
@@ -1339,33 +1446,37 @@ if (AppConfig.crossfadeEnabled)
 // Transitions.
               const Text('Transitions',
                   style: TextStyle(fontWeight: FontWeight.bold)),
-              DropdownButtonFormField<String>(
-                initialValue: _proTransition,
-                decoration: const InputDecoration(labelText: 'Transition'),
-                items: const [
-                  'fade',
-                  'slideleft',
-                  'slideright',
-                  'slideup',
-                  'slidedown',
-                  'wipeleft',
-                  'wiperight',
-                  'wipeup',
-                  'wipedown',
-                  'circlecrop',
-                  'dissolve',
-                  'pixelize',
-                  'smoothleft',
-                  'smoothright',
-                  'radial',
-                  'rectcrop',
-                  'hblur',
-                  'circleopen',
-                ]
-                    .map((s) => DropdownMenuItem(value: s, child: Text(s)))
-                    .toList(),
-                onChanged: (v) => setState(() => _proTransition = v ?? 'fade'),
-              ),
+              const SizedBox(height: 4),
+              const Text('Transition'),
+              const SizedBox(height: 4),
+              _iconChoiceRail([
+                for (final e in const [
+                  ('fade', Icons.gradient),
+                  ('slideleft', Icons.arrow_back),
+                  ('slideright', Icons.arrow_forward),
+                  ('slideup', Icons.arrow_upward),
+                  ('slidedown', Icons.arrow_downward),
+                  ('wipeleft', Icons.keyboard_arrow_left),
+                  ('wiperight', Icons.keyboard_arrow_right),
+                  ('wipeup', Icons.keyboard_arrow_up),
+                  ('wipedown', Icons.keyboard_arrow_down),
+                  ('circlecrop', Icons.circle_outlined),
+                  ('dissolve', Icons.blur_on),
+                  ('pixelize', Icons.grid_on),
+                  ('smoothleft', Icons.keyboard_double_arrow_left),
+                  ('smoothright', Icons.keyboard_double_arrow_right),
+                  ('radial', Icons.radio_button_checked),
+                  ('rectcrop', Icons.crop_square),
+                  ('hblur', Icons.blur_linear),
+                  ('circleopen', Icons.radio_button_unchecked),
+                ])
+                  _iconChoiceItem(
+                    icon: e.$2,
+                    label: e.$1,
+                    selected: _proTransition == e.$1,
+                    onTap: () => setState(() => _proTransition = e.$1),
+                  ),
+              ]),
               _ProSlider(
                 label: 'Transition duration (s)',
                 value: _proTransitionDur,
@@ -1393,6 +1504,7 @@ if (AppConfig.crossfadeEnabled)
               setState(() {
                 _fxPip = v;
               });
+              _ensurePipPreview();
             },
           ),
           if (_fxPip)
@@ -1404,6 +1516,7 @@ if (AppConfig.crossfadeEnabled)
                   setState(() {
                     _fxPipVideo = picked.path;
                   });
+                  _ensurePipPreview();
                 }
               },
               icon: const Icon(Icons.video_library),
@@ -1413,24 +1526,22 @@ if (AppConfig.crossfadeEnabled)
             ),
           if (_fxPip) ...[
             const SizedBox(height: 8),
-            DropdownButtonFormField<PipPosition>(
-              key: const Key('pipPositionDropdown'),
-              initialValue: _pipPosition,
-              decoration: const InputDecoration(
-                labelText: 'PIP position',
-              ),
-              items: PipPosition.values
-                  .map(
-                    (pos) => DropdownMenuItem(
-                      value: pos,
-                      child: Text(pos.name),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (v) {
-                if (v != null) setState(() => _pipPosition = v);
-              },
-            ),
+            const Text('PIP position'),
+            const SizedBox(height: 4),
+            _iconChoiceRail([
+              for (final pos in PipPosition.values)
+                _iconChoiceItem(
+                  icon: switch (pos) {
+                    PipPosition.topLeft => Icons.north_west,
+                    PipPosition.topRight => Icons.north_east,
+                    PipPosition.bottomLeft => Icons.south_west,
+                    PipPosition.bottomRight => Icons.south_east,
+                  },
+                  label: pos.name,
+                  selected: _pipPosition == pos,
+                  onTap: () => setState(() => _pipPosition = pos),
+                ),
+            ]),
             const SizedBox(height: 8),
             Row(
               children: [
@@ -1549,28 +1660,28 @@ if (AppConfig.crossfadeEnabled)
                   ),
                 ),
                 const SizedBox(width: 8),
-                Expanded(
-                  child: DropdownButtonFormField<LogoPosition>(
-                    initialValue: _news.logoPosition,
-                    decoration: const InputDecoration(
-                      labelText: 'Logo jagah',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: LogoPosition.values
-                        .map((pos) => DropdownMenuItem(
-                              value: pos,
-                              child: Text(pos.label),
-                            ))
-                        .toList(),
-                    onChanged: (v) {
-                      if (v == null) return;
-                      setState(() => _news.logoPosition = v);
-                      unawaited(_news.save());
-                    },
-                  ),
-                ),
               ],
             ),
+            const SizedBox(height: 8),
+            const Text('Logo jagah'),
+            const SizedBox(height: 4),
+            _iconChoiceRail([
+              for (final pos in LogoPosition.values)
+                _iconChoiceItem(
+                  icon: switch (pos) {
+                    LogoPosition.topLeft => Icons.north_west,
+                    LogoPosition.topRight => Icons.north_east,
+                    LogoPosition.bottomLeft => Icons.south_west,
+                    LogoPosition.bottomRight => Icons.south_east,
+                  },
+                  label: pos.label,
+                  selected: _news.logoPosition == pos,
+                  onTap: () {
+                    setState(() => _news.logoPosition = pos);
+                    unawaited(_news.save());
+                  },
+                ),
+            ]),
             SwitchListTile(
               title: const Text('Logo ahista ghoome (rotation)'),
               subtitle: const Text('Sirf live me ghoomega; export me static.'),
@@ -1600,16 +1711,20 @@ const Text('Auto Captions (CapCut-style)',
           Row(
             children: [
               Expanded(
-                child: DropdownButtonFormField<String>(
-                  initialValue: _captionLocale,
-                  decoration:
-                      const InputDecoration(labelText: 'Caption language'),
-                  items: const [
-                    DropdownMenuItem(value: 'ur', child: Text('Urdu')),
-                    DropdownMenuItem(value: 'en', child: Text('English')),
-                  ],
-                  onChanged: (v) => setState(() => _captionLocale = v ?? 'ur'),
-                ),
+                child: _iconChoiceRail([
+                  _iconChoiceItem(
+                    icon: Icons.translate,
+                    label: 'Urdu',
+                    selected: _captionLocale == 'ur',
+                    onTap: () => setState(() => _captionLocale = 'ur'),
+                  ),
+                  _iconChoiceItem(
+                    icon: Icons.abc,
+                    label: 'English',
+                    selected: _captionLocale == 'en',
+                    onTap: () => setState(() => _captionLocale = 'en'),
+                  ),
+                ]),
               ),
               const SizedBox(width: 8),
               Expanded(
@@ -1637,51 +1752,24 @@ const Text('Auto Captions (CapCut-style)',
             ),
           ],
           const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  initialValue: switch (_captionStyle) {
-                    CaptionStyle.standard => 'standard',
-                    CaptionStyle.highlight => 'highlight',
-                    CaptionStyle.gold => 'gold',
-                    CaptionStyle.clean => 'clean',
-                    CaptionStyle.pop => 'pop',
-                    CaptionStyle.boxed => 'boxed',
-                  },
-                  decoration:
-                      const InputDecoration(labelText: 'Caption style'),
-                  items: const [
-                    DropdownMenuItem(
-                        value: 'standard', child: Text('Default')),
-                    DropdownMenuItem(
-                        value: 'highlight',
-                        child: Text('Highlight (black on yellow)')),
-                    DropdownMenuItem(
-                        value: 'gold', child: Text('Gold')),
-                    DropdownMenuItem(
-                        value: 'clean', child: Text('Clean')),
-                    DropdownMenuItem(
-                        value: 'pop',
-                        child: Text('Pop (word by word)')),
-                    DropdownMenuItem(
-                        value: 'boxed',
-                        child: Text('Boxed (white on black)')),
-                  ],
-                  onChanged: (v) => setState(() {
-                    _captionStyle = switch (v) {
-                      'highlight' => CaptionStyle.highlight,
-                      'gold' => CaptionStyle.gold,
-                      'clean' => CaptionStyle.clean,
-                      'pop' => CaptionStyle.pop,
-                      'boxed' => CaptionStyle.boxed,
-                      _ => CaptionStyle.standard,
-                    };
-                  }),
-                ),
+          const Text('Caption style'),
+          const SizedBox(height: 4),
+          _iconChoiceRail([
+            for (final e in const [
+              (CaptionStyle.standard, 'Default', Icons.closed_caption),
+              (CaptionStyle.highlight, 'Highlight', Icons.highlight),
+              (CaptionStyle.gold, 'Gold', Icons.star),
+              (CaptionStyle.clean, 'Clean', Icons.format_clear),
+              (CaptionStyle.pop, 'Pop', Icons.bolt),
+              (CaptionStyle.boxed, 'Boxed', Icons.check_box_outline_blank),
+            ])
+              _iconChoiceItem(
+                icon: e.$3,
+                label: e.$2,
+                selected: _captionStyle == e.$1,
+                onTap: () => setState(() => _captionStyle = e.$1),
               ),
-            ],
-          ),
+          ]),
           if (_captions.isNotEmpty && !_transcribing) ...[
             const SizedBox(height: 8),
             Row(
@@ -1741,24 +1829,28 @@ const Text('Auto Captions (CapCut-style)',
                 Row(
                   children: [
                     Expanded(
-                      child: DropdownButton<String>(
-                        value: (_proChromaColor == 'green' ||
-                                _proChromaColor == 'blue')
-                            ? _proChromaColor
-                            : null,
-                        hint: const Text('Custom (sampled)'),
-                        isExpanded: true,
-                        items: const [
-                          DropdownMenuItem(
-                              value: 'green', child: Text('Green')),
-                          DropdownMenuItem(
-                              value: 'blue', child: Text('Blue')),
-                        ],
-                        onChanged: (v) {
-                          setState(() => _proChromaColor = v ?? 'green');
-                          _scheduleChromaPreview();
-                        },
-                      ),
+                      child: _iconChoiceRail([
+                        _iconChoiceItem(
+                          icon: Icons.circle,
+                          iconColor: Colors.green,
+                          label: 'Green',
+                          selected: _proChromaColor == 'green',
+                          onTap: () {
+                            setState(() => _proChromaColor = 'green');
+                            _scheduleChromaPreview();
+                          },
+                        ),
+                        _iconChoiceItem(
+                          icon: Icons.circle,
+                          iconColor: Colors.blue,
+                          label: 'Blue',
+                          selected: _proChromaColor == 'blue',
+                          onTap: () {
+                            setState(() => _proChromaColor = 'blue');
+                            _scheduleChromaPreview();
+                          },
+                        ),
+                      ]),
                     ),
                     IconButton(
                       tooltip: 'Eyedropper — frame par tap karke rang chunein',
@@ -1817,44 +1909,48 @@ const Text('Auto Captions (CapCut-style)',
                   },
                 ),
                 const Text('Background kind'),
-                DropdownButton<String>(
-                  value: _proChromaBgKind,
-                  isExpanded: true,
-                  items: const [
-                    DropdownMenuItem(value: 'color', child: Text('Color')),
-                    DropdownMenuItem(value: 'image', child: Text('Image')),
-                  ],
-                  onChanged: (v) {
-                    setState(() => _proChromaBgKind = v ?? 'color');
-                    _scheduleChromaPreview();
-                  },
-                ),
-                if (_proChromaBgKind == 'color') ...[
-                  const Text('Background color'),
-                  DropdownButton<String>(
-                    value: const ['#00FF00', '#0000FF', '#000000', '#FFFFFF']
-                            .contains(_proChromaBgColor)
-                        ? _proChromaBgColor
-                        : null,
-                    hint: const Text('Custom'),
-                    isExpanded: true,
-                    items: const {
-                      '#00FF00': 'Green',
-                      '#0000FF': 'Blue',
-                      '#000000': 'Black',
-                      '#FFFFFF': 'White',
-                    }
-                        .entries
-                        .map((e) => DropdownMenuItem(
-                              value: e.key,
-                              child: Text(e.value),
-                            ))
-                        .toList(),
-                    onChanged: (v) {
-                      setState(() => _proChromaBgColor = v ?? '#00FF00');
+                const SizedBox(height: 4),
+                _iconChoiceRail([
+                  _iconChoiceItem(
+                    icon: Icons.palette,
+                    label: 'Color',
+                    selected: _proChromaBgKind == 'color',
+                    onTap: () {
+                      setState(() => _proChromaBgKind = 'color');
                       _scheduleChromaPreview();
                     },
                   ),
+                  _iconChoiceItem(
+                    icon: Icons.image,
+                    label: 'Image',
+                    selected: _proChromaBgKind == 'image',
+                    onTap: () {
+                      setState(() => _proChromaBgKind = 'image');
+                      _scheduleChromaPreview();
+                    },
+                  ),
+                ]),
+                if (_proChromaBgKind == 'color') ...[
+                  const Text('Background color'),
+                  const SizedBox(height: 4),
+                  _iconChoiceRail([
+                    for (final e in const [
+                      ('#00FF00', 'Green', Color(0xFF00FF00)),
+                      ('#0000FF', 'Blue', Color(0xFF0000FF)),
+                      ('#000000', 'Black', Color(0xFF000000)),
+                      ('#FFFFFF', 'White', Color(0xFFFFFFFF)),
+                    ])
+                      _iconChoiceItem(
+                        icon: Icons.circle,
+                        iconColor: e.$3,
+                        label: e.$2,
+                        selected: _proChromaBgColor == e.$1,
+                        onTap: () {
+                          setState(() => _proChromaBgColor = e.$1);
+                          _scheduleChromaPreview();
+                        },
+                      ),
+                  ]),
                   TextField(
                     decoration: const InputDecoration(
                       labelText: 'Custom color (#RRGGBB)',
@@ -1889,26 +1985,28 @@ const Text('Auto Captions (CapCut-style)',
                   const Text('Backdrop shortcuts',
                       style: TextStyle(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      ActionChip(
-                        label: const Text('Newsroom'),
-                        onPressed: () => _applyBackdropAsset(
-                            'assets/backgrounds/newsroom.jpg'),
-                      ),
-                      ActionChip(
-                        label: const Text('Studio Desk'),
-                        onPressed: () => _applyBackdropAsset(
-                            'assets/backgrounds/studio_desk.jpg'),
-                      ),
-                      ActionChip(
-                        label: const Text('News anchor preset'),
-                        onPressed: _applyNewsAnchorPreset,
-                      ),
-                    ],
-                  ),
+                  _iconChoiceRail([
+                    _iconChoiceItem(
+                      icon: Icons.meeting_room,
+                      label: 'Newsroom',
+                      selected: false,
+                      onTap: () => _applyBackdropAsset(
+                          'assets/backgrounds/newsroom.jpg'),
+                    ),
+                    _iconChoiceItem(
+                      icon: Icons.desktop_windows,
+                      label: 'Studio Desk',
+                      selected: false,
+                      onTap: () => _applyBackdropAsset(
+                          'assets/backgrounds/studio_desk.jpg'),
+                    ),
+                    _iconChoiceItem(
+                      icon: Icons.tv,
+                      label: 'News anchor preset',
+                      selected: false,
+                      onTap: _applyNewsAnchorPreset,
+                    ),
+                  ]),
                   const SizedBox(height: 12),
                   const Text('Live preview (export jesa result)',
                       style: TextStyle(fontWeight: FontWeight.bold)),
@@ -1959,36 +2057,42 @@ const Text('Auto Captions (CapCut-style)',
                 onChanged: _onBgRemoverChanged,
               ),
               if (_proBgRemove) ...[
-                DropdownButtonFormField<String>(
-                  initialValue: _proBgKind,
-                  decoration:
-                      const InputDecoration(labelText: 'Background kind'),
-                  items: const [
-                    DropdownMenuItem(value: 'color', child: Text('Color')),
-                    DropdownMenuItem(value: 'image', child: Text('Image')),
-                  ],
-                  onChanged: (v) => setState(() => _proBgKind = v ?? 'color'),
-                ),
-                if (_proBgKind == 'color')
-                  DropdownButtonFormField<String>(
-                    initialValue: _proBgColor,
-                    decoration:
-                        const InputDecoration(labelText: 'Background color'),
-                    items: const {
-                      '#00FF00': 'Green',
-                      '#0000FF': 'Blue',
-                      '#000000': 'Black',
-                      '#FFFFFF': 'White',
-                    }
-                        .entries
-                        .map((e) => DropdownMenuItem(
-                              value: e.key,
-                              child: Text(e.value),
-                            ))
-                        .toList(),
-                    onChanged: (v) =>
-                        setState(() => _proBgColor = v ?? '#00FF00'),
+                const Text('Background kind'),
+                const SizedBox(height: 4),
+                _iconChoiceRail([
+                  _iconChoiceItem(
+                    icon: Icons.palette,
+                    label: 'Color',
+                    selected: _proBgKind == 'color',
+                    onTap: () => setState(() => _proBgKind = 'color'),
                   ),
+                  _iconChoiceItem(
+                    icon: Icons.image,
+                    label: 'Image',
+                    selected: _proBgKind == 'image',
+                    onTap: () => setState(() => _proBgKind = 'image'),
+                  ),
+                ]),
+                if (_proBgKind == 'color') ...[
+                  const SizedBox(height: 6),
+                  const Text('Background color'),
+                  const SizedBox(height: 4),
+                  _iconChoiceRail([
+                    for (final e in const [
+                      ('#00FF00', 'Green', Color(0xFF00FF00)),
+                      ('#0000FF', 'Blue', Color(0xFF0000FF)),
+                      ('#000000', 'Black', Color(0xFF000000)),
+                      ('#FFFFFF', 'White', Color(0xFFFFFFFF)),
+                    ])
+                      _iconChoiceItem(
+                        icon: Icons.circle,
+                        iconColor: e.$3,
+                        label: e.$2,
+                        selected: _proBgColor == e.$1,
+                        onTap: () => setState(() => _proBgColor = e.$1),
+                      ),
+                  ]),
+                ],
                 if (_proBgKind == 'image')
                   ElevatedButton.icon(
                     onPressed: () =>
@@ -2102,19 +2206,19 @@ const Text('Auto Captions (CapCut-style)',
               const Text('Grading',
                   style: TextStyle(fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                initialValue: _proLut,
-                decoration: const InputDecoration(labelText: 'LUT look'),
-                items: proLuts
-                    .map((e) => DropdownMenuItem(
-                          value: e['name'] ?? '',
-                          child: Text(
-                            (e['name'] ?? '').isEmpty ? 'None' : e['name']!,
-                          ),
-                        ))
-                    .toList(),
-                onChanged: (v) => setState(() => _proLut = v ?? ''),
-              ),
+              const Text('LUT look'),
+              const SizedBox(height: 4),
+              _iconChoiceRail([
+                for (final e in proLuts)
+                  _iconChoiceItem(
+                    icon: (e['name'] ?? '').isEmpty
+                        ? Icons.block
+                        : Icons.photo_filter,
+                    label: (e['name'] ?? '').isEmpty ? 'None' : e['name']!,
+                    selected: _proLut == (e['name'] ?? ''),
+                    onTap: () => setState(() => _proLut = e['name'] ?? ''),
+                  ),
+              ]),
               _ProSlider(
                 label: 'Temperature',
                 value: _proTemperature,
@@ -2231,25 +2335,22 @@ const Text('Auto Captions (CapCut-style)',
           const Text('Filters — LIVE preview stage par',
               style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              for (final f in const [
-                'Normal',
-                'Warm',
-                'Cool',
-                'B&W',
-                'Vivid',
-                'Sepia',
-              ])
-                ChoiceChip(
-                  label: Text(f),
-                  selected: _filter == f,
-                  onSelected: (_) => setState(() => _filter = f),
-                ),
-            ],
-          ),
+          _iconChoiceRail([
+            for (final e in const [
+              ('Normal', Icons.photo),
+              ('Warm', Icons.wb_sunny),
+              ('Cool', Icons.ac_unit),
+              ('B&W', Icons.filter_b_and_w),
+              ('Vivid', Icons.palette),
+              ('Sepia', Icons.history),
+            ])
+              _iconChoiceItem(
+                icon: e.$2,
+                label: e.$1,
+                selected: _filter == e.$1,
+                onTap: () => setState(() => _filter = e.$1),
+              ),
+          ]),
           _ProSlider(
             label: 'Filter intensity',
             value: _filterIntensity,
@@ -2274,42 +2375,39 @@ const Text('Auto Captions (CapCut-style)',
           const Text('Adjust — ek waqt mein ek slider',
               style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
-          DropdownButtonFormField<String>(
-            initialValue: _proLut,
-            decoration: const InputDecoration(labelText: 'LUT look'),
-            items: proLuts
-                .map((e) => DropdownMenuItem(
-                      value: e['name'] ?? '',
-                      child: Text(
-                        (e['name'] ?? '').isEmpty ? 'None' : e['name']!,
-                      ),
-                    ))
-                .toList(),
-            onChanged: (v) => setState(() => _proLut = v ?? ''),
-          ),
+          const Text('LUT look'),
+          const SizedBox(height: 4),
+          _iconChoiceRail([
+            for (final e in proLuts)
+              _iconChoiceItem(
+                icon: (e['name'] ?? '').isEmpty
+                    ? Icons.block
+                    : Icons.photo_filter,
+                label: (e['name'] ?? '').isEmpty ? 'None' : e['name']!,
+                selected: _proLut == (e['name'] ?? ''),
+                onTap: () => setState(() => _proLut = e['name'] ?? ''),
+              ),
+          ]),
           const SizedBox(height: 8),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              for (final name in const [
-                'Temperature',
-                'Tint',
-                'Saturation',
-                'Vibrance',
-                'Contrast',
-                'Shadows',
-                'Highlights',
-                'Brightness',
-                'Exposure',
-              ])
-                ChoiceChip(
-                  label: Text(name),
-                  selected: _gradeSlider == name,
-                  onSelected: (_) => setState(() => _gradeSlider = name),
-                ),
-            ],
-          ),
+          _iconChoiceRail([
+            for (final e in const [
+              ('Temperature', Icons.thermostat),
+              ('Tint', Icons.colorize),
+              ('Saturation', Icons.palette),
+              ('Vibrance', Icons.color_lens),
+              ('Contrast', Icons.contrast),
+              ('Shadows', Icons.dark_mode),
+              ('Highlights', Icons.light_mode),
+              ('Brightness', Icons.brightness_6),
+              ('Exposure', Icons.exposure),
+            ])
+              _iconChoiceItem(
+                icon: e.$2,
+                label: e.$1,
+                selected: _gradeSlider == e.$1,
+                onTap: () => setState(() => _gradeSlider = e.$1),
+              ),
+          ]),
           const SizedBox(height: 8),
           _gradeSliderWidget(),
           const Divider(height: 32),
@@ -2335,9 +2433,12 @@ const Text('Auto Captions (CapCut-style)',
               padding: EdgeInsets.only(top: 4),
               child: Text(
                 'Ye project Final template (nigraanFinal) hai: is ka '
-                'export ANIMATED lagega — dono ribbons scroll, '
-                'ghoomta logo, tick karta clock (bilkul asal Nigraan '
-                'video jaisa).',
+                'export ANIMATED lagega — Final 3-Ribbon design '
+                '(neeche English ticker hamesha scroll, Urdu '
+                'ribbons lambi text par scroll), ghoomta logo aur '
+                'us ke neeche date capsule (bilkul asal Nigraan '
+                'video jaisa). Classic 2-Ribbon design Template '
+                'Studio se select ho sakta hai.',
                 style: TextStyle(color: Colors.grey, fontSize: 12),
               ),
             ),
@@ -2448,28 +2549,28 @@ const Text('Auto Captions (CapCut-style)',
                   ),
                 ),
                 const SizedBox(width: 8),
-                Expanded(
-                  child: DropdownButtonFormField<LogoPosition>(
-                    initialValue: _news.logoPosition,
-                    decoration: const InputDecoration(
-                      labelText: 'Logo jagah',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: LogoPosition.values
-                        .map((pos) => DropdownMenuItem(
-                              value: pos,
-                              child: Text(pos.label),
-                            ))
-                        .toList(),
-                    onChanged: (v) {
-                      if (v == null) return;
-                      setState(() => _news.logoPosition = v);
-                      unawaited(_news.save());
-                    },
-                  ),
-                ),
               ],
             ),
+            const SizedBox(height: 8),
+            const Text('Logo jagah'),
+            const SizedBox(height: 4),
+            _iconChoiceRail([
+              for (final pos in LogoPosition.values)
+                _iconChoiceItem(
+                  icon: switch (pos) {
+                    LogoPosition.topLeft => Icons.north_west,
+                    LogoPosition.topRight => Icons.north_east,
+                    LogoPosition.bottomLeft => Icons.south_west,
+                    LogoPosition.bottomRight => Icons.south_east,
+                  },
+                  label: pos.label,
+                  selected: _news.logoPosition == pos,
+                  onTap: () {
+                    setState(() => _news.logoPosition = pos);
+                    unawaited(_news.save());
+                  },
+                ),
+            ]),
             SwitchListTile(
               title: const Text('Logo ahista ghoome (rotation)'),
               subtitle: const Text(

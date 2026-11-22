@@ -82,6 +82,46 @@ enum RibbonDirection {
   }
 }
 
+/// The two Final-template designs (user, 22 Nov 2026): 'final3' is
+/// the DEFAULT — the PUBLIC-News-style THREE-ribbon bottom stack
+/// (top = current/related Urdu, middle = national Urdu, bottom =
+/// international English ticker, logo + date capsule at the right).
+/// 'classic2' keeps the v1.3.0 two-ribbon parity design (Urdu
+/// #3D5AFE over English #EF0017, gold chips) selectable.
+const String kFinalVariant3 = 'final3';
+const String kFinalVariantClassic2 = 'classic2';
+
+/// Factory ribbon colours (the values a preset carries when the
+/// user has never customised them). The Final designs key off
+/// these: an un-customised ribbon renders in its DESIGN colour,
+/// a user-picked colour always wins (the colour pickers in
+/// Template Studio / Channel Branding stay live in both designs).
+const int kFactoryTopRibbonColor = 0xFF01B0FF;
+const int kFactoryUrduRibbonColor = 0xFF3D5AFE;
+const int kFactoryEnglishRibbonColor = 0xFFEF0017;
+
+/// Final 3-Ribbon design colours, sampled from the user's PUBLIC
+/// News reference frame (22 Nov 2026): top dark navy (3,37,114),
+/// middle red (136,12,3), bottom dark navy-black (8,30,70).
+const int kFinal3TopColor = 0xFF032572;
+const int kFinal3UrduColor = 0xFF880C03;
+const int kFinal3EnglishColor = 0xFF081E46;
+
+/// Resolves one ribbon's render colour for a Final design: the
+/// preset's own colour when the user customised it (differs from
+/// the factory value), otherwise the design colour — for
+/// 'classic2' the design colour IS the factory colour, so classic
+/// rendering is unchanged by this resolver.
+int finalDesignRibbonColor({
+  required int presetColor,
+  required int factoryColor,
+  required int final3Color,
+  required bool isFinal3,
+}) =>
+    presetColor != factoryColor
+        ? presetColor
+        : (isFinal3 ? final3Color : factoryColor);
+
 /// Chroma-key (green screen) background choice (Phase 3, Template &
 /// Studio). The toggle + picker + sensitivity persist on the channel
 /// preset for real; the visual chroma effect itself is wired into the
@@ -205,6 +245,7 @@ class ChannelPreset {
     RibbonConfig? urduRibbon,
     RibbonConfig? englishRibbon,
     this.templateKind = 'nigraanFinal',
+    this.finalVariant = kFinalVariant3,
     this.breakingVariant = 'breakingRedBanner',
     this.breakingTickerColor = 0xFF01B0FF,
     this.categoryLabel = '',
@@ -278,6 +319,38 @@ class ChannelPreset {
 
   /// Template variant id, e.g. 'nigraanFinal' (final 3-ribbon template).
   String templateKind;
+
+  /// Which Final-template design renders when [templateKind] is
+  /// 'nigraanFinal': [kFinalVariant3] (default — the 3-ribbon
+  /// PUBLIC-style stack) or [kFinalVariantClassic2] (the v1.3.0
+  /// 2-ribbon parity design). Selected in Template Studio next to
+  /// the template cards; ignored by the other template kinds.
+  String finalVariant;
+
+  /// True when this preset renders the Final 3-Ribbon design.
+  bool get finalIs3Ribbon => finalVariant != kFinalVariantClassic2;
+
+  /// Resolved render colours of the three Final-design ribbons
+  /// (see [finalDesignRibbonColor]): design colours for an
+  /// un-customised preset, the user's picked colours otherwise.
+  int get designTopColor => finalDesignRibbonColor(
+        presetColor: topRibbon.color,
+        factoryColor: kFactoryTopRibbonColor,
+        final3Color: kFinal3TopColor,
+        isFinal3: finalIs3Ribbon,
+      );
+  int get designUrduColor => finalDesignRibbonColor(
+        presetColor: urduRibbon.color,
+        factoryColor: kFactoryUrduRibbonColor,
+        final3Color: kFinal3UrduColor,
+        isFinal3: finalIs3Ribbon,
+      );
+  int get designEnglishColor => finalDesignRibbonColor(
+        presetColor: englishRibbon.color,
+        factoryColor: kFactoryEnglishRibbonColor,
+        final3Color: kFinal3EnglishColor,
+        isFinal3: finalIs3Ribbon,
+      );
 
   /// Which of the four breaking variants this preset uses when
   /// [templateKind] is 'breaking' (a [BreakingVariant] id — see
@@ -480,6 +553,13 @@ class ChannelPreset {
       // v1.3.0 (§9 parity): the REAL final template has NO top
       // ribbon and NO outro — the top ribbon stays available as an
       // option the user can switch on, and the outro likewise.
+      // 22 Nov 2026 (Final 3-Ribbon rework): the default design is
+      // now 'final3', whose TOP ribbon is the stack's first ribbon
+      // (current story) — so its toggle defaults ON. Under
+      // 'classic2' the same toggle is the optional frame-top
+      // ticker; it stays live there too (switch it off in the
+      // ribbon settings for the strict 2-ribbon look).
+      finalVariant: kFinalVariant3,
       showOutro: false,
       topRibbon: RibbonConfig(
         text: '',
@@ -487,7 +567,7 @@ class ChannelPreset {
         speed: 1.0,
         direction: RibbonDirection.rtl,
         fontSize: 20,
-        enabled: false,
+        enabled: true,
         contentKind: RibbonContentKind.current,
       ),
       urduRibbon: RibbonConfig(
@@ -520,6 +600,7 @@ class ChannelPreset {
         'urduRibbon': urduRibbon.toJson(),
         'englishRibbon': englishRibbon.toJson(),
         'templateKind': templateKind,
+        'finalVariant': finalVariant,
         'breakingVariant': breakingVariant,
         'breakingTickerColor': breakingTickerColor,
         'categoryLabel': categoryLabel,
@@ -581,6 +662,9 @@ class ChannelPreset {
         ),
       ),
       templateKind: (json['templateKind'] as String?) ?? 'nigraanFinal',
+      // Absent on pre-rework saves → the NEW default design.
+      finalVariant:
+          (json['finalVariant'] as String?) ?? kFinalVariant3,
       breakingVariant:
           (json['breakingVariant'] as String?) ?? 'breakingRedBanner',
       breakingTickerColor:
@@ -722,6 +806,7 @@ class ChannelPresetStore {
       urduRibbon: preset.urduRibbon.copyWith(),
       englishRibbon: preset.englishRibbon.copyWith(),
       templateKind: preset.templateKind,
+      finalVariant: preset.finalVariant,
       breakingVariant: preset.breakingVariant,
       breakingTickerColor: preset.breakingTickerColor,
       categoryLabel: preset.categoryLabel,

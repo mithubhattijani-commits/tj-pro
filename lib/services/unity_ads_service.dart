@@ -40,6 +40,24 @@ class UnityAdsService {
 
   static DateTime? _lastInterstitialShown;
 
+  /// Fired when a full-screen ad has actually been watched: a
+  /// rewarded ad completed in full, or an interstitial that was
+  /// shown (completed or skipped after starting). Set ONCE by
+  /// ReferralService at startup (Share & Earn "first ad watched"
+  /// qualification); null in every other context, and every firing
+  /// is guarded so a bad callback can never break an ad flow.
+  static void Function()? onAdCompleted;
+
+  static void _notifyAdCompleted() {
+    final cb = onAdCompleted;
+    if (cb == null) return;
+    try {
+      cb();
+    } catch (_) {
+      // A listener bug must never break ads.
+    }
+  }
+
   /// Initialize the Unity Ads SDK. Safe to call once at app startup;
   /// subsequent calls are no-ops. Never throws, never blocks startup
   /// for more than ~10s.
@@ -151,6 +169,7 @@ class UnityAdsService {
           }
         },
         onComplete: (placementId) {
+          _notifyAdCompleted();
           if (!completer.isCompleted) {
             completer.complete(UnityAdResult.completed);
           }
@@ -220,9 +239,11 @@ class UnityAdsService {
         },
         onClick: (placementId) {},
         onSkipped: (placementId) {
+          _notifyAdCompleted();
           if (!completer.isCompleted) completer.complete(true);
         },
         onComplete: (placementId) {
+          _notifyAdCompleted();
           if (!completer.isCompleted) completer.complete(true);
         },
         onFailed: (placementId, error, message) {
@@ -305,9 +326,11 @@ class UnityAdsService {
         },
         onClick: (placementId) {},
         onSkipped: (placementId) {
+          _notifyAdCompleted();
           if (!completer.isCompleted) completer.complete(true);
         },
         onComplete: (placementId) {
+          _notifyAdCompleted();
           if (!completer.isCompleted) completer.complete(true);
         },
         onFailed: (placementId, error, message) {

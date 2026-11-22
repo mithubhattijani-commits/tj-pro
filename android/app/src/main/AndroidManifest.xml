@@ -32,6 +32,30 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Share & Earn referral links (v1.3.0): the https App
+                 Link carries the sharer's code in ?ref= so the new
+                 user types nothing. autoVerify needs
+                 /.well-known/assetlinks.json on nigraantv.xyz; until
+                 it is published this still works as a normal deep
+                 link (chooser / direct open). -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data
+                    android:scheme="https"
+                    android:host="nigraantv.xyz"
+                    android:pathPrefix="/apps/tj-pro"/>
+            </intent-filter>
+            <!-- Share & Earn fallback scheme: tjpro://ref/CODE -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data
+                    android:scheme="tjpro"
+                    android:host="ref"/>
+            </intent-filter>
         </activity>
         <!-- AdMob meta-data REMOVED (one-build, defect #4): the app
              is Unity-Ads-only now; the Google test app ID that used

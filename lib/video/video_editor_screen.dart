@@ -35,6 +35,7 @@ import '../news/project_handoff.dart';
 import '../services/coin_service.dart';
 import '../services/photo_pipeline.dart';
 import '../services/asset_download_service.dart';
+import '../services/logo_loop_service.dart';
 import '../live/parity_template.dart';
 import '../services/unity_ads_service.dart';
 import '../services/ffmpeg_service.dart';
@@ -153,12 +154,31 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   double _rampStart = 1;
   double _rampMid = 0.5;
   double _rampEnd = 1;
-  /// §6.11 PIP opacity (1 = solid) + mask ('none' / 'circle').
-  /// Blend modes are NOT offered — see the report: ffmpeg's blend
-  /// filter ignores the overlay's alpha, so a true blend mode
-  /// cannot be produced honestly with this graph.
+  /// §6.11 PIP style state: opacity (1 = solid), blend mode, mask.
+  /// Blend modes ARE offered since the completion fix (user order
+  /// 22 Nov 2026): the export uses a masked-blend chain — the inset
+  /// is blended against the base frame, then its own alpha (mask +
+  /// opacity applied) alphamerge-limits the result to the inset's
+  /// shape — so a mode never bleeds outside the PIP. The stage
+  /// preview composites the inset in a saveLayer with the same
+  /// [BlendMode]. Mask values: 'none' / 'circle' / 'rect' /
+  /// 'roundrect' / 'heart' / 'star' / 'linear' / 'radial'; one
+  /// dart:ui-rendered mask PNG drives BOTH the preview (ImageShader
+  /// dstIn) and the export (alpha multiply), so they always match.
   double _pipOpacity = 1;
+  String _pipBlend = 'normal';
   String _pipMask = 'none';
+  double _pipMaskFeather = 0;
+  bool _pipMaskInvert = false;
+  // PIP live preview: a muted looping controller for the inset, so
+  // blend/mask/opacity are visible on the stage before export.
+  VideoPlayerController? _pipController;
+  String _pipControllerPath = '';
+  bool _pipControllerBusy = false;
+  // Decoded preview mask (regenerated when the mask key changes).
+  ui.Image? _pipMaskImage;
+  String _pipMaskImageKey = '';
+  bool _pipMaskImageBusy = false;
   // Status is a transient overlay chip on the stage (§3), not a
   // permanent line: it flashes for a few seconds per message.
   bool _statusVisible = false;
@@ -898,6 +918,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   @override
   void dispose() {
     _controller?.dispose();
+    _pipController?.dispose();
     super.dispose();
   }
 
@@ -1578,7 +1599,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           // v1.3.0 (§6.9): music volume keyframes — a piecewise
           // linear gain envelope over the music track.
           afParts.add(
-            "volume='${volumeEnvelopeExpression(_volumePoints, _musicVolume)}':eval=frame",
+            "volume='${FfmpegService.volumeEnvelopeExpression(_volumePoints, _musicVolume)}':eval=frame",
           );
         } else if (mainMusicPath != null && _musicVolume != 1.0) {
           afParts.add('volume=${_musicVolume.toStringAsFixed(2)}');
@@ -2102,24 +2123,70 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         // channel preset's settings when opened via timeline handoff
         // (Phase 7) — the inset is composited for real, never a
         // preview-only effect.
-        // v1.3.0 (§6.11): PIP opacity + circle mask extend the
-        // stock snippet (alpha via colorchannelmixer; the circle
-        // via a geq alpha disc). Blend modes are not offered —
-        // ffmpeg's blend ignores overlay alpha (see state note).
-        final String snippet = (_pipOpacity < 1 || _pipMask == 'circle')
-            ? _pipSnippetWithAlpha()
-            : pipOverlayFilter(
-                pipLabel: '[1:v]',
-                position: _pipPosition,
-                pipScale: _pipScale,
-                margin: 24,
-                outLabel: '[vout]',
+        // v1.3.0 (§6.11): opacity + circle mask. Completion fix
+        // (user order 22 Nov 2026): blend modes + the full mask set
+        // (shapes / linear / radial, feather, invert) via the
+        // masked-blend chain in [_pipSnippetAdvanced]. The untouched
+        // default (Normal + no mask + full opacity) still takes the
+        // original stock snippet, byte-for-byte.
+        final bool pipStock = _pipBlend == 'normal' &&
+            _pipMask == 'none' &&
+            _pipOpacity >= 1;
+        String snippet;
+        String? pipMaskPath;
+        if (pipStock) {
+          snippet = pipOverlayFilter(
+            pipLabel: '[1:v]',
+            position: _pipPosition,
+            pipScale: _pipScale,
+            margin: 24,
+            outLabel: '[vout]',
+          );
+        } else {
+          final baseSize =
+              await VideoExportService.probeVideoSize(File(out));
+          final pipSize =
+              await VideoExportService.probeVideoSize(File(_fxPipVideo));
+          if (baseSize == null || pipSize == null) {
+            // Guarded fallback (FX-pass contract): without probed
+            // geometry the advanced graph cannot be built, so the
+            // stock composite runs and the user is told.
+            _setStatus(
+              'Note: PIP blend/mask ke liye size nahi mila — '
+              'simple PIP lag raha hai.',
+            );
+            snippet = pipOverlayFilter(
+              pipLabel: '[1:v]',
+              position: _pipPosition,
+              pipScale: _pipScale,
+              margin: 24,
+              outLabel: '[vout]',
+            );
+          } else {
+            if (_pipMask != 'none') {
+              pipMaskPath = await _renderPipMaskPng(
+                dir: dir,
+                stamp: stamp,
+                width: pipSize.width,
+                height: pipSize.height,
               );
+            }
+            snippet = _pipSnippetAdvanced(
+              base: baseSize,
+              pip: pipSize,
+              hasMask: pipMaskPath != null,
+            );
+          }
+        }
         final StringBuffer pb = StringBuffer();
         pb.write('-y -i ');
         pb.write(FfmpegService.q(out));
         pb.write(' -i ');
         pb.write(FfmpegService.q(_fxPipVideo));
+        if (pipMaskPath != null) {
+          pb.write(' -loop 1 -i ');
+          pb.write(FfmpegService.q(pipMaskPath));
+        }
         pb.write(' -filter_complex "');
         pb.write(snippet);
         pb.write('" -map "[vout]" -map 0:a? -c:v libx264 -preset veryfast ');
@@ -2189,7 +2256,23 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
                   movPath = mov.path;
                 } else if (_news.logoPath != null &&
                     await File(_news.logoPath!).exists()) {
-                  stillPath = _news.logoPath;
+                  // Logo parity (user spec 22 Nov 2026): a user-imported
+                  // logo ROTATES in 3D exactly like the channel logo —
+                  // generate its loop frames the same way the reel
+                  // export does; the still is only a fallback.
+                  try {
+                    final key =
+                        logoLoopCacheKey(logoFile: File(_news.logoPath!));
+                    final dirFrames =
+                        Directory(p.join(dir.path, 'logo_loop_$key'));
+                    await LogoLoopService.generateFrames(
+                      logoFile: File(_news.logoPath!),
+                      outDir: dirFrames,
+                    );
+                    framesDir = dirFrames.path;
+                  } catch (_) {
+                    stillPath = _news.logoPath;
+                  }
                 }
                 String? clockFont;
                 final dejaVu = await svc.ensureDejaVuFile();
@@ -2435,26 +2518,467 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     }
   }
 
-  /// §6.11 PIP snippet with alpha: the inset is scaled, given an
-  /// alpha channel, optionally circle-masked (geq alpha disc) and
-  /// faded to [_pipOpacity] before the overlay — the alpha-aware
-  /// counterpart of [pipOverlayFilter] (same position math).
-  String _pipSnippetWithAlpha() {
+  /// §6.11 PIP advanced graph (completion fix, user order
+  /// 22 Nov 2026): blend modes + masks + opacity, built on probed
+  /// pixel geometry so every size is an exact integer.
+  ///
+  /// Alpha chain (shared): the scaled inset is split — one branch
+  /// keeps its colour, the other gives its alpha (opacity applied
+  /// via colorchannelmixer BEFORE alphaextract, as the old snippet
+  /// did). When a mask PNG is input [2:v], the mask MULTIPLIES the
+  /// alpha (blend multiply on two gray streams = a*b/255), so mask
+  /// + feather + invert + opacity all compose into one final alpha.
+  ///
+  /// Normal mode: the final alpha is alphamerge'd back onto the
+  /// inset and overlaid on the untouched base — the old alpha path,
+  /// generalised from the geq circle to the mask PNG set.
+  ///
+  /// Blend modes: the base is CROPPED to the inset's rect and
+  /// blended (gbrp) with the inset's colour; the blended crop is
+  /// alphamerge'd with the SAME final alpha and overlaid back onto
+  /// the untouched base at the same rect. Inside the alpha the
+  /// blend shows; outside it the original frame survives — this is
+  /// what ffmpeg's raw `blend` alone cannot do, because it has no
+  /// notion of the overlay's alpha.
+  String _pipSnippetAdvanced({
+    required VideoSize base,
+    required VideoSize pip,
+    required bool hasMask,
+  }) {
     const margin = 24;
     final s = _pipScale.clamp(0.15, 0.5);
-    final (xExpr, yExpr) = switch (_pipPosition) {
-      PipPosition.topLeft => ('$margin', '$margin'),
-      PipPosition.topRight => ('W-w-$margin', '$margin'),
-      PipPosition.bottomLeft => ('$margin', 'H-h-$margin'),
-      _ => ('W-w-$margin', 'H-h-$margin'),
+    var pw = ((pip.width * s) / 2).floor() * 2;
+    var ph = ((pip.height * s) / 2).floor() * 2;
+    if (pw > base.width) pw = base.width - (base.width % 2);
+    if (ph > base.height) ph = base.height - (base.height % 2);
+    if (pw < 2) pw = 2;
+    if (ph < 2) ph = 2;
+    final right = base.width - pw - margin;
+    final bottom = base.height - ph - margin;
+    final (x, y) = switch (_pipPosition) {
+      PipPosition.topLeft => (margin, margin),
+      PipPosition.topRight => (right, margin),
+      PipPosition.bottomLeft => (margin, bottom),
+      _ => (right, bottom),
     };
-    final mask = _pipMask == 'circle'
-        ? ",geq=r='r(X\\,Y)':g='g(X\\,Y)':b='b(X\\,Y)'"
-            ":a='if(lte((X-W/2)*(X-W/2)+(Y-H/2)*(Y-H/2)\\,pow(min(W\\,H)/2\\,2))\\,255\\,0)'"
-        : '';
-    return '[1:v]scale=iw*$s:ih*$s,format=yuva420p$mask,'
-        'colorchannelmixer=aa=${_pipOpacity.toStringAsFixed(2)}[pip];'
-        "[0:v][pip]overlay=x='$xExpr':y='$yExpr'[vout]";
+    final xx = x < 0 ? 0 : x;
+    final yy = y < 0 ? 0 : y;
+    final b = StringBuffer();
+    b.write('[1:v]scale=$pw:$ph,format=yuva420p,split=2[pv1][pv2];');
+    b.write('[pv2]');
+    if (_pipOpacity < 1) {
+      b.write('colorchannelmixer=aa=${_pipOpacity.toStringAsFixed(2)},');
+    }
+    b.write('alphaextract[pa0];');
+    if (hasMask) {
+      b.write('[2:v]scale=$pw:$ph,format=gray[mg];');
+      b.write('[pa0][mg]blend=all_mode=multiply[pa];');
+    } else {
+      b.write('[pa0]null[pa];');
+    }
+    if (_pipBlend == 'normal') {
+      b.write('[pv1][pa]alphamerge[pipA];');
+      b.write('[0:v][pipA]overlay=x=$xx:y=$yy[vout]');
+    } else {
+      // [0:v] is consumed twice (crop + final overlay) — split it.
+      b.write('[0:v]split=2[bbg][bcrop];');
+      b.write('[bcrop]crop=$pw:$ph:$xx:$yy,format=gbrp[bc];');
+      b.write('[pv1]format=gbrp[pc];');
+      b.write('[bc][pc]blend=all_mode=$_pipBlend[bl];');
+      b.write('[bl]format=yuva420p[blf];');
+      b.write('[blf][pa]alphamerge[bla];');
+      b.write('[bbg][bla]overlay=x=$xx:y=$yy[vout]');
+    }
+    return b.toString();
+  }
+
+  /// The PIP mask shape as a [Path] in a [size] rect — the ONE
+  /// shape definition behind both the exported mask PNG and the
+  /// preview, so they cannot drift apart. Only the shape masks
+  /// ('circle' / 'rect' / 'roundrect' / 'heart' / 'star') come
+  /// through here; 'linear' / 'radial' are gradients, drawn
+  /// directly by [_pipMaskPngBytes].
+  Path _pipMaskShapePath(String shape, Size size) {
+    final w = size.width;
+    final h = size.height;
+    final cx = w / 2;
+    final cy = h / 2;
+    final path = Path();
+    switch (shape) {
+      case 'circle':
+        // Same disc the old geq snippet drew: diameter min(w,h),
+        // centred on the inset.
+        path.addOval(Rect.fromCircle(
+          center: Offset(cx, cy),
+          radius: math.min(w, h) / 2,
+        ));
+      case 'roundrect':
+        path.addRRect(RRect.fromRectAndRadius(
+          Rect.fromLTWH(0, 0, w, h),
+          Radius.circular(math.min(w, h) * 0.18),
+        ));
+      case 'heart':
+        Offset pt(double fx, double fy) => Offset(fx * w, fy * h);
+        path.moveTo(pt(0.50, 0.90).dx, pt(0.50, 0.90).dy);
+        path.cubicTo(pt(0.10, 0.62).dx, pt(0.10, 0.62).dy, pt(0.02, 0.40).dx,
+            pt(0.02, 0.40).dy, pt(0.12, 0.24).dx, pt(0.12, 0.24).dy);
+        path.cubicTo(pt(0.20, 0.10).dx, pt(0.20, 0.10).dy, pt(0.38, 0.10).dx,
+            pt(0.38, 0.10).dy, pt(0.50, 0.30).dx, pt(0.50, 0.30).dy);
+        path.cubicTo(pt(0.62, 0.10).dx, pt(0.62, 0.10).dy, pt(0.80, 0.10).dx,
+            pt(0.80, 0.10).dy, pt(0.88, 0.24).dx, pt(0.88, 0.24).dy);
+        path.cubicTo(pt(0.98, 0.40).dx, pt(0.98, 0.40).dy, pt(0.90, 0.62).dx,
+            pt(0.90, 0.62).dy, pt(0.50, 0.90).dx, pt(0.50, 0.90).dy);
+        path.close();
+      case 'star':
+        final rOut = math.min(w, h) / 2;
+        final rIn = rOut * 0.45;
+        for (var i = 0; i < 10; i++) {
+          final ang = -math.pi / 2 + i * math.pi / 5;
+          final r = i.isEven ? rOut : rIn;
+          final px = cx + math.cos(ang) * r;
+          final py = cy + math.sin(ang) * r;
+          if (i == 0) {
+            path.moveTo(px, py);
+          } else {
+            path.lineTo(px, py);
+          }
+        }
+        path.close();
+      default: // 'rect' — the full inset.
+        path.addRect(Rect.fromLTWH(0, 0, w, h));
+    }
+    return path;
+  }
+
+  /// Renders the current PIP mask (shape / gradient, feather,
+  /// invert) as PNG bytes at [width]×[height] — white where the
+  /// inset shows, transparent where it is masked out. Feather on
+  /// shapes is a real alpha blur (MaskFilter.blur), so the soft
+  /// edge is identical in preview and export; on gradients the
+  /// feather widens the ramp instead.
+  Future<Uint8List?> _pipMaskPngBytes(int width, int height) async {
+    if (width < 2 || height < 2) return null;
+    final w = width.toDouble();
+    final h = height.toDouble();
+    final recorder = ui.PictureRecorder();
+    final canvas = ui.Canvas(recorder);
+    final feather = _pipMaskFeather.clamp(0.0, 1.0);
+    const white = Color(0xFFFFFFFF);
+    const clear = Color(0x00000000);
+    if (_pipMask == 'linear' || _pipMask == 'radial') {
+      final paint = ui.Paint();
+      if (_pipMask == 'linear') {
+        final a = 0.5 - feather / 2;
+        final bb = 0.5 + feather / 2;
+        paint.shader = ui.Gradient.linear(
+          Offset.zero,
+          Offset(w, 0),
+          _pipMaskInvert
+              ? const [clear, clear, white, white]
+              : const [white, white, clear, clear],
+          [0, a, bb, 1],
+        );
+      } else {
+        final radius = math.sqrt(w * w + h * h) / 2;
+        paint.shader = ui.Gradient.radial(
+          Offset(w / 2, h / 2),
+          radius,
+          _pipMaskInvert
+              ? const [clear, clear, white]
+              : const [white, white, clear],
+          [0, (1 - feather).clamp(0.0, 1.0), 1],
+        );
+      }
+      canvas.drawRect(Rect.fromLTWH(0, 0, w, h), paint);
+    } else {
+      final path = _pipMaskShapePath(_pipMask, Size(w, h));
+      final sigma = feather * math.min(w, h) * 0.2;
+      if (_pipMaskInvert) {
+        canvas.drawRect(
+            Rect.fromLTWH(0, 0, w, h), ui.Paint()..color = white);
+        final cut = ui.Paint()..blendMode = BlendMode.clear;
+        if (sigma > 0) {
+          cut.maskFilter = ui.MaskFilter.blur(ui.BlurStyle.normal, sigma);
+        }
+        canvas.drawPath(path, cut);
+      } else {
+        final fill = ui.Paint()..color = white;
+        if (sigma > 0) {
+          fill.maskFilter = ui.MaskFilter.blur(ui.BlurStyle.normal, sigma);
+        }
+        canvas.drawPath(path, fill);
+      }
+    }
+    final picture = recorder.endRecording();
+    final img = await picture.toImage(width, height);
+    final data = await img.toByteData(format: ui.ImageByteFormat.png);
+    img.dispose();
+    picture.dispose();
+    return data?.buffer.asUint8List();
+  }
+
+  /// Writes the export-resolution mask PNG for the PIP pass;
+  /// returns its path, or null when rendering failed (the caller
+  /// then builds the graph without the mask input).
+  Future<String?> _renderPipMaskPng({
+    required Directory dir,
+    required int stamp,
+    required int width,
+    required int height,
+  }) async {
+    try {
+      final bytes = await _pipMaskPngBytes(width, height);
+      if (bytes == null) return null;
+      final f = File(p.join(dir.path, 'pip_mask_$stamp.png'));
+      await f.writeAsBytes(bytes);
+      return f.path;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Keeps the PIP preview controller in sync with the picked
+  /// inset: created (muted, looping) when a video is chosen,
+  /// disposed when PIP is switched off or the pick changes.
+  /// Idempotent — safe to call from build and from the pickers.
+  void _ensurePipPreview() {
+    if (!_fxPip || _fxPipVideo.isEmpty) {
+      if (_pipController != null) {
+        _pipController!.dispose();
+        _pipController = null;
+        _pipControllerPath = '';
+      }
+      return;
+    }
+    if (_pipControllerPath == _fxPipVideo || _pipControllerBusy) return;
+    _pipControllerBusy = true;
+    final path = _fxPipVideo;
+    final old = _pipController;
+    final c = VideoPlayerController.file(File(path));
+    _pipController = c;
+    _pipControllerPath = path;
+    old?.dispose();
+    () async {
+      try {
+        await c.initialize();
+        await c.setLooping(true);
+        await c.setVolume(0);
+        await c.play();
+      } catch (_) {
+        // Preview is best-effort — the export never depends on it.
+      }
+      _pipControllerBusy = false;
+      if (mounted) setState(() {});
+    }();
+  }
+
+  /// Loads (once per parameter change) the preview-resolution
+  /// mask image used by the stage's ShaderMask.
+  void _ensurePipMaskImage(int width, int height) {
+    final key = '$_pipMask|${_pipMaskFeather.toStringAsFixed(2)}|'
+        '$_pipMaskInvert|${width}x$height';
+    if (_pipMaskImageKey == key || _pipMaskImageBusy) return;
+    _pipMaskImageKey = key;
+    _pipMaskImageBusy = true;
+    () async {
+      ui.Image? img;
+      try {
+        final bytes = await _pipMaskPngBytes(width, height);
+        if (bytes != null) {
+          final codec = await ui.instantiateImageCodec(bytes);
+          final frame = await codec.getNextFrame();
+          img = frame.image;
+        }
+      } catch (_) {
+        img = null;
+      }
+      _pipMaskImageBusy = false;
+      if (!mounted) {
+        img?.dispose();
+        return;
+      }
+      final old = _pipMaskImage;
+      setState(() => _pipMaskImage = img);
+      old?.dispose();
+    }();
+  }
+
+  /// The stage's PIP layer: the inset composited over the main
+  /// preview at the export's position/scale fractions, with the
+  /// chosen blend mode (saveLayer), opacity and mask (the SAME
+  /// generated mask PNG as the export, as a dstIn ImageShader).
+  Widget _pipPreviewLayer(Size stage) {
+    final clip = _clips.isEmpty ? null : _clips[_selected];
+    final ctrl = _controller;
+    // Main content rect (contain fit, centred on the black stage).
+    double mainAspect = stage.aspectRatio;
+    double basePxW = 1280;
+    if (clip != null && clip.isPhoto) {
+      mainAspect = clip.aspectRatio;
+      basePxW = 1920;
+    } else if (ctrl != null && ctrl.value.isInitialized) {
+      mainAspect = ctrl.value.aspectRatio;
+      basePxW = ctrl.value.size.width;
+    }
+    var dispW = stage.width;
+    var dispH = dispW / mainAspect;
+    if (dispH > stage.height) {
+      dispH = stage.height;
+      dispW = dispH * mainAspect;
+    }
+    final dispX = (stage.width - dispW) / 2;
+    final dispY = (stage.height - dispH) / 2;
+    final pipCtrl = _pipController;
+    final pipReady = pipCtrl != null && pipCtrl.value.isInitialized;
+    final pipPxW = pipReady ? pipCtrl!.value.size.width : 1280;
+    final pipAspect = pipReady ? pipCtrl!.value.aspectRatio : 16 / 9;
+    final s = _pipScale.clamp(0.15, 0.5);
+    final pipW = dispW * pipPxW * s / basePxW;
+    final pipH = pipW / pipAspect;
+    final margin = dispW * 24 / basePxW;
+    final (lx, ty) = switch (_pipPosition) {
+      PipPosition.topLeft => (dispX + margin, dispY + margin),
+      PipPosition.topRight => (dispX + dispW - pipW - margin, dispY + margin),
+      PipPosition.bottomLeft => (dispX + margin, dispY + dispH - pipH - margin),
+      _ => (dispX + dispW - pipW - margin, dispY + dispH - pipH - margin),
+    };
+    // Preview mask at a capped resolution (shapes/gradients are
+    // scale-invariant; feather is relative to the short side).
+    if (_pipMask != 'none' && pipReady) {
+      final mw = pipCtrl!.value.size.width.round();
+      final mh = pipCtrl!.value.size.height.round();
+      final cap = 480 / math.max(mw, mh);
+      final sw = cap < 1 ? (mw * cap).round() : mw;
+      final sh = cap < 1 ? (mh * cap).round() : mh;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _ensurePipMaskImage(sw, sh);
+      });
+    }
+    Widget content = pipReady
+        ? VideoPlayer(pipCtrl!)
+        : Container(
+            decoration: BoxDecoration(
+              color: Colors.black54,
+              border: Border.all(color: TjProTheme.gold),
+            ),
+            child: const Center(
+              child: Icon(Icons.picture_in_picture_alt,
+                  color: Colors.white70, size: 28),
+            ),
+          );
+    if (_pipMask != 'none' && _pipMaskImage != null) {
+      final img = _pipMaskImage!;
+      content = ShaderMask(
+        shaderCallback: (bounds) => ui.ImageShader(
+          img,
+          ui.TileMode.clamp,
+          ui.TileMode.clamp,
+          (Matrix4.identity()
+                ..scale(bounds.width / img.width, bounds.height / img.height))
+              .storage,
+        ),
+        blendMode: BlendMode.dstIn,
+        child: content,
+      );
+    }
+    content = Opacity(opacity: _pipOpacity.clamp(0.1, 1.0), child: content);
+    final mode = _pipBlendMode(_pipBlend);
+    if (mode != null) {
+      content = _BlendLayer(mode: mode, child: content);
+    }
+    return Positioned(
+      left: lx,
+      top: ty,
+      width: pipW,
+      height: pipH,
+      child: content,
+    );
+  }
+
+  /// dart:ui blend mode for a PIP blend key ('normal' → null,
+  /// meaning plain source-over compositing).
+  BlendMode? _pipBlendMode(String key) {
+    switch (key) {
+      case 'multiply':
+        return BlendMode.multiply;
+      case 'screen':
+        return BlendMode.screen;
+      case 'overlay':
+        return BlendMode.overlay;
+      case 'softlight':
+        return BlendMode.softLight;
+      case 'hardlight':
+        return BlendMode.hardLight;
+      case 'darken':
+        return BlendMode.darken;
+      case 'lighten':
+        return BlendMode.lighten;
+      case 'difference':
+        return BlendMode.difference;
+      case 'dodge':
+        return BlendMode.colorDodge;
+      case 'burn':
+        return BlendMode.colorBurn;
+      default:
+        return null;
+    }
+  }
+
+  /// One icon+label choice item — the global UI rule (user order
+  /// 22 Nov 2026): every choice inside a tool is an icon above a
+  /// label, in a horizontal swipeable row, never bare text. Mirrors
+  /// the main tool rail's look (violet when selected).
+  Widget _iconChoiceItem({
+    required IconData icon,
+    required String label,
+    required bool selected,
+    required VoidCallback? onTap,
+    Color? iconColor,
+    TextStyle? labelStyle,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 3),
+      child: Opacity(
+        opacity: onTap == null ? 0.4 : 1,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: onTap,
+          child: Container(
+            width: 62,
+            padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 3),
+            decoration: BoxDecoration(
+              color: selected ? TjProTheme.violet : const Color(0xFF232323),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 21, color: iconColor ?? Colors.white),
+                const SizedBox(height: 3),
+                Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: labelStyle ??
+                      const TextStyle(color: Colors.white, fontSize: 10),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// A horizontal scrollable row of [_iconChoiceItem]s — swipe
+  /// left/right and more options keep appearing; nothing is
+  /// buried in a dropdown or a wrapped stack.
+  Widget _iconChoiceRail(List<Widget> items) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(children: items),
+    );
   }
 
   /// Captions mapped onto the exported timeline: captions were recorded
@@ -2844,6 +3368,12 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     final ctrl = _controller;
     final ready = ctrl != null && ctrl.value.isInitialized;
     final isPlaying = ready && ctrl.value.isPlaying;
+    // PIP preview sync (idempotent; only acts on a pick change).
+    if ((_fxPip && _fxPipVideo.isNotEmpty && _pipControllerPath != _fxPipVideo) ||
+        (!_fxPip && _pipController != null)) {
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => _ensurePipPreview());
+    }
     final posSec = ready ? ctrl.value.position.inMilliseconds / 1000 : 0.0;
     final durSec = clip != null ? clip.duration.inMilliseconds / 1000 : 0.0;
     String fmt(double sec) {
@@ -3057,6 +3587,19 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
                                               TextStyle(color: Colors.white70)),
                                     ),
                     ),
+                    // PIP live preview (§6.11 completion fix):
+                    // the inset composited on the stage with its
+                    // blend mode / mask / opacity, exactly where
+                    // the export will put it.
+                    if (_fxPip && _fxPipVideo.isNotEmpty)
+                      Positioned.fill(
+                        child: LayoutBuilder(
+                          builder: (context, constraints) =>
+                              Stack(children: [
+                            _pipPreviewLayer(constraints.biggest),
+                          ]),
+                        ),
+                      ),
                     // Transient status chip (§3) — overlays the
                     // stage, auto-hides; never a permanent line.
                     if (_statusVisible)
@@ -3247,6 +3790,56 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
 }
 
 
+
+/// Composites its child against everything painted beneath it in
+/// the same layer tree using [mode] — a saveLayer whose paint
+/// carries the blend mode, so the layer's content blends with the
+/// actual stage pixels under it (the video texture included). This
+/// is the preview twin of the export's masked-blend chain: for
+/// opaque inset pixels the result is the same blend equation;
+/// at feathered/transparent edges both interpolate towards the
+/// untouched base.
+class _BlendLayer extends SingleChildRenderObjectWidget {
+  const _BlendLayer({required this.mode, required super.child});
+
+  final BlendMode mode;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderBlendLayer(mode);
+
+  @override
+  void updateRenderObject(
+      BuildContext context, _RenderBlendLayer renderObject) {
+    renderObject.mode = mode;
+  }
+}
+
+class _RenderBlendLayer extends RenderProxyBox {
+  _RenderBlendLayer(this._mode);
+
+  BlendMode _mode;
+
+  set mode(BlendMode value) {
+    if (_mode != value) {
+      _mode = value;
+      markNeedsPaint();
+    }
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    if (child == null) return;
+    if (_mode == BlendMode.srcOver) {
+      super.paint(context, offset);
+      return;
+    }
+    context.canvas
+        .saveLayer(offset & size, Paint()..blendMode = _mode);
+    super.paint(context, offset);
+    context.canvas.restore();
+  }
+}
 
 /// Label + value slider row for the Pro tools panel.
 class _ProSlider extends StatelessWidget {

@@ -24,6 +24,7 @@ import 'package:path_provider/path_provider.dart';
 import '../news/breaking_templates.dart';
 import '../news/channel_preset.dart';
 import '../services/asset_download_service.dart';
+import 'parity_template.dart';
 
 /// Logo corner inside the frame.
 enum LogoPosition {
@@ -175,15 +176,19 @@ double _measureTextWidth(
 ///
 /// Returns the written file (overwritten on every call).
 ///
-/// Phase 3 — Nigraan final 3-ribbon variant ([templateKind]
-/// `'nigraanFinal'`): renders the final template from a [ChannelPreset]
-/// instead of the live template — top ticker #01B0FF + red
-/// "تازہ ترین" chip, middle Urdu #3D5AFE + black "بریکنگ نیوز" chip,
-/// bottom English #EF0017 at half thickness + "HEADLINES" chip, logo
-/// bug + time/date capsule, 10s intro marker. The existing live branch
-/// below is UNTOUCHED (Live Studio depends on it); the variant is a
-/// separate branch ([_renderNigraanFinalImage]) with its own output
-/// file (`nigraan_final_template.png`).
+/// Phase 3 — Nigraan final template variant ([templateKind]
+/// `'nigraanFinal'`): renders the final template from a
+/// [ChannelPreset] instead of the live template. Two designs
+/// (preset's `finalVariant`): the DEFAULT 'final3' — the
+/// 3-ribbon bottom stack (dark-navy current-Urdu ribbon, thick
+/// red national-Urdu ribbon, dark international-English ribbon,
+/// logo + date capsule at the right; see parity_template.dart) —
+/// and 'classic2', the v1.3.0 2-ribbon parity design (Urdu
+/// #3D5AFE + gold-text chip, English #EF0017 + chip, frame-top
+/// ticker when enabled). The existing live branch below is
+/// UNTOUCHED (Live Studio depends on it); the variant is a
+/// separate branch ([_renderNigraanFinalImage]) with its own
+/// output file (`nigraan_final_template.png`).
 ///
 /// [includeLogo] — DESIGN DECISION (Phase 3, recorded 20 Nov 2026):
 /// the EXPORT path renders the template WITHOUT the logo
@@ -528,6 +533,12 @@ class NigraanFinalLayout {
     required this.tickerTextSize,
     required this.urduTextSize,
     required this.englishTextSize,
+    required this.isFinal3,
+    required this.topStackStrip,
+    required this.topStackTextSize,
+    required this.topColor,
+    required this.urduColor,
+    required this.englishColor,
   });
 
   /// Chip labels (broadcast package — never swapped between ribbons).
@@ -565,10 +576,12 @@ class NigraanFinalLayout {
   /// Null when the lower third is off or has no text.
   final ui.Rect? lowerThird;
 
-  /// Logo-bug VISIBLE box (bottom-right, v1.3.0 parity geometry)
-  /// and the time/date capsule directly under it, same width as
-  /// the logo, zero gaps — the capsule's bottom edge sits on the
-  /// Urdu ribbon's top edge.
+  /// Logo-bug VISIBLE box and the time/date capsule directly
+  /// under it, same width as the logo, zero gaps. classic2:
+  /// bottom-right, the capsule's bottom edge sits on the Urdu
+  /// ribbon's top edge. final3: at the RIGHT of the stack — the
+  /// logo's top pokes slightly above the stack top and the DATE
+  /// capsule hangs under it over the ribbons' right end.
   final ui.Rect logoRect;
   final ui.Rect capsuleRect;
 
@@ -593,6 +606,31 @@ class NigraanFinalLayout {
   final double urduTextSize;
   final double englishTextSize;
 
+  /// True for the DEFAULT Final 3-Ribbon design ('final3');
+  /// false for the 'classic2' 2-ribbon parity design. In final3:
+  /// [tickerStrip]/[tickerChip] are null (no frame-top ticker —
+  /// the top ribbon lives in the bottom stack as
+  /// [topStackStrip]), the stack ribbons have NO chips
+  /// ([urduChip]/[englishChip] are null), [urduStrip] is the
+  /// thick middle (national) ribbon and [englishStrip] the dark
+  /// bottom (international) ribbon, and the logo + DATE capsule
+  /// hang at the stack's top-right.
+  final bool isFinal3;
+
+  /// The final3 stack's TOP ribbon (current/related Urdu) —
+  /// null in classic2 or when the top ribbon is toggled off.
+  final ui.Rect? topStackStrip;
+
+  /// Final3 top-ribbon text size (0 in classic2).
+  final double topStackTextSize;
+
+  /// Resolved ribbon colours for the active design (see
+  /// [ChannelPreset.designTopColor] etc. — design colours for an
+  /// un-customised preset, the user's picked colours otherwise).
+  final int topColor;
+  final int urduColor;
+  final int englishColor;
+
   /// Clamps a ribbon's configured font size so its ink can never poke
   /// out of its strip (Nastaleeq ink is ~1.33x the font size — §14
   /// rule 3: strip fonts stay ~0.52x the strip height).
@@ -612,27 +650,28 @@ class NigraanFinalLayout {
             : null;
 
     final tickerH = height * 0.055;
-    // v1.3.0 (§9 Final-template parity): the bottom stack takes the
-    // REAL reference geometry (see ParityGeometry in
-    // parity_template.dart — the production house style v8): the
-    // Urdu and English ribbons are EQUAL height (64/1920 of the
-    // frame height portrait, 40/720 landscape) and FLUSH (zero
-    // gap); the Urdu chip sits at the RIGHT at a fixed 240px
-    // reference width, the English chip at the left (220/260px);
-    // the logo's visible width is 185/1080 of the frame width and
-    // the capsule (47/1920 / 39/720 high) sits directly under it,
-    // its bottom edge ON the Urdu ribbon's top edge.
+    // The active Final design (22 Nov 2026 rework): 'final3'
+    // (default) draws the 3-ribbon bottom stack from
+    // [ParityGeometry]'s f3 constants; 'classic2' keeps the
+    // v1.3.0 parity geometry below (equal flush ribbons, gold
+    // chips, capsule on the Urdu ribbon's top edge).
+    final isFinal3 = preset.finalIs3Ribbon;
+    final pg = ParityGeometry(
+      width,
+      height,
+      variant: isFinal3 ? ParityVariant.final3 : ParityVariant.classic2,
+    );
     final portraitFrame = height >= width;
     final ribbonH =
         portraitFrame ? height * (64 / 1920) : height * (40 / 720);
-    final englishH = ribbonH;
-    final urduH = ribbonH;
+    final englishH = isFinal3 ? pg.f3BotH : ribbonH;
+    final urduH = isFinal3 ? pg.f3MidH : ribbonH;
     final gap = height * 0.008;
     final refScale = width / (portraitFrame ? 1080 : 1280);
 
     ui.Rect? tickerStrip;
     ui.Rect? tickerChip;
-    if (preset.topRibbon.enabled) {
+    if (!isFinal3 && preset.topRibbon.enabled) {
       tickerStrip = ui.Rect.fromLTWH(0, 0, width, tickerH);
       final chipFont = tickerH * 0.45;
       final chipW = _measureTextWidth(
@@ -648,27 +687,31 @@ class NigraanFinalLayout {
     ui.Rect? englishChip;
     if (preset.englishRibbon.enabled) {
       englishStrip = ui.Rect.fromLTWH(0, height - englishH, width, englishH);
-      final chipW = width * (portraitFrame ? 220 / 1080 : 260 / 1280);
-      englishChip = ui.Rect.fromLTWH(
-        0,
-        height - englishH,
-        chipW,
-        englishH,
-      );
+      // final3: no chip — the dark ribbon is a full-width bar.
+      if (!isFinal3) {
+        final chipW = width * (portraitFrame ? 220 / 1080 : 260 / 1280);
+        englishChip = ui.Rect.fromLTWH(
+          0,
+          height - englishH,
+          chipW,
+          englishH,
+        );
+      }
     }
 
     ui.Rect? urduStrip;
     ui.Rect? urduChip;
     if (preset.urduRibbon.enabled) {
       // Flush on the English ribbon (or the frame bottom) — the
-      // reference stack has ZERO gap between the ribbons.
+      // stack has ZERO gap between the ribbons in both designs.
       final bottom =
           preset.englishRibbon.enabled ? height - englishH : height;
       urduStrip = ui.Rect.fromLTWH(0, bottom - urduH, width, urduH);
-      // The breaking banner of the final template is this chip —
-      // at the RIGHT end of the Urdu ribbon (reference), fixed
-      // width, gold text (drawn by the renderer).
-      if (preset.showBreakingBanner) {
+      // classic2: the breaking banner of the final template is
+      // this chip — at the RIGHT end of the Urdu ribbon
+      // (reference), fixed width, gold text (drawn by the
+      // renderer). final3 has no chips at all.
+      if (!isFinal3 && preset.showBreakingBanner) {
         final chipW = width * (portraitFrame ? 240 / 1080 : 240 / 1280);
         urduChip = ui.Rect.fromLTWH(
           width - chipW,
@@ -679,6 +722,22 @@ class NigraanFinalLayout {
       }
     }
 
+    // final3: the stack's TOP ribbon (current/related Urdu),
+    // flush on the middle ribbon (or on whatever is below it).
+    ui.Rect? topStackStrip;
+    if (isFinal3 && preset.topRibbon.enabled) {
+      final bottom = urduStrip?.top ?? englishStrip?.top ?? height;
+      topStackStrip =
+          ui.Rect.fromLTWH(0, bottom - pg.f3TopH, width, pg.f3TopH);
+    }
+
+    /// Top edge of the whole bottom stack (the anchor the lower
+    /// third, interview plate and logo stack hang from).
+    final stackTopY = topStackStrip?.top ??
+        urduStrip?.top ??
+        englishStrip?.top ??
+        height;
+
     ui.Rect? lowerThird;
     final hasLowerThird = preset.showLowerThird &&
         (preset.lowerThirdTitle.trim().isNotEmpty ||
@@ -686,41 +745,67 @@ class NigraanFinalLayout {
     if (hasLowerThird) {
       final ltH = height * 0.10;
       var bottom = height;
-      if (preset.urduRibbon.enabled) {
-        bottom = urduStrip!.top - gap;
-      } else if (preset.englishRibbon.enabled) {
-        bottom = englishStrip!.top - gap;
+      if (preset.urduRibbon.enabled ||
+          preset.englishRibbon.enabled ||
+          topStackStrip != null) {
+        bottom = stackTopY - gap;
       }
       lowerThird = ui.Rect.fromLTWH(0, bottom - ltH, width * 0.68, ltH);
     }
 
-    // Logo + capsule stack, bottom-right (v1.3.0 parity): the
-    // logo's VISIBLE box is 185/1080 of the frame width (aspect
-    // 422:347, the alpha .mov's visible content); the capsule has
-    // the same width and sits directly beneath it with zero gaps,
-    // its bottom edge on the Urdu ribbon's top edge.
-    final logoVisibleW = width * (185 / 1080);
-    final logoVisibleH = 347 * logoVisibleW / 422;
-    final capsuleH =
-        portraitFrame ? height * (47 / 1920) : height * (39 / 720);
-    final stackLeft = width - 24 * refScale - logoVisibleW;
-    final ribbonsTop = urduStrip?.top ?? englishStrip?.top ?? height;
-    final capsuleRect = ui.Rect.fromLTWH(
-      stackLeft,
-      ribbonsTop - capsuleH,
-      logoVisibleW,
-      capsuleH,
-    );
-    final logoRect = ui.Rect.fromLTWH(
-      stackLeft,
-      capsuleRect.top - logoVisibleH,
-      logoVisibleW,
-      logoVisibleH,
-    );
+    // Logo + capsule stack. classic2 (bottom-right, v1.3.0
+    // parity): the logo's VISIBLE box is 185/1080 of the frame
+    // width (aspect 422:347, the alpha .mov's visible content);
+    // the capsule has the same width and sits directly beneath
+    // it with zero gaps, its bottom edge on the Urdu ribbon's
+    // top edge. final3: the stack hangs at the RIGHT of the
+    // ribbon stack — the logo (110/720 of the width) pokes
+    // ~7/720 above the stack top and the DATE capsule hangs
+    // directly under it over the ribbons' right end.
+    final ui.Rect logoRect;
+    final ui.Rect capsuleRect;
+    if (isFinal3) {
+      final lw = pg.logoVisibleW;
+      final lh = pg.logoVisibleH;
+      logoRect = ui.Rect.fromLTWH(
+        width - lw,
+        stackTopY - pg.f3Poke,
+        lw,
+        lh,
+      );
+      capsuleRect = ui.Rect.fromLTWH(
+        width - lw,
+        logoRect.bottom,
+        lw,
+        pg.capsuleH,
+      );
+    } else {
+      final logoVisibleW = width * (185 / 1080);
+      final logoVisibleH = 347 * logoVisibleW / 422;
+      final capsuleH =
+          portraitFrame ? height * (47 / 1920) : height * (39 / 720);
+      final stackLeft = width - 24 * refScale - logoVisibleW;
+      final ribbonsTop = urduStrip?.top ?? englishStrip?.top ?? height;
+      capsuleRect = ui.Rect.fromLTWH(
+        stackLeft,
+        ribbonsTop - capsuleH,
+        logoVisibleW,
+        capsuleH,
+      );
+      logoRect = ui.Rect.fromLTWH(
+        stackLeft,
+        capsuleRect.top - logoVisibleH,
+        logoVisibleW,
+        logoVisibleH,
+      );
+    }
 
     ui.Rect? introMarker;
     ui.Rect? outroMarker;
     ui.Rect? categoryChip;
+    // Height of the FRAME-TOP ticker zone the markers sit below
+    // — classic2 only; final3 has no frame-top ticker.
+    final frameTopH = !isFinal3 && preset.topRibbon.enabled ? tickerH : 0.0;
     if (preset.categoryLabel.trim().isNotEmpty) {
       final chipH = height * 0.024;
       final chipW = _measureTextWidth(
@@ -730,7 +815,7 @@ class NigraanFinalLayout {
           24;
       categoryChip = ui.Rect.fromLTWH(
         16,
-        (preset.topRibbon.enabled ? tickerH : 0) + 16,
+        frameTopH + 16,
         chipW,
         chipH,
       );
@@ -739,7 +824,7 @@ class NigraanFinalLayout {
       final markerFont = height * 0.016;
       final markerW =
           _measureTextWidth(introMarkerText, markerFont) + 28;
-      final markerTop = (preset.topRibbon.enabled ? tickerH : 0.0) +
+      final markerTop = frameTopH +
           16 +
           (categoryChip != null ? categoryChip.height + 8 : 0);
       introMarker = ui.Rect.fromLTWH(
@@ -768,10 +853,10 @@ class NigraanFinalLayout {
       var bottom = height;
       if (lowerThird != null) {
         bottom = lowerThird.top - gap;
-      } else if (preset.urduRibbon.enabled) {
-        bottom = urduStrip!.top - gap;
-      } else if (preset.englishRibbon.enabled) {
-        bottom = englishStrip!.top - gap;
+      } else if (preset.urduRibbon.enabled ||
+          preset.englishRibbon.enabled ||
+          topStackStrip != null) {
+        bottom = stackTopY - gap;
       }
       interviewPlate = ui.Rect.fromLTWH(
         0,
@@ -799,16 +884,27 @@ class NigraanFinalLayout {
       outroMarker: outroMarker,
       categoryChip: categoryChip,
       interviewPlate: interviewPlate,
-      tickerTextSize: preset.topRibbon.enabled
+      tickerTextSize: !isFinal3 && preset.topRibbon.enabled
           ? ribbonFontSize(preset.topRibbon, tickerH)
           : 0,
       // Reference text sizes (§9.7): Urdu 0.5625 x ribbon height,
       // English 0.53 x — fixed fractions, not the preset's clamped
       // font size, so the parity preset always matches the real
-      // videos.
-      urduTextSize: preset.urduRibbon.enabled ? urduH * (36 / 64) : 0,
-      englishTextSize:
-          preset.englishRibbon.enabled ? englishH * (34 / 64) : 0,
+      // videos. final3 uses its own per-ribbon fractions (the
+      // ParityGeometry f3 font getters).
+      urduTextSize: preset.urduRibbon.enabled
+          ? (isFinal3 ? pg.f3MidFontAr : urduH * (36 / 64))
+          : 0,
+      englishTextSize: preset.englishRibbon.enabled
+          ? (isFinal3 ? pg.f3BotFont : englishH * (34 / 64))
+          : 0,
+      isFinal3: isFinal3,
+      topStackStrip: topStackStrip,
+      topStackTextSize:
+          isFinal3 && preset.topRibbon.enabled ? pg.f3TopFontAr : 0,
+      topColor: preset.designTopColor,
+      urduColor: preset.designUrduColor,
+      englishColor: preset.designEnglishColor,
     );
   }
 }
@@ -987,9 +1083,10 @@ Future<File> _renderNigraanFinalImage({
   // --- Middle Urdu ribbon (#3D5AFE default) + black chip.
   // v1.3.0 parity: 3px gold top edge; the chip sits at the RIGHT
   // with GOLD text + a gold inner divider; the pinned text
-  // occupies the strip LEFT of the chip.
+  // occupies the strip LEFT of the chip. (classic2 only — final3
+  // draws its stack in the block further down.)
   final urduStrip = layout.urduStrip;
-  if (urduStrip != null) {
+  if (!layout.isFinal3 && urduStrip != null) {
     canvas.drawRect(
       urduStrip,
       ui.Paint()..color = ui.Color(preset.urduRibbon.color),
@@ -1035,9 +1132,10 @@ Future<File> _renderNigraanFinalImage({
 
   // --- Bottom English ribbon (#EF0017) + chip. v1.3.0 parity:
   // equal height with the Urdu ribbon, 3px gold top edge, chip at
-  // the left with GOLD text + a gold inner divider.
+  // the left with GOLD text + a gold inner divider. (classic2
+  // only — final3 draws its stack in the block below.)
   final englishStrip = layout.englishStrip;
-  if (englishStrip != null) {
+  if (!layout.isFinal3 && englishStrip != null) {
     canvas.drawRect(
       englishStrip,
       ui.Paint()..color = ui.Color(preset.englishRibbon.color),
@@ -1074,6 +1172,83 @@ Future<File> _renderNigraanFinalImage({
         fontFamily: null,
         buildLine: buildLine,
       );
+    }
+  }
+
+  // --- Final 3-Ribbon stack (the DEFAULT design, 22 Nov 2026):
+  // three full-width bars — NO chips, NO gold edges. The Urdu
+  // headlines are pinned right-aligned inside the text window
+  // left of the logo stack; the English line is pinned at its
+  // start (in the animated export it scrolls continuously, and
+  // the Urdu ribbons scroll there only when they overflow).
+  if (layout.isFinal3) {
+    final logoW = layout.logoRect.width;
+    final botStrip = layout.englishStrip;
+    if (botStrip != null) {
+      canvas.drawRect(
+        botStrip,
+        ui.Paint()..color = ui.Color(layout.englishColor),
+      );
+      final text = preset.englishRibbon.text.trim();
+      if (text.isNotEmpty) {
+        _drawStripText(
+          canvas: canvas,
+          text: text,
+          strip: botStrip,
+          textLeft: 12,
+          fontSize: layout.englishTextSize,
+          fontFamily: null,
+          buildLine: buildLine,
+        );
+      }
+    }
+    final midStrip = layout.urduStrip;
+    if (midStrip != null) {
+      canvas.drawRect(
+        midStrip,
+        ui.Paint()..color = ui.Color(layout.urduColor),
+      );
+      final text = preset.urduRibbon.text.trim();
+      if (text.isNotEmpty) {
+        _drawStripText(
+          canvas: canvas,
+          text: text,
+          strip: ui.Rect.fromLTWH(
+            0,
+            midStrip.top,
+            w - logoW,
+            midStrip.height,
+          ),
+          textLeft: 12,
+          fontSize: layout.urduTextSize,
+          fontFamily: kasheeda(text),
+          buildLine: buildLine,
+        );
+      }
+    }
+    final topStack = layout.topStackStrip;
+    if (topStack != null) {
+      canvas.drawRect(
+        topStack,
+        ui.Paint()..color = ui.Color(layout.topColor),
+      );
+      final text = preset.topRibbon.text.trim();
+      if (text.isNotEmpty) {
+        _drawStripText(
+          canvas: canvas,
+          text: text,
+          strip: ui.Rect.fromLTWH(
+            0,
+            topStack.top,
+            w - logoW,
+            topStack.height,
+          ),
+          textLeft: 12,
+          fontSize: layout.topStackTextSize,
+          fontFamily: kasheeda(text),
+          buildLine: buildLine,
+        );
+      }
     }
   }
 
@@ -1208,29 +1383,46 @@ Future<File> _renderNigraanFinalImage({
   // --- Time/date capsule under the logo, same width as the logo.
   // Always drawn (it is per-frame time/date in the logo slot, not
   // part of the logo — see the includeLogo note on
-  // [renderLiveTemplateImage]). v1.3.0 parity: black at 67%
-  // alpha, radius 8, 4px gold top line, and this still shows the
-  // TIME face (hh:mm:ss AM/PM) — the export flips to the Urdu
-  // date face every 3s (parity_template.dart).
+  // [renderLiveTemplateImage]). classic2: black at 67% alpha,
+  // radius 8, 4px gold top line, and this still shows the TIME
+  // face (hh:mm:ss AM/PM) — the export flips to the Urdu date
+  // face every 3s (parity_template.dart). final3: the reference's
+  // solid black date box (small radius, NO gold line) showing
+  // the DATE face — the export flips DATE <-> TIME there.
   final capsule = layout.capsuleRect;
-  final hour12 = now.hour % 12 == 0 ? 12 : now.hour % 12;
-  final ampm = now.hour < 12 ? 'AM' : 'PM';
-  final capsuleText =
-      '${hour12.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')} $ampm';
-  canvas.drawRRect(
-    ui.RRect.fromRectAndRadius(
-        capsule, ui.Radius.circular(8 * refScaleR)),
-    ui.Paint()..color = const ui.Color(0xAA000000),
-  );
-  canvas.save();
-  canvas.clipRRect(ui.RRect.fromRectAndRadius(
-      capsule, ui.Radius.circular(8 * refScaleR)));
-  canvas.drawRect(
-    ui.Rect.fromLTWH(capsule.left, capsule.top, capsule.width, 4 * refScaleR),
-    ui.Paint()..color = const ui.Color(0xFFF5C542),
-  );
-  canvas.restore();
-  drawCentred(capsuleText, capsule, capsule.height * 0.55, bold: false);
+  if (layout.isFinal3) {
+    canvas.drawRRect(
+      ui.RRect.fromRectAndRadius(
+          capsule, ui.Radius.circular(2 * refScaleR)),
+      ui.Paint()..color = const ui.Color(0xFF000000),
+    );
+    final dateText = parityShortUrduDate(now);
+    drawCentred(
+      dateText,
+      capsule,
+      capsule.height * 0.62,
+      fontFamily: kasheeda(dateText),
+    );
+  } else {
+    final hour12 = now.hour % 12 == 0 ? 12 : now.hour % 12;
+    final ampm = now.hour < 12 ? 'AM' : 'PM';
+    final capsuleText =
+        '${hour12.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')} $ampm';
+    canvas.drawRRect(
+      ui.RRect.fromRectAndRadius(
+          capsule, ui.Radius.circular(8 * refScaleR)),
+      ui.Paint()..color = const ui.Color(0xAA000000),
+    );
+    canvas.save();
+    canvas.clipRRect(ui.RRect.fromRectAndRadius(
+        capsule, ui.Radius.circular(8 * refScaleR)));
+    canvas.drawRect(
+      ui.Rect.fromLTWH(capsule.left, capsule.top, capsule.width, 4 * refScaleR),
+      ui.Paint()..color = const ui.Color(0xFFF5C542),
+    );
+    canvas.restore();
+    drawCentred(capsuleText, capsule, capsule.height * 0.55, bold: false);
+  }
 
   // --- 10s intro marker (top-left pill; still/preview frames only). ---
   final introMarker = layout.introMarker;
