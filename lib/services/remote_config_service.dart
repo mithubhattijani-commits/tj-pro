@@ -117,6 +117,11 @@ class RemoteConfig {
     this.kasheedaFontUrl = AppConfig.kasheedaFontUrl,
     this.nigraanIntroUrl = AppConfig.nigraanIntroUrl,
     this.logoMovUrl = AppConfig.logoMovUrl,
+    this.easypaisaNumber = AppConfig.proEasypaisaNumber,
+    this.easypaisaTitle = AppConfig.proEasypaisaTitle,
+    this.ablAccount = AppConfig.proAblAccount,
+    this.ablTitle = AppConfig.proAblTitle,
+    this.jazzcashNumber = AppConfig.proJazzcashNumber,
   });
 
   final String displayName;
@@ -176,6 +181,11 @@ class RemoteConfig {
       kasheedaFontUrl: kasheedaFontUrl,
       nigraanIntroUrl: nigraanIntroUrl,
       logoMovUrl: logoMovUrl,
+      easypaisaNumber: easypaisaNumber,
+      easypaisaTitle: easypaisaTitle,
+      ablAccount: ablAccount,
+      ablTitle: ablTitle,
+      jazzcashNumber: jazzcashNumber,
     );
   }
 
@@ -186,6 +196,21 @@ class RemoteConfig {
   final String kasheedaFontUrl;
   final String nigraanIntroUrl;
   final String logoMovUrl;
+
+  /// TJ Pro PRO payment details (v1.4.0) — shown on the Pro screen
+  /// (lib/news/pro_screen.dart) so a user can pay manually and send
+  /// the screenshot on WhatsApp. JSON keys `pro_easypaisa_number` /
+  /// `pro_easypaisa_title` / `pro_abl_account` / `pro_abl_title` /
+  /// `pro_jazzcash_number` in tj-pro.json; every field falls back to
+  /// the [AppConfig] Pro defaults when absent, so the numbers can
+  /// change without a rebuild. [jazzcashNumber] is EMPTY until
+  /// JazzCash is added — the Pro screen shows its JazzCash line only
+  /// when this is non-empty.
+  final String easypaisaNumber;
+  final String easypaisaTitle;
+  final String ablAccount;
+  final String ablTitle;
+  final String jazzcashNumber;
 
   static const RemoteConfig defaults = RemoteConfig();
 
@@ -242,6 +267,28 @@ class RemoteConfig {
         json['logo_mov_url'],
         AppConfig.logoMovUrl,
       ),
+      easypaisaNumber: _nonEmptyString(
+        json['pro_easypaisa_number'],
+        AppConfig.proEasypaisaNumber,
+      ),
+      easypaisaTitle: _nonEmptyString(
+        json['pro_easypaisa_title'],
+        AppConfig.proEasypaisaTitle,
+      ),
+      ablAccount: _nonEmptyString(
+        json['pro_abl_account'],
+        AppConfig.proAblAccount,
+      ),
+      ablTitle: _nonEmptyString(
+        json['pro_abl_title'],
+        AppConfig.proAblTitle,
+      ),
+      // No bundled JazzCash number exists yet: absent/empty in JSON
+      // simply stays empty (JazzCash not offered).
+      jazzcashNumber:
+          (json['pro_jazzcash_number'] ?? AppConfig.proJazzcashNumber)
+              .toString()
+              .trim(),
     );
   }
 

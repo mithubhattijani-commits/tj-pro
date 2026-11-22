@@ -3,6 +3,9 @@
     <!-- Live Studio: camera + microphone for RTMP publishing. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Audio recording/playback routing for the record package and
+         the v1.4.0 audio tools (voice capture + enhance). -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- Lets the in-app updater fire the system install prompt for a
          downloaded APK. Android still requires the user's install tap;
          silent install is never attempted. -->

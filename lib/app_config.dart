@@ -218,6 +218,91 @@ class AppConfig {
   // from code. Until then the Watch Ads button reports the ad as
   // unavailable.
   static const String unityRewardedCoinsPlacementId = 'rewarded_coins';
+
+  // TJ PRO PRO (v1.4.0) — paid Pro subscription (owner's prices,
+  // 22 Nov 2026): Weekly Rs 200, 15-day Rs 500, Monthly Rs 1000,
+  // paid manually via Easypaisa / ABL bank (both in Ghulam Jillani's
+  // name); JazzCash is added later (empty number = not offered yet).
+  // Payment is verified by the owner from the user's screenshot and
+  // Pro is granted server-side in the `tjpro_pro` table — see
+  // lib/services/pro_service.dart and lib/news/pro_screen.dart.
+  // REMOTE-CONFIG OVERRIDE: the payment fields below must be
+  // changeable without a build — RemoteConfigService (tj-pro.json)
+  // maps `pro_easypaisa_number` / `pro_easypaisa_title` /
+  // `pro_abl_account` / `pro_abl_title` / `pro_jazzcash_number` onto
+  // them when present.
+  static const String proEasypaisaNumber = '03090808180';
+  static const String proEasypaisaTitle = 'Ghulam Jillani';
+  static const String proAblAccount = '11200010103371080010';
+  static const String proAblTitle = 'Ghulam Jillani';
+
+  /// JazzCash number for Pro payments — EMPTY for now (JazzCash is
+  /// added later); the Pro screen shows a JazzCash line ONLY when
+  /// this is non-empty (via remote config).
+  static const String proJazzcashNumber = '';
+
+  /// Pro package prices in rupees (owner's numbers, 22 Nov 2026).
+  static const int proWeeklyRs = 200;
+  static const int proHalfMonthRs = 500;
+  static const int proMonthlyRs = 1000;
+
+  // MODEL PACKS (v1.4.0) — every AI model is a DOWNLOADABLE pack,
+  // never bundled in the APK (same rule as the Kasheeda font above).
+  // ModelPackService (lib/services/model_pack_service.dart) owns the
+  // pack registry (pack id -> file names + expected sizes); this map
+  // owns ONLY the download URLs, keyed '<packId>/<fileName>'.
+  // Hugging Face `resolve` URLs serve the exact tested files (see
+  // ~/workspace/tj-pro-build/V140-TOOL-TESTS.md for the verified
+  // sizes/licences). A pack/file with NO entry here is simply not
+  // hosted yet — ModelPackService fails soft (returns false) instead
+  // of downloading garbage:
+  //   - dfn3: upstream ships ONLY a release tar.gz
+  //     (DeepFilterNet3_onnx.tar.gz with enc/erb_dec/df_dec.onnx +
+  //     config.ini inside), never per-file downloads; the pack is
+  //     registered but unhosted until the files are mirrored.
+  //   - rife_v46: the tested ONNX came out of the vs-mlrt 7z models
+  //     package; no single-file host yet.
+  static const Map<String, String> modelPackUrls = <String, String>{
+    // Shruti Urdu sherpa-onnx pack (Apache-2.0) — Urdu auto captions.
+    'shruti_ur/preprocess.onnx':
+        'https://huggingface.co/udgamlabs/Shruti-ONNX/resolve/main/ur/sherpa-onnx/preprocess.onnx',
+    'shruti_ur/encode.onnx':
+        'https://huggingface.co/udgamlabs/Shruti-ONNX/resolve/main/ur/sherpa-onnx/encode.onnx',
+    'shruti_ur/uncached_decode.onnx':
+        'https://huggingface.co/udgamlabs/Shruti-ONNX/resolve/main/ur/sherpa-onnx/uncached_decode.onnx',
+    'shruti_ur/cached_decode.onnx':
+        'https://huggingface.co/udgamlabs/Shruti-ONNX/resolve/main/ur/sherpa-onnx/cached_decode.onnx',
+    'shruti_ur/tokens.txt':
+        'https://huggingface.co/udgamlabs/Shruti-ONNX/resolve/main/ur/sherpa-onnx/tokens.txt',
+    // MI-GAN (MIT) — photo object remove, 512x512 pipeline.
+    'migan/migan_pipeline_v2.onnx':
+        'https://huggingface.co/andraniksargsyan/migan/resolve/main/migan_pipeline_v2.onnx',
+    // BiRefNet_lite fp16 (MIT) — photo BG matte, fixed 1024x1024.
+    'birefnet_fp16/model_fp16.onnx':
+        'https://huggingface.co/onnx-community/BiRefNet_lite-ONNX/resolve/main/onnx/model_fp16.onnx',
+    // Real-ESRGAN general-x4v3 (BSD-3) — photo enhance.
+    'esrgan/realesr-general-x4v3.onnx':
+        'https://huggingface.co/CoderViking/realesr-general-x4v3-onnx/resolve/main/realesr-general-x4v3.onnx',
+    // Depth Anything V2 Small int8 (Apache-2.0) — depth/bokeh.
+    'depth_v2_small/model_int8.onnx':
+        'https://huggingface.co/onnx-community/depth-anything-v2-small/resolve/main/onnx/model_int8.onnx',
+    // MODNet (Apache-2.0) — portrait matte, 512x512.
+    'modnet/model.onnx':
+        'https://huggingface.co/Xenova/modnet/resolve/main/onnx/model.onnx',
+    // Fast-neural-style (ONNX Model Zoo, Apache-2.0) — "Artistic
+    // Styles". Candy is BANNED (eye artifact) and has no pack.
+    'fns_udnie/udnie-9.onnx':
+        'https://raw.githubusercontent.com/onnx/models/main/validated/vision/style_transfer/fast_neural_style/model/udnie-9.onnx',
+    'fns_mosaic/mosaic-9.onnx':
+        'https://raw.githubusercontent.com/onnx/models/main/validated/vision/style_transfer/fast_neural_style/model/mosaic-9.onnx',
+    'fns_rain/rain-princess-9.onnx':
+        'https://raw.githubusercontent.com/onnx/models/main/validated/vision/style_transfer/fast_neural_style/model/rain-princess-9.onnx',
+    // RNNoise model for ffmpeg's arnndn filter (official xiph models
+    // mirrored by GregorR/rnnoise-models for exactly this filter):
+    // cb.rnnn = the general-purpose speech model (conjoined-burgers).
+    'rnnoise_models/cb.rnnn':
+        'https://raw.githubusercontent.com/GregorR/rnnoise-models/master/conjoined-burgers-2018-08-28/cb.rnnn',
+  };
 }
 
 
