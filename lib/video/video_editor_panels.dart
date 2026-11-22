@@ -56,13 +56,23 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
   /// tab list per tool (the panel header renders these as chips).
   List<(String, String)> _panelTabs() {
     switch (_activeTool) {
-      case 'edit':
+      case 'canvas':
+        return const [
+          ('ratio', 'Ratio'),
+          ('zoom', 'Zoom'),
+          ('background', 'Background'),
+        ];
+      case 'precut':
         return const [
           ('trim', 'Trim'),
-          ('speed', 'Speed'),
+          ('cut', 'Cut'),
+          ('split', 'Split'),
+        ];
+      case 'speed':
+        return const [
+          ('standard', 'Standard'),
+          ('curve', 'Curve'),
           ('beat', 'Beat'),
-          ('steady', 'Steady'),
-          ('transform', 'Transform'),
         ];
       case 'audio':
         return const [
@@ -91,7 +101,6 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
           ('sticker', 'Sticker'),
           ('keyframes', 'Keyframes'),
           ('pip', 'PIP'),
-          ('background', 'Background'),
         ];
       case 'news':
         return const [
@@ -118,16 +127,24 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
   /// related icon, never bare text alone.
   IconData _tabIcon(String tool, String tab) {
     switch ((tool, tab)) {
-      case ('edit', 'trim'):
+      case ('canvas', 'ratio'):
+        return Icons.aspect_ratio;
+      case ('canvas', 'zoom'):
+        return Icons.zoom_in;
+      case ('canvas', 'background'):
+        return Icons.wallpaper;
+      case ('precut', 'trim'):
         return Icons.content_cut;
-      case ('edit', 'speed'):
+      case ('precut', 'cut'):
+        return Icons.cut;
+      case ('precut', 'split'):
+        return Icons.call_split;
+      case ('speed', 'standard'):
         return Icons.speed;
-      case ('edit', 'beat'):
+      case ('speed', 'curve'):
+        return Icons.show_chart;
+      case ('speed', 'beat'):
         return Icons.music_note;
-      case ('edit', 'steady'):
-        return Icons.videocam;
-      case ('edit', 'transform'):
-        return Icons.transform;
       case ('audio', 'music'):
         return Icons.music_note;
       case ('audio', 'voice'):
@@ -201,43 +218,50 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
   bool _isTextStarting(Widget w, String prefix) =>
       w is Text && (w.data ?? '').startsWith(prefix);
 
-  /// v1.3.0 composition: ONE sub-tab of ONE tool at a time (§3).
-  /// Every legacy control from the one-build regroup is still
-  /// reachable exactly once — the §5A inventory is the checklist.
+  /// Index of the _sectionTitle whose text starts with [part], or
+  /// -1 (v1.5.0 — section anchors for the Canvas / Precut splits).
+  int _sectionAnchor(List<Widget> items, String part) {
+    return _anchorIndex(items, (w) {
+      if (w is Padding && w.child is Row) {
+        for (final c in (w.child as Row).children) {
+          if (c is Text && (c.data ?? '').startsWith(part)) return true;
+        }
+      }
+      return false;
+    });
+  }
+
+  /// v1.5.0 dispatch: ONE panel per tool key (the flat InShot row
+  /// opens these directly). Legacy bodies are reused by slice —
+  /// every legacy control stays reachable exactly once.
   List<Widget> _toolPanelChildren() {
     switch (_activeTool) {
-      case 'edit':
+      case 'canvas':
         switch (_currentTab) {
-          case 'speed':
-            return [
-              ..._panelBody('speed'),
-              if (_proRamp == 'Custom') ..._customRampWidgets(),
-              _sectionTitle('Smooth Slow-Mo (AI)'),
-              const Text(
-                'RIFE AI har frame ke darmiyan naya frame banata hai '
-                '— 0.5x slow-mo bilkul smooth. Sirf ~10s tak ki '
-                'selected clip par; model pack (rife_v46) chahiye.',
-                style: TextStyle(color: Colors.grey, fontSize: 12),
-              ),
-              const SizedBox(height: 6),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: _busy ? null : _applySlowMoAi,
-                  icon: const Icon(Icons.slow_motion_video),
-                  label: const Text('Smooth Slow-Mo (AI) lagayein'),
-                ),
-              ),
-              const Divider(height: 32),
-            ];
+          case 'zoom':
+            return _transformTabChildren();
+          case 'background':
+            return _canvasBackgroundChildren();
+          default:
+            return _canvasRatioChildren();
+        }
+      case 'precut':
+        switch (_currentTab) {
+          case 'cut':
+            return _cutTabChildren();
+          case 'split':
+            return _splitTabChildren();
+          default:
+            return _precutTrimChildren();
+        }
+      case 'speed':
+        switch (_currentTab) {
+          case 'curve':
+            return _speedCurveChildren();
           case 'beat':
             return _panelBody('beats');
-          case 'steady':
-            return _panelBody('stabilization');
-          case 'transform':
-            return _transformTabChildren();
           default:
-            return _trimTabChildren();
+            return _speedStandardChildren();
         }
       case 'audio':
         final body = _panelBody('audio');
@@ -246,7 +270,8 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
         final cleanIdx =
             _anchorIndex(body, (w) => _isTextStarting(w, 'Cleanup'));
         final v = voiceIdx < 0 ? body.length : voiceIdx;
-        final c = cleanIdx < 0 ? body.length : cleanIdx;
+        var c = cleanIdx < 0 ? body.length : cleanIdx;
+        if (c < v) c = v;
         switch (_currentTab) {
           case 'voice':
             return body.sublist(v, c);
@@ -329,8 +354,9 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
         return _currentTab == 'adjust'
             ? _adjustPanelChildren()
             : _legacyPanelChildren('filtersRow');
+      case 'volume':
       case 'clipVolume':
-        return _clipVolumeChildren();
+        return _volumePanelChildren();
       case 'effects':
         return _currentTab == 'tracking'
             ? _panelBody('tracking')
@@ -344,33 +370,31 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
               ..._panelBody('overlays'),
               ..._pipExtras(),
             ];
-          case 'background':
-            return _panelBody('chroma');
           default:
             return _stickerTabChildren();
         }
+      case 'aicut':
+        return _aiCutChildren();
+      case 'voiceenhance':
+        return _voiceEnhanceChildren();
+      case 'edit':
+        return _transformTabChildren();
+      case 'enhance':
+        return _enhancePanelChildren();
+      case 'stabilizer':
+        return _stabilizerPanelChildren();
+      case 'cutout':
+        return _cutoutPanelChildren();
+      case 'mask':
+        return _maskPanelChildren();
+      case 'opacity':
+        return _opacityPanelChildren();
+      case 'rotate':
+        return _rotatePanelChildren();
+      case 'ease':
+        return _easePanelChildren();
       case 'transitions':
-        return [
-          ..._panelBody('transitions'),
-          _sectionTitle('Duration presets'),
-          _iconChoiceRail([
-            for (final e in const [
-              ('Quick', 0.3, Icons.flash_on),
-              ('Smooth', 0.5, Icons.waves),
-              ('Long', 1.0, Icons.hourglass_bottom),
-            ])
-              _iconChoiceItem(
-                icon: e.$3,
-                label: '${e.$1} — ${e.$2}s',
-                selected: _crossfade && _proTransitionDur == e.$2,
-                onTap: () => setState(() {
-                  _proTransitionDur = e.$2;
-                  _crossfade = true;
-                }),
-              ),
-          ]),
-          const SizedBox(height: 8),
-        ];
+        return _transitionsPanelChildren();
       case 'news':
         switch (_currentTab) {
           case 'text':
@@ -383,6 +407,900 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
       default:
         return _legacyPanelChildren('text');
     }
+  }
+
+  // ---- v1.5.0 panels ----
+
+  /// Canvas › Ratio: the Canvas section of the old Trim tab (the
+  /// aspect rail), sliced at its section anchors.
+  List<Widget> _canvasRatioChildren() {
+    final body = _trimTabChildren();
+    final canvasIdx = _sectionAnchor(body, 'Canvas');
+    if (canvasIdx < 0) return body;
+    final fillIdx = _anchorIndex(
+      body,
+      (w) => w is Text && w.data == 'Fill',
+    );
+    final end = fillIdx > canvasIdx ? fillIdx : body.length;
+    return body.sublist(canvasIdx, end);
+  }
+
+  /// Canvas › Background: the SAME Canvas section's Fill part
+  /// (Crop / Blur / Colour + fill colours). InShot's GRADIENT fill
+  /// is not supported by the export's canvas fill — the note in
+  /// the panel says so (PARTIAL, see the test report).
+  List<Widget> _canvasBackgroundChildren() {
+    final body = _trimTabChildren();
+    final fillIdx = _anchorIndex(
+      body,
+      (w) => w is Text && w.data == 'Fill',
+    );
+    final introIdx = _sectionAnchor(body, 'Intro / outro');
+    if (fillIdx < 0) return const [];
+    final end = introIdx > fillIdx ? introIdx : body.length;
+    return [
+      _sectionTitle('Canvas background'),
+      ...body.sublist(fillIdx, end),
+      const Text(
+        'Gradient fill abhi supported nahi — Blur ya Colour chunein.',
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      const Divider(height: 32),
+    ];
+  }
+
+  /// Precut › Trim: the old Trim tab's trim section (RangeSlider +
+  /// fine sliders) + frame-step buttons + the timeline Zoom toggle
+  /// (InShot's "Zoom Selection").
+  List<Widget> _precutTrimChildren() {
+    final body = _trimTabChildren();
+    final canvasIdx = _sectionAnchor(body, 'Canvas');
+    final trimPart = canvasIdx < 0 ? body : body.sublist(0, canvasIdx);
+    return [
+      ...trimPart,
+      _sectionTitle('Frame step'),
+      Row(
+        children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: _busy
+                  ? null
+                  : () => unawaited(
+                        _seekToGlobalSec(_globalPositionSec - 1 / 30),
+                      ),
+              icon: const Icon(Icons.skip_previous, size: 18),
+              label: const Text('Previous Frame'),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: _busy
+                  ? null
+                  : () => unawaited(
+                        _seekToGlobalSec(_globalPositionSec + 1 / 30),
+                      ),
+              icon: const Icon(Icons.skip_next, size: 18),
+              label: const Text('Next Frame'),
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 8),
+      _iconChoiceRail([
+        _iconChoiceItem(
+          icon: Icons.zoom_in,
+          label: 'Zoom Selection (timeline 2x)',
+          selected: _tlPxPerSec > 50,
+          onTap: () => setState(() => _tlPxPerSec = _tlPxPerSec > 50 ? 42 : 84),
+        ),
+      ]),
+      const Divider(height: 32),
+    ];
+  }
+
+  /// Precut › Cut: choose a range INSIDE the selected clip and
+  /// remove it — the clip becomes two clips (before / after).
+  List<Widget> _cutTabChildren() {
+    final clip = _clips.isEmpty ? null : _clips[_selected];
+    if (clip == null) {
+      return const [
+        Text(
+          'Pehle timeline se clip select karein.',
+          style: TextStyle(color: Colors.grey),
+        ),
+      ];
+    }
+    final start = clip.trimStart;
+    final end = clip.effectiveEnd;
+    final cutStart = _cutStart.clamp(start, end);
+    final cutEnd = _cutEnd.clamp(start, end);
+    return [
+      _sectionTitle('Cut — darmiyan ka hissa hatayein'),
+      Text(
+        'Clip range: ${start.toStringAsFixed(1)}s – '
+        '${end.toStringAsFixed(1)}s',
+        style: const TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      _ProSlider(
+        label: 'Cut start',
+        value: cutStart,
+        min: start,
+        max: end,
+        divisions: 100,
+        onChanged: (v) => setState(() => _cutStart = v),
+      ),
+      _ProSlider(
+        label: 'Cut end',
+        value: cutEnd,
+        min: start,
+        max: end,
+        divisions: 100,
+        onChanged: (v) => setState(() => _cutEnd = v),
+      ),
+      SizedBox(
+        width: double.infinity,
+        child: ElevatedButton.icon(
+          onPressed: _busy ? null : _applyCutRange,
+          icon: const Icon(Icons.cut),
+          label: const Text('Cut hatao (2 clips ban jayenge)'),
+        ),
+      ),
+      const Divider(height: 32),
+    ];
+  }
+
+  /// Applies Precut › Cut: replaces the selected clip with its
+  /// [trimStart..cutStart] and [cutEnd..effectiveEnd] parts.
+  void _applyCutRange() {
+    if (_clips.isEmpty || _busy) return;
+    final idx = _selected;
+    final clip = _clips[idx];
+    final start = clip.trimStart;
+    final end = clip.effectiveEnd;
+    final cs = _cutStart.clamp(start, end);
+    final ce = _cutEnd.clamp(start, end);
+    if (ce - cs < 0.2) {
+      _setStatus('Cut range bohat chhota hai — start/end badhayein.');
+      return;
+    }
+    if (cs <= start + 0.05 && ce >= end - 0.05) {
+      _setStatus('Poori clip cut ho jayegi — Delete use karein.');
+      return;
+    }
+    _pushHistory();
+    final parts = <VideoClip>[];
+    if (cs > start + 0.05) {
+      parts.add(clip.copy()..trimEnd = cs);
+    }
+    if (ce < end - 0.05) {
+      parts.add(clip.copy()..trimStart = ce);
+    }
+    setState(() {
+      _clips.replaceRange(idx, idx + 1, parts);
+      _selected = idx;
+    });
+    _setStatus('Cut lag gaya — ${parts.length} clip(s) reh gaye.');
+    unawaited(_loadPreview());
+  }
+
+  /// Precut › Split: the snap choice (playhead / midpoint — the
+  /// toggle that used to sit in the transport row lives here now),
+  /// Split, and Multi Split into N equal parts.
+  List<Widget> _splitTabChildren() {
+    return [
+      _sectionTitle('Split'),
+      const Text('Split point'),
+      const SizedBox(height: 4),
+      _iconChoiceRail([
+        _iconChoiceItem(
+          icon: Icons.push_pin,
+          label: 'Playhead par',
+          selected: _snapOn,
+          onTap: () => setState(() => _snapOn = true),
+        ),
+        _iconChoiceItem(
+          icon: Icons.horizontal_rule,
+          label: 'Darmiyan se',
+          selected: !_snapOn,
+          onTap: () => setState(() => _snapOn = false),
+        ),
+      ]),
+      const SizedBox(height: 8),
+      SizedBox(
+        width: double.infinity,
+        child: ElevatedButton.icon(
+          onPressed: _busy || _clips.isEmpty ? null : _splitSelectedClip,
+          icon: const Icon(Icons.call_split),
+          label: const Text('Split karein'),
+        ),
+      ),
+      _sectionTitle('Multi split'),
+      _iconChoiceRail([
+        for (final n in const [2, 3, 4, 5])
+          _iconChoiceItem(
+            icon: Icons.grid_view,
+            label: '$n hisse',
+            selected: false,
+            onTap: _busy || _clips.isEmpty ? null : () => _multiSplit(n),
+          ),
+      ]),
+      const Divider(height: 32),
+    ];
+  }
+
+  /// Multi Split: the selected clip becomes [n] equal-length clips
+  /// (trim copies — no re-encode).
+  void _multiSplit(int n) {
+    if (_clips.isEmpty || _busy) return;
+    final idx = _selected;
+    final clip = _clips[idx];
+    final start = clip.trimStart;
+    final step = clip.effectiveDuration / n;
+    if (step < 0.3) {
+      _setStatus('Clip bohat chhoti hai $n hisson ke liye.');
+      return;
+    }
+    _pushHistory();
+    final parts = <VideoClip>[];
+    for (var i = 0; i < n; i++) {
+      final part = clip.copy();
+      part.trimStart = start + step * i;
+      part.trimEnd = start + step * (i + 1);
+      parts.add(part);
+    }
+    setState(() {
+      _clips.replaceRange(idx, idx + 1, parts);
+      _selected = idx;
+    });
+    _setStatus('Multi split — $n clips ban gaye.');
+    unawaited(_loadPreview());
+  }
+
+  /// Speed › Standard: the legacy speed body (fixed chips + ramp
+  /// presets; its Reverse toggle was removed — Reverse is an
+  /// instant action now) + Custom ramp widgets + Smooth Slow-Mo
+  /// (AI) + the resulting-total readout from the ONE timeline
+  /// model.
+  List<Widget> _speedStandardChildren() {
+    final atSpeed = _speed == 1 || _proRamp != 'None'
+        ? _totalDurationSec
+        : _totalDurationSec / _speed;
+    return [
+      ..._panelBody('speed'),
+      if (_proRamp == 'Custom') ..._customRampWidgets(),
+      _sectionTitle('Smooth Slow-Mo (AI)'),
+      const Text(
+        'RIFE AI har frame ke darmiyan naya frame banata hai '
+        '— 0.5x slow-mo bilkul smooth. Sirf ~10s tak ki '
+        'selected clip par; model pack (rife_v46) chahiye.',
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      const SizedBox(height: 6),
+      SizedBox(
+        width: double.infinity,
+        child: ElevatedButton.icon(
+          onPressed: _busy ? null : _applySlowMoAi,
+          icon: const Icon(Icons.slow_motion_video),
+          label: const Text('Smooth Slow-Mo (AI) lagayein'),
+        ),
+      ),
+      const SizedBox(height: 8),
+      Text(
+        'Timeline total: ${_totalDurationSec.toStringAsFixed(1)}s'
+        '${_proRamp == 'None' && _speed != 1 ? ' • speed ke baad ~${atSpeed.toStringAsFixed(1)}s' : ''}',
+        style: const TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      const Divider(height: 32),
+    ];
+  }
+
+  /// Speed › Curve: the Custom-ramp point editors (the preset rail
+  /// itself lives in Standard, where the legacy body puts it).
+  List<Widget> _speedCurveChildren() {
+    if (_proRamp != 'Custom') {
+      return [
+        _sectionTitle('Speed curve'),
+        const Text(
+          'Curve editor ke liye pehle ramp preset "Custom" chunein '
+          '(Standard tab mein) — phir 3 points ki speed yahan set '
+          'hoti hai.',
+          style: TextStyle(color: Colors.grey, fontSize: 12),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: () => setState(() {
+              _proRamp = 'Custom';
+              _panelTab = 'curve';
+            }),
+            icon: const Icon(Icons.show_chart),
+            label: const Text('Custom ramp on karein'),
+          ),
+        ),
+        const Divider(height: 32),
+      ];
+    }
+    return _customRampWidgets();
+  }
+
+  /// Voice Enhance panel: the enhance-voice op (AudioEnhanceService
+  /// voice chain). Denoise is NOT duplicated here — it lives in
+  /// Volume, per InShot [TUT9].
+  List<Widget> _voiceEnhanceChildren() {
+    return [
+      _sectionTitle('Voice Enhance'),
+      const Text(
+        'Selected clip ki awaz saaf + wazeh: noise kam, voice '
+        'band EQ, compression aur loudness normalise — on-device '
+        '(AudioEnhanceService).',
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      const SizedBox(height: 8),
+      SizedBox(
+        width: double.infinity,
+        child: ElevatedButton.icon(
+          onPressed: _busy || _clips.isEmpty
+              ? null
+              : () => unawaited(_enhanceSelectedClipAudio(voice: true)),
+          icon: const Icon(Icons.record_voice_over),
+          label: const Text('Voice Enhance lagayein'),
+        ),
+      ),
+      const SizedBox(height: 8),
+      const Text(
+        'Sirf denoise chahiye to Volume panel ka Denoise use karein.',
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      const Divider(height: 32),
+    ];
+  }
+
+  /// Enhance panel (InShot [TUT11] shape): whole-clip target +
+  /// one action. TJ Pro's Enhance is ON-DEVICE HD upscale (no
+  /// sign-in gate — InShot's gate is a product fact we replace).
+  List<Widget> _enhancePanelChildren() {
+    final clip = _clips.isEmpty ? null : _clips[_selected];
+    return [
+      _sectionTitle('Enhance — HD (on-device)'),
+      const Text(
+        'Poori selected clip 2x upscale + sharpen hoti hai '
+        '(ffmpeg lanczos + unsharp). Ye ESRGAN AI nahi hai — wo '
+        'Photo Editor mein hai.',
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      const SizedBox(height: 8),
+      Text(
+        clip == null
+            ? 'Pehle clip select karein.'
+            : 'Target: Clip ${_selected + 1} '
+                '(${clip.effectiveDuration.toStringAsFixed(1)}s — poori clip)',
+        style: const TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      const SizedBox(height: 8),
+      SizedBox(
+        width: double.infinity,
+        child: ElevatedButton.icon(
+          onPressed: _busy || clip == null ? null : _enhanceSelectedClipHd,
+          icon: const Icon(Icons.high_quality),
+          label: const Text('Enhance karo'),
+        ),
+      ),
+      const Divider(height: 32),
+    ];
+  }
+
+  /// Stabilizer panel (InShot [TUT10] shape): 4 level tiles. Ours
+  /// applies at EXPORT (vidstab two-pass in the export chain) —
+  /// the note says so; the level maps to shakiness/smoothing at
+  /// the export call site.
+  List<Widget> _stabilizerPanelChildren() {
+    return [
+      _sectionTitle('Stabilizer'),
+      _iconChoiceRail([
+        for (final e in const [
+          (0, 'Original', Icons.block),
+          (1, 'Low', Icons.videocam),
+          (2, 'Standard', Icons.video_stable),
+          (3, 'Most Stable', Icons.video_stable),
+        ])
+          _iconChoiceItem(
+            icon: e.$3,
+            label: e.$2,
+            selected: _stabLevel == e.$1,
+            onTap: () => setState(() {
+              _stabLevel = e.$1;
+              _proStabilize = e.$1 > 0;
+            }),
+          ),
+      ]),
+      const SizedBox(height: 8),
+      const Text(
+        'Stabilization EXPORT par apply hoti hai (vidstab two-pass) '
+        '— preview mein nahi dikhegi.',
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      const Divider(height: 32),
+    ];
+  }
+
+  /// Cutout panel: two modes (InShot [TUT3/4]) — Cutout = the ML
+  /// background remover section, Chroma = the chroma-key section,
+  /// sliced out of the one legacy 'chroma' body at the BG-remover
+  /// switch anchor (each section shows exactly once).
+  List<Widget> _cutoutPanelChildren() {
+    final body = _panelBody('chroma');
+    final bgIdx = _anchorIndex(
+      body,
+      (w) =>
+          w is SwitchListTile &&
+          w.title is Text &&
+          ((w.title as Text).data ?? '').contains('background remover'),
+    );
+    final chromaPart = bgIdx < 0 ? body : body.sublist(0, bgIdx);
+    final bgPart = bgIdx < 0 ? const <Widget>[] : body.sublist(bgIdx);
+    return [
+      _iconChoiceRail([
+        _iconChoiceItem(
+          icon: Icons.person_remove,
+          label: 'Cutout',
+          selected: _cutoutMode == 'cutout',
+          onTap: () => setState(() => _cutoutMode = 'cutout'),
+        ),
+        _iconChoiceItem(
+          icon: Icons.format_color_fill,
+          label: 'Chroma',
+          selected: _cutoutMode == 'chroma',
+          onTap: () => setState(() => _cutoutMode = 'chroma'),
+        ),
+      ]),
+      const SizedBox(height: 6),
+      if (_cutoutMode == 'chroma') ...chromaPart else ...bgPart,
+    ];
+  }
+
+  /// Mask panel: the PIP element's mask controls when a PIP is
+  /// active; otherwise a pointer to add one (our mask model is the
+  /// PIP mask — main clips have no mask track).
+  List<Widget> _maskPanelChildren() {
+    if (!_fxPip) {
+      return [
+        _sectionTitle('Mask'),
+        const Text(
+          'Mask PIP element par lagta hai. Pehle PIP add karein — '
+          'phir yahan us ki mask shape / feather / invert milega.',
+          style: TextStyle(color: Colors.grey, fontSize: 12),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: () => _openToolTab('overlay', 'pip'),
+            icon: const Icon(Icons.picture_in_picture_alt),
+            label: const Text('PIP add karein'),
+          ),
+        ),
+        const Divider(height: 32),
+      ];
+    }
+    return _pipMaskChildren();
+  }
+
+  /// Opacity panel: PIP element → its opacity + blend (the PIP
+  /// style slice); a plain clip → the transform opacity.
+  List<Widget> _opacityPanelChildren() {
+    if (_fxPip) return _pipStyleChildren();
+    return [
+      _sectionTitle('Opacity — clip'),
+      _ProSlider(
+        label: 'Clip opacity',
+        value: _tfOpacity,
+        min: 0,
+        max: 1,
+        divisions: 20,
+        onChanged: (v) => setState(() => _tfOpacity = v),
+      ),
+      const Text(
+        'Clip apne blurred backdrop par fade hota hai (Transform '
+        'pass) — export par apply hota hai.',
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      const Divider(height: 32),
+    ];
+  }
+
+  /// Rotate panel (InShot [TUT9]): exactly ROTATE + FLIP.
+  List<Widget> _rotatePanelChildren() {
+    return [
+      _sectionTitle('Rotate'),
+      Row(
+        children: [
+          Expanded(
+            child: ElevatedButton.icon(
+              onPressed: _busy || _clips.isEmpty
+                  ? null
+                  : () => unawaited(_rotateSelectedClip(flip: false)),
+              icon: const Icon(Icons.rotate_right),
+              label: const Text('ROTATE 90°'),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: ElevatedButton.icon(
+              onPressed: _busy || _clips.isEmpty
+                  ? null
+                  : () => unawaited(_rotateSelectedClip(flip: true)),
+              icon: const Icon(Icons.flip),
+              label: const Text('FLIP'),
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 8),
+      const Text(
+        'Dono selected clip ke trimmed range par bake hote hain '
+        '(processed copy ban jati hai).',
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      const Divider(height: 32),
+    ];
+  }
+
+  /// Ease panel (InShot curve-preset variant — the documented
+  /// superset): the 4 REAL easing curves of the keyframe system,
+  /// as chips + the live curve graph.
+  List<Widget> _easePanelChildren() {
+    return [
+      _sectionTitle('Ease — keyframe motion'),
+      _iconChoiceRail([
+        for (final e in KeyframeEasing.values)
+          _iconChoiceItem(
+            icon: switch (e) {
+              KeyframeEasing.linear => Icons.trending_flat,
+              KeyframeEasing.easeIn => Icons.trending_up,
+              KeyframeEasing.easeOut => Icons.trending_down,
+              KeyframeEasing.easeInOut => Icons.show_chart,
+            },
+            label: keyframeEasingLabel(e).split(' (').first,
+            selected: _kfEasing == e,
+            onTap: () => setState(() => _kfEasing = e),
+          ),
+      ]),
+      Container(
+        height: 56,
+        margin: const EdgeInsets.symmetric(vertical: 6),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1B1B1B),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: CustomPaint(
+          painter: _EasingCurvePainter(_kfEasing),
+          child: const SizedBox.expand(),
+        ),
+      ),
+      const Text(
+        'Ye easing Animation (keyframes) wale motion par lagti hai.',
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      const Divider(height: 32),
+    ];
+  }
+
+  /// Transitions panel REWRITE (#8): category rows of type chips +
+  /// ONE duration slider. v1.4.0 had THREE duration controls
+  /// (crossfade toggle + presets rail + slider) and a crossfade
+  /// switch separate from the type — here picking a type IS the
+  /// on-switch, 'None' is the off-switch, one slider sets the
+  /// duration. (InShot's post-pick volume slider is skipped — no
+  /// transition-SFX model exists; PARTIAL in the report.)
+  List<Widget> _transitionsPanelChildren() {
+    Widget typeChip(String id, String label, IconData icon) {
+      final selected = _crossfade && _proTransition == id;
+      return _iconChoiceItem(
+        icon: icon,
+        label: label,
+        selected: selected,
+        onTap: () => setState(() {
+          _proTransition = id;
+          _crossfade = true;
+        }),
+      );
+    }
+
+    return [
+      _sectionTitle('Transition — type'),
+      const Text('Basic'),
+      const SizedBox(height: 4),
+      _iconChoiceRail([
+        _iconChoiceItem(
+          icon: Icons.block,
+          label: 'None',
+          selected: !_crossfade,
+          onTap: () => setState(() => _crossfade = false),
+        ),
+        typeChip('fade', 'Fade', Icons.blur_linear),
+        typeChip('dissolve', 'Dissolve', Icons.grain),
+        typeChip('pixelize', 'Pixelize', Icons.grid_on),
+        typeChip('hblur', 'H-Blur', Icons.blur_on),
+      ]),
+      const SizedBox(height: 6),
+      const Text('Slide'),
+      const SizedBox(height: 4),
+      _iconChoiceRail([
+        typeChip('slideleft', 'Left', Icons.arrow_back),
+        typeChip('slideright', 'Right', Icons.arrow_forward),
+        typeChip('slideup', 'Up', Icons.arrow_upward),
+        typeChip('slidedown', 'Down', Icons.arrow_downward),
+        typeChip('smoothleft', 'Smooth L', Icons.keyboard_double_arrow_left),
+        typeChip('smoothright', 'Smooth R', Icons.keyboard_double_arrow_right),
+      ]),
+      const SizedBox(height: 6),
+      const Text('Wipe'),
+      const SizedBox(height: 4),
+      _iconChoiceRail([
+        typeChip('wipeleft', 'Left', Icons.arrow_back),
+        typeChip('wiperight', 'Right', Icons.arrow_forward),
+        typeChip('wipeup', 'Up', Icons.arrow_upward),
+        typeChip('wipedown', 'Down', Icons.arrow_downward),
+      ]),
+      const SizedBox(height: 6),
+      const Text('Circle'),
+      const SizedBox(height: 4),
+      _iconChoiceRail([
+        typeChip('circlecrop', 'Crop', Icons.circle_outlined),
+        typeChip('circleopen', 'Open', Icons.radio_button_unchecked),
+        typeChip('radial', 'Radial', Icons.radar),
+        typeChip('rectcrop', 'Rect', Icons.crop_square),
+      ]),
+      _sectionTitle('Duration'),
+      _ProSlider(
+        label: 'Transition duration',
+        value: _proTransitionDur,
+        min: 0.1,
+        max: 2,
+        divisions: 19,
+        onChanged: (v) => setState(() => _proTransitionDur = v),
+      ),
+      const Text(
+        'Duration har clip boundary par same lagti hai; type '
+        'badalne se kul duration badal sakti hai (xfade overlap).',
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      const Divider(height: 32),
+    ];
+  }
+
+  /// AI Cut panel: on-device silence removal (ffmpeg
+  /// silencedetect) — scan the selected clip, list the silence
+  /// ranges, then rebuild the clip from the keep segments.
+  List<Widget> _aiCutChildren() {
+    final clip = _clips.isEmpty ? null : _clips[_selected];
+    return [
+      _sectionTitle('AI Cut — silence hatayein'),
+      const Text(
+        'On-device scan: khamoshi wale hisse dhoondh kar kaat diye '
+        'jate hain (filler / pauses). Koi cloud ya sign-in nahi.',
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      if (clip == null)
+        const Text(
+          'Pehle clip select karein.',
+          style: TextStyle(color: Colors.grey),
+        )
+      else ...[
+        _ProSlider(
+          label: 'Silence threshold (dB)',
+          value: _aicutThresholdDb,
+          min: -60,
+          max: -10,
+          divisions: 50,
+          onChanged: (v) => setState(() => _aicutThresholdDb = v),
+        ),
+        _ProSlider(
+          label: 'Kam az kam silence (s)',
+          value: _aicutMinSilenceSec,
+          min: 0.2,
+          max: 2,
+          divisions: 18,
+          onChanged: (v) => setState(() => _aicutMinSilenceSec = v),
+        ),
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: _aicutBusy ? null : _scanSilence,
+            icon: const Icon(Icons.search),
+            label: Text(_aicutBusy ? 'Scan ho raha hai…' : 'Silence scan karein'),
+          ),
+        ),
+        if (_aicutRanges.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(
+            '${_aicutRanges.length} silence range mile:',
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
+          for (final r in _aicutRanges)
+            Text(
+              '${r.$1.toStringAsFixed(1)}s – ${r.$2.toStringAsFixed(1)}s',
+              style: const TextStyle(color: Colors.grey, fontSize: 12),
+            ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _aicutBusy ? null : _applyAiCut,
+              icon: const Icon(Icons.content_cut),
+              label: const Text('Cut karke naya clip banao'),
+            ),
+          ),
+        ],
+      ],
+      const Divider(height: 32),
+    ];
+  }
+
+  /// Runs silencedetect on the selected clip and parses the
+  /// silence_start / silence_end pairs out of the ffmpeg log.
+  Future<void> _scanSilence() async {
+    if (_clips.isEmpty || _aicutBusy) return;
+    final clip = _clips[_selected];
+    setState(() {
+      _aicutBusy = true;
+      _aicutRanges = const [];
+    });
+    try {
+      final res = await FfmpegService.run(
+        '-i ${FfmpegService.q(clip.file.path)} '
+        '-af silencedetect=noise=${_aicutThresholdDb.toStringAsFixed(0)}dB'
+        ':d=${_aicutMinSilenceSec.toStringAsFixed(2)} '
+        '-f null -',
+      );
+      final starts = <double>[];
+      final ranges = <(double, double)>[];
+      for (final m in RegExp(r'silence_(start|end): ([\d.]+)')
+          .allMatches(res.logs)) {
+        final value = double.tryParse(m.group(2) ?? '') ?? 0;
+        if (m.group(1) == 'start') {
+          starts.add(value);
+        } else if (starts.isNotEmpty) {
+          ranges.add((starts.removeAt(0), value));
+        }
+      }
+      // An unterminated silence runs to the end of the file.
+      final fileEnd = clip.duration.inMilliseconds / 1000;
+      for (final s in starts) {
+        ranges.add((s, fileEnd));
+      }
+      if (!mounted) return;
+      setState(() => _aicutRanges = ranges);
+      _setStatus(
+        ranges.isEmpty
+            ? 'Koi silence nahi mili — threshold kam karke dekhein.'
+            : '${ranges.length} silence range mile.',
+      );
+    } catch (e) {
+      _setStatus('Silence scan failed: $e');
+    } finally {
+      if (mounted) setState(() => _aicutBusy = false);
+    }
+  }
+
+  /// Rebuilds the selected clip from the KEEP segments (its trimmed
+  /// range minus the scanned silences) via one trim/concat graph.
+  Future<void> _applyAiCut() async {
+    if (_clips.isEmpty || _aicutBusy || _aicutRanges.isEmpty) return;
+    final idx = _selected;
+    final clip = _clips[idx];
+    final start = clip.trimStart;
+    final end = clip.effectiveEnd;
+    final keeps = <(double, double)>[];
+    var cursor = start;
+    for (final r in _aicutRanges) {
+      final s = r.$1.clamp(start, end);
+      final e = r.$2.clamp(start, end);
+      if (s > cursor + 0.05) keeps.add((cursor, s));
+      if (e > cursor) cursor = e;
+    }
+    if (cursor < end - 0.05) keeps.add((cursor, end));
+    if (keeps.isEmpty) {
+      _setStatus('Poori clip silence hai — kuch nahi bachega.');
+      return;
+    }
+    if (keeps.length == 1 && keeps.first.$1 == start && keeps.first.$2 == end) {
+      _setStatus('Trim range mein koi silence nahi — clip waisi ki waisi hai.');
+      return;
+    }
+    setState(() => _aicutBusy = true);
+    try {
+      final dir = await _workDir();
+      final stamp = DateTime.now().millisecondsSinceEpoch;
+      final out = p.join(dir.path, 'aicut_$stamp.mp4');
+      String graph(bool withAudio) {
+        final b = StringBuffer();
+        for (var i = 0; i < keeps.length; i++) {
+          b.write(
+            '[0:v]trim=start=${keeps[i].$1}:end=${keeps[i].$2},'
+            'setpts=PTS-STARTPTS[v$i];',
+          );
+          if (withAudio) {
+            b.write(
+              '[0:a]atrim=start=${keeps[i].$1}:end=${keeps[i].$2},'
+              'asetpts=PTS-STARTPTS[a$i];',
+            );
+          }
+        }
+        final inputs = keeps
+            .asMap()
+            .entries
+            .map((e) => withAudio
+                ? '[v${e.key}][a${e.key}]'
+                : '[v${e.key}]')
+            .join();
+        b.write(
+          '${inputs}concat=n=${keeps.length}:v=1:a=${withAudio ? 1 : 0}'
+          '[outv]${withAudio ? '[outa]' : ''}',
+        );
+        return b.toString();
+      }
+
+      var res = await FfmpegService.run(
+        '-i ${FfmpegService.q(clip.file.path)} '
+        '-filter_complex "${graph(true)}" -map "[outv]" -map "[outa]" '
+        '-c:v libx264 -preset veryfast -crf 23 -c:a aac -b:a 128k '
+        '-y ${FfmpegService.q(out)}',
+      );
+      if (!res.ok) {
+        res = await FfmpegService.run(
+          '-i ${FfmpegService.q(clip.file.path)} '
+          '-filter_complex "${graph(false)}" -map "[outv]" '
+          '-c:v libx264 -preset veryfast -crf 23 '
+          '-y ${FfmpegService.q(out)}',
+        );
+      }
+      if (!res.ok) {
+        _setStatus('AI Cut nahi hua. ${res.logs}');
+        return;
+      }
+      final keepTotal =
+          keeps.fold(0.0, (sum, k) => sum + (k.$2 - k.$1));
+      _pushHistory();
+      setState(() {
+        final nc = VideoClip(
+          File(out),
+          Duration(milliseconds: (keepTotal * 1000).round()),
+          clip.aspectRatio,
+        );
+        nc.volume = clip.volume;
+        nc.muted = clip.muted;
+        _clips[idx] = nc;
+        _aicutRanges = const [];
+      });
+      _setStatus('AI Cut tayyar — silence hat gayi.');
+      await _loadPreview();
+    } catch (e) {
+      _setStatus('AI Cut failed: $e');
+    } finally {
+      if (mounted) setState(() => _aicutBusy = false);
+    }
+  }
+
+  /// The PIP style slice of [_pipExtras] (opacity + blend) — the
+  /// Opacity panel's element half.
+  List<Widget> _pipStyleChildren() {
+    final extras = _pipExtras();
+    final maskIdx = _anchorIndex(extras, (w) => _isTextStarting(w, 'Mask'));
+    return maskIdx < 0 ? extras : extras.sublist(0, maskIdx);
+  }
+
+  /// The PIP mask slice of [_pipExtras] — the Mask panel's content.
+  List<Widget> _pipMaskChildren() {
+    final extras = _pipExtras();
+    final maskIdx = _anchorIndex(extras, (w) => _isTextStarting(w, 'Mask'));
+    if (maskIdx < 0) return const [];
+    return [
+      _sectionTitle('Mask — PIP element'),
+      ...extras.sublist(maskIdx),
+    ];
   }
 
   /// Edit › Speed extras for the Custom ramp (§6.10): three point
@@ -657,6 +1575,602 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
       ),
       const Divider(height: 32),
     ];
+  }
+
+  /// Overlay › Sticker tab: the legacy stickers body (emoji/text
+  /// overlay + animation preset rail).
+  List<Widget> _stickerTabChildren() => _panelBody('stickers');
+
+  /// v1.5.0 TIMELINE (mockups V1/V2, replacing _timelineSection +
+  /// _timelineCard): contextual yellow hint → the centred-playhead
+  /// strip (fixed red + column at left with Mute under it, ruler
+  /// labels every 2s, REAL filmstrip thumbnails, gold selection,
+  /// trim handles on the selected block, transition badges on the
+  /// boundaries, long-press swap) → PIP lane → audio lane → text
+  /// lane → times row (current centred / total right — BOTH from
+  /// the one TimelineClock model, #5/#30).
+  Widget _timelineBar() {
+    final total = _totalDurationSec;
+    return Container(
+      color: const Color(0xFF161616),
+      padding: const EdgeInsets.fromLTRB(10, 4, 10, 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            _elementRow && _fxPip
+                ? 'PIP element selected — Switch se main track par wapas.'
+                : _clipRow && _clips.isNotEmpty
+                    ? 'Long press to swap'
+                    : 'Select one track to edit.',
+            style: const TextStyle(
+              color: Color(0xFFFFD60A),
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final halfPad = constraints.maxWidth / 2 - 52;
+              final contentW = halfPad * 2 + total * _tlPxPerSec;
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Fixed left column: red + (add) and, under it,
+                  // the selected clip's Mute toggle (InShot's
+                  // "Mute Clip" label zone).
+                  SizedBox(
+                    width: 52,
+                    child: Column(
+                      children: [
+                        Material(
+                          color: const Color(0xFFE53935),
+                          shape: const CircleBorder(),
+                          child: InkWell(
+                            customBorder: const CircleBorder(),
+                            onTap: _busy ? null : _showAddMediaSheet,
+                            child: const SizedBox(
+                              width: 38,
+                              height: 38,
+                              child: Icon(
+                                Icons.add,
+                                color: Colors.white,
+                                size: 24,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        if (_clips.isNotEmpty)
+                          InkWell(
+                            onTap: () {
+                              final clip = _clips[_selected];
+                              setState(() => clip.muted = !clip.muted);
+                              unawaited(
+                                _controller?.setVolume(
+                                      clip.muted ? 0 : clip.volume,
+                                    ) ??
+                                    Future<void>.value(),
+                              );
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                vertical: 2,
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    _clips[_selected].muted
+                                        ? Icons.volume_off
+                                        : Icons.volume_up,
+                                    size: 14,
+                                    color: Colors.white70,
+                                  ),
+                                  const SizedBox(width: 2),
+                                  const Text(
+                                    'Mute',
+                                    style: TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 10,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: Stack(
+                      children: [
+                        NotificationListener<ScrollNotification>(
+                          onNotification: (n) {
+                            if (n is ScrollStartNotification) {
+                              _tlUserScrolling = true;
+                            } else if (n is ScrollEndNotification) {
+                              _tlUserScrolling = false;
+                              final centreSec =
+                                  _tlScroll.offset / _tlPxPerSec;
+                              unawaited(_seekToGlobalSec(centreSec));
+                            }
+                            return false;
+                          },
+                          child: SingleChildScrollView(
+                            controller: _tlScroll,
+                            scrollDirection: Axis.horizontal,
+                            child: SizedBox(
+                              width: contentW,
+                              height: 74,
+                              child: Stack(
+                                children: [
+                                  // Ruler labels every 2s.
+                                  for (var s = 0; s <= total; s += 2)
+                                    Positioned(
+                                      left: halfPad + s * _tlPxPerSec - 8,
+                                      top: 0,
+                                      child: Text(
+                                        '${s}s',
+                                        style: const TextStyle(
+                                          color: Colors.white54,
+                                          fontSize: 9,
+                                        ),
+                                      ),
+                                    ),
+                                  // Clip blocks.
+                                  for (var i = 0;
+                                      i < _clips.length;
+                                      i++)
+                                    _timelineClipBlock(
+                                      i,
+                                      left: halfPad +
+                                          _clipStartSec(i) * _tlPxPerSec,
+                                    ),
+                                  // Transition badges.
+                                  for (var i = 1;
+                                      i < _clips.length;
+                                      i++)
+                                    Positioned(
+                                      left: halfPad +
+                                          _clipStartSec(i) * _tlPxPerSec -
+                                          11,
+                                      top: 26,
+                                      child: GestureDetector(
+                                        onTap: () =>
+                                            _openTool('transitions'),
+                                        child: Container(
+                                          width: 22,
+                                          height: 22,
+                                          decoration: BoxDecoration(
+                                            color: Colors.white,
+                                            borderRadius:
+                                                BorderRadius.circular(5),
+                                          ),
+                                          child: Icon(
+                                            _crossfade
+                                                ? Icons.swap_horiz
+                                                : Icons.add,
+                                            size: 14,
+                                            color: Colors.black87,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        // FIXED centre playhead.
+                        Positioned(
+                          left: (constraints.maxWidth - 52) / 2,
+                          top: 0,
+                          bottom: 0,
+                          child: Container(
+                            width: 2,
+                            color: const Color(0xFFFFD60A),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+          if (_fxPip) ...[
+            const SizedBox(height: 4),
+            InkWell(
+              onTap: () => setState(() {
+                _elementRow = true;
+                _clipRow = false;
+                _activeTool = null;
+              }),
+              child: Container(
+                height: 22,
+                decoration: BoxDecoration(
+                  color: _elementRow
+                      ? const Color(0xFF6A4C00)
+                      : const Color(0xFF263238),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                alignment: Alignment.centerLeft,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: const Row(
+                  children: [
+                    Icon(
+                      Icons.picture_in_picture_alt,
+                      size: 13,
+                      color: Colors.white70,
+                    ),
+                    SizedBox(width: 6),
+                    Text(
+                      'PIP element',
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+          const SizedBox(height: 4),
+          // Audio lane.
+          InkWell(
+            onTap: () => _openToolTab('audio', 'music'),
+            child: Container(
+              height: 22,
+              decoration: BoxDecoration(
+                color: _musicPath != null
+                    ? const Color(0xFF37474F)
+                    : const Color(0xFF222222),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              alignment: Alignment.centerLeft,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.music_note,
+                    size: 13,
+                    color: Colors.white70,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      _musicPath != null
+                          ? p.basename(_musicPath!)
+                          : '+ Add audio',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          // Text lane.
+          InkWell(
+            onTap: () => _openTool('text'),
+            child: Container(
+              height: 22,
+              decoration: BoxDecoration(
+                color: _overlayText.trim().isNotEmpty
+                    ? const Color(0xFF37474F)
+                    : const Color(0xFF222222),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              alignment: Alignment.centerLeft,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.text_fields,
+                    size: 13,
+                    color: Colors.white70,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      _overlayText.trim().isNotEmpty
+                          ? _overlayText.trim()
+                          : _captions.isNotEmpty
+                              ? '${_captions.length} captions'
+                              : '+ Add text',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          // Times row — current centred, total right, both from
+          // the ONE clock/model (#5).
+          AnimatedBuilder(
+            animation: _clock,
+            builder: (context, _) {
+              String fmtT(double sec) {
+                final m = sec ~/ 60;
+                final s = (sec % 60).floor().toString().padLeft(2, '0');
+                return '$m:$s';
+              }
+
+              return SizedBox(
+                height: 16,
+                child: Stack(
+                  children: [
+                    Center(
+                      child: Text(
+                        fmtT(_globalPositionSec),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Text(
+                        fmtT(total),
+                        style: const TextStyle(
+                          color: Colors.white54,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// One filmstrip block on the new timeline: real thumbnails
+  /// (photo clips show themselves), gold border when selected,
+  /// trim handles on the selected block, tap = select + preview,
+  /// long-press = the swap sheet ("Long press to swap").
+  Widget _timelineClipBlock(int i, {required double left}) {
+    final clip = _clips[i];
+    final w = clip.effectiveDuration * _tlPxPerSec;
+    final selected = i == _selected;
+    final thumbs = _thumbCache[clip.file.path];
+    return Positioned(
+      left: left,
+      top: 14,
+      width: w,
+      height: 56,
+      child: GestureDetector(
+        onTap: () {
+          setState(() {
+            _selected = i;
+            _clipRow = true;
+            _elementRow = false;
+          });
+          unawaited(_loadPreview());
+        },
+        onLongPress: () => _showSwapSheet(i),
+        child: Container(
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: selected ? TjProTheme.gold : Colors.white24,
+              width: selected ? 2 : 1,
+            ),
+            borderRadius: BorderRadius.circular(4),
+            color: const Color(0xFF2A2A2A),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: thumbs == null || thumbs.isEmpty
+                    ? const Center(
+                        child: Icon(
+                          Icons.movie,
+                          color: Colors.white38,
+                          size: 18,
+                        ),
+                      )
+                    : Row(
+                        children: [
+                          for (var k = 0; k < 24; k++)
+                            Expanded(
+                              child: Image.file(
+                                File(thumbs[k % thumbs.length]),
+                                fit: BoxFit.cover,
+                                height: 56,
+                                errorBuilder: (_, _, _) =>
+                                    const ColoredBox(
+                                  color: Color(0xFF2A2A2A),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+              ),
+              if (clip.isPhoto)
+                const Positioned(
+                  left: 3,
+                  top: 3,
+                  child: Icon(
+                    Icons.photo,
+                    size: 12,
+                    color: Colors.white,
+                  ),
+                ),
+              if (selected) ...[
+                Positioned(
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: 14,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onHorizontalDragUpdate: (d) {
+                      setState(() {
+                        clip.trimStart = (clip.trimStart +
+                                d.delta.dx / _tlPxPerSec)
+                            .clamp(
+                              0,
+                              clip.effectiveEnd - 0.3,
+                            );
+                      });
+                    },
+                    onHorizontalDragEnd: (_) => _pushHistory(),
+                    child: Container(
+                      color: TjProTheme.gold.withValues(alpha: 0.85),
+                      child: const Icon(
+                        Icons.chevron_left,
+                        size: 12,
+                        color: Colors.black,
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  right: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: 14,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onHorizontalDragUpdate: (d) {
+                      setState(() {
+                        final full = clip.duration.inMilliseconds / 1000;
+                        clip.trimEnd = (clip.effectiveEnd +
+                                d.delta.dx / _tlPxPerSec)
+                            .clamp(
+                              clip.trimStart + 0.3,
+                              full,
+                            );
+                      });
+                    },
+                    onHorizontalDragEnd: (_) => _pushHistory(),
+                    child: Container(
+                      color: TjProTheme.gold.withValues(alpha: 0.85),
+                      child: const Icon(
+                        Icons.chevron_right,
+                        size: 12,
+                        color: Colors.black,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// The add-media sheet behind the timeline's red + button.
+  void _showAddMediaSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF1E1E1E),
+      builder: (sheetCtx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.videocam, color: Colors.white),
+              title: const Text(
+                'Video add karein',
+                style: TextStyle(color: Colors.white),
+              ),
+              onTap: () {
+                Navigator.of(sheetCtx).pop();
+                unawaited(_addClip());
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo, color: Colors.white),
+              title: const Text(
+                'Photo add karein',
+                style: TextStyle(color: Colors.white),
+              ),
+              onTap: () {
+                Navigator.of(sheetCtx).pop();
+                unawaited(_addPhotoClip());
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Long-press on a clip block: swap it with a neighbour
+  /// ("Long press to swap" — the reorder path of the new
+  /// timeline).
+  void _showSwapSheet(int i) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF1E1E1E),
+      builder: (sheetCtx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (i > 0)
+              ListTile(
+                leading:
+                    const Icon(Icons.arrow_back, color: Colors.white),
+                title: const Text(
+                  'Peechay wali clip se swap',
+                  style: TextStyle(color: Colors.white),
+                ),
+                onTap: () {
+                  Navigator.of(sheetCtx).pop();
+                  _swapClips(i, i - 1);
+                },
+              ),
+            if (i < _clips.length - 1)
+              ListTile(
+                leading:
+                    const Icon(Icons.arrow_forward, color: Colors.white),
+                title: const Text(
+                  'Aglay wali clip se swap',
+                  style: TextStyle(color: Colors.white),
+                ),
+                onTap: () {
+                  Navigator.of(sheetCtx).pop();
+                  _swapClips(i, i + 1);
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _swapClips(int a, int b) {
+    _pushHistory();
+    setState(() {
+      final tmp = _clips[a];
+      _clips[a] = _clips[b];
+      _clips[b] = tmp;
+      _selected = b;
+    });
+    unawaited(_loadPreview());
   }
 
   /// Edit › Trim (§5A): fine trim + the action row (Split / Frame /
@@ -1438,18 +2952,6 @@ TextField(
                 style: TextStyle(color: Colors.grey),
               ),
               const Divider(height: 32),
-          const Text('Clip FX',
-              style: TextStyle(fontWeight: FontWeight.bold)),
-          SwitchListTile(
-            title: const Text('Reverse video'),
-            value: _fxReverse,
-            onChanged: (bool v) {
-              setState(() {
-                _fxReverse = v;
-              });
-            },
-          ),
-          const Divider(height: 32),
         ];
       case 'transitions':
         return [
@@ -2665,7 +4167,12 @@ const Text('Auto Captions (CapCut-style)',
   /// v1.4.0 clip-selected row › Volume: the SELECTED clip's own
   /// gain + mute (materialised at export — see _exportInner) and
   /// its unlink state.
-  List<Widget> _clipVolumeChildren() {
+  /// v1.5.0 Volume panel (InShot [TUT9]): ONE % slider (max 200%
+  /// — best-knowledge, InShot's max was never verified on video),
+  /// Mute, Denoise (the op lives here, not in Voice Enhance) and
+  /// Extract audio. The slider applies the gain to the LIVE
+  /// preview as well as the export model.
+  List<Widget> _volumePanelChildren() {
     final clip = _clips.isEmpty ? null : _clips[_selected];
     if (clip == null) {
       return const [
@@ -2679,17 +4186,29 @@ const Text('Auto Captions (CapCut-style)',
       _sectionTitle('Clip ${_selected + 1} — volume'),
       _ProSlider(
         label: 'Clip volume',
-        value: clip.volume,
+        value: clip.volume.clamp(0, 2),
         min: 0,
-        max: 1.5,
-        divisions: 30,
-        onChanged: (v) => setState(() => clip.volume = v),
+        max: 2,
+        divisions: 40,
+        onChanged: (v) {
+          setState(() => clip.volume = v);
+          unawaited(
+            _controller?.setVolume(clip.muted ? 0 : v) ??
+                Future<void>.value(),
+          );
+        },
       ),
       SwitchListTile(
         title: const Text('Mute clip'),
         subtitle: const Text('Is clip ki awaz export mein nahi aayegi.'),
         value: clip.muted,
-        onChanged: (v) => setState(() => clip.muted = v),
+        onChanged: (v) {
+          setState(() => clip.muted = v);
+          unawaited(
+            _controller?.setVolume(v ? 0 : clip.volume) ??
+                Future<void>.value(),
+          );
+        },
       ),
       if (clip.detachedAudioPath != null)
         Text(
@@ -2701,6 +4220,38 @@ const Text('Auto Captions (CapCut-style)',
         'Volume sirf is clip par lagta hai — baqi clips ki awaz '
         'apni jagah rehti hai.',
         style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      _sectionTitle('Audio ops'),
+      Row(
+        children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: _busy
+                  ? null
+                  : () =>
+                      unawaited(_enhanceSelectedClipAudio(voice: false)),
+              icon: const Icon(Icons.noise_control_off, size: 18),
+              label: const Text('Denoise'),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: _busy ? null : _extractClipAudio,
+              icon: const Icon(Icons.audio_file, size: 18),
+              label: const Text('Extract audio'),
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 8),
+      SizedBox(
+        width: double.infinity,
+        child: OutlinedButton.icon(
+          onPressed: _busy ? null : _unlinkSelectedClipAudio,
+          icon: const Icon(Icons.link_off, size: 18),
+          label: const Text('Unlink audio (alag track)'),
+        ),
       ),
       const Divider(height: 32),
     ];
@@ -2970,417 +4521,6 @@ const Text('Auto Captions (CapCut-style)',
           onChanged: (v) => setState(() => _proExposure = v),
         );
     }
-  }
-
-  /// v1.3.0 (§3/§5A) timeline: a ruler row (playhead readout +
-  /// progress), ONE filmstrip track — slim clip cards with trim
-  /// HANDLE drag zones on the selected clip, a + tile at the END
-  /// (Add video — there is NO separate add row anywhere) and a
-  /// photo tile beside it — then the layered bars (§6.4): the
-  /// music bar (or a ghost "+ Add audio" row) and the text bar.
-  /// Split / Frame / Extract / the trim slider moved to
-  /// Edit › Trim — nothing is lost, only re-homed.
-  Widget _timelineSection(VideoClip? clip) {
-    final ctrl = _controller;
-    final pos = ctrl != null && ctrl.value.isInitialized
-        ? ctrl.value.position.inMilliseconds / 1000
-        : 0.0;
-    final dur = clip != null ? clip.duration.inMilliseconds / 1000 : 0.0;
-    final frac = dur > 0 ? (pos / dur).clamp(0.0, 1.0) : 0.0;
-    final totalDur =
-        _clips.fold<double>(0, (a, c) => a + c.effectiveDuration);
-    String fmt(double sec) {
-      final m = sec ~/ 60;
-      final ss = (sec % 60).toStringAsFixed(0).padLeft(2, '0');
-      return '$m:$ss';
-    }
-
-    Widget addTile({
-      required IconData icon,
-      required String label,
-      required VoidCallback onTap,
-    }) {
-      return GestureDetector(
-        onTap: onTap,
-        child: Container(
-          width: 54,
-          height: 58,
-          margin: const EdgeInsets.only(right: 8),
-          decoration: BoxDecoration(
-            color: const Color(0xFF232323),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: TjProTheme.gold, width: 1.5),
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, color: TjProTheme.gold, size: 22),
-              Text(label,
-                  style: const TextStyle(color: Colors.white, fontSize: 10)),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return Container(
-      color: const Color(0xFF1B1B1B),
-      padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Ruler row: playhead readout + clip position + total.
-          Row(
-            children: [
-              Text(
-                _clips.isEmpty
-                    ? 'Timeline — koi clip nahi'
-                    : '${fmt(pos)} / ${fmt(dur)}',
-                style: const TextStyle(color: Colors.white70, fontSize: 11),
-              ),
-              const Spacer(),
-              if (_clips.isNotEmpty)
-                Text(
-                  'Clip ${_selected + 1} of ${_clips.length} • '
-                  'kul ${fmt(totalDur)}',
-                  style: const TextStyle(color: Colors.grey, fontSize: 11),
-                ),
-            ],
-          ),
-          // Playhead progress line.
-          Container(
-            height: 3,
-            margin: const EdgeInsets.symmetric(vertical: 5),
-            child: LinearProgressIndicator(
-              value: frac,
-              backgroundColor: Colors.white12,
-              valueColor:
-                  const AlwaysStoppedAnimation<Color>(TjProTheme.gold),
-            ),
-          ),
-          // v1.4.0 (mockup S4a): LEFT RAIL — Mute clip + Cover —
-          // beside the filmstrip + lanes column.
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Column(
-                children: [
-                  _iconChoiceItem(
-                    icon: (clip != null && clip.muted)
-                        ? Icons.volume_off
-                        : Icons.volume_up,
-                    label: 'Mute',
-                    selected: clip != null && clip.muted,
-                    onTap: clip == null
-                        ? null
-                        : () {
-                            final c = _clips[_selected];
-                            _pushHistory();
-                            setState(() => c.muted = !c.muted);
-                            _setStatus(
-                              c.muted
-                                  ? 'Clip mute ho gaya (export mein awaz nahi aayegi).'
-                                  : 'Clip unmute ho gaya.',
-                            );
-                          },
-                  ),
-                  const SizedBox(height: 6),
-                  _iconChoiceItem(
-                    icon: Icons.image_outlined,
-                    label: 'Cover',
-                    selected: false,
-                    onTap: _clips.isEmpty
-                        ? null
-                        : () => unawaited(_saveFrameSnapshot()),
-                  ),
-                ],
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-          // Filmstrip track + the + tiles at its END.
-          SizedBox(
-            height: 58,
-            child: _clips.isEmpty
-                ? Row(
-                    children: [
-                      addTile(
-                        icon: Icons.add,
-                        label: 'Video',
-                        onTap: _addClip,
-                      ),
-                      addTile(
-                        icon: Icons.photo_outlined,
-                        label: 'Photo',
-                        onTap: _addPhotoClip,
-                      ),
-                      const Expanded(
-                        child: Text(
-                          'Timeline khaali hai — + tile se shuru karein.',
-                          style: TextStyle(color: Colors.grey, fontSize: 12),
-                        ),
-                      ),
-                    ],
-                  )
-                : ListView(
-                    scrollDirection: Axis.horizontal,
-                    children: [
-                      for (var i = 0; i < _clips.length; i++)
-                        _timelineCard(i),
-                      addTile(
-                        icon: Icons.add,
-                        label: 'Video',
-                        onTap: _addClip,
-                      ),
-                      addTile(
-                        icon: Icons.photo_outlined,
-                        label: 'Photo',
-                        onTap: _addPhotoClip,
-                      ),
-                    ],
-                  ),
-          ),
-          // Layered bar — audio (§6.4).
-          const SizedBox(height: 6),
-          if (_musicPath != null)
-            InkWell(
-              onTap: () => setState(() {
-                _activeTool = 'audio';
-                _panelTab = 'music';
-              }),
-              child: Container(
-                height: 26,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF263238),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.music_note,
-                        size: 14, color: Colors.lightBlueAccent),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        p.basename(_musicPath!),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            color: Colors.white, fontSize: 11),
-                      ),
-                    ),
-                    if (_autoDuck)
-                      const Text('duck ',
-                          style: TextStyle(
-                              color: Colors.orangeAccent, fontSize: 10)),
-                    GestureDetector(
-                      onTap: () => setState(() => _musicPath = null),
-                      child: const Icon(Icons.close,
-                          size: 14, color: Colors.white70),
-                    ),
-                  ],
-                ),
-              ),
-            )
-          else
-            InkWell(
-              onTap: _pickMusic,
-              child: Container(
-                height: 26,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: Colors.white24),
-                ),
-                child: const Row(
-                  children: [
-                    Icon(Icons.add, size: 14, color: Colors.white54),
-                    SizedBox(width: 6),
-                    Text('Add audio',
-                        style:
-                            TextStyle(color: Colors.white54, fontSize: 11)),
-                  ],
-                ),
-              ),
-            ),
-          // Layered bar — text / captions (§6.4).
-          if (_text.trim().isNotEmpty || _captions.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            InkWell(
-              onTap: () => _openTool('text'),
-              child: Container(
-                height: 26,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF37474F),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.text_fields,
-                        size: 14, color: Colors.amberAccent),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        _text.trim().isNotEmpty
-                            ? _text.trim()
-                            : '${_captions.length} captions',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            color: Colors.white, fontSize: 11),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          // v1.4.0: the EMPTY text lane — a plain "+ Add text" row
-          // (mockup S4a) when no text/captions exist yet.
-          if (_text.trim().isEmpty && _captions.isEmpty) ...[
-            const SizedBox(height: 6),
-            InkWell(
-              onTap: () => _openTool('text'),
-              child: Container(
-                height: 26,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: Colors.white24),
-                ),
-                child: const Row(
-                  children: [
-                    Icon(Icons.add, size: 14, color: Colors.white54),
-                    SizedBox(width: 6),
-                    Text('Add text',
-                        style:
-                            TextStyle(color: Colors.white54, fontSize: 11)),
-                  ],
-                ),
-              ),
-            ),
-          ],
-                  ],
-        ],
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// One filmstrip card. The SELECTED card carries left/right
-  /// trim HANDLE zones (12 px) — drag them to trim; the drag
-  /// start pushes an undo snapshot.
-  Widget _timelineCard(int i) {
-    final c = _clips[i];
-    final selected = i == _selected;
-    final cardW =
-        (44 + c.effectiveDuration * 7).clamp(56.0, 170.0).toDouble();
-    final secsPerPx = c.duration.inMilliseconds / 1000 / 340;
-    Widget handle(bool isStart) {
-      return GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onHorizontalDragStart: (_) => _pushHistory(),
-        onHorizontalDragUpdate: (d) {
-          setState(() {
-            if (isStart) {
-              c.trimStart = (c.trimStart + d.delta.dx * secsPerPx)
-                  .clamp(0, c.effectiveEnd - 0.5);
-            } else {
-              final ne = (c.effectiveEnd + d.delta.dx * secsPerPx)
-                  .clamp(c.trimStart + 0.5, c.duration.inMilliseconds / 1000);
-              c.trimEnd = ne;
-            }
-          });
-        },
-        child: Container(
-          width: 12,
-          height: 58,
-          color: TjProTheme.gold.withValues(alpha: 0.35),
-          child: Icon(
-            isStart ? Icons.chevron_left : Icons.chevron_right,
-            size: 12,
-            color: Colors.black,
-          ),
-        ),
-      );
-    }
-
-    return GestureDetector(
-      onTap: () async {
-        // v1.4.0: tapping a clip SELECTS it and swaps the tool
-        // zone to the clip-selected row (mockup S4b).
-        setState(() {
-          _selected = i;
-          _clipRow = true;
-        });
-        await _loadPreview();
-      },
-      child: Container(
-        width: cardW,
-        height: 58,
-        margin: const EdgeInsets.only(right: 8),
-        decoration: BoxDecoration(
-          color: selected ? TjProTheme.goldDeep : const Color(0xFF2E2E2E),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: selected ? TjProTheme.gold : Colors.grey.shade700,
-            width: selected ? 2 : 1,
-          ),
-        ),
-        child: Row(
-          children: [
-            if (selected) handle(true),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 6),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(
-                          c.isPhoto ? Icons.photo : Icons.movie_outlined,
-                          size: 13,
-                          color: Colors.white70,
-                        ),
-                        const SizedBox(width: 4),
-                        Expanded(
-                          child: Text(
-                            'Clip ${i + 1}',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 11,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    Text(
-                      '${c.effectiveDuration.toStringAsFixed(1)}s'
-                      ' • ${c.trimStart.toStringAsFixed(1)}'
-                      '–${c.effectiveEnd.toStringAsFixed(1)}s',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          color: Colors.white70, fontSize: 10),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            if (selected) handle(false),
-          ],
-        ),
-      ),
-    );
   }
 }
 

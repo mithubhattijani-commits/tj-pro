@@ -1008,9 +1008,10 @@ String _trfPath(Directory workDir) => '${workDir.path}/vidstab.trf';
 String _vidstabDetectCommand({
   required String input,
   required String trfPath,
+  int shakiness = 5,
 }) {
   return '-y -i ${FfmpegService.q(input)} '
-      '-vf "vidstabdetect=shakiness=5:accuracy=15:stepsize=6:mincontrast=0.3:result=${_filterQuote(trfPath)}" '
+      '-vf "vidstabdetect=shakiness=$shakiness:accuracy=15:stepsize=6:mincontrast=0.3:result=${_filterQuote(trfPath)}" '
       '-an -f null -';
 }
 
@@ -1020,9 +1021,10 @@ String _vidstabTransformCommand({
   required String input,
   required String trfPath,
   required String output,
+  int smoothing = 30,
 }) {
   return '-y -i ${FfmpegService.q(input)} '
-      '-vf "vidstabtransform=input=${_filterQuote(trfPath)}:smoothing=30" '
+      '-vf "vidstabtransform=input=${_filterQuote(trfPath)}:smoothing=$smoothing" '
       '-c:v libx264 -preset veryfast -crf 23 -c:a aac -movflags +faststart ${FfmpegService.q(output)}';
 }
 
@@ -1052,11 +1054,21 @@ List<String> stabilizeCommands({
   required String input,
   required String output,
   required Directory workDir,
+  // v1.5.0: stabilizer LEVELS (Low / Standard / Most Stable). The
+  // defaults ARE the pre-v1.5.0 values (shakiness 5, smoothing 30),
+  // so an unlevelled call renders byte-identical commands.
+  int shakiness = 5,
+  int smoothing = 30,
 }) {
   final trf = _trfPath(workDir);
   return [
-    _vidstabDetectCommand(input: input, trfPath: trf),
-    _vidstabTransformCommand(input: input, trfPath: trf, output: output),
+    _vidstabDetectCommand(input: input, trfPath: trf, shakiness: shakiness),
+    _vidstabTransformCommand(
+      input: input,
+      trfPath: trf,
+      output: output,
+      smoothing: smoothing,
+    ),
   ];
 }
 
@@ -1080,6 +1092,8 @@ Future<StabilizeResult> runStabilized({
   int? expectedMs,
   void Function(double progress)? onProgress,
   void Function(String step)? onStep,
+  int shakiness = 5,
+  int smoothing = 30,
 }) async {
   try {
     await workDir.create(recursive: true);
@@ -1088,6 +1102,8 @@ Future<StabilizeResult> runStabilized({
     input: input,
     output: output,
     workDir: workDir,
+    shakiness: shakiness,
+    smoothing: smoothing,
   );
   onStep?.call('Stabilization: analysing motion (pass 1 of 2)…');
   final detect = await FfmpegService.run(commands[0]);

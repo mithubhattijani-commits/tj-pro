@@ -28,6 +28,7 @@ import '../theme.dart';
 import '../live/news_template.dart';
 import '../live/live_studio_screen.dart';
 import '../news/breaking_templates.dart';
+import '../news/store_screen.dart';
 import '../news/audio_tools_screen.dart';
 import '../news/caption_translator_screen.dart';
 import '../news/channel_preset.dart';
@@ -94,6 +95,48 @@ class VideoClip {
     c.muted = muted;
     c.detachedAudioPath = detachedAudioPath;
     return c;
+  }
+}
+
+/// v1.5.0 (#5/#29/#30): THE one playback clock for the editor.
+///
+/// v1.4.0 read `controller.value.position` once per build() — with
+/// nothing ever listening, the counter froze and three different
+/// duration readouts drifted apart. This clock attaches to the
+/// selected clip's controller (see _loadPreview) and notifies on
+/// every position/playing change; the transport row, the timeline
+/// playhead and every total derive from it + the ONE timeline
+/// model on the State (clip effective durations summed in order).
+class TimelineClock extends ChangeNotifier {
+  VideoPlayerController? _controller;
+
+  /// The controller currently driving the clock (null for a photo
+  /// clip / no clips).
+  VideoPlayerController? get controller => _controller;
+
+  void attach(VideoPlayerController? controller) {
+    if (_controller == controller) return;
+    _controller?.removeListener(_tick);
+    _controller = controller;
+    _controller?.addListener(_tick);
+    notifyListeners();
+  }
+
+  void _tick() => notifyListeners();
+
+  bool get isInitialized => _controller?.value.isInitialized ?? false;
+
+  bool get isPlaying => _controller?.value.isPlaying ?? false;
+
+  /// Raw position inside the selected clip's FILE (seconds).
+  double get filePositionSec =>
+      (_controller?.value.position.inMilliseconds ?? 0) / 1000.0;
+
+  @override
+  void dispose() {
+    _controller?.removeListener(_tick);
+    _controller = null;
+    super.dispose();
   }
 }
 
@@ -198,6 +241,47 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   /// clip is tapped — the tool zone then shows THAT clip's tools
   /// instead of the main tool row, until the row's back/✓ closes it.
   bool _clipRow = false;
+
+  // ---- v1.5.0 InShot shell state. ----
+  /// The one playback clock (#5/#29/#30) — see [TimelineClock].
+  final TimelineClock _clock = TimelineClock();
+
+  /// Element row (PIP selected): true while the PIP element's own
+  /// tool row is showing in the tool zone.
+  bool _elementRow = false;
+
+  /// Timeline strip scroll + zoom (px per second of timeline).
+  final ScrollController _tlScroll = ScrollController();
+  double _tlPxPerSec = 42;
+
+  /// True while the user is dragging the timeline strip — the
+  /// clock's auto-scroll must not fight the user's finger.
+  bool _tlUserScrolling = false;
+
+  /// Filmstrip thumbnails per clip file path (generated lazily by
+  /// [_ensureThumbs]); a clip with no entry yet renders its first
+  /// generated thumb or a plain block until they land.
+  final Map<String, List<String>> _thumbCache = {};
+
+  /// Stabilizer level (v1.5.0): 0 = Original (off), 1 = Low,
+  /// 2 = Standard, 3 = Most Stable. [_proStabilize] stays the
+  /// export switch (level > 0); the level maps to vidstab
+  /// shakiness/smoothing at the export call site.
+  int _stabLevel = 0;
+
+  /// AI Cut panel state: silence threshold (dB, negative) + minimum
+  /// silence length (seconds) + the last scan's silence ranges.
+  double _aicutThresholdDb = -35;
+  double _aicutMinSilenceSec = 0.4;
+  List<(double, double)> _aicutRanges = const [];
+  bool _aicutBusy = false;
+
+  /// Cutout panel mode: 'cutout' (AI BG remove) or 'chroma'.
+  String _cutoutMode = 'cutout';
+
+  /// Precut › Cut range (seconds, FILE time of the selected clip).
+  double _cutStart = 0;
+  double _cutEnd = 0;
   // ---- v1.4.0 Adjust extras (Colour › Adjust, one shared slider).
   // These ride their own ffmpeg chain ([_adjustExtraFilter]) next
   // to the ProGrade values, because ProGrade's field set is fixed.
@@ -986,6 +1070,10 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   @override
   void initState() {
     super.initState();
+    // v1.5.0: while the clock says "playing", keep the timeline
+    // strip scrolled so the playhead stays at the centre — unless
+    // the user is dragging the strip themselves.
+    _clock.addListener(_onClockTick);
     // Plain editor only: a handoff project brings its own template
     // ([_loadProject] below) — the saved live template must NOT
     // overwrite it when this future resolves.
@@ -1109,9 +1197,132 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
 
   @override
   void dispose() {
+    _clock.removeListener(_onClockTick);
+    _clock.dispose();
+    _tlScroll.dispose();
     _controller?.dispose();
     _pipController?.dispose();
     super.dispose();
+  }
+
+  /// Clock listener (playback only): auto-scroll the timeline strip
+  /// so the centred playhead tracks the playing position (#29).
+  void _onClockTick() {
+    if (!mounted || _tlUserScrolling || !_clock.isPlaying) return;
+    if (!_tlScroll.hasClients || _clips.isEmpty) return;
+    final target = (_globalPositionSec * _tlPxPerSec)
+        .clamp(0.0, _tlScroll.position.maxScrollExtent);
+    if ((target - _tlScroll.offset).abs() > 1) {
+      _tlScroll.jumpTo(target);
+    }
+  }
+
+  // ---- v1.5.0 timeline model: the ONE source of durations. ----
+
+  /// Total timeline length (seconds) — the sum of every clip's
+  /// effective (trimmed) duration, in order. EVERY readout
+  /// (transport, panels, timeline) derives from this.
+  double get _totalDurationSec =>
+      _clips.fold(0.0, (sum, c) => sum + c.effectiveDuration);
+
+  /// Timeline position (seconds) where clip [index] starts.
+  double _clipStartSec(int index) {
+    var start = 0.0;
+    for (var j = 0; j < index && j < _clips.length; j++) {
+      start += _clips[j].effectiveDuration;
+    }
+    return start;
+  }
+
+  /// The playhead's position on the TIMELINE (seconds): the
+  /// selected clip's start + the clock position inside its trimmed
+  /// range. Photo clips have no clock — their start is the best
+  /// position (selecting the clip is what the user sees).
+  double get _globalPositionSec {
+    if (_clips.isEmpty) return 0;
+    final clip = _clips[_selected];
+    var inside = 0.0;
+    if (!clip.isPhoto && _clock.isInitialized) {
+      inside = (_clock.filePositionSec - clip.trimStart)
+          .clamp(0.0, clip.effectiveDuration);
+    }
+    return _clipStartSec(_selected) + inside;
+  }
+
+  /// Seek the preview to a TIMELINE position (seconds): selects the
+  /// clip containing it (loading its preview when needed) and seeks
+  /// inside the clip's trimmed range (#29 — scrubbing and tapping
+  /// the timeline move the preview to the exact frame).
+  Future<void> _seekToGlobalSec(double sec) async {
+    if (_clips.isEmpty) return;
+    final target = sec.clamp(0.0, _totalDurationSec);
+    var index = _clips.length - 1;
+    var acc = 0.0;
+    for (var i = 0; i < _clips.length; i++) {
+      if (target < acc + _clips[i].effectiveDuration || i == _clips.length - 1) {
+        index = i;
+        break;
+      }
+      acc += _clips[i].effectiveDuration;
+    }
+    final clip = _clips[index];
+    final inside = (target - _clipStartSec(index))
+        .clamp(0.0, clip.effectiveDuration);
+    if (index != _selected) {
+      setState(() {
+        _selected = index;
+        _elementRow = false;
+      });
+      await _loadPreview();
+    }
+    final controller = _controller;
+    if (controller != null && controller.value.isInitialized && !clip.isPhoto) {
+      await controller.seekTo(
+        Duration(milliseconds: ((clip.trimStart + inside) * 1000).round()),
+      );
+    }
+  }
+
+  /// Lazily generate filmstrip thumbnails for [clip] (up to 8
+  /// frames spread over its effective range) into the work dir.
+  /// Fire-and-forget: the timeline renders plain blocks until the
+  /// thumbs land, then rebuilds. Failures are silent — a clip
+  /// without thumbs is still fully editable.
+  Future<void> _ensureThumbs(VideoClip clip) async {
+    final key = clip.file.path;
+    if (_thumbCache.containsKey(key)) return;
+    _thumbCache[key] = const [];
+    try {
+      final dir = await _workDir();
+      final thumbsDir = Directory(p.join(dir.path, 'thumbs'));
+      if (!await thumbsDir.exists()) await thumbsDir.create(recursive: true);
+      final stamp = key.hashCode.toUnsigned(31).toRadixString(36);
+      final paths = <String>[];
+      if (clip.isPhoto) {
+        paths.add(clip.file.path);
+      } else {
+        const count = 8;
+        for (var i = 0; i < count; i++) {
+          final rawT = clip.trimStart +
+              clip.effectiveDuration * (i / (count - 1)) -
+              (i == count - 1 ? 0.05 : 0);
+          final t = rawT.clamp(clip.trimStart, clip.effectiveEnd);
+          final out = p.join(thumbsDir.path, 'th_${stamp}_$i.jpg');
+          if (!await File(out).exists()) {
+            final res = await FfmpegService.run(
+              '-y -ss ${t.toStringAsFixed(2)} -i ${FfmpegService.q(clip.file.path)} '
+              '-frames:v 1 -vf scale=96:-1 -q:v 4 ${FfmpegService.q(out)}',
+            );
+            if (!res.ok) break;
+          }
+          paths.add(out);
+        }
+      }
+      if (!mounted) return;
+      setState(() => _thumbCache[key] = paths);
+    } catch (_) {
+      // Thumbnails are decoration — never an error path.
+    }
   }
 
   /// Display title for the handoff banner (project title, else
@@ -1126,21 +1337,30 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
 
   Future<void> _loadPreview() async {
     if (_clips.isEmpty) return;
+    // v1.5.0: filmstrip thumbs for the timeline (lazy, cached).
+    unawaited(_ensureThumbs(_clips[_selected]));
     // v1.3.0 (§6.1): a photo clip has no video controller — the
     // stage shows the still image instead.
     if (_clips[_selected].isPhoto) {
       final old = _controller;
+      _clock.attach(null);
       setState(() => _controller = null);
       await old?.dispose();
       return;
     }
     final old = _controller;
     final c = VideoPlayerController.file(_clips[_selected].file);
+    // v1.5.0: the ONE clock follows the selected clip's controller.
+    _clock.attach(c);
     setState(() => _controller = c);
     await old?.dispose();
     try {
       await c.initialize();
       await c.setLooping(true);
+      // Per-clip volume is audible in the preview too (v1.5.0 —
+      // the Volume panel's slider now drives the preview gain).
+      final clip = _clips[_selected];
+      await c.setVolume(clip.muted ? 0 : clip.volume);
       setState(() {});
     } catch (e) {
       setState(() => _status = 'Preview failed: $e');
@@ -1628,31 +1848,47 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   /// v1.4.0 top bar search: a real tool index — every editor tool
   /// by name; tapping one opens its exact panel/tab.
   Future<void> _showToolSearch() async {
+    // v1.5.0: the index lists the NEW tool keys (the Help dialog is
+    // this list — every entry opens the real panel).
     final entries = <(String, String, String?)>[
-      ('Edit — Trim / Canvas', 'edit', 'trim'),
-      ('Edit — Speed', 'edit', 'speed'),
-      ('Edit — Beat sync', 'edit', 'beat'),
-      ('Edit — Stabilize', 'edit', 'steady'),
-      ('Edit — Transform', 'edit', 'transform'),
+      ('Canvas — Ratio', 'canvas', 'ratio'),
+      ('Canvas — Zoom', 'canvas', 'zoom'),
+      ('Canvas — Background', 'canvas', 'background'),
       ('Audio — Music', 'audio', 'music'),
-      ('Audio — Voice changer', 'audio', 'voice'),
+      ('Audio — Voice Effect', 'audio', 'voice'),
       ('Audio — Cleanup', 'audio', 'clean'),
+      ('Stickers', 'overlay', 'sticker'),
       ('Text', 'text', 'text'),
       ('Motion titles', 'text', 'titles'),
       ('Captions', 'text', 'captions'),
-      ('Filters', 'colour', 'filters'),
-      ('Adjust', 'colour', 'adjust'),
       ('Effects', 'effects', 'effects'),
       ('Motion tracking', 'effects', 'tracking'),
-      ('Stickers', 'overlay', 'sticker'),
-      ('Keyframes', 'overlay', 'keyframes'),
-      ('Overlay — PIP', 'overlay', 'pip'),
-      ('Background / Chroma key', 'overlay', 'background'),
+      ('Filters', 'colour', 'filters'),
+      ('Adjust', 'colour', 'adjust'),
+      ('PIP / Overlay', 'overlay', 'pip'),
+      ('Precut — Trim', 'precut', 'trim'),
+      ('Precut — Cut', 'precut', 'cut'),
+      ('Precut — Split', 'precut', 'split'),
+      ('Volume', 'volume', null),
+      ('Chroma key', 'cutout', null),
+      ('Speed', 'speed', 'standard'),
+      ('Speed curve', 'speed', 'curve'),
+      ('Beat sync', 'speed', 'beat'),
+      ('Animation / Keyframes', 'overlay', 'keyframes'),
+      ('AI Cut', 'aicut', null),
+      ('Voice Enhance', 'voiceenhance', null),
+      ('Crop / Transform', 'edit', 'transform'),
+      ('Enhance (HD)', 'enhance', null),
+      ('Stabilizer', 'stabilizer', null),
+      ('Cutout / Chroma', 'cutout', null),
+      ('Mask', 'mask', null),
+      ('Opacity', 'opacity', null),
+      ('Rotate / Flip', 'rotate', null),
+      ('Ease', 'ease', null),
       ('Transitions', 'transitions', null),
       ('News template', 'news', 'template'),
       ('News text', 'news', 'text'),
       ('News logo', 'news', 'logo'),
-      ('Clip volume', 'clipVolume', null),
     ];
     final picked = await showDialog<(String, String?)>(
       context: context,
@@ -1810,6 +2046,278 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       await _loadPreview();
     } catch (e) {
       _setStatus('Freeze frame failed: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// v1.5.0 Switch (InShot [TUT12], CONFIRMED behaviour): the
+  /// selected main-track segment MOVES to the overlay/PIP track —
+  /// it leaves the main timeline and becomes the PIP element. The
+  /// element-row Switch runs the symmetric move back (that
+  /// direction was never demonstrated in InShot — flagged in the
+  /// v1.5.0 test report).
+  Future<void> _switchSelectedClipToPip() async {
+    if (_clips.isEmpty || _busy) return;
+    final clip = _clips[_selected];
+    if (clip.isPhoto) {
+      _setStatus('Photo clip PIP nahi ban sakta — video clip chunein.');
+      return;
+    }
+    if (_clips.length < 2) {
+      _setStatus(
+        'Switch ke liye kam az kam 2 clips chahiye — warna main '
+        'track khaali ho jayega.',
+      );
+      return;
+    }
+    _pushHistory();
+    setState(() {
+      _fxPip = true;
+      _fxPipVideo = clip.file.path;
+      _clips.removeAt(_selected);
+      if (_selected >= _clips.length) _selected = _clips.length - 1;
+      _clipRow = false;
+      _elementRow = true;
+    });
+    _setStatus('Clip PIP track par chala gaya (Switch).');
+    await _loadPreview();
+  }
+
+  /// v1.5.0 Switch, element → main track (symmetric implementation;
+  /// InShot never demonstrated this direction — flagged): the PIP
+  /// video is appended to the main timeline via the ONE add path
+  /// and the PIP slot clears.
+  Future<void> _switchPipToMainTrack() async {
+    if (!_fxPip || _fxPipVideo.isEmpty || _busy) return;
+    final file = File(_fxPipVideo);
+    if (!await file.exists()) {
+      _setStatus('PIP video file nahi mili.');
+      return;
+    }
+    _pushHistory();
+    setState(() {
+      _fxPip = false;
+      _fxPipVideo = '';
+      _elementRow = false;
+    });
+    await _addClipFile(file);
+    _setStatus('PIP element main track par aa gaya (Switch).');
+  }
+
+  /// v1.5.0 Capture (InShot): the playhead frame becomes a still
+  /// segment INSERTED at the playhead — the selected clip splits
+  /// there and the 2s still sits between the halves. (Reuses the
+  /// _saveFrameSnapshot frame-grab; that one saves to the gallery,
+  /// this one inserts into the timeline.)
+  Future<void> _captureFrameInsert() async {
+    if (_clips.isEmpty || _busy) return;
+    final clip = _clips[_selected];
+    if (clip.isPhoto) {
+      _setStatus('Photo clip par Capture nahi — wo pehle se still hai.');
+      return;
+    }
+    final ctrl = _controller;
+    if (ctrl == null || !ctrl.value.isInitialized) {
+      _setStatus('Pehle clip ka preview load honay dein.');
+      return;
+    }
+    final posSec = ctrl.value.position.inMilliseconds / 1000.0;
+    setState(() => _busy = true);
+    try {
+      final dir = await _workDir();
+      final stamp = DateTime.now().millisecondsSinceEpoch;
+      final out = p.join(dir.path, 'capture_$stamp.png');
+      final r = await FfmpegService.run(
+        '-ss $posSec -i ${FfmpegService.q(clip.file.path)} '
+        '-frames:v 1 -q:v 2 -y ${FfmpegService.q(out)}',
+      );
+      if (!r.ok) {
+        _setStatus('Capture nahi hua. ${r.logs}');
+        return;
+      }
+      _pushHistory();
+      final idx = _selected;
+      final inside = posSec - clip.trimStart;
+      final still = VideoClip(
+        File(out),
+        const Duration(seconds: 2),
+        clip.aspectRatio,
+      )..isPhoto = true;
+      setState(() {
+        if (inside > 0.3 && inside < clip.effectiveDuration - 0.3) {
+          // Split at the playhead: [first][still][second].
+          final second = clip.copy()..trimStart = posSec;
+          clip.trimEnd = posSec;
+          _clips.insert(idx + 1, second);
+          _clips.insert(idx + 1, still);
+        } else {
+          _clips.insert(idx + 1, still);
+        }
+        _selected = idx + 1;
+      });
+      _setStatus('Capture — frame timeline mein lag gaya (2s still).');
+      await _loadPreview();
+    } catch (e) {
+      _setStatus('Capture failed: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// v1.5.0 Reverse (instant, InShot): the selected clip's TRIMMED
+  /// range is baked into a reversed processed copy which replaces
+  /// the clip (the same replace pattern as Smooth Slow-Mo). A clip
+  /// without an audio stream retries video-only.
+  Future<void> _reverseSelectedClip() async {
+    if (_clips.isEmpty || _busy) return;
+    final idx = _selected;
+    final clip = _clips[idx];
+    if (clip.isPhoto) {
+      _setStatus('Photo clip reverse nahi hota.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _status = 'Reverse ban raha hai…';
+    });
+    try {
+      final dir = await _workDir();
+      final stamp = DateTime.now().millisecondsSinceEpoch;
+      final out = p.join(dir.path, 'reverse_$stamp.mp4');
+      final base = '-ss ${clip.trimStart} -t ${clip.effectiveDuration} '
+          '-i ${FfmpegService.q(clip.file.path)} ';
+      var r = await FfmpegService.run(
+        '$base-vf reverse -af areverse -c:v libx264 -preset veryfast '
+        '-crf 23 -c:a aac -b:a 128k -y ${FfmpegService.q(out)}',
+      );
+      if (!r.ok) {
+        r = await FfmpegService.run(
+          '$base-vf reverse -an -c:v libx264 -preset veryfast '
+          '-crf 23 -y ${FfmpegService.q(out)}',
+        );
+      }
+      if (!r.ok) {
+        _setStatus('Reverse nahi hua. ${r.logs}');
+        return;
+      }
+      _pushHistory();
+      setState(() {
+        final nc = VideoClip(
+          File(out),
+          Duration(milliseconds: (clip.effectiveDuration * 1000).round()),
+          clip.aspectRatio,
+        );
+        nc.volume = clip.volume;
+        nc.muted = clip.muted;
+        _clips[idx] = nc;
+      });
+      _setStatus('Clip reverse ho gaya.');
+      await _loadPreview();
+    } catch (e) {
+      _setStatus('Reverse failed: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// v1.5.0 Rotate / Flip (InShot Rotate panel: exactly ROTATE +
+  /// FLIP): the trimmed range is baked into a processed copy —
+  /// transpose=1 (90° clockwise, aspect swaps) or hflip (mirror).
+  Future<void> _rotateSelectedClip({required bool flip}) async {
+    if (_clips.isEmpty || _busy) return;
+    final idx = _selected;
+    final clip = _clips[idx];
+    if (clip.isPhoto) {
+      _setStatus('Photo clip ke liye Photo Editor ka Rotate use karein.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _status = flip ? 'Flip ho raha hai…' : 'Rotate ho raha hai…';
+    });
+    try {
+      final dir = await _workDir();
+      final stamp = DateTime.now().millisecondsSinceEpoch;
+      final out = p.join(dir.path, '${flip ? 'flip' : 'rotate'}_$stamp.mp4');
+      final r = await FfmpegService.run(
+        '-ss ${clip.trimStart} -t ${clip.effectiveDuration} '
+        '-i ${FfmpegService.q(clip.file.path)} '
+        '-vf ${flip ? 'hflip' : 'transpose=1'} '
+        '-c:v libx264 -preset veryfast -crf 23 -c:a aac -b:a 128k '
+        '-y ${FfmpegService.q(out)}',
+      );
+      if (!r.ok) {
+        _setStatus('${flip ? 'Flip' : 'Rotate'} nahi hua. ${r.logs}');
+        return;
+      }
+      _pushHistory();
+      setState(() {
+        final nc = VideoClip(
+          File(out),
+          Duration(milliseconds: (clip.effectiveDuration * 1000).round()),
+          flip ? clip.aspectRatio : 1 / clip.aspectRatio,
+        );
+        nc.volume = clip.volume;
+        nc.muted = clip.muted;
+        _clips[idx] = nc;
+      });
+      _setStatus(flip ? 'Clip flip ho gaya.' : 'Clip 90° rotate ho gaya.');
+      await _loadPreview();
+    } catch (e) {
+      _setStatus('${flip ? 'Flip' : 'Rotate'} failed: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// v1.5.0 Enhance (video): an honest on-device HD enhance — 2x
+  /// lanczos upscale + unsharp + a touch of saturation, baked into
+  /// a processed copy. This is NOT the ESRGAN AI upscaler (that is
+  /// the Photo path); the panel labels it as such.
+  Future<void> _enhanceSelectedClipHd() async {
+    if (_clips.isEmpty || _busy) return;
+    final idx = _selected;
+    final clip = _clips[idx];
+    if (clip.isPhoto) {
+      _setStatus('Photo clip ke liye Photo Editor ka Enhance use karein.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _status = 'HD Enhance ban raha hai…';
+    });
+    try {
+      final dir = await _workDir();
+      final stamp = DateTime.now().millisecondsSinceEpoch;
+      final out = p.join(dir.path, 'enhance_$stamp.mp4');
+      final r = await FfmpegService.run(
+        '-ss ${clip.trimStart} -t ${clip.effectiveDuration} '
+        '-i ${FfmpegService.q(clip.file.path)} '
+        '-vf "scale=iw*2:ih*2:flags=lanczos,unsharp=5:5:1.0,'
+        'eq=saturation=1.05" '
+        '-c:v libx264 -preset veryfast -crf 20 -c:a aac -b:a 128k '
+        '-y ${FfmpegService.q(out)}',
+      );
+      if (!r.ok) {
+        _setStatus('HD Enhance nahi hua. ${r.logs}');
+        return;
+      }
+      _pushHistory();
+      setState(() {
+        final nc = VideoClip(
+          File(out),
+          Duration(milliseconds: (clip.effectiveDuration * 1000).round()),
+          clip.aspectRatio,
+        );
+        nc.volume = clip.volume;
+        nc.muted = clip.muted;
+        _clips[idx] = nc;
+      });
+      _setStatus('HD Enhance tayyar (2x upscale + sharpen).');
+      await _loadPreview();
+    } catch (e) {
+      _setStatus('HD Enhance failed: $e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -2548,6 +3056,10 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
             input: out,
             output: stab,
             workDir: dir,
+            // v1.5.0: the Stabilizer panel's level drives the
+            // vidstab strength (Standard = the old fixed values).
+            shakiness: _stabLevel == 1 ? 3 : (_stabLevel == 3 ? 8 : 5),
+            smoothing: _stabLevel == 1 ? 15 : (_stabLevel == 3 ? 60 : 30),
             expectedMs: (exportDurSec * 1000).round(),
             onProgress: (v) {
               final pct = (v * 100).round();
@@ -3963,75 +4475,41 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     _scheduleChromaPreview();
   }
 
-  Widget _railButton(String key, String label, IconData icon,
-      {String? tab}) {
-    final selected = _activeTool == key && (tab == null || _panelTab == tab);
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: () => tab == null ? _openTool(key) : _openToolTab(key, tab),
-        child: Container(
-          width: 76,
-          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-          decoration: BoxDecoration(
-            color: selected ? TjProTheme.violet : const Color(0xFF232323),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: 24, color: Colors.white),
-              const SizedBox(height: 4),
-              Text(
-                label,
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: Colors.white, fontSize: 11),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// One item of the clip-selected row (mockup S4b): icon +
-  /// label, red tint for Delete.
-  Widget _clipRowItem(
-    IconData icon,
-    String label,
-    VoidCallback? onTap, {
+  /// The InShot tool set (INSHOT-REFERENCE §B, exact order) as
+  /// (id, item) pairs — ONE list behind both the main row and the
+  /// clip row (the clip row filters it), so a tool can never exist
+  /// twice with two behaviours. Instant ops run immediately; the
+  /// rest open their panel. News is appended after Ease (33rd) so
+  /// the News template panel stays reachable — InShot's 32 keep
+  /// their exact order.
+  /// One item of an InShot tool row: icon above a small label,
+  /// 64 wide, in a horizontal swipeable line (mockups V1/V2).
+  Widget _toolRowItem({
+    required IconData icon,
+    required String label,
+    required VoidCallback? onTap,
     bool danger = false,
   }) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4),
+    final color = danger ? const Color(0xFFFF6B5E) : Colors.white;
+    return SizedBox(
+      width: 64,
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
         onTap: onTap,
-        child: Container(
-          width: 76,
-          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-          decoration: BoxDecoration(
-            color: const Color(0xFF232323),
-            borderRadius: BorderRadius.circular(12),
-          ),
+        child: Opacity(
+          opacity: onTap == null ? 0.4 : 1,
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon,
-                  size: 24,
-                  color: danger ? Colors.redAccent : Colors.white),
-              const SizedBox(height: 4),
-              Text(
-                label,
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: danger ? Colors.redAccent : Colors.white,
-                  fontSize: 11,
+              Icon(icon, color: color, size: 23),
+              const SizedBox(height: 3),
+              SizedBox(
+                height: 14,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    label,
+                    style: TextStyle(color: color, fontSize: 10.5),
+                  ),
                 ),
               ),
             ],
@@ -4041,154 +4519,358 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     );
   }
 
-  /// v1.4.0 CLIP-SELECTED ROW (mockup S4b — the context row that
-  /// did not exist before): shown in the tool zone while a clip
-  /// is selected from the timeline. Every item either runs its op
-  /// immediately (Split / Duplicate / Delete / Freeze / Extract /
-  /// Unlink / Reduce noise / Enhance voice) or opens the existing
-  /// panel that implements it (Volume → clip-volume panel; Speed /
-  /// Beats / Reverse → Edit tabs; Adjust / Filters → Colour tabs;
-  /// Animations → Overlay › Keyframes; Crop / Transform / Opacity
-  /// → Edit › Transform; Overlay / Mask → Overlay › PIP; Remove BG
-  /// → Overlay › Background; Stabilize → Edit › Steady; Retouch →
-  /// Colour › Adjust, the video grading panel — there is no
-  /// dedicated video retouch engine in the codebase).
-  Widget _clipToolRow() {
-    final busy = _busy;
+  /// The shell every tool row renders in: dark bar, ONE horizontal
+  /// swipeable line.
+  Widget _toolRowShell(String key, List<Widget> items) {
     return Container(
-      key: const ValueKey<String>('video-clip-row'),
+      key: ValueKey<String>(key),
       color: const Color(0xFF1B1B1B),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(4, 6, 12, 2),
-            child: Row(
-              children: [
-                IconButton(
-                  tooltip: 'Back to tools',
-                  onPressed: () => setState(() => _clipRow = false),
-                  icon: const Icon(Icons.arrow_back, color: Colors.white),
-                ),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: TjProTheme.gold,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    'Clip ${_selected + 1} selected',
-                    style: const TextStyle(
-                      color: Colors.black,
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                const Spacer(),
-                IconButton(
-                  tooltip: 'Done',
-                  onPressed: () => setState(() => _clipRow = false),
-                  icon: const Icon(Icons.check_circle,
-                      color: TjProTheme.gold, size: 26),
-                ),
-              ],
-            ),
-          ),
-          SizedBox(
-            height: 88,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-              children: [
-                _clipRowItem(Icons.content_cut, 'Split',
-                    busy ? null : _splitSelectedClip),
-                _clipRowItem(Icons.volume_up, 'Volume',
-                    () => _openTool('clipVolume')),
-                _clipRowItem(Icons.animation, 'Animations',
-                    () => _openToolTab('overlay', 'keyframes')),
-                _clipRowItem(Icons.auto_awesome, 'Effects',
-                    () => _openTool('effects')),
-                _clipRowItem(Icons.delete_outline, 'Delete',
-                    busy ? null : () => unawaited(_deleteSelectedClip()),
-                    danger: true),
-                _clipRowItem(
-                    Icons.speed, 'Speed', () => _openToolTab('edit', 'speed')),
-                _clipRowItem(Icons.graphic_eq, 'Beats',
-                    () => _openToolTab('edit', 'beat')),
-                _clipRowItem(
-                    Icons.crop, 'Crop', () => _openToolTab('edit', 'transform')),
-                _clipRowItem(Icons.copy, 'Duplicate',
-                    busy ? null : _duplicateSelectedClip),
-                _clipRowItem(Icons.find_replace, 'Replace',
-                    busy ? null : () => unawaited(_replaceSelectedClip())),
-                _clipRowItem(Icons.picture_in_picture_alt, 'Overlay',
-                    () => _openToolTab('overlay', 'pip')),
-                _clipRowItem(
-                    Icons.tune, 'Adjust', () => _openToolTab('colour', 'adjust')),
-                _clipRowItem(Icons.photo_filter, 'Filters',
-                    () => _openToolTab('colour', 'filters')),
-                _clipRowItem(Icons.face_retouching_natural, 'Retouch',
-                    () => _openToolTab('colour', 'adjust')),
-                _clipRowItem(Icons.person_remove, 'Remove BG',
-                    () => _openToolTab('overlay', 'background')),
-                _clipRowItem(Icons.opacity, 'Opacity',
-                    () => _openToolTab('edit', 'transform')),
-                _clipRowItem(Icons.ac_unit, 'Freeze',
-                    busy ? null : () => unawaited(_freezeFrameInsert())),
-                _clipRowItem(Icons.history, 'Reverse',
-                    () => _openToolTab('edit', 'speed')),
-                _clipRowItem(Icons.blur_on, 'Mask',
-                    () => _openToolTab('overlay', 'pip')),
-                _clipRowItem(Icons.audio_file_outlined, 'Extract audio',
-                    busy ? null : () => unawaited(_extractClipAudio())),
-                _clipRowItem(Icons.link_off, 'Unlink audio',
-                    busy ? null : () => unawaited(_unlinkSelectedClipAudio())),
-                _clipRowItem(
-                    Icons.noise_control_off,
-                    'Reduce noise',
-                    busy
-                        ? null
-                        : () => unawaited(
-                            _enhanceSelectedClipAudio(voice: false))),
-                _clipRowItem(
-                    Icons.record_voice_over,
-                    'Enhance voice',
-                    busy
-                        ? null
-                        : () =>
-                            unawaited(_enhanceSelectedClipAudio(voice: true))),
-                _clipRowItem(Icons.videocam, 'Stabilize',
-                    () => _openToolTab('edit', 'steady')),
-                _clipRowItem(Icons.transform, 'Transform',
-                    () => _openToolTab('edit', 'transform')),
-              ],
-            ),
-          ),
-        ],
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+        children: items,
       ),
     );
+  }
+
+  List<(String, Widget)> _toolItems() {
+    final busy = _busy;
+    final hasClip = _clips.isNotEmpty;
+    VoidCallback? clipOp(Future<void> Function() f) =>
+        (busy || !hasClip) ? null : () => unawaited(f());
+    return [
+      ('canvas',
+          _toolRowItem(
+            icon: Icons.aspect_ratio,
+            label: 'Canvas',
+            onTap: () => _openTool('canvas'),
+          )),
+      ('audio',
+          _toolRowItem(
+            icon: Icons.music_note,
+            label: 'Audio',
+            onTap: () => _openTool('audio'),
+          )),
+      ('sticker',
+          _toolRowItem(
+            icon: Icons.emoji_emotions,
+            label: 'Sticker',
+            onTap: () => _openToolTab('overlay', 'sticker'),
+          )),
+      ('text',
+          _toolRowItem(
+            icon: Icons.text_fields,
+            label: 'Text',
+            onTap: () => _openTool('text'),
+          )),
+      ('effect',
+          _toolRowItem(
+            icon: Icons.auto_awesome,
+            label: 'Effect',
+            onTap: () => _openTool('effects'),
+          )),
+      ('filter',
+          _toolRowItem(
+            icon: Icons.photo_filter,
+            label: 'Filter',
+            onTap: () => _openToolTab('colour', 'filters'),
+          )),
+      ('pip',
+          _toolRowItem(
+            icon: Icons.picture_in_picture_alt,
+            label: 'PIP',
+            onTap: () => _openToolTab('overlay', 'pip'),
+          )),
+      ('precut',
+          _toolRowItem(
+            icon: Icons.content_cut,
+            label: 'Precut',
+            onTap: () => _openTool('precut'),
+          )),
+      ('split',
+          _toolRowItem(
+            icon: Icons.call_split,
+            label: 'Split',
+            onTap: (busy || !hasClip) ? null : _splitSelectedClip,
+          )),
+      ('delete',
+          _toolRowItem(
+            icon: Icons.delete_outline,
+            label: 'Delete',
+            danger: true,
+            onTap: clipOp(_deleteSelectedClip),
+          )),
+      ('volume',
+          _toolRowItem(
+            icon: Icons.volume_up,
+            label: 'Volume',
+            onTap: () => _openTool('volume'),
+          )),
+      ('background',
+          _toolRowItem(
+            icon: Icons.wallpaper,
+            label: 'Background',
+            onTap: () => _openToolTab('canvas', 'background'),
+          )),
+      ('speed',
+          _toolRowItem(
+            icon: Icons.speed,
+            label: 'Speed',
+            onTap: () => _openTool('speed'),
+          )),
+      ('animation',
+          _toolRowItem(
+            icon: Icons.animation,
+            label: 'Animation',
+            onTap: () => _openToolTab('overlay', 'keyframes'),
+          )),
+      ('aicut',
+          _toolRowItem(
+            icon: Icons.content_cut_outlined,
+            label: 'AI Cut',
+            onTap: () => _openTool('aicut'),
+          )),
+      ('voiceenhance',
+          _toolRowItem(
+            icon: Icons.record_voice_over,
+            label: 'Voice Enhance',
+            onTap: () => _openTool('voiceenhance'),
+          )),
+      ('crop',
+          _toolRowItem(
+            icon: Icons.crop,
+            label: 'Crop',
+            onTap: () => _openToolTab('edit', 'transform'),
+          )),
+      ('switch',
+          _toolRowItem(
+            icon: Icons.swap_vert,
+            label: 'Switch',
+            onTap: clipOp(_switchSelectedClipToPip),
+          )),
+      ('enhance',
+          _toolRowItem(
+            icon: Icons.high_quality,
+            label: 'Enhance',
+            onTap: () => _openTool('enhance'),
+          )),
+      ('stabilizer',
+          _toolRowItem(
+            icon: Icons.videocam,
+            label: 'Stabilizer',
+            onTap: () => _openTool('stabilizer'),
+          )),
+      ('cutout',
+          _toolRowItem(
+            icon: Icons.person_remove,
+            label: 'Cutout',
+            onTap: () => _openTool('cutout'),
+          )),
+      ('mask',
+          _toolRowItem(
+            icon: Icons.blur_on,
+            label: 'Mask',
+            onTap: () => _openTool('mask'),
+          )),
+      ('templates',
+          _toolRowItem(
+            icon: Icons.dashboard_customize,
+            label: 'Templates',
+            // #31: the editor's Templates slot opens OUR Online
+            // Store on its Templates section.
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) =>
+                      const StoreScreen(initialCategory: 'Templates'),
+                ),
+              );
+            },
+          )),
+      ('opacity',
+          _toolRowItem(
+            icon: Icons.opacity,
+            label: 'Opacity',
+            onTap: () => _openTool('opacity'),
+          )),
+      ('replace',
+          _toolRowItem(
+            icon: Icons.find_replace,
+            label: 'Replace',
+            onTap: clipOp(_replaceSelectedClip),
+          )),
+      ('voiceeffect',
+          _toolRowItem(
+            icon: Icons.voice_chat,
+            label: 'Voice Effect',
+            onTap: () => _openToolTab('audio', 'voice'),
+          )),
+      ('duplicate',
+          _toolRowItem(
+            icon: Icons.copy,
+            label: 'Duplicate',
+            onTap: (busy || !hasClip) ? null : _duplicateSelectedClip,
+          )),
+      ('rotate',
+          _toolRowItem(
+            icon: Icons.rotate_right,
+            label: 'Rotate',
+            onTap: () => _openTool('rotate'),
+          )),
+      ('freeze',
+          _toolRowItem(
+            icon: Icons.ac_unit,
+            label: 'Freeze',
+            onTap: clipOp(_freezeFrameInsert),
+          )),
+      ('capture',
+          _toolRowItem(
+            icon: Icons.camera_alt_outlined,
+            label: 'Capture',
+            onTap: clipOp(_captureFrameInsert),
+          )),
+      ('reverse',
+          _toolRowItem(
+            icon: Icons.history,
+            label: 'Reverse',
+            onTap: clipOp(_reverseSelectedClip),
+          )),
+      ('ease',
+          _toolRowItem(
+            icon: Icons.show_chart,
+            label: 'Ease',
+            onTap: () => _openTool('ease'),
+          )),
+      ('news',
+          _toolRowItem(
+            icon: Icons.newspaper,
+            label: 'News',
+            onTap: () => _openTool('news'),
+          )),
+    ];
+  }
+
+  /// MAIN tool row (mockup V1): the full InShot order.
+  Widget _mainToolRow() {
+    return _toolRowShell(
+      'video-rail',
+      _toolItems().map((e) => e.$2).toList(),
+    );
+  }
+
+  /// CLIP row (mockup V2): the main row minus Canvas / Audio /
+  /// Sticker / Text (InShot's rule), led by a ✓ that exits clip
+  /// mode. Every item is the SAME item as in the main row — the
+  /// v1.4.0 clip row's duplicate mappings (Retouch→Adjust, a second
+  /// Opacity→Transform, Reverse→Speed, Mask→PIP) are gone.
+  Widget _clipToolRow() {
+    const excluded = {'canvas', 'audio', 'sticker', 'text'};
+    return _toolRowShell('video-clip-row', [
+      _toolRowItem(
+        icon: Icons.check_circle,
+        label: 'Done',
+        onTap: () => setState(() => _clipRow = false),
+      ),
+      for (final e in _toolItems())
+        if (!excluded.contains(e.$1)) e.$2,
+    ]);
+  }
+
+  /// ELEMENT row (PIP selected): scoped to the ops that are real
+  /// for our single-inset PIP model — source / edit / delete /
+  /// Switch back to the main track / Mask / Blend / Opacity / Ease.
+  /// (InShot's fuller element row also trims/speeds the element;
+  /// our PIP has no trim/speed model — PARTIAL, see the report.)
+  Widget _elementToolRow() {
+    return _toolRowShell('video-element-row', [
+      _toolRowItem(
+        icon: Icons.check_circle,
+        label: 'Done',
+        onTap: () => setState(() => _elementRow = false),
+      ),
+      _toolRowItem(
+        icon: Icons.picture_in_picture_alt,
+        label: 'PIP',
+        onTap: () => _openToolTab('overlay', 'pip'),
+      ),
+      _toolRowItem(
+        icon: Icons.edit,
+        label: 'Edit',
+        onTap: () => _openToolTab('overlay', 'pip'),
+      ),
+      _toolRowItem(
+        icon: Icons.delete_outline,
+        label: 'Delete',
+        danger: true,
+        onTap: _busy
+            ? null
+            : () => setState(() {
+                  _fxPip = false;
+                  _fxPipVideo = '';
+                  _elementRow = false;
+                }),
+      ),
+      _toolRowItem(
+        icon: Icons.swap_vert,
+        label: 'Switch',
+        onTap: _busy ? null : () => unawaited(_switchPipToMainTrack()),
+      ),
+      _toolRowItem(
+        icon: Icons.blur_on,
+        label: 'Mask',
+        onTap: () => _openTool('mask'),
+      ),
+      _toolRowItem(
+        icon: Icons.layers,
+        label: 'Blend',
+        onTap: () => _openToolTab('overlay', 'pip'),
+      ),
+      _toolRowItem(
+        icon: Icons.opacity,
+        label: 'Opacity',
+        onTap: () => _openTool('opacity'),
+      ),
+      _toolRowItem(
+        icon: Icons.show_chart,
+        label: 'Ease',
+        onTap: () => _openTool('ease'),
+      ),
+    ]);
   }
 
   /// Display name for a tool key (used in the panel header).
   String _toolDisplayName(String key) {
     const Map<String, String> names = <String, String>{
-      'edit': 'Edit',
+      'canvas': 'Canvas',
       'audio': 'Audio',
       'text': 'Text',
       'colour': 'Colour',
       'effects': 'Effects',
       'overlay': 'Overlay',
+      'precut': 'Precut',
+      'volume': 'Volume',
+      'clipVolume': 'Volume',
+      'speed': 'Speed',
+      'aicut': 'AI Cut',
+      'voiceenhance': 'Voice Enhance',
+      'edit': 'Crop',
+      'enhance': 'Enhance',
+      'stabilizer': 'Stabilizer',
+      'cutout': 'Cutout',
+      'mask': 'Mask',
+      'opacity': 'Opacity',
+      'rotate': 'Rotate',
+      'ease': 'Ease',
       'transitions': 'Transitions',
       'news': 'News',
-      'clipVolume': 'Clip Volume',
     };
     return names[key] ?? key;
   }
 
-  /// Header for the open tool panel: Back button + tool name + Done button.
-  /// CapCut-style: Back/Done closes the panel and returns to the tool grid.
+  /// Header for the open tool panel: Back button + tool name + ✓.
+  /// v1.5.0 (#11): the confirm is a ✓ ICON everywhere — v1.4.0 mixed
+  /// 'Done' text here, a ✓ in Photo and a purple ✓ elsewhere.
   Widget _toolPanelHeader(String toolKey) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -4210,12 +4892,155 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          TextButton(
+          IconButton(
+            tooltip: 'Done',
             onPressed: () => _openTool(null),
-            child: const Text('Done'),
+            icon: const Icon(Icons.check, color: TjProTheme.gold),
           ),
         ],
       ),
+    );
+  }
+
+  /// v1.5.0 top bar (mockups V1/V2 — NO AppBar): back arrow, help
+  /// (the tool index lives inside it), quality as plain text, and
+  /// Export as PLAIN TEXT top-right (no pill).
+  Widget _topBar() {
+    final topPad = MediaQuery.of(context).padding.top;
+    return Container(
+      color: const Color(0xFF1E1E1E),
+      padding: EdgeInsets.fromLTRB(4, topPad + 2, 8, 2),
+      child: Row(
+        children: [
+          IconButton(
+            tooltip: 'Close editor',
+            icon: const Icon(Icons.arrow_back, color: Colors.white),
+            onPressed: () => Navigator.of(context).maybePop(),
+          ),
+          IconButton(
+            tooltip: 'Help — saare tools ki list',
+            icon: const Icon(Icons.help_outline, color: Colors.white),
+            onPressed: _busy ? null : _showToolSearch,
+          ),
+          const Spacer(),
+          TextButton(
+            onPressed: _busy ? null : _pickExportQuality,
+            child: Text(
+              _qualityLabel,
+              style: const TextStyle(color: Colors.white70),
+            ),
+          ),
+          TextButton(
+            onPressed: _busy ? null : _export,
+            child: Text(
+              _busy ? 'Exporting…' : 'Export',
+              style: const TextStyle(
+                color: TjProTheme.gold,
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Stage height (v1.5.0): 60% of the screen in tool-row mode (the
+  /// user's preview-size ruling, overriding InShot's ≈57%); with a
+  /// panel open the stage takes what the fixed chrome leaves.
+  double _stageHeight(BuildContext context) {
+    final screenH = MediaQuery.of(context).size.height;
+    if (_activeTool == null) return screenH * 0.60;
+    final topPad = MediaQuery.of(context).padding.top;
+    const chrome = 50.0 + 46.0 + 148.0 + 236.0; // bar+transport+timeline+panel
+    final banner = _handoffProject != null ? 34.0 : 0.0;
+    return (screenH - topPad - chrome - banner).clamp(170.0, screenH);
+  }
+
+  /// v1.5.0 transport row — BELOW the preview (v1.4.0 overlaid it on
+  /// the stage, hiding the frame's bottom, #10). Everything reads
+  /// the ONE clock + timeline model: undo / redo, plain play/pause
+  /// (no gold circle), current / total from [_globalPositionSec] /
+  /// [_totalDurationSec], keyframe toggle, fullscreen. Rebuilds on
+  /// every clock tick — the counter RUNS (#30).
+  Widget _transportRow() {
+    String fmt(double sec) {
+      final m = sec ~/ 60;
+      final ss = (sec % 60).toStringAsFixed(1).padLeft(4, '0');
+      return '$m:$ss';
+    }
+
+    return AnimatedBuilder(
+      animation: _clock,
+      builder: (context, _) {
+        final ctrl = _controller;
+        final ready = ctrl != null && ctrl.value.isInitialized;
+        final playing = _clock.isPlaying;
+        return Container(
+          height: 46,
+          color: const Color(0xFF121212),
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Row(
+            children: [
+              IconButton(
+                tooltip: 'Undo',
+                onPressed: _undoStack.isEmpty ? null : _undo,
+                icon: const Icon(Icons.undo, color: Colors.white, size: 20),
+              ),
+              IconButton(
+                tooltip: 'Redo',
+                onPressed: _redoStack.isEmpty ? null : _redo,
+                icon: const Icon(Icons.redo, color: Colors.white, size: 20),
+              ),
+              const Spacer(),
+              IconButton(
+                tooltip: playing ? 'Pause' : 'Play',
+                onPressed: !ready
+                    ? null
+                    : () {
+                        if (playing) {
+                          ctrl.pause();
+                        } else {
+                          ctrl.play();
+                        }
+                      },
+                icon: Icon(
+                  playing ? Icons.pause : Icons.play_arrow,
+                  color: Colors.white,
+                  size: 26,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '${fmt(_globalPositionSec)} / ${fmt(_totalDurationSec)}',
+                style: const TextStyle(color: Colors.white, fontSize: 12),
+              ),
+              const Spacer(),
+              IconButton(
+                tooltip: 'Keyframes on/off',
+                onPressed: () {
+                  setState(() => _proKeyframes = !_proKeyframes);
+                  _setStatus(
+                    _proKeyframes ? 'Keyframes ON.' : 'Keyframes OFF.',
+                  );
+                },
+                icon: Icon(
+                  Icons.diamond,
+                  color: _proKeyframes ? TjProTheme.gold : Colors.white54,
+                  size: 20,
+                ),
+              ),
+              IconButton(
+                tooltip: 'Fullscreen',
+                onPressed: ready ? _openFullscreen : null,
+                icon: const Icon(Icons.fullscreen,
+                    color: Colors.white, size: 22),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -4225,20 +5050,16 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     final clip = _clips.isEmpty ? null : _clips[_selected];
     final ctrl = _controller;
     final ready = ctrl != null && ctrl.value.isInitialized;
-    final isPlaying = ready && ctrl.value.isPlaying;
     // PIP preview sync (idempotent; only acts on a pick change).
     if ((_fxPip && _fxPipVideo.isNotEmpty && _pipControllerPath != _fxPipVideo) ||
         (!_fxPip && _pipController != null)) {
       WidgetsBinding.instance
           .addPostFrameCallback((_) => _ensurePipPreview());
     }
-    final posSec = ready ? ctrl.value.position.inMilliseconds / 1000 : 0.0;
-    final durSec = clip != null ? clip.duration.inMilliseconds / 1000 : 0.0;
-    String fmt(double sec) {
-      final m = sec ~/ 60;
-      final ss = (sec % 60).toStringAsFixed(1).padLeft(4, '0');
-      return '$m:$ss';
-    }
+    // v1.5.0: build() no longer reads the controller's position —
+    // the transport row listens to the ONE TimelineClock instead
+    // (#30: the frozen counter's root cause was exactly this
+    // read-once-per-build pattern).
 
     return Theme(
       data: ThemeData.dark().copyWith(
@@ -4247,67 +5068,15 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       ),
       child: Scaffold(
         backgroundColor: const Color(0xFF121212),
-        appBar: AppBar(
-          backgroundColor: const Color(0xFF1E1E1E),
-          // v1.4.0 CapCut top bar (mockup S4a): ✕ + search on the
-          // left, quality selector + Export on the right — no title.
-          leadingWidth: 104,
-          leading: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                tooltip: 'Close editor',
-                icon: const Icon(Icons.close, color: Colors.white),
-                onPressed: () => Navigator.of(context).maybePop(),
-              ),
-              IconButton(
-                tooltip: 'Search tools',
-                icon: const Icon(Icons.search, color: Colors.white),
-                onPressed: _busy ? null : _showToolSearch,
-              ),
-            ],
-          ),
-          actions: [
-            // Export-quality pill (§3): tap to set the quality
-            // ahead of time; Export then skips its dialog.
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              child: OutlinedButton(
-                onPressed: _busy ? null : _pickExportQuality,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.white,
-                  side: const BorderSide(color: Colors.white38),
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                ),
-                child: Text(_qualityLabel),
-              ),
-            ),
-            // ONE gold Export pill — top-right, always (§3/§4).
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 8, 12, 8),
-              child: ElevatedButton.icon(
-                onPressed: _busy ? null : _export,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: TjProTheme.gold,
-                  foregroundColor: Colors.black,
-                ),
-                icon: const Icon(Icons.ios_share, size: 18),
-                label: Text(_busy ? 'Exporting…' : 'Export'),
-              ),
-            ),
-          ],
-        ),
-        // LAYOUT v1.3.0 (§3 — the user's screenshot complaint: the
-        // preview was crushed by permanently-open blocks). Top to
-        // bottom: handoff banner → BIG stage (dominant share, the
-        // transport row pinned to ITS bottom, status as a transient
-        // overlay chip) → timeline directly under the stage → ONE
-        // tool zone: the tool rail, or ONLY the open tool's panel
-        // in the rail's place. Nothing else is ever open; there is
-        // NO separate Add-video row (the + tile lives at the end
-        // of the timeline) and NO second Export button.
+        // LAYOUT v1.5.0 (InShot copy, mockups V1/V2): NO AppBar —
+        // the custom top bar (back / help / quality / plain-text
+        // Export) → handoff banner → stage (60% in row mode) →
+        // transport row BELOW the stage → centred-playhead timeline
+        // → ONE tool zone (main row / clip row / element row / the
+        // open panel). Nothing else is ever open.
         body: Column(
           children: [
+            _topBar(),
             if (_handoffProject != null)
               Container(
                 width: double.infinity,
@@ -4329,7 +5098,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
                 ),
               ),
             // ---- STAGE ----
-            Expanded(
+            SizedBox(
+              height: _stageHeight(context),
               child: Container(
                 color: Colors.black,
                 child: Stack(
@@ -4501,184 +5271,21 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
                           ),
                         ),
                       ),
-                    // Transport row — pinned to the STAGE bottom.
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      child: Container(
-                        color: Colors.black.withValues(alpha: 0.55),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 4),
-                        child: Row(
-                          children: [
-                            IconButton(
-                              tooltip: 'Undo',
-                              onPressed: _undoStack.isEmpty ? null : _undo,
-                              icon: const Icon(Icons.undo,
-                                  color: Colors.white, size: 20),
-                            ),
-                            IconButton(
-                              tooltip: 'Redo',
-                              onPressed: _redoStack.isEmpty ? null : _redo,
-                              icon: const Icon(Icons.redo,
-                                  color: Colors.white, size: 20),
-                            ),
-                            const Spacer(),
-                            if (ready)
-                              InkWell(
-                                onTap: () {
-                                  setState(() {
-                                    isPlaying ? ctrl.pause() : ctrl.play();
-                                  });
-                                },
-                                borderRadius: BorderRadius.circular(24),
-                                child: Container(
-                                  width: 48,
-                                  height: 48,
-                                  decoration: const BoxDecoration(
-                                    color: TjProTheme.gold,
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: Icon(
-                                    isPlaying
-                                        ? Icons.pause
-                                        : Icons.play_arrow,
-                                    color: Colors.black,
-                                    size: 28,
-                                  ),
-                                ),
-                              ),
-                            const SizedBox(width: 12),
-                            Text(
-                              '${fmt(posSec)} / ${fmt(durSec)}',
-                              style: const TextStyle(
-                                  color: Colors.white, fontSize: 12),
-                            ),
-                            const Spacer(),
-                            // v1.4.0 transport: snap toggle (Split
-                            // at playhead when ON).
-                            IconButton(
-                              tooltip: _snapOn
-                                  ? 'Snap ON — Split playhead par katega'
-                                  : 'Snap OFF — Split darmiyan se katega',
-                              onPressed: () =>
-                                  setState(() => _snapOn = !_snapOn),
-                              icon: Icon(
-                                Icons.push_pin,
-                                color: _snapOn
-                                    ? TjProTheme.gold
-                                    : Colors.white54,
-                                size: 20,
-                              ),
-                            ),
-                            IconButton(
-                              tooltip: 'Fullscreen',
-                              onPressed: ready ? _openFullscreen : null,
-                              icon: const Icon(Icons.fullscreen,
-                                  color: Colors.white, size: 22),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
                   ],
                 ),
               ),
             ),
-            // ---- TIMELINE (directly under the stage) ----
-            _timelineSection(clip),
-            // ---- TOOL ZONE: rail ⇄ the one open panel ----
+            // ---- TRANSPORT (below the stage, #10) ----
+            _transportRow(),
+            // ---- TIMELINE (directly under the transport) ----
+            _timelineBar(),
+            // ---- TOOL ZONE: row ⇄ the one open panel ----
             SizedBox(
-              height: 218,
+              height: _activeTool != null ? 236 : 76,
               child: AnimatedSwitcher(
                 duration: const Duration(milliseconds: 150),
-                transitionBuilder:
-                    (Widget child, Animation<double> animation) {
-                  return FadeTransition(
-                    opacity: animation,
-                    child: SlideTransition(
-                      position: Tween<Offset>(
-                        begin: const Offset(0, 0.05),
-                        end: Offset.zero,
-                      ).animate(CurvedAnimation(
-                          parent: animation, curve: Curves.easeOut)),
-                      child: child,
-                    ),
-                  );
-                },
-                child: _activeTool == null
-                    ? (_clipRow && _clips.isNotEmpty
-                        ? _clipToolRow()
-                        : Container(
-                            key: const ValueKey<String>('video-rail'),
-                        color: const Color(0xFF1B1B1B),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Padding(
-                              padding: EdgeInsets.fromLTRB(12, 10, 12, 2),
-                              child: Text(
-                                'Tools — koi tool chunein, sirf usi ke '
-                                'controls khulenge.',
-                                style: TextStyle(
-                                    color: Colors.grey, fontSize: 12),
-                              ),
-                            ),
-                            SizedBox(
-                              height: 88,
-                              child: ListView(
-                                scrollDirection: Axis.horizontal,
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 6),
-                                children: [
-                                  // v1.4.0 MAIN TOOL ROW (mockup
-                                  // S4a): Edit, Audio, Text, Effects,
-                                  // Overlay, Captions, Filters,
-                                  // Adjust, Stickers, Aspect ratio,
-                                  // Background — plus the existing
-                                  // Transitions + News (nothing is
-                                  // removed). Promoted entries open
-                                  // the SAME panels on their tab.
-                                  _railButton(
-                                      'edit', 'Edit', Icons.content_cut),
-                                  _railButton(
-                                      'audio', 'Audio', Icons.music_note),
-                                  _railButton(
-                                      'text', 'Text', Icons.text_fields),
-                                  _railButton('effects', 'Effects',
-                                      Icons.auto_awesome),
-                                  _railButton(
-                                      'overlay', 'Overlay', Icons.layers),
-                                  _railButton('text', 'Captions',
-                                      Icons.closed_caption,
-                                      tab: 'captions'),
-                                  _railButton('colour', 'Filters',
-                                      Icons.photo_filter,
-                                      tab: 'filters'),
-                                  _railButton(
-                                      'colour', 'Adjust', Icons.tune,
-                                      tab: 'adjust'),
-                                  _railButton('overlay', 'Stickers',
-                                      Icons.emoji_emotions,
-                                      tab: 'sticker'),
-                                  _railButton('edit', 'Aspect ratio',
-                                      Icons.aspect_ratio,
-                                      tab: 'trim'),
-                                  _railButton('overlay', 'Background',
-                                      Icons.wallpaper,
-                                      tab: 'background'),
-                                  _railButton('transitions', 'Transitions',
-                                      Icons.swap_horiz),
-                                  _railButton(
-                                      'news', 'News', Icons.newspaper),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                          ))
-                    : Container(
+                child: _activeTool != null
+                    ? Container(
                         key: ValueKey<String>('video-panel-${_activeTool!}'),
                         color: const Color(0xFF121212),
                         padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
@@ -4695,7 +5302,12 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
                             ),
                           ],
                         ),
-                      ),
+                      )
+                    : _elementRow && _fxPip
+                        ? _elementToolRow()
+                        : _clipRow && _clips.isNotEmpty
+                            ? _clipToolRow()
+                            : _mainToolRow(),
               ),
             ),
           ],
