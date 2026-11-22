@@ -29,6 +29,7 @@ import '../services/caption_styles.dart';
 import '../services/export_settings.dart';
 import '../services/gemini_voice_service.dart';
 import 'channel_preset.dart';
+import 'element_override.dart';
 import 'news_analysis.dart';
 
 /// A fact-check source the user attached. The app does NOT auto-verify
@@ -136,12 +137,14 @@ class NewsProject {
     this.captionShadow = false,
     this.captionBackground = false,
     this.captionDualLanguage = false,
+    Map<String, ElementOverride>? elementOverrides,
     this.voiceSpeed = 1.0,
     this.voicePauseSec = 0.0,
     this.voiceMusic = false,
     DateTime? createdAt,
     DateTime? updatedAt,
-  })  : clipPaths = clipPaths ?? [],
+  })  : elementOverrides = elementOverrides ?? {},
+        clipPaths = clipPaths ?? [],
         subtitles = subtitles ?? [],
         sources = sources ?? [],
         seo = seo ?? SeoData(),
@@ -167,6 +170,12 @@ class NewsProject {
   /// projects). When a Gemini voice is picked, [voice] is kept in
   /// sync so every other reader of the project stays correct.
   String studioVoiceId;
+
+  /// v1.5.0 (#33): per-element MANUAL overrides (move / resize /
+  /// hide) for the Final template's elements, keyed by
+  /// [NewsElement] id. Empty = the template renders exactly as
+  /// finalised. Applied by the preview + the parity export.
+  Map<String, ElementOverride> elementOverrides;
 
   /// Cached voiceover WAV path (from GeminiVoiceService), or null.
   String? voiceoverPath;
@@ -333,6 +342,7 @@ class NewsProject {
     bool? captionShadow,
     bool? captionBackground,
     bool? captionDualLanguage,
+    Map<String, ElementOverride>? elementOverrides,
     double? voiceSpeed,
     double? voicePauseSec,
     bool? voiceMusic,
@@ -370,6 +380,8 @@ class NewsProject {
       captionShadow: captionShadow ?? this.captionShadow,
       captionBackground: captionBackground ?? this.captionBackground,
       captionDualLanguage: captionDualLanguage ?? this.captionDualLanguage,
+      elementOverrides: elementOverrides ??
+          Map<String, ElementOverride>.from(this.elementOverrides),
       voiceSpeed: voiceSpeed ?? this.voiceSpeed,
       voicePauseSec: voicePauseSec ?? this.voicePauseSec,
       voiceMusic: voiceMusic ?? this.voiceMusic,
@@ -384,6 +396,9 @@ class NewsProject {
         'tehreer': tehreer,
         'voice': voice.apiName,
         'studioVoiceId': studioVoiceId,
+        'elementOverrides': elementOverrides.map(
+          (k, v) => MapEntry(k, v.toJson()),
+        ),
         'voiceoverPath': voiceoverPath,
         'voiceoverDurationSec': voiceoverDurationSec,
         'clipPaths': clipPaths,
@@ -447,6 +462,15 @@ class NewsProject {
         }
       }
     }
+    final rawOverrides = json['elementOverrides'];
+    final overrides = <String, ElementOverride>{};
+    if (rawOverrides is Map<String, dynamic>) {
+      for (final e in rawOverrides.entries) {
+        if (e.value is Map<String, dynamic>) {
+          overrides[e.key] = ElementOverride.fromJson(e.value);
+        }
+      }
+    }
     final rawSeo = json['seo'];
     CaptionPosition captionPositionFrom(String? name) =>
         CaptionPosition.values.firstWhere(
@@ -464,6 +488,7 @@ class NewsProject {
       tehreer: (json['tehreer'] as String?) ?? '',
       voice: voice,
       studioVoiceId: (json['studioVoiceId'] as String?) ?? '',
+      elementOverrides: overrides,
       voiceoverPath: json['voiceoverPath'] as String?,
       voiceoverDurationSec:
           (json['voiceoverDurationSec'] as num?)?.toDouble(),

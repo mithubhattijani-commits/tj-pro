@@ -295,11 +295,14 @@ class _NewsStudioScreenState extends State<NewsStudioScreen> {
                             mediaPaths: latest.clipPaths,
                             fontReady: data.fontReady,
                             height: 280,
+                            elementOverrides: latest.elementOverrides,
                           )
                         : NigraanFinalPreview(
                             preset: preset,
                             fontReady: data.fontReady,
                             height: 280,
+                            elementOverrides:
+                                latest?.elementOverrides ?? const {},
                           )
                     : preset.templateKind == kTemplateBreaking
                         ? BreakingTemplatePreview(

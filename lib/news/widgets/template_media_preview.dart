@@ -27,6 +27,7 @@ import 'package:video_player/video_player.dart';
 
 import '../../live/parity_template.dart';
 import '../channel_preset.dart';
+import '../element_override.dart';
 import 'nigraan_final_preview.dart';
 
 /// True for file extensions the reel export treats as a still photo
@@ -48,9 +49,16 @@ class TemplateMediaPreview extends StatefulWidget {
     required this.mediaPaths,
     this.fontReady = false,
     this.height = 300,
+    this.elementOverrides = const {},
   });
 
   final ChannelPreset preset;
+
+  /// v1.5.0 (#33): the project's manual element overrides — the
+  /// furniture preview receives them, the media layer is moved /
+  /// scaled / hidden by the media override, and the logo notch
+  /// follows the logo + capsule overrides.
+  final Map<String, ElementOverride> elementOverrides;
 
   /// The project's clip paths, in order; the first existing file is
   /// previewed in the main area.
@@ -137,7 +145,11 @@ class _TemplateMediaPreviewState extends State<TemplateMediaPreview> {
       1080,
       1920,
       variant: isFinal3 ? ParityVariant.final3 : ParityVariant.classic2,
+      overrides: widget.elementOverrides,
     );
+    final mediaOv = overrideFor(widget.elementOverrides, NewsElement.media);
+    final logoOv = overrideFor(widget.elementOverrides, NewsElement.logo);
+    final capOv = overrideFor(widget.elementOverrides, NewsElement.capsule);
     final scaleW = w / 1080;
     final scaleH = h / 1920;
     final ribbonH = (g.ribbonH * scaleH).clamp(22.0, 200.0);
@@ -186,9 +198,10 @@ class _TemplateMediaPreviewState extends State<TemplateMediaPreview> {
     final logoH = isFinal3 ? logoW * 344 / 408 : logoW * 347 / 422;
     final capsuleH =
         (g.capsuleH * scaleH).clamp(isFinal3 ? 9.0 : 15.0, 200.0);
-    final capTop = urduTop + midH - capsuleH - g.f3BlockLift * scaleH;
+    final capTop = urduTop + midH - capsuleH - g.f3BlockLift * scaleH +
+        capOv.dy * h;
     final logoTop = capTop - logoH;
-    final logoLeft = w - g.logoMargin * scaleW - logoW;
+    final logoLeft = w - g.logoMargin * scaleW - logoW + logoOv.dx * w;
 
     return SizedBox(
       width: w,
@@ -199,8 +212,9 @@ class _TemplateMediaPreviewState extends State<TemplateMediaPreview> {
             preset: preset,
             fontReady: widget.fontReady,
             height: h,
+            elementOverrides: widget.elementOverrides,
           ),
-          if (first != null)
+          if (first != null && !mediaOv.hidden)
             Positioned.fill(
               child: ClipPath(
                 clipper: _MainAreaClipper(
@@ -209,7 +223,13 @@ class _TemplateMediaPreviewState extends State<TemplateMediaPreview> {
                   notchTop: logoTop,
                   notchLeft: logoLeft,
                 ),
-                child: _mediaLayer(first),
+                child: Transform.translate(
+                  offset: Offset(mediaOv.dx * w, mediaOv.dy * h),
+                  child: Transform.scale(
+                    scale: mediaOv.scale,
+                    child: _mediaLayer(first),
+                  ),
+                ),
               ),
             ),
           if (first != null && widget.mediaPaths.length > 1)
@@ -295,4 +315,48 @@ class _MainAreaClipper extends CustomClipper<Path> {
       bottom != oldClipper.bottom ||
       notchTop != oldClipper.notchTop ||
       notchLeft != oldClipper.notchLeft;
+}
+
+/// v1.5.0 (#33): the Final template's element rectangles in a
+/// [w]x[h] preview frame, WITH the project's overrides applied —
+/// the News Maker's selection / drag layer hit-tests against
+/// these, so what the user grabs is exactly what the preview
+/// shows. Media = the main area (frame top down to the ribbon
+/// stack); headline/ticker text share their band's rect.
+Map<String, Rect> finalElementRects({
+  required ChannelPreset preset,
+  required Map<String, ElementOverride> overrides,
+  required double w,
+  required double h,
+}) {
+  final isFinal3 = preset.finalIs3Ribbon;
+  final g = ParityGeometry(
+    1080,
+    1920,
+    variant: isFinal3 ? ParityVariant.final3 : ParityVariant.classic2,
+    overrides: overrides,
+  );
+  final sx = w / 1080;
+  final sy = h / 1920;
+  Rect scale(Rect r) =>
+      Rect.fromLTWH(r.left * sx, r.top * sy, r.width * sx, r.height * sy);
+  final top = isFinal3 ? g.f3TopStrip : Rect.fromLTWH(0, 0, 1080, 1920 * 0.055);
+  final mid = isFinal3 ? g.f3MidStrip : g.urduStrip;
+  final bot = isFinal3 ? g.f3BotStrip : g.englishStrip;
+  return {
+    NewsElement.media: Rect.fromLTWH(0, 0, w, mid.top * sy),
+    NewsElement.topRibbon: scale(top),
+    NewsElement.middleRibbon: scale(mid),
+    NewsElement.headlineText: scale(mid),
+    NewsElement.bottomRibbon: scale(bot),
+    NewsElement.tickerText: scale(bot),
+    NewsElement.logo: scale(g.logoVisible),
+    NewsElement.capsule: scale(g.capsule),
+    NewsElement.overlay: Rect.fromLTWH(
+      w - w * 0.2 - 8,
+      8,
+      w * 0.2,
+      w * 0.2,
+    ),
+  };
 }

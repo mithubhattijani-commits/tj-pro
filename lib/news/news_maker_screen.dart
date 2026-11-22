@@ -59,6 +59,7 @@ import 'caption_studio_screen.dart';
 import 'channel_preset.dart';
 import 'karaoke_sync.dart';
 import 'news_analysis.dart';
+import 'element_override.dart';
 import 'news_project.dart';
 import 'seo_screen.dart';
 import 'template_studio_screen.dart';
@@ -114,6 +115,15 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
 
   String _saveStatus = '';
   Timer? _saveTimer;
+
+  /// v1.5.0 (#33): the element selected in the Elements panel /
+  /// by tapping the preview (a [NewsElement] id).
+  String _selectedElement = NewsElement.media;
+
+  /// Drag-session state for the preview gesture layer.
+  Offset? _panStart;
+  ElementOverride? _panInitOverride;
+  bool _panResizing = false;
 
   @override
   void initState() {
@@ -402,6 +412,392 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       () => _saveStatus =
           'Saved • ${now.hour.toString().padLeft(2, '0')}:'
           '${now.minute.toString().padLeft(2, '0')}',
+    );
+  }
+
+  /// v1.5.0 (#33): writes one element's override and autosaves.
+  void _setElementOverride(String id, ElementOverride value) {
+    final project = _project;
+    if (project == null) return;
+    setState(() {
+      if (value.isIdentity) {
+        project.elementOverrides.remove(id);
+      } else {
+        project.elementOverrides[id] = value;
+      }
+    });
+    _scheduleSave();
+  }
+
+  ElementOverride _elementOv(NewsProject project, String id) =>
+      overrideFor(project.elementOverrides, id);
+
+  /// v1.5.0 (#33): wraps the Final preview with the element
+  /// gesture layer — tap selects an element (hit-tested against
+  /// the override-adjusted rects), drag moves it, dragging its
+  /// bottom-right corner handle resizes it. Other template kinds
+  /// keep the plain preview (their adjustments live in the
+  /// Elements panel below; the Final template is the one whose
+  /// preview + export both honour overrides).
+  Widget _withElementGestures(
+    NewsProject project,
+    ChannelPreset preset,
+    Widget child,
+  ) {
+    if (project.templateKind != 'nigraanFinal') return child;
+    const ph = 300.0;
+    final pw = ph * 9 / 16;
+    final rects = finalElementRects(
+      preset: preset,
+      overrides: project.elementOverrides,
+      w: pw,
+      h: ph,
+    );
+    final selRect = rects[_selectedElement];
+    final selOv = _elementOv(project, _selectedElement);
+    return SizedBox(
+      width: pw,
+      height: ph,
+      child: Stack(
+        children: [
+          child,
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTapUp: (d) =>
+                  _elementTap(project, rects, d.localPosition),
+              onPanStart: (d) =>
+                  _elementPanStart(project, rects, d.localPosition),
+              onPanUpdate: (d) =>
+                  _elementPanUpdate(project, pw, ph, d.localPosition),
+              onPanEnd: (_) {
+                _panStart = null;
+                _panInitOverride = null;
+              },
+            ),
+          ),
+          if (selRect != null && !selOv.hidden)
+            Positioned.fromRect(
+              rect: selRect,
+              child: IgnorePointer(
+                child: Stack(
+                  children: [
+                    Container(
+                      decoration: BoxDecoration(
+                        border: Border.all(
+                          color: const Color(0xFFF5C542),
+                          width: 2,
+                        ),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                    Positioned(
+                      right: 0,
+                      bottom: 0,
+                      child: Container(
+                        width: 18,
+                        height: 18,
+                        color: const Color(0xFFF5C542),
+                        child: const Icon(
+                          Icons.open_in_full,
+                          size: 11,
+                          color: Colors.black,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Hit-test priority: small elements first, texts before their
+  /// band, the media (background) last.
+  static const _hitPriority = [
+    NewsElement.capsule,
+    NewsElement.logo,
+    NewsElement.headlineText,
+    NewsElement.tickerText,
+    NewsElement.topRibbon,
+    NewsElement.middleRibbon,
+    NewsElement.bottomRibbon,
+    NewsElement.overlay,
+    NewsElement.media,
+  ];
+
+  String? _hitElement(Map<String, Rect> rects, Offset pos) {
+    for (final id in _hitPriority) {
+      final r = rects[id];
+      if (r != null && r.contains(pos)) return id;
+    }
+    return null;
+  }
+
+  void _elementTap(
+    NewsProject project,
+    Map<String, Rect> rects,
+    Offset pos,
+  ) {
+    final hit = _hitElement(rects, pos);
+    if (hit != null) setState(() => _selectedElement = hit);
+  }
+
+  void _elementPanStart(
+    NewsProject project,
+    Map<String, Rect> rects,
+    Offset pos,
+  ) {
+    var sel = _selectedElement;
+    final selRect = rects[sel];
+    if (selRect == null || !selRect.contains(pos)) {
+      final hit = _hitElement(rects, pos);
+      if (hit == null) {
+        _panStart = null;
+        return;
+      }
+      sel = hit;
+      setState(() => _selectedElement = hit);
+    }
+    _panStart = pos;
+    _panInitOverride = _elementOv(project, sel);
+    final r = rects[sel];
+    _panResizing = r != null &&
+        (r.bottomRight - pos).distance < 30 &&
+        !_panInitOverride!.hidden;
+  }
+
+  void _elementPanUpdate(
+    NewsProject project,
+    double pw,
+    double ph,
+    Offset pos,
+  ) {
+    final start = _panStart;
+    final init = _panInitOverride;
+    if (start == null || init == null) return;
+    final dxPx = pos.dx - start.dx;
+    final dyPx = pos.dy - start.dy;
+    if (_panResizing) {
+      final scale = (init.scale * (1 + (dxPx + dyPx) / 260))
+          .clamp(0.4, 2.5);
+      _setElementOverride(
+        _selectedElement,
+        init.copyWith(scale: scale.toDouble()),
+      );
+    } else {
+      _setElementOverride(
+        _selectedElement,
+        init.copyWith(
+          dx: (init.dx + dxPx / pw).clamp(-0.5, 0.5).toDouble(),
+          dy: (init.dy + dyPx / ph).clamp(-0.5, 0.5).toDouble(),
+        ),
+      );
+    }
+  }
+
+  /// v1.5.0 (#33): the Elements panel — element chips, the
+  /// selected element's move/size sliders (the panel half of the
+  /// corner-handle resize), hide/show (= remove), reset, and the
+  /// Add row (video/photo via the clips sheet, text, watermark).
+  Widget _elementsPanel(NewsProject project) {
+    final sel = _selectedElement;
+    final ov = _elementOv(project, sel);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Text(
+              'Elements — manual control',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const Spacer(),
+            if (project.elementOverrides.isNotEmpty)
+              TextButton(
+                onPressed: () {
+                  setState(() => project.elementOverrides.clear());
+                  _scheduleSave();
+                },
+                child: const Text('Reset all'),
+              ),
+          ],
+        ),
+        const Text(
+          'Preview par tap karke element select karein, drag karke '
+          'move karein, corner handle se size badlein. Neeche '
+          'sliders bhi wohi kaam karte hain.',
+          style: TextStyle(color: Colors.grey, fontSize: 12),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final id in NewsElement.all)
+              ChoiceChip(
+                key: Key('elementChip-$id'),
+                label: Text(
+                  overrideFor(project.elementOverrides, id).hidden
+                      ? '${NewsElement.labels[id]} (hidden)'
+                      : NewsElement.labels[id]!,
+                ),
+                selected: sel == id,
+                onSelected: (_) => setState(() => _selectedElement = id),
+              ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text(
+          '${NewsElement.labels[sel]} — position / size',
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+        _elementSlider(
+          label: 'Left / Right',
+          value: ov.dx,
+          min: -0.3,
+          max: 0.3,
+          onChanged: (v) =>
+              _setElementOverride(sel, ov.copyWith(dx: v)),
+        ),
+        _elementSlider(
+          label: 'Up / Down',
+          value: ov.dy,
+          min: -0.3,
+          max: 0.3,
+          onChanged: (v) =>
+              _setElementOverride(sel, ov.copyWith(dy: v)),
+        ),
+        _elementSlider(
+          label: 'Size',
+          value: ov.scale,
+          min: 0.5,
+          max: 2.0,
+          onChanged: (v) =>
+              _setElementOverride(sel, ov.copyWith(scale: v)),
+        ),
+        Row(
+          children: [
+            OutlinedButton.icon(
+              key: const Key('elementHideButton'),
+              onPressed: () => _setElementOverride(
+                sel,
+                ov.copyWith(hidden: !ov.hidden),
+              ),
+              icon: Icon(
+                ov.hidden ? Icons.visibility : Icons.visibility_off,
+                size: 18,
+              ),
+              label: Text(ov.hidden ? 'Show (wapas)' : 'Remove (hide)'),
+            ),
+            const SizedBox(width: 8),
+            OutlinedButton.icon(
+              onPressed: ov.isIdentity
+                  ? null
+                  : () => _setElementOverride(sel, ElementOverride.identity),
+              icon: const Icon(Icons.restart_alt, size: 18),
+              label: const Text('Reset element'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: () => _showClipsSheet(project),
+                icon: const Icon(Icons.video_call_outlined, size: 18),
+                label: const FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text('Add Video'),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: () {
+                  _setElementOverride(
+                    NewsElement.headlineText,
+                    _elementOv(project, NewsElement.headlineText)
+                        .copyWith(hidden: false),
+                  );
+                  setState(
+                    () => _selectedElement = NewsElement.headlineText,
+                  );
+                  _showMessage(
+                    'Headline text select ho gaya — Tehreer se '
+                    'headline aati hai.',
+                  );
+                },
+                icon: const Icon(Icons.text_fields, size: 18),
+                label: const FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text('Add Text'),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: () async {
+                  final preset = _preset;
+                  if (preset == null) return;
+                  preset.watermarkEnabled = true;
+                  await persistPresetChange(preset);
+                  _setElementOverride(
+                    NewsElement.overlay,
+                    _elementOv(project, NewsElement.overlay)
+                        .copyWith(hidden: false),
+                  );
+                  setState(
+                    () => _selectedElement = NewsElement.overlay,
+                  );
+                },
+                icon: const Icon(Icons.branding_watermark, size: 18),
+                label: const FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text('Add Watermark'),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _elementSlider({
+    required String label,
+    required double value,
+    required double min,
+    required double max,
+    required ValueChanged<double> onChanged,
+  }) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 84,
+          child: Text(label, style: const TextStyle(fontSize: 12)),
+        ),
+        Expanded(
+          child: Slider(
+            value: value.clamp(min, max),
+            min: min,
+            max: max,
+            onChanged: onChanged,
+          ),
+        ),
+        SizedBox(
+          width: 44,
+          child: Text(
+            value.toStringAsFixed(2),
+            style: const TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+        ),
+      ],
     );
   }
 
@@ -802,12 +1198,16 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         ),
         const SizedBox(height: 8),
         Center(
-          child: project.templateKind == 'nigraanFinal'
+          child: _withElementGestures(
+            project,
+            previewPreset,
+            project.templateKind == 'nigraanFinal'
               ? project.clipPaths.isEmpty
                   ? NigraanFinalPreview(
                       preset: previewPreset,
                       fontReady: _fontReady,
                       height: 300,
+                      elementOverrides: project.elementOverrides,
                     )
                   // v1.5.0 (#32): the user's own video/photo sits in
                   // the template's main area — the same composite
@@ -818,6 +1218,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                       mediaPaths: project.clipPaths,
                       fontReady: _fontReady,
                       height: 300,
+                      elementOverrides: project.elementOverrides,
                     )
               : project.templateKind == 'breaking'
                   ? BreakingTemplatePreview(
@@ -837,6 +1238,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                       fontReady: _fontReady,
                       height: 300,
                     ),
+          ),
         ),
         const SizedBox(height: 10),
         // v1.5.0 (#32): the three controls the user asked for,
@@ -892,6 +1294,8 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             ),
           ],
         ),
+        const SizedBox(height: 20),
+        _elementsPanel(project),
         const SizedBox(height: 20),
         Row(
           children: [

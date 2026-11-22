@@ -91,6 +91,7 @@ import 'pro_editor.dart';
 import 'video_export_service.dart';
 import '../news/breaking_templates.dart';
 import '../news/channel_preset.dart';
+import '../news/element_override.dart';
 import '../news/news_project.dart';
 import '../news/widgets/template_media_preview.dart' show isPhotoMediaPath;
 import '../news/project_handoff.dart';
@@ -640,6 +641,53 @@ class ReelExportService {
         final c = cancelledResult();
         if (c != null) return c;
       }
+      // --- 3b. Manual MEDIA element adjustment (v1.5.0 #33):
+      // the composited main video is scaled / shifted onto the
+      // template's dark background colour, or covered entirely
+      // when the user removed it — BEFORE the template furniture
+      // is drawn over it, exactly like the preview's media layer.
+      final mediaOv =
+          overrideFor(project.elementOverrides, NewsElement.media);
+      if (!mediaOv.isIdentity) {
+        step('Media adjust ho raha hai…', 0.56);
+        final mediaOut = p.join(dir.path, 'reel_media_$stamp.mp4');
+        final String mediaCmd;
+        if (mediaOv.hidden) {
+          mediaCmd = '-y -i ${FfmpegService.q(out)} '
+              '-filter_complex "[0:v]drawbox=x=0:y=0:w=iw:h=ih:'
+              'color=0x101018:t=fill[vout]" '
+              '-map "[vout]" -map 0:a? '
+              '-c:v libx264 -preset veryfast -crf 23 -c:a copy '
+              '-movflags +faststart ${FfmpegService.q(mediaOut)}';
+        } else {
+          final sw = (w * mediaOv.scale).round();
+          final sh = (h * mediaOv.scale).round();
+          final mx = ((w - sw) / 2 + mediaOv.dx * w).round();
+          final my = ((h - sh) / 2 + mediaOv.dy * h).round();
+          mediaCmd = '-y -i ${FfmpegService.q(out)} '
+              '-f lavfi -i color=c=0x101018:s=${w}x$h:r=30 '
+              '-filter_complex "[0:v]scale=$sw:$sh[m];'
+              '[1:v][m]overlay=$mx:$my:shortest=1[vout]" '
+              '-map "[vout]" -map 0:a? '
+              '-c:v libx264 -preset veryfast -crf 23 -c:a copy '
+              '-movflags +faststart ${FfmpegService.q(mediaOut)}';
+        }
+        final res = await runStage(
+          mediaCmd,
+          0.56,
+          0.58,
+          expectedMs: reelMs,
+        );
+        if (res.ok) {
+          out = mediaOut;
+        } else {
+          notes.add(
+            'Media adjustment nahi laga — default size/position '
+            'ke saath export ho raha hai.',
+          );
+        }
+      }
+
       // --- 4. Template overlay (logo left OUT of the PNG). ---
       // nigraanFinal still-frame contract: every other still caller
       // of renderLiveTemplateImage (Template Studio frame export,
@@ -695,6 +743,7 @@ class ReelExportService {
           settings: effectiveSettings,
           reelMs: reelMs,
           onProgress: onProgress,
+          overrides: project.elementOverrides,
         );
         if (parityOut != null) {
           out = parityOut;
@@ -704,6 +753,13 @@ class ReelExportService {
             'Animated Final template nahi laga — static template ke '
             'saath export ho raha hai.',
           );
+          if (project.elementOverrides.isNotEmpty) {
+            notes.add(
+              'Manual element adjustments (Elements panel) sirf '
+              'animated template pass mein lagte hain — is static '
+              'export mein default layout aaya hai.',
+            );
+          }
         }
       }
       if (!parityApplied) {
@@ -779,6 +835,7 @@ class ReelExportService {
         settings: effectiveSettings,
         reelMs: reelMs,
         onProgress: onProgress,
+        overrides: project.elementOverrides,
       );
       if (watermarkDone != null) out = watermarkDone;
       step('Watermark done.', 0.80);
@@ -941,6 +998,7 @@ class ReelExportService {
     ExportSettings settings = const ExportSettings(),
     int? reelMs,
     void Function(double progress)? onProgress,
+    Map<String, ElementOverride> overrides = const {},
   }) async {
     try {
       final assets = await renderParityAssets(
@@ -950,15 +1008,21 @@ class ReelExportService {
         height: height,
         now: DateTime.now(),
         fontReady: fontReady,
+        overrides: overrides,
       );
       final svc = assetService ?? const AssetDownloadService();
       String? movPath;
       String? framesDir;
       String? stillPath;
-      final mov = await svc.cachedLogoMov();
+      // v1.5.0 (#33): a logo the user removed is never resolved —
+      // all four sources stay null and the command skips the logo
+      // stack (the capsule still renders, unless also removed).
+      final logoHidden =
+          overrideFor(overrides, NewsElement.logo).hidden;
+      final mov = logoHidden ? null : await svc.cachedLogoMov();
       if (mov != null) {
         movPath = mov.path;
-      } else if (preset.logoPath != null &&
+      } else if (!logoHidden && preset.logoPath != null &&
           await File(preset.logoPath!).exists()) {
         try {
           final key = logoLoopCacheKey(logoFile: File(preset.logoPath!));
@@ -977,7 +1041,10 @@ class ReelExportService {
       // (a picked logo keeps its generated-frames behaviour).
       // Missing bundle → null → the existing path (fail soft).
       String? gsPath;
-      if (preset.finalIs3Ribbon && framesDir == null && stillPath == null) {
+      if (!logoHidden &&
+          preset.finalIs3Ribbon &&
+          framesDir == null &&
+          stillPath == null) {
         final gs = await svc.ensureLogoGsFile();
         gsPath = gs?.path;
       }
@@ -1142,8 +1209,13 @@ class ReelExportService {
     ExportSettings settings = const ExportSettings(),
     int? reelMs,
     void Function(double progress)? onProgress,
+    Map<String, ElementOverride> overrides = const {},
   }) async {
     if (!preset.watermarkEnabled) return null;
+    // v1.5.0 (#33): a watermark the user removed in the Elements
+    // panel is skipped exactly like the preset toggle being off.
+    final wmOv = overrideFor(overrides, NewsElement.overlay);
+    if (wmOv.hidden) return null;
     final wmOut = p.join(dir.path, 'reel_watermark_$stamp.mp4');
     try {
       final wmPng = await renderWatermarkImage(
@@ -1152,10 +1224,43 @@ class ReelExportService {
         width: width,
         height: height,
       );
+      // #33 move/resize: the watermark PNG is a full-frame layer —
+      // scale it, re-pad it onto a transparent canvas and crop
+      // the frame window at the shifted origin. Failure keeps the
+      // designed PNG (with a note), never blocks the export.
+      var wmPath = wmPng.path;
+      if (!wmOv.isIdentity) {
+        final tw = (width * wmOv.scale).round();
+        final th = (height * wmOv.scale).round();
+        final canvasW = tw > width ? tw : width;
+        final canvasH = th > height ? th : height;
+        final padX = (canvasW - tw) ~/ 2;
+        final padY = (canvasH - th) ~/ 2;
+        final cropX =
+            (padX - (wmOv.dx * width).round()).clamp(0, canvasW - width);
+        final cropY =
+            (padY - (wmOv.dy * height).round()).clamp(0, canvasH - height);
+        final moved = p.join(dir.path, 'watermark_moved_$stamp.png');
+        final movedRes = await FfmpegService.run(
+          '-y -i ${FfmpegService.q(wmPng.path)} '
+          '-vf "format=rgba,scale=$tw:$th,'
+          'pad=$canvasW:$canvasH:$padX:$padY:color=0x00000000,'
+          'crop=$width:$height:$cropX:$cropY" '
+          '${FfmpegService.q(moved)}',
+        );
+        if (movedRes.ok) {
+          wmPath = moved;
+        } else {
+          notes.add(
+            'Watermark ki manual position/size nahi lagi — '
+            'designed position ke saath export ho raha hai.',
+          );
+        }
+      }
       final res = await _runStage(
         FfmpegService.watermarkOverlayCommand(
           input: input,
-          watermarkPngPath: wmPng.path,
+          watermarkPngPath: wmPath,
           output: wmOut,
           videoBitrateKbps: settings.videoBitrateKbps,
         ),

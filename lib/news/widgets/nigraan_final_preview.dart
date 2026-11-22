@@ -29,6 +29,7 @@ import '../../live/news_template.dart';
 import '../../live/parity_template.dart';
 import '../../services/asset_download_service.dart';
 import '../channel_preset.dart';
+import '../element_override.dart';
 import '../watermark.dart';
 import 'pip_inset.dart';
 
@@ -210,17 +211,40 @@ double fitPreviewChipFontSize(String text, double fontSize, double maxWidth) {
 /// here as its keyed first frame) sits directly above the capsule.
 /// Ribbon heights carry a small legibility floor at preview sizes
 /// (the export uses the exact fractions).
+/// v1.5.0 (#33): applies a TEXT element's manual offset + size
+/// to its preview content (identity → the child untouched).
+Widget _overrideTransform(
+  ElementOverride o,
+  double frameW,
+  double frameH,
+  Widget child,
+) {
+  if (o.isIdentity) return child;
+  return Transform.translate(
+    offset: Offset(o.dx * frameW, o.dy * frameH),
+    child: Transform.scale(scale: o.scale, child: child),
+  );
+}
+
 class NigraanFinalPreview extends StatelessWidget {
   const NigraanFinalPreview({
     super.key,
     required this.preset,
     this.fontReady = false,
     this.height = 320,
+    this.elementOverrides = const {},
   });
 
   final ChannelPreset preset;
   final bool fontReady;
   final double height;
+
+  /// v1.5.0 (#33): per-project MANUAL element overrides (News
+  /// Maker). DEFAULTS PRESERVED: the default empty map makes
+  /// every position/size below compute exactly the pre-#33
+  /// value (the geometry is constructed without overrides and
+  /// every adjustment term is 0 / 1).
+  final Map<String, ElementOverride> elementOverrides;
 
   String? _kasheeda(String text) =>
       fontReady && _hasArabicForPreview(text)
@@ -240,7 +264,26 @@ class NigraanFinalPreview extends StatelessWidget {
       1080,
       1920,
       variant: isFinal3 ? ParityVariant.final3 : ParityVariant.classic2,
+      overrides: elementOverrides,
     );
+    // #33 helpers: per-element override + the manual offsets in
+    // preview pixels (all zero when no override is set).
+    ElementOverride ov(String id) => overrideFor(elementOverrides, id);
+    final topOv = ov(NewsElement.topRibbon);
+    final midOv = ov(NewsElement.middleRibbon);
+    final botOv = ov(NewsElement.bottomRibbon);
+    final headOv = ov(NewsElement.headlineText);
+    final tickOv = ov(NewsElement.tickerText);
+    final logoOv = ov(NewsElement.logo);
+    final capOv = ov(NewsElement.capsule);
+    final overlayOv = ov(NewsElement.overlay);
+    // The watermark's SIZE override applies through a cloned
+    // preset (its mark sizes from preset.watermarkSize).
+    final wmPreset = overlayOv.isIdentity
+        ? preset
+        : (ChannelPreset.fromJson(preset.toJson())
+          ..watermarkSize =
+              (preset.watermarkSize * overlayOv.scale).clamp(0.05, 0.30));
     final scaleW = w / 1080;
     final scaleH = h / 1920;
     final ribbonH = (g.ribbonH * scaleH).clamp(22.0, 200.0);
@@ -254,10 +297,11 @@ class NigraanFinalPreview extends StatelessWidget {
 
     // classic2: the top ribbon is the FRAME-TOP ticker. final3:
     // it is the stack's TOP ribbon instead (showTop).
-    final showTicker = !isFinal3 && preset.topRibbon.enabled;
-    final showTop = isFinal3 && preset.topRibbon.enabled;
-    final showUrdu = preset.urduRibbon.enabled;
-    final showEnglish = preset.englishRibbon.enabled;
+    final showTicker =
+        !isFinal3 && preset.topRibbon.enabled && !topOv.hidden;
+    final showTop = isFinal3 && preset.topRibbon.enabled && !topOv.hidden;
+    final showUrdu = preset.urduRibbon.enabled && !midOv.hidden;
+    final showEnglish = preset.englishRibbon.enabled && !botOv.hidden;
     final hasLowerThird = preset.showLowerThird &&
         (preset.lowerThirdTitle.trim().isNotEmpty ||
             preset.lowerThirdSubtitle.trim().isNotEmpty);
@@ -266,8 +310,11 @@ class NigraanFinalPreview extends StatelessWidget {
 
     // Flush stack: English at the very bottom, Urdu directly on
     // it, and (final3) the top ribbon directly on the Urdu one.
-    final midH = isFinal3 ? f3MidH : ribbonH;
-    final botH = isFinal3 ? f3BotH : ribbonH;
+    // classic2: the shared ribbonH is the DESIGNED height — the
+    // per-band size override multiplies it here (final3's heights
+    // already carry their band scale via the geometry).
+    final midH = isFinal3 ? f3MidH : ribbonH * midOv.scale;
+    final botH = isFinal3 ? f3BotH : ribbonH * botOv.scale;
     final englishTop = h - botH;
     final urduTop = (showEnglish ? englishTop : h) - midH;
     final stackBelowTop = showUrdu ? urduTop : (showEnglish ? englishTop : h);
@@ -293,6 +340,17 @@ class NigraanFinalPreview extends StatelessWidget {
     final capTop = urduTop + midH - capsuleH - g.f3BlockLift * scaleH;
     final logoTop = capTop - logoH;
     final logoRight = g.logoMargin * scaleW;
+    // #33 manual positions: ribbons shift by their own override;
+    // the logo / capsule shift by theirs (right-anchored, so a
+    // +dx move right shrinks the right inset).
+    final urduTopAdj = urduTop + midOv.dy * h;
+    final topStackTopAdj = topStackTop + topOv.dy * h;
+    final englishTopAdj = englishTop + botOv.dy * h;
+    final logoTopAdj = logoTop + logoOv.dy * h;
+    final logoRightAdj = logoRight - logoOv.dx * w;
+    final capTopAdj = capTop + capOv.dy * h;
+    final capRightAdj = logoRight - capOv.dx * w;
+    final capW = g.capsuleW * scaleW;
 
     TextStyle topStyle(RibbonConfig ribbon, double stripH) {
       final size = NigraanFinalLayout.ribbonFontSize(ribbon, stripH);
@@ -452,8 +510,8 @@ class NigraanFinalPreview extends StatelessWidget {
             Positioned(
               key: const Key('preview-top-ribbon'),
               top: 0,
-              left: 0,
-              right: 0,
+              left: topOv.dx * w,
+              right: -topOv.dx * w,
               height: tickerH,
               child: Container(
                 color: Color(preset.topRibbon.color),
@@ -663,18 +721,25 @@ class NigraanFinalPreview extends StatelessWidget {
           if (showUrdu)
             Positioned(
               key: const Key('preview-middle-ribbon'),
-              top: urduTop,
-              left: 0,
-              right: 0,
+              top: urduTopAdj,
+              left: midOv.dx * w,
+              right: -midOv.dx * w,
               height: midH,
               child: isFinal3
                   ? Container(
                       color: Color(preset.designUrduColor),
-                      child: f3UrduContent(
-                        text: preset.urduRibbon.text,
-                        fallback: 'قومی خبریں',
-                        fontSize: f3MidH * 0.56,
-                      ),
+                      child: headOv.hidden
+                          ? const SizedBox.shrink()
+                          : _overrideTransform(
+                              headOv,
+                              w,
+                              h,
+                              f3UrduContent(
+                                text: preset.urduRibbon.text,
+                                fallback: 'قومی خبریں',
+                                fontSize: f3MidH * 0.56,
+                              ),
+                            ),
                     )
                   : Container(
                       color: Color(preset.urduRibbon.color),
@@ -687,20 +752,29 @@ class NigraanFinalPreview extends StatelessWidget {
                             child: Row(
                               children: [
                                 Expanded(
-                                  child: _ParityScrollText(
-                                    text: preset.urduRibbon.text.isEmpty
-                                        ? 'قومی خبریں'
-                                        : preset.urduRibbon.text,
-                                    rtl: true,
-                                    speedPxPerSec: g.scrollSpeed * scaleW,
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: ribbonH * 0.5625,
-                                      fontWeight: FontWeight.bold,
-                                      fontFamily: _kasheeda(
-                                          preset.urduRibbon.text),
-                                    ),
-                                  ),
+                                  child: headOv.hidden
+                                      ? const SizedBox.shrink()
+                                      : _overrideTransform(
+                                          headOv,
+                                          w,
+                                          h,
+                                          _ParityScrollText(
+                                            text: preset.urduRibbon.text
+                                                    .isEmpty
+                                                ? 'قومی خبریں'
+                                                : preset.urduRibbon.text,
+                                            rtl: true,
+                                            speedPxPerSec:
+                                                g.scrollSpeed * scaleW,
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                              fontSize: ribbonH * 0.5625,
+                                              fontWeight: FontWeight.bold,
+                                              fontFamily: _kasheeda(
+                                                  preset.urduRibbon.text),
+                                            ),
+                                          ),
+                                        ),
                                 ),
                                 if (preset.showBreakingBanner)
                                   parityChip(
@@ -723,24 +797,31 @@ class NigraanFinalPreview extends StatelessWidget {
           if (showEnglish)
             Positioned(
               key: const Key('preview-english-ribbon'),
-              left: 0,
-              right: 0,
-              bottom: 0,
+              left: botOv.dx * w,
+              right: -botOv.dx * w,
+              top: englishTopAdj,
               height: botH,
               child: isFinal3
                   ? Container(
                       color: Color(preset.designEnglishColor),
-                      child: _ParityScrollText(
-                        text: preset.englishRibbon.text.isEmpty
-                            ? 'International headlines'
-                            : preset.englishRibbon.text,
-                        rtl: false,
-                        speedPxPerSec: g.scrollSpeed * scaleW,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                        ).copyWith(fontSize: f3BotH * 0.53),
-                      ),
+                      child: tickOv.hidden
+                          ? const SizedBox.shrink()
+                          : _overrideTransform(
+                              tickOv,
+                              w,
+                              h,
+                              _ParityScrollText(
+                                text: preset.englishRibbon.text.isEmpty
+                                    ? 'International headlines'
+                                    : preset.englishRibbon.text,
+                                rtl: false,
+                                speedPxPerSec: g.scrollSpeed * scaleW,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                ).copyWith(fontSize: f3BotH * 0.53),
+                              ),
+                            ),
                     )
                   : Container(
                       color: Color(preset.englishRibbon.color),
@@ -760,18 +841,27 @@ class NigraanFinalPreview extends StatelessWidget {
                                   fontSize: ribbonH * 0.45,
                                 ),
                                 Expanded(
-                                  child: _ParityScrollText(
-                                    text: preset.englishRibbon.text.isEmpty
-                                        ? 'International headlines'
-                                        : preset.englishRibbon.text,
-                                    rtl: false,
-                                    speedPxPerSec: g.scrollSpeed * scaleW,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.bold,
-                                    ).copyWith(
-                                        fontSize: ribbonH * 0.53),
-                                  ),
+                                  child: tickOv.hidden
+                                      ? const SizedBox.shrink()
+                                      : _overrideTransform(
+                                          tickOv,
+                                          w,
+                                          h,
+                                          _ParityScrollText(
+                                            text: preset.englishRibbon.text
+                                                    .isEmpty
+                                                ? 'International headlines'
+                                                : preset.englishRibbon.text,
+                                            rtl: false,
+                                            speedPxPerSec:
+                                                g.scrollSpeed * scaleW,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.bold,
+                                            ).copyWith(
+                                                fontSize: ribbonH * 0.53),
+                                          ),
+                                        ),
                                 ),
                               ],
                             ),
@@ -783,9 +873,9 @@ class NigraanFinalPreview extends StatelessWidget {
           if (showTop)
             Positioned(
               key: const Key('preview-top-stack-ribbon'),
-              top: topStackTop,
-              left: 0,
-              right: 0,
+              top: topStackTopAdj,
+              left: topOv.dx * w,
+              right: -topOv.dx * w,
               height: f3TopH,
               child: Container(
                 color: Color(preset.designTopColor),
@@ -804,15 +894,17 @@ class NigraanFinalPreview extends StatelessWidget {
           // ribbons (v1.3.0 parity). final3 (demo v4): the DATE
           // capsule sits ON the middle (red) ribbon at its right
           // end and the logo block sits directly above it.
+          if (!logoOv.hidden)
           Positioned(
             key: const Key('preview-logo-bug'),
-            right: logoRight,
-            top: isFinal3 ? logoTop : null,
+            right: logoRightAdj,
+            top: isFinal3 ? logoTopAdj : null,
             bottom: isFinal3
                 ? null
                 : ((showUrdu || showEnglish)
-                    ? (h - ribbonsTop) + capsuleH
-                    : capsuleH + 4),
+                        ? (h - ribbonsTop) + capsuleH
+                        : capsuleH + 4) -
+                    logoOv.dy * h,
             child: _ParityLogoBox(
               logoPath: preset.logoPath,
               initial: initial,
@@ -821,14 +913,16 @@ class NigraanFinalPreview extends StatelessWidget {
               isFinal3: isFinal3,
             ),
           ),
+          if (!capOv.hidden)
           Positioned(
-            right: logoRight,
-            top: isFinal3 ? capTop : null,
+            right: capRightAdj,
+            top: isFinal3 ? capTopAdj : null,
             bottom: isFinal3
                 ? null
-                : (showUrdu || showEnglish ? h - ribbonsTop : 4),
+                : (showUrdu || showEnglish ? h - ribbonsTop : 4) -
+                    capOv.dy * h,
             child: _ParityCapsule(
-              width: logoW,
+              width: capW,
               height: capsuleH,
               fontReady: fontReady,
               dateFirst: isFinal3,
@@ -836,15 +930,15 @@ class NigraanFinalPreview extends StatelessWidget {
               shortDate: isFinal3,
             ),
           ),
-          if (preset.pipEnabled)
+          if (preset.pipEnabled && !overlayOv.hidden)
             PipInset(
               position: preset.pipPosition,
               scale: preset.pipScale,
               frameWidth: w,
             ),
-          if (preset.watermarkEnabled)
+          if (preset.watermarkEnabled && !overlayOv.hidden)
             WatermarkMark(
-              preset: preset,
+              preset: wmPreset,
               frameWidth: w,
               frameHeight: h,
             ),
