@@ -18,16 +18,21 @@ subprojects {
 subprojects {
     project.evaluationDependsOn(":app")
 }
-subprojects {
-    // v1.4.0: some plugin libraries (onnxruntime) are compiled against
-    // android-33 while their own AndroidX dependencies require
-    // compileSdk 34 or later, so their checkDebugAarMetadata task fails
-    // the whole build. Raise every library subproject that sits below
-    // the app's compileSdk (37) up to 37. Compile-time only: targetSdk,
-    // minSdk and runtime behavior are untouched.
-    project.afterEvaluate {
+// v1.4.0: some plugin libraries (onnxruntime) are compiled against
+// android-33 while their own AndroidX dependencies require compileSdk
+// 34 or later, so their checkDebugAarMetadata task fails the whole
+// build. Raise every library project that sits below the app's
+// compileSdk (37) up to 37. Compile-time only: targetSdk, minSdk and
+// runtime behavior are untouched. The hook is registered from
+// beforeProject (not a subprojects afterEvaluate): Flutter evaluates
+// plugin projects early, and calling afterEvaluate on an already
+// evaluated project is an error — beforeProject always runs first,
+// so the callback is in place before any project finishes evaluating
+// and before AGP reads the value.
+gradle.beforeProject {
+    afterEvaluate {
         val libraryExtension =
-            project.extensions.findByType(com.android.build.gradle.LibraryExtension::class.java)
+            extensions.findByType(com.android.build.gradle.LibraryExtension::class.java)
         if (libraryExtension != null && (libraryExtension.compileSdk ?: 0) < 37) {
             libraryExtension.compileSdk = 37
         }
