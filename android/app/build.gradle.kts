@@ -91,6 +91,16 @@ android {
             )
         }
     }
+
+    // v1.4.0: the onnxruntime and sherpa_onnx plugins BOTH bundle
+    // libonnxruntime.so, and mergeDebugNativeLibs fails the build on
+    // the duplicate. Keep the first copy so both plugins share one
+    // onnxruntime native library.
+    packaging {
+        jniLibs {
+            pickFirsts.add("**/libonnxruntime.so")
+        }
+    }
 }
 
 kotlin {
