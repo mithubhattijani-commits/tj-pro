@@ -2,18 +2,21 @@
 /// rework) — the ONE source of truth for the Final template's two
 /// selectable designs.
 ///
-/// DEFAULT — 'final3' (user-confirmed 22 Nov 2026, "same rang"):
+/// DEFAULT — 'final3' (user-declared FINAL 22 Nov 2026, demo v4):
 /// the PUBLIC-News-style THREE-ribbon bottom stack measured from
 /// the user's reference frame (720x119 crop): TOP ribbon slightly
-/// thinner, dark navy (sampled (3,37,114)), carrying the
+/// thinner, YELLOW #FFC800 with BLACK headline text, carrying the
 /// current/related URDU headline; MIDDLE ribbon the THICKEST, red
 /// (sampled (136,12,3)), carrying the national URDU headline;
 /// BOTTOM ribbon dark navy-black (sampled (8,30,70)) carrying the
 /// international ENGLISH text as a continuously scrolling ticker.
 /// Ribbon heights ratio 31:43:28 (fractions of frame WIDTH). The
-/// rotating logo block sits at the RIGHT of the stack (visible
-/// width 110/720 of the frame, poking ~7/720 above the stack top)
-/// with the DATE capsule directly under it. No chips, no gold
+/// DATE/TIME capsule sits ON the middle (red) ribbon at its right
+/// end, bottom-aligned with the red ribbon's bottom edge, width =
+/// the logo block width. The logo block sits directly ABOVE the
+/// capsule (its bottom on the capsule top), width 232/1280 of the
+/// frame, and the logo itself is the user's green-screen rotating
+/// 3D-cube VIDEO (chromakeyed, solid alpha). No chips, no gold
 /// edges — the ribbons are full-width headline bars and the logo
 /// stack overlaps their right end. The Urdu ribbons carry their
 /// headlines pinned (right-aligned) and scroll only when the text
@@ -125,9 +128,9 @@ class ParityGeometry {
 
   /// The logo's VISIBLE width: classic2 — 185 px at 1080 wide,
   /// 219 at 1280 (both ≈17.1% of the frame width); final3 — the
-  /// reference block's 110 px at 720 wide (15.3%).
+  /// demo-v4 logo block, 232 px at 1280 wide (≈18.1%).
   double get logoVisibleW =>
-      isFinal3 ? width * (110 / 720) : width * (185 / 1080);
+      isFinal3 ? width * (232 / 1280) : width * (185 / 1080);
 
   /// The alpha .mov's union crop (488:382:195:57) scaled so its
   /// visible content (422x347 inside the crop, offset 29,13,
@@ -167,13 +170,15 @@ class ParityGeometry {
       ui.Rect.fromLTWH(0, englishStrip.top, englishChipW, ribbonH);
 
   /// Capsule position. classic2: its bottom edge sits ON the Urdu
-  /// ribbon's top edge, logo above it. final3: the capsule hangs
-  /// directly UNDER the logo at the right of the stack (the
-  /// reference's date box under the logo block).
+  /// ribbon's top edge, logo above it. final3 (demo v4 + user
+  /// lift, 22 Nov 2026): the capsule sits ON the middle (red)
+  /// ribbon at its right end, bottom-aligned with the red
+  /// ribbon's bottom edge and then raised by [f3BlockLift]; the
+  /// logo block sits directly above it.
   ui.Rect get capsule => isFinal3
       ? ui.Rect.fromLTWH(
           width - logoVisibleW,
-          f3LogoTop + logoVisibleH,
+          f3MidStrip.bottom - capsuleH - f3BlockLift,
           capsuleW,
           capsuleH,
         )
@@ -184,13 +189,15 @@ class ParityGeometry {
           capsuleH,
         );
 
-  /// Where the logo's VISIBLE content lands.
+  /// Where the logo's VISIBLE content lands. final3 (demo v4):
+  /// directly above the capsule, its bottom edge ON the capsule
+  /// top; classic2: above its capsule (bottom on the capsule top).
   ui.Rect get logoVisible => isFinal3
       ? ui.Rect.fromLTWH(
           width - logoVisibleW,
-          f3LogoTop,
+          capsule.top - f3LogoBlockH,
           logoVisibleW,
-          logoVisibleH,
+          f3LogoBlockH,
         )
       : ui.Rect.fromLTWH(
           capsule.left,
@@ -230,9 +237,36 @@ class ParityGeometry {
 
   // ---- Final 3-Ribbon geometry (variant final3) ----
   // Measured from the user's PUBLIC News frame (720x119 crop):
-  // ribbon heights 31 (top) : 43 (middle) : 28 (bottom), logo
-  // block 110 wide poking 7 above the stack top, date box 14
-  // high — all in crop px, i.e. fractions of the frame WIDTH.
+  // ribbon heights 31 (top) : 43 (middle) : 28 (bottom), all in
+  // crop px, i.e. fractions of the frame WIDTH. The demo-v4
+  // (user-declared FINAL, 22 Nov 2026) logo block is 232 wide at
+  // 1280 (18.1% of W) and sits directly above the capsule, which
+  // sits ON the red ribbon.
+
+  /// The user's green-screen rotating-cube logo video: union crop
+  /// of the chromakeyed content over the full 10 s (key 0x10C81C,
+  /// similarity 0.22, blend 0.08) — 408x344 at (228,72) of the
+  /// 848x478 source (the FINAL stabilized tagline logo, 22 Nov
+  /// 2026: zoom removed, "عوام کی آواز" ribbon tagline, original
+  /// colours). The export crops to this box, then scales it
+  /// to the logo block.
+  int get f3GsCropW => 408;
+  int get f3GsCropH => 344;
+  int get f3GsCropX => 228;
+  int get f3GsCropY => 72;
+
+  /// Height of the logo block on the template: the GS crop's
+  /// aspect (344/408 ≈ 0.843) at the block width.
+  double get f3LogoBlockH => logoVisibleW * (344 / 408);
+
+  /// Extra lift of the final3 capsule+logo block (user order,
+  /// 22 Nov 2026: "logo aur time capsule thora sa aur oper"):
+  /// the whole block sits W × 10/1280 higher than the demo-v4
+  /// position (≈10 px at 1280 wide, ≈8.4 px at 1080 wide). The
+  /// capsule is raised by this much off the red ribbon's bottom
+  /// edge — it still overlaps the red ribbon — and the logo
+  /// block rides on the raised capsule top.
+  double get f3BlockLift => width * (10 / 1280);
 
   double get f3TopH => width * (31 / 720);
   double get f3MidH => width * (43 / 720);
@@ -247,14 +281,6 @@ class ParityGeometry {
       ui.Rect.fromLTWH(0, f3StackTop + f3TopH, width, f3MidH);
   ui.Rect get f3BotStrip =>
       ui.Rect.fromLTWH(0, height - f3BotH, width, f3BotH);
-
-  /// How far the logo block pokes above the stack top in the
-  /// reference (its border starts ~7 crop px above the top
-  /// ribbon's top edge).
-  double get f3Poke => width * (7 / 720);
-
-  /// Top edge of the logo's visible box (final3).
-  double get f3LogoTop => f3StackTop - f3Poke;
 
   /// Text window of the two Urdu ribbons: from the left edge to
   /// the logo stack (their headlines end at the logo block, like
@@ -345,6 +371,7 @@ bool _hasArabic(String text) =>
   required ParityGeometry g,
   double? fontAr,
   double? fontLat,
+  int textColor = 0xFFFFFFFF,
 }) {
   final builder = ui.ParagraphBuilder(
     ui.ParagraphStyle(
@@ -382,7 +409,7 @@ bool _hasArabic(String text) =>
   for (final (arabic, run) in runs) {
     builder.pushStyle(
       ui.TextStyle(
-        color: const ui.Color(0xFFFFFFFF),
+        color: ui.Color(textColor),
         fontSize: arabic
             ? (fontAr ?? g.urduFontAr)
             : (fontLat ?? (urdu ? g.urduFontLat : g.englishFont)),
@@ -526,6 +553,7 @@ Future<(File, double)> renderParityStrip({
   double? ribbonH,
   double? windowW,
   int dotColor = kParityGold,
+  int textColor = 0xFFFFFFFF,
   double? fontAr,
   double? fontLat,
   String? name,
@@ -539,6 +567,7 @@ Future<(File, double)> renderParityStrip({
       g: g,
       fontAr: fontAr,
       fontLat: fontLat,
+      textColor: textColor,
     );
     return (r.$1, r.$2, _hasArabic(h));
   }
@@ -650,15 +679,17 @@ Future<File> renderParityHeadlineStill({
   required double fontAr,
   required double fontLat,
   required String name,
+  int textColor = 0xFFFFFFFF,
 }) async {
   final recorder = ui.PictureRecorder();
   final canvas = ui.Canvas(recorder);
   // Build right-to-left: cursor at the window's right edge (with
   // a small inset), each headline placed left of the previous,
-  // white dot separator between them (the final3 separators are
-  // white, like the reference's bullets).
+  // dot separator between them — the separator follows the text
+  // colour (black on the final3 yellow top ribbon, white on the
+  // red middle ribbon).
   var x = windowW - 4 * g.s;
-  final dotPaint = ui.Paint()..color = const ui.Color(0xFFFFFFFF);
+  final dotPaint = ui.Paint()..color = ui.Color(textColor);
   for (var i = headlines.length - 1; i >= 0; i--) {
     final (para, inkW, arabic) = () {
       final r = _headlineParagraph(
@@ -668,6 +699,7 @@ Future<File> renderParityHeadlineStill({
         g: g,
         fontAr: fontAr,
         fontLat: fontLat,
+        textColor: textColor,
       );
       return (r.$1, r.$2, _hasArabic(headlines[i]));
     }();
@@ -1068,6 +1100,7 @@ Future<ParityAssets> renderParityAssets({
     required double fontAr,
     required double fontLat,
     required String tag,
+    int textColor = 0xFFFFFFFF,
   }) async {
     final headlines =
         paritySplitHeadlines(text.isEmpty ? fallback : text);
@@ -1090,6 +1123,7 @@ Future<ParityAssets> renderParityAssets({
         fontAr: fontAr,
         fontLat: fontLat,
         name: 'parity_f3${tag}still.png',
+        textColor: textColor,
       );
       return ParityRibbonAssets(bg: bg, y: y, still: still);
     }
@@ -1101,7 +1135,8 @@ Future<ParityAssets> renderParityAssets({
       fontReady: fontReady,
       ribbonH: ribbonH,
       windowW: g.f3TextWindowW,
-      dotColor: 0xFFFFFFFF,
+      dotColor: textColor,
+      textColor: textColor,
       fontAr: fontAr,
       fontLat: fontLat,
       name: 'parity_f3${tag}strip.png',
@@ -1125,6 +1160,9 @@ Future<ParityAssets> renderParityAssets({
     fontAr: g.f3TopFontAr,
     fontLat: g.f3TopFontLat,
     tag: 'top',
+    // Yellow design top ribbon → BLACK headline text (and dots);
+    // a user-customised top colour keeps white text.
+    textColor: preset.designTopTextColor,
   );
   final mid = await urduStackRibbon(
     bg: midBg,
@@ -1182,10 +1220,15 @@ String _n(double v) =>
 /// date box).
 ///
 /// Logo source — exactly one of:
+/// * [logoGsPath]: the user's green-screen rotating-cube logo
+///   VIDEO (final3 default, demo v4): chromakeyed (0x10C81C,
+///   0.22/0.08), despilled, cropped to the keyed union, scaled to
+///   the logo block and alpha-hardened so it reads SOLID, looped
+///   for the export duration. Takes precedence over the .mov.
 /// * [logoMovPath]: the pre-rendered alpha .mov (reference crop).
 /// * [logoFramesDir]: generated rotating frames (user/default logo).
 /// * [logoStillPng]: a static logo image (last-resort fallback).
-/// When all three are null the logo stack is skipped (the capsule
+/// When all four are null the logo stack is skipped (the capsule
 /// still renders) and the caller notes it.
 ///
 /// [clockFontFile] null skips the TIME face (the DATE face still
@@ -1194,6 +1237,7 @@ String buildParityTemplateCommand({
   required String input,
   required String output,
   required ParityAssets assets,
+  String? logoGsPath,
   String? logoMovPath,
   String? logoFramesDir,
   String? logoStillPng,
@@ -1224,7 +1268,12 @@ String buildParityTemplateCommand({
   final iCapDate = next(assets.capDate);
   final iTop = assets.topRibbon == null ? null : next(assets.topRibbon!);
   int? iLogo;
-  if (logoMovPath != null) {
+  if (logoGsPath != null) {
+    // The green-screen logo video is 10 s — loop it for the whole
+    // export, like the .mov below.
+    buf.write('-stream_loop -1 -i ${q(logoGsPath)} ');
+    iLogo = idx++;
+  } else if (logoMovPath != null) {
     buf.write('-stream_loop -1 -i ${q(logoMovPath)} ');
     iLogo = idx++;
   } else if (logoFramesDir != null) {
@@ -1275,7 +1324,24 @@ String buildParityTemplateCommand({
     step('[$iTop:v]overlay=0:0');
   }
   if (iLogo != null) {
-    if (logoMovPath != null) {
+    if (logoGsPath != null) {
+      // Green-screen rotating-cube logo video (final3 default):
+      // chromakey the green out, despill, crop to the keyed
+      // content's union box, scale to the logo block, then HARDEN
+      // the alpha — a soft key read as "transparent" in the demo,
+      // so the alpha is thresholded to solid (values >70 → 255)
+      // with only a ~1 px soft edge (0.6 sigma blur) kept.
+      fc.write(
+        '[$iLogo:v]chromakey=0x10C81C:0.22:0.08,despill=type=green,'
+        'crop=${g.f3GsCropW}:${g.f3GsCropH}:${g.f3GsCropX}:${g.f3GsCropY},'
+        'format=yuva420p,scale=${g.logoVisibleW.round()}:${g.f3LogoBlockH.round()},'
+        'split[gsrgb][gsa];'
+        '[gsa]alphaextract,lut=a=\'if(gt(val\\,70)\\,255\\,0)\','
+        'gblur=sigma=0.6[gsah];'
+        '[gsrgb][gsah]alphamerge[gsout];',
+      );
+      step('[gsout]overlay=${_n(g.logoVisible.left)}:${_n(g.logoVisible.top)}');
+    } else if (logoMovPath != null) {
       fc.write(
         '[$iLogo:v]crop=488:382:195:57,format=yuva420p,split[lgf][lgr];'
         '[lgr]reverse[lgrr];[lgf][lgrr]concat=n=2:v=1:a=0,format=yuva420p,'

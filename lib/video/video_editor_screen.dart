@@ -15,6 +15,7 @@ import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:gal/gal.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:open_filex/open_filex.dart';
@@ -364,7 +365,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       _aiCoinsPaid = true;
       _setStatus(
         res.adminFree
-            ? 'Admin — AI tools free unlock ho gaye.'
+            ? 'AI tools unlock ho gaye.'
             : 'AI tools unlock ho gaye ($cost coins).',
       );
       return true;
@@ -2274,6 +2275,18 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
                     stillPath = _news.logoPath;
                   }
                 }
+                // final3 default logo (demo v4): the user's
+                // green-screen rotating-cube video — only when no
+                // user logo was picked (a picked logo keeps its
+                // generated-frames behaviour). Missing bundle →
+                // null → the existing path (fail soft).
+                String? gsPath;
+                if (effPreset.finalIs3Ribbon &&
+                    framesDir == null &&
+                    stillPath == null) {
+                  final gs = await svc.ensureLogoGsFile();
+                  gsPath = gs?.path;
+                }
                 String? clockFont;
                 final dejaVu = await svc.ensureDejaVuFile();
                 clockFont = dejaVu?.path ?? FfmpegService.findFontFile();
@@ -2283,6 +2296,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
                   input: out,
                   output: parityOut,
                   assets: assets,
+                  logoGsPath: gsPath,
                   logoMovPath: movPath,
                   logoFramesDir: framesDir,
                   logoStillPng: stillPath,

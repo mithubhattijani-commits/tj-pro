@@ -956,6 +956,15 @@ class ReelExportService {
           stillPath = preset.logoPath;
         }
       }
+      // final3 default logo (demo v4): the user's green-screen
+      // rotating-cube video — only when no user logo was picked
+      // (a picked logo keeps its generated-frames behaviour).
+      // Missing bundle → null → the existing path (fail soft).
+      String? gsPath;
+      if (preset.finalIs3Ribbon && framesDir == null && stillPath == null) {
+        final gs = await svc.ensureLogoGsFile();
+        gsPath = gs?.path;
+      }
       // Clock font: bundled DejaVu → a system font → none (the
       // capsule then shows only its date face; a note says so).
       String? clockFont;
@@ -972,6 +981,7 @@ class ReelExportService {
         input: input,
         output: parityOut,
         assets: assets,
+        logoGsPath: gsPath,
         logoMovPath: movPath,
         logoFramesDir: framesDir,
         logoStillPng: stillPath,

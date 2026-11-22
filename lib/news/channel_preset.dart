@@ -100,12 +100,19 @@ const int kFactoryTopRibbonColor = 0xFF01B0FF;
 const int kFactoryUrduRibbonColor = 0xFF3D5AFE;
 const int kFactoryEnglishRibbonColor = 0xFFEF0017;
 
-/// Final 3-Ribbon design colours, sampled from the user's PUBLIC
-/// News reference frame (22 Nov 2026): top dark navy (3,37,114),
+/// Final 3-Ribbon design colours (user-declared FINAL, demo v4,
+/// 22 Nov 2026): top YELLOW (255,200,0) with BLACK headline text,
 /// middle red (136,12,3), bottom dark navy-black (8,30,70).
-const int kFinal3TopColor = 0xFF032572;
+const int kFinal3TopColor = 0xFFFFC800;
 const int kFinal3UrduColor = 0xFF880C03;
 const int kFinal3EnglishColor = 0xFF081E46;
+
+/// Text colour for the final3 top ribbon: BLACK on the yellow
+/// design colour, WHITE when the user picked a custom top colour
+/// (the colour pickers in Template Studio / Channel Branding stay
+/// live — a custom colour always wins and takes white text, the
+/// same rule as the other ribbons).
+const int kFinal3TopTextColor = 0xFF000000;
 
 /// Resolves one ribbon's render colour for a Final design: the
 /// preset's own colour when the user customised it (differs from
@@ -121,6 +128,19 @@ int finalDesignRibbonColor({
     presetColor != factoryColor
         ? presetColor
         : (isFinal3 ? final3Color : factoryColor);
+
+/// Text colour for the final3 top ribbon: BLACK on the yellow
+/// design colour, WHITE when the user picked a custom top colour
+/// (or on any other variant — only the yellow design top takes
+/// black text).
+int finalDesignTopTextColor({
+  required int presetColor,
+  required int factoryColor,
+  required bool isFinal3,
+}) =>
+    (isFinal3 && presetColor == factoryColor)
+        ? kFinal3TopTextColor
+        : 0xFFFFFFFF;
 
 /// Chroma-key (green screen) background choice (Phase 3, Template &
 /// Studio). The toggle + picker + sensitivity persist on the channel
@@ -349,6 +369,15 @@ class ChannelPreset {
         presetColor: englishRibbon.color,
         factoryColor: kFactoryEnglishRibbonColor,
         final3Color: kFinal3EnglishColor,
+        isFinal3: finalIs3Ribbon,
+      );
+
+  /// Resolved text colour for the Final top ribbon (see
+  /// [finalDesignTopTextColor]): BLACK on the yellow design top,
+  /// WHITE when the user picked a custom top colour.
+  int get designTopTextColor => finalDesignTopTextColor(
+        presetColor: topRibbon.color,
+        factoryColor: kFactoryTopRibbonColor,
         isFinal3: finalIs3Ribbon,
       );
 

@@ -539,6 +539,7 @@ class NigraanFinalLayout {
     required this.topColor,
     required this.urduColor,
     required this.englishColor,
+    required this.topTextColor,
   });
 
   /// Chip labels (broadcast package — never swapped between ribbons).
@@ -576,12 +577,13 @@ class NigraanFinalLayout {
   /// Null when the lower third is off or has no text.
   final ui.Rect? lowerThird;
 
-  /// Logo-bug VISIBLE box and the time/date capsule directly
-  /// under it, same width as the logo, zero gaps. classic2:
+  /// Logo-bug VISIBLE box and the time/date capsule. classic2:
   /// bottom-right, the capsule's bottom edge sits on the Urdu
-  /// ribbon's top edge. final3: at the RIGHT of the stack — the
-  /// logo's top pokes slightly above the stack top and the DATE
-  /// capsule hangs under it over the ribbons' right end.
+  /// ribbon's top edge, logo directly above it. final3 (demo v4):
+  /// at the RIGHT of the stack — the capsule sits ON the middle
+  /// (red) ribbon at its right end, bottom-aligned with the red
+  /// ribbon's bottom edge, and the logo block sits directly above
+  /// it (logo bottom on the capsule top).
   final ui.Rect logoRect;
   final ui.Rect capsuleRect;
 
@@ -613,8 +615,9 @@ class NigraanFinalLayout {
   /// [topStackStrip]), the stack ribbons have NO chips
   /// ([urduChip]/[englishChip] are null), [urduStrip] is the
   /// thick middle (national) ribbon and [englishStrip] the dark
-  /// bottom (international) ribbon, and the logo + DATE capsule
-  /// hang at the stack's top-right.
+  /// bottom (international) ribbon, and the DATE capsule sits ON
+  /// the middle ribbon at its right end with the logo block
+  /// directly above it.
   final bool isFinal3;
 
   /// The final3 stack's TOP ribbon (current/related Urdu) —
@@ -630,6 +633,11 @@ class NigraanFinalLayout {
   final int topColor;
   final int urduColor;
   final int englishColor;
+
+  /// Resolved text colour for the Final top ribbon (see
+  /// [ChannelPreset.designTopTextColor]): BLACK on the yellow
+  /// final3 design top, WHITE otherwise.
+  final int topTextColor;
 
   /// Clamps a ribbon's configured font size so its ink can never poke
   /// out of its strip (Nastaleeq ink is ~1.33x the font size — §14
@@ -758,26 +766,31 @@ class NigraanFinalLayout {
     // width (aspect 422:347, the alpha .mov's visible content);
     // the capsule has the same width and sits directly beneath
     // it with zero gaps, its bottom edge on the Urdu ribbon's
-    // top edge. final3: the stack hangs at the RIGHT of the
-    // ribbon stack — the logo (110/720 of the width) pokes
-    // ~7/720 above the stack top and the DATE capsule hangs
-    // directly under it over the ribbons' right end.
+    // top edge. final3 (demo v4, user-declared FINAL): the
+    // capsule sits ON the middle (red) ribbon at its right end,
+    // bottom-aligned with the red ribbon's bottom edge and then
+    // raised by pg.f3BlockLift (user order, 22 Nov 2026), and the
+    // logo block (232/1280 of the width, GS-video aspect
+    // 408:344) sits directly above it, its bottom on the capsule
+    // top. Anchored to the full-stack geometry (pg.f3MidStrip),
+    // like the export — the parity stack always renders all
+    // three ribbons.
     final ui.Rect logoRect;
     final ui.Rect capsuleRect;
     if (isFinal3) {
       final lw = pg.logoVisibleW;
-      final lh = pg.logoVisibleH;
-      logoRect = ui.Rect.fromLTWH(
-        width - lw,
-        stackTopY - pg.f3Poke,
-        lw,
-        lh,
-      );
+      final lh = pg.f3LogoBlockH;
       capsuleRect = ui.Rect.fromLTWH(
         width - lw,
-        logoRect.bottom,
+        pg.f3MidStrip.bottom - pg.capsuleH - pg.f3BlockLift,
         lw,
         pg.capsuleH,
+      );
+      logoRect = ui.Rect.fromLTWH(
+        width - lw,
+        capsuleRect.top - lh,
+        lw,
+        lh,
       );
     } else {
       final logoVisibleW = width * (185 / 1080);
@@ -905,6 +918,7 @@ class NigraanFinalLayout {
       topColor: preset.designTopColor,
       urduColor: preset.designUrduColor,
       englishColor: preset.designEnglishColor,
+      topTextColor: preset.designTopTextColor,
     );
   }
 }
@@ -1246,6 +1260,8 @@ Future<File> _renderNigraanFinalImage({
           textLeft: 12,
           fontSize: layout.topStackTextSize,
           fontFamily: kasheeda(text),
+          // Yellow design top ribbon → BLACK headline text.
+          color: ui.Color(layout.topTextColor),
           buildLine: buildLine,
         );
       }
@@ -1497,6 +1513,7 @@ void _drawStripText({
   required double textLeft,
   required double fontSize,
   required String? fontFamily,
+  ui.Color color = const ui.Color(0xFFFFFFFF),
   required ui.Paragraph Function(
     String text,
     double fontSize, {
@@ -1516,12 +1533,14 @@ void _drawStripText({
   ui.Paragraph para;
   double x;
   if (textW <= availW) {
-    para = buildLine(text, fontSize, fontFamily: fontFamily, exactWidth: textW);
+    para = buildLine(text, fontSize,
+        color: color, fontFamily: fontFamily, exactWidth: textW);
     x = isRtl ? strip.right - 12 - textW : textLeft;
   } else {
     para = buildLine(
       text,
       fontSize,
+      color: color,
       fontFamily: fontFamily,
       maxWidth: availW,
       ellipsis: '…',

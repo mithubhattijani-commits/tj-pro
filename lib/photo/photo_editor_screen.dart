@@ -650,7 +650,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
       _aiCoinsPaid = true;
       _setStatus(
         res.adminFree
-            ? 'Admin — AI tools free unlock ho gaye.'
+            ? 'AI tools unlock ho gaye.'
             : 'AI tools unlock ho gaye ($cost coins).',
       );
     }
@@ -1485,7 +1485,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
       child: _photoIconChoiceRail([
         for (final t in tabs)
           _photoIconChoiceItem(
-            icon: _photoTabIcon(_activePhotoTool, t.$1),
+            icon: _photoTabIcon(_activePhotoTool ?? '', t.$1),
             label: t.$2,
             selected: current == t.$1,
             onTap: () => setState(() => _photoTab = t.$1),

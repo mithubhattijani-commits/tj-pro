@@ -198,15 +198,18 @@ double fitPreviewChipFontSize(String text, double fontSize, double maxWidth) {
 /// gold-dot separators; the logo sits bottom-right with the
 /// flipping TIME (with seconds) <-> Urdu DATE capsule directly
 /// under it; the optional top ticker scrolls at the frame top.
-/// final3 (the DEFAULT, 22 Nov 2026): the 3-ribbon bottom stack
-/// — navy current-Urdu ribbon (thinner), thick red national-Urdu
+/// final3 (the DEFAULT, user-declared FINAL 22 Nov 2026, demo
+/// v4): the 3-ribbon bottom stack — YELLOW current-Urdu ribbon
+/// (thinner) with BLACK headline text, thick red national-Urdu
 /// ribbon, dark English ticker scrolling continuously; the Urdu
 /// headlines sit pinned right-aligned when they fit the window
 /// left of the logo stack and scroll on overflow; NO chips; the
-/// logo pokes above the stack's top-right with the DATE-first
-/// capsule hanging under it. Ribbon
-/// heights carry a small legibility floor at preview sizes (the
-/// export uses the exact fractions).
+/// DATE/TIME capsule sits ON the middle (red) ribbon at its right
+/// end, bottom-aligned with the red ribbon's bottom edge, and the
+/// logo block (the user's green-screen rotating-cube video, shown
+/// here as its keyed first frame) sits directly above the capsule.
+/// Ribbon heights carry a small legibility floor at preview sizes
+/// (the export uses the exact fractions).
 class NigraanFinalPreview extends StatelessWidget {
   const NigraanFinalPreview({
     super.key,
@@ -245,7 +248,6 @@ class NigraanFinalPreview extends StatelessWidget {
     final f3TopH = (g.f3TopH * scaleH).clamp(12.0, 200.0);
     final f3MidH = (g.f3MidH * scaleH).clamp(18.0, 200.0);
     final f3BotH = (g.f3BotH * scaleH).clamp(12.0, 200.0);
-    final f3Poke = g.f3Poke * scaleH;
     final tickerH = (h * 0.055).clamp(26.0, 44.0);
     const gap = 6.0;
     final ltH = (h * 0.10).clamp(36.0, 200.0);
@@ -277,9 +279,19 @@ class NigraanFinalPreview extends StatelessWidget {
         (hasLowerThird ? lowerThirdTop : ribbonsTop) - gap - plateH;
 
     final logoW = g.logoVisibleW * scaleW;
-    final logoH = logoW * 347 / 422;
+    // final3: the logo block is the green-screen video's keyed
+    // aspect (408:344); classic2 keeps the .mov aspect (422:347).
+    final logoH = isFinal3 ? logoW * 344 / 408 : logoW * 347 / 422;
     final capsuleH =
         (g.capsuleH * scaleH).clamp(isFinal3 ? 9.0 : 15.0, 200.0);
+    // final3 (demo v4 + user lift): the capsule sits ON the
+    // middle (red) ribbon at its right end, bottom-aligned with
+    // the red ribbon's bottom edge and raised by g.f3BlockLift;
+    // the logo block sits directly above it. Anchored to the
+    // middle ribbon's geometric bottom, like the export (which
+    // always renders the full stack).
+    final capTop = urduTop + midH - capsuleH - g.f3BlockLift * scaleH;
+    final logoTop = capTop - logoH;
     final logoRight = g.logoMargin * scaleW;
 
     TextStyle topStyle(RibbonConfig ribbon, double stripH) {
@@ -375,10 +387,11 @@ class NigraanFinalPreview extends StatelessWidget {
       required String text,
       required String fallback,
       required double fontSize,
+      Color textColor = Colors.white,
     }) {
       final shown = text.isEmpty ? fallback : text;
       final style = TextStyle(
-        color: Colors.white,
+        color: textColor,
         fontSize: fontSize,
         fontWeight: FontWeight.bold,
         fontFamily: _kasheeda(text),
@@ -386,7 +399,7 @@ class NigraanFinalPreview extends StatelessWidget {
       final parts = paritySplitHeadlines(shown);
       final seq = parts.isEmpty ? shown : '${parts.join('  ●  ')}  ●  ';
       final windowW = w - logoW;
-      final fits = measurePreviewTextWidth(seq, style) <= windowW - 16;
+      final fits = measurePreviewTextWidth(seq, fontSize) <= windowW - 16;
       if (fits) {
         return Container(
           alignment: Alignment.centerRight,
@@ -780,20 +793,21 @@ class NigraanFinalPreview extends StatelessWidget {
                   text: preset.topRibbon.text,
                   fallback: 'موجودہ خبر',
                   fontSize: f3TopH * 0.52,
+                  // Yellow design top ribbon → BLACK headline text.
+                  textColor: Color(preset.designTopTextColor),
                 ),
               ),
             ),
           // Logo + flipping capsule stack — painted AFTER the
           // ribbons so it lands ON TOP of them. classic2:
           // bottom-right, the capsule sitting directly on the
-          // ribbons (v1.3.0 parity). final3: at the RIGHT of the
-          // stack — the logo pokes slightly above the stack top
-          // and the DATE capsule hangs directly under it, over
-          // the ribbons' right end.
+          // ribbons (v1.3.0 parity). final3 (demo v4): the DATE
+          // capsule sits ON the middle (red) ribbon at its right
+          // end and the logo block sits directly above it.
           Positioned(
             key: const Key('preview-logo-bug'),
             right: logoRight,
-            top: isFinal3 ? ribbonsTop - f3Poke : null,
+            top: isFinal3 ? logoTop : null,
             bottom: isFinal3
                 ? null
                 : ((showUrdu || showEnglish)
@@ -804,11 +818,12 @@ class NigraanFinalPreview extends StatelessWidget {
               initial: initial,
               width: logoW,
               height: logoH,
+              isFinal3: isFinal3,
             ),
           ),
           Positioned(
             right: logoRight,
-            top: isFinal3 ? ribbonsTop - f3Poke + logoH : null,
+            top: isFinal3 ? capTop : null,
             bottom: isFinal3
                 ? null
                 : (showUrdu || showEnglish ? h - ribbonsTop : 4),
@@ -841,20 +856,25 @@ class NigraanFinalPreview extends StatelessWidget {
 
 /// The parity logo box: the picked logo image fitted into the
 /// design's VISIBLE box (classic2: 185/1080 wide, 422:347;
-/// final3: 110/720 wide, same aspect), or the channel initial
-/// tile when no logo is picked.
+/// final3: 232/1280 wide, 408:344), or — final3 with no logo
+/// picked — the keyed first frame of the user's green-screen
+/// rotating-cube logo video (a still: the preview has no
+/// chroma-key shader plumbing, the EXPORT plays the real video),
+/// or the channel initial tile otherwise.
 class _ParityLogoBox extends StatelessWidget {
   const _ParityLogoBox({
     required this.logoPath,
     required this.initial,
     required this.width,
     required this.height,
+    this.isFinal3 = false,
   });
 
   final String? logoPath;
   final String initial;
   final double width;
   final double height;
+  final bool isFinal3;
 
   @override
   Widget build(BuildContext context) {
@@ -865,6 +885,17 @@ class _ParityLogoBox extends StatelessWidget {
         height: height,
         child: Image.file(
           File(path),
+          fit: BoxFit.contain,
+          errorBuilder: (_, __, ___) => _tile(),
+        ),
+      );
+    }
+    if (isFinal3) {
+      return SizedBox(
+        width: width,
+        height: height,
+        child: Image.asset(
+          'assets/templates/nigraan_logo_gs_frame.png',
           fit: BoxFit.contain,
           errorBuilder: (_, __, ___) => _tile(),
         ),

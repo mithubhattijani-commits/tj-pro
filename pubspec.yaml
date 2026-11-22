@@ -87,6 +87,13 @@ flutter:
     # export always has it (the on-demand URL stays empty). The
     # binary is uploaded separately — this entry names its path.
     - assets/templates/nigraan_intro.mp4
+    # v1.3.0 (demo v4, user-declared FINAL 22 Nov 2026): the
+    # user's green-screen rotating-cube logo VIDEO — the Final
+    # template's logo in export (chromakeyed) — plus its keyed
+    # first frame, shown as a still in the preview. Both binaries
+    # are uploaded separately — these entries name their paths.
+    - assets/templates/nigraan_logo_gs.mp4
+    - assets/templates/nigraan_logo_gs_frame.png
     - assets/fonts/DejaVuSans-Bold.ttf
     - assets/music/news_music_1.mp3
     - assets/music/news_music_2.mp3

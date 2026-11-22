@@ -415,7 +415,7 @@ class _TemplateStudioScreenState extends State<TemplateStudioScreen> {
               preset: preset,
               kind: kTemplateFinal,
               label: 'Final 3-Ribbon',
-              colors: const [0xFF032572, 0xFF880C03, 0xFF081E46],
+              colors: const [0xFFFFC800, 0xFF880C03, 0xFF081E46],
             ),
             const SizedBox(width: 8),
             _templateCard(

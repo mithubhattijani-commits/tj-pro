@@ -226,6 +226,14 @@ class AssetDownloadService {
   /// Bundled asset path of the real channel intro (v1.3.0, pubspec).
   static const introAssetPath = 'assets/templates/nigraan_intro.mp4';
 
+  /// Bundled asset path + cache name of the user's green-screen
+  /// rotating-cube logo VIDEO (final3 default, demo v4, 22 Nov
+  /// 2026): chromakeyed into the Final template's logo block in
+  /// export. A missing bundle is NOT an error — callers fall back
+  /// to the existing logo path (generated frames / .mov / still).
+  static const logoGsAssetPath = 'assets/templates/nigraan_logo_gs.mp4';
+  static const logoGsFileName = 'nigraan_logo_gs.mp4';
+
   /// Bundled asset path + cache name of the DejaVu Sans Bold font
   /// (the reference template's Latin font — ribbons' Latin runs are
   /// drawn by the PNG renderer, the ticking clock by drawtext, which
@@ -301,6 +309,19 @@ class AssetDownloadService {
       final cached = await cachedFile(dejaVuFileName);
       if (cached != null) return cached;
       return extractBundledAsset(dejaVuAssetPath, dejaVuFileName);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// The green-screen logo video file: cache → bundled asset →
+  /// null (the caller falls back to the existing logo path).
+  /// Never throws.
+  Future<File?> ensureLogoGsFile() async {
+    try {
+      final cached = await cachedFile(logoGsFileName);
+      if (cached != null) return cached;
+      return extractBundledAsset(logoGsAssetPath, logoGsFileName);
     } catch (_) {
       return null;
     }
