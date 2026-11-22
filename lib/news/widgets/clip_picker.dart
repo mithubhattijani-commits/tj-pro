@@ -6,6 +6,11 @@
 /// skipped on add. Paths are plain file paths — the screens store
 /// them in the project JSON, and Phase 7 hands them to the video
 /// editor timeline + FFmpeg export.
+///
+/// v1.5.0 (#32): PHOTOS are pickable too (multi-image gallery pick)
+/// — a photo path in the same list; the preview composites it into
+/// the template's main area and the export turns it into a real
+/// segment via photoClipCommand.
 library;
 
 import 'package:file_picker/file_picker.dart';
@@ -13,6 +18,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../news_project.dart';
+import 'template_media_preview.dart' show isPhotoMediaPath;
 
 class ClipPickerList extends StatelessWidget {
   const ClipPickerList({
@@ -58,6 +64,24 @@ class ClipPickerList extends StatelessWidget {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Clip add nahi hua: $e')),
+        );
+      }
+    }
+  }
+
+  /// v1.5.0 (#32): photos from the gallery (multi-pick). Photo paths
+  /// land in the same ordered list as videos — order = timeline
+  /// order for preview + export.
+  Future<void> _addPhotos(BuildContext context) async {
+    try {
+      final picked = await ImagePicker().pickMultiImage();
+      if (picked.isEmpty) return;
+      if (!context.mounted) return;
+      _addPaths(context, picked.map((f) => f.path).toList());
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Photo add nahi hua: $e')),
         );
       }
     }
@@ -110,9 +134,20 @@ class ClipPickerList extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            key: const Key('addClipPhoto'),
+            onPressed: () => _addPhotos(context),
+            icon: const Icon(Icons.photo_library_outlined),
+            label: const Text('Photo add karein'),
+          ),
+        ),
+        const SizedBox(height: 8),
         if (paths.isEmpty)
           const Text(
-            'Abhi koi clip nahi — gallery ya files se video add karein.',
+            'Abhi koi clip nahi — gallery ya files se video ya photo '
+            'add karein; yehi template ke main area mein lagega.',
             style: TextStyle(color: Colors.grey),
           )
         else
@@ -130,13 +165,18 @@ class ClipPickerList extends StatelessWidget {
             itemBuilder: (context, index) {
               final path = paths[index];
               final name = path.split('/').last;
+              final isPhoto = isPhotoMediaPath(path);
               return Card(
                 key: ValueKey(path),
                 margin: const EdgeInsets.only(bottom: 6),
                 child: ListTile(
-                  leading: const Icon(Icons.play_circle_outline),
+                  leading: Icon(
+                    isPhoto
+                        ? Icons.image_outlined
+                        : Icons.play_circle_outline,
+                  ),
                   title: Text(
-                    'Clip ${index + 1} — $name',
+                    '${isPhoto ? 'Photo' : 'Clip'} ${index + 1} — $name',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),

@@ -92,6 +92,7 @@ import 'video_export_service.dart';
 import '../news/breaking_templates.dart';
 import '../news/channel_preset.dart';
 import '../news/news_project.dart';
+import '../news/widgets/template_media_preview.dart' show isPhotoMediaPath;
 import '../news/project_handoff.dart';
 import '../news/watermark.dart';
 
@@ -411,23 +412,38 @@ class ReelExportService {
             clipDuration == null ? null : (clipDuration * 1000).round();
         final stageFrom = 0.05 + 0.20 * i / totalClips;
         final stageTo = 0.05 + 0.20 * (i + 1) / totalClips;
+        // v1.5.0 (#32): a PHOTO in the clip list becomes a real 5s
+        // Ken Burns segment via photoClipCommand — normalizeCommand
+        // on a still image would produce a one-frame file and break
+        // the concat. Videos keep the normalize path unchanged.
+        final isPhoto = isPhotoMediaPath(handoff.clipPaths[i]);
         final res = await runStage(
-          FfmpegService.normalizeCommand(
-            input: handoff.clipPaths[i],
-            trimStart: 0,
-            // No trim range on a project clip: the full clip is used.
-            // `-to 3600` is a generous cap — FFmpeg stops at EOF.
-            trimEnd: 3600,
-            width: w,
-            height: h,
-            output: nf,
-            fps: effectiveSettings.fps,
-            videoBitrateKbps: effectiveSettings.videoBitrateKbps,
-            audioBitrateKbps: effectiveSettings.audioBitrateKbps,
-          ),
+          isPhoto
+              ? FfmpegService.photoClipCommand(
+                  imagePath: handoff.clipPaths[i],
+                  output: nf,
+                  width: w,
+                  height: h,
+                  durationSec: 5,
+                  kenBurns: true,
+                )
+              : FfmpegService.normalizeCommand(
+                  input: handoff.clipPaths[i],
+                  trimStart: 0,
+                  // No trim range on a project clip: the full clip is
+                  // used. `-to 3600` is a generous cap — FFmpeg stops
+                  // at EOF.
+                  trimEnd: 3600,
+                  width: w,
+                  height: h,
+                  output: nf,
+                  fps: effectiveSettings.fps,
+                  videoBitrateKbps: effectiveSettings.videoBitrateKbps,
+                  audioBitrateKbps: effectiveSettings.audioBitrateKbps,
+                ),
           stageFrom,
           stageTo,
-          expectedMs: clipMs,
+          expectedMs: isPhoto ? 5000 : clipMs,
         );
         if (!res.ok) {
           return ReelExportResult(

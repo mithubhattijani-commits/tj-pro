@@ -66,6 +66,8 @@ import 'widgets/breaking_preview.dart';
 import 'widgets/clip_picker.dart';
 import 'widgets/nigraan_final_preview.dart';
 import 'widgets/reel_export_card.dart';
+import 'widgets/studio_pickers.dart';
+import 'widgets/template_media_preview.dart';
 import 'widgets/voice_preview_player.dart';
 
 class NewsMakerScreen extends StatefulWidget {
@@ -91,6 +93,15 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   final _tickerController = TextEditingController();
 
   GeminiVoice _voice = GeminiVoice.aoede;
+
+  /// v1.5.0 (#19): the ONE unified voice selection — a StudioVoice
+  /// id from the shared 8-voice catalogue. Gemini picks also keep
+  /// [_voice] in sync (the Gemini path + project.voice use it);
+  /// Edge picks (Asad/Uzma) live only here + project.studioVoiceId.
+  String _studioVoiceId = 'aoede';
+
+  StudioVoice get _selectedStudioVoice => StudioVoice.byId(_studioVoiceId);
+
   bool _voiceBusy = false;
   String _voiceStatus = 'Abhi voice nahi bani.';
   int? _voiceRemaining;
@@ -113,6 +124,9 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       _preset = preset ?? ChannelPreset.nigraanTv();
       _project = project ?? NewsProject.create(presetId: _preset!.id);
       _voice = _project!.voice;
+      _studioVoiceId = _project!.studioVoiceId.isNotEmpty
+          ? _project!.studioVoiceId
+          : _project!.voice.name;
       _tehreerController.text = _project!.tehreer;
       _tickerController.text = _project!.tickerText;
       _loaded = true;
@@ -139,6 +153,9 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       _preset = preset;
       _project = project;
       _voice = project.voice;
+      _studioVoiceId = project.studioVoiceId.isNotEmpty
+          ? project.studioVoiceId
+          : project.voice.name;
       _tehreerController.text = project.tehreer;
       _tickerController.text = project.tickerText;
       _loaded = true;
@@ -278,10 +295,12 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   }
 
   /// Trio option 3 (free-TTS half) — Text se Audio via the free
-  /// Edge voices in [TtsStudioService] (Asad/Uzma, matched to the
-  /// selected Gemini voice's gender). COSTS COINS like the Gemini
-  /// path ([CoinFeature.voiceover], charged when the result is
-  /// not a cache hit); a failed spend attaches nothing.
+  /// Edge voices in [TtsStudioService]. v1.5.0 (#19): uses the
+  /// SELECTED Edge voice (Asad or Uzma) directly — the old
+  /// gender-match against the Gemini selection is gone, because
+  /// the 8 chips below are the one selection now. COSTS COINS like
+  /// the Gemini path ([CoinFeature.voiceover], charged when the
+  /// result is not a cache hit); a failed spend attaches nothing.
   Future<void> _buildFreeTtsVoice() async {
     final project = _project;
     if (project == null || _voiceBusy) return;
@@ -297,9 +316,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     try {
       final result = await TtsStudioService().generate(
         text,
-        voice: _voice == GeminiVoice.charon
-            ? StudioVoice.asad
-            : StudioVoice.uzma,
+        voice: _selectedStudioVoice,
         controls: TtsControls(
           speed: project.voiceSpeed,
           pauseSeconds: project.voicePauseSec,
@@ -342,31 +359,18 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     }
   }
 
-  /// Trio option 3 — chooser: Gemini AI voice (the existing flow
-  /// below) or the free Edge TTS voices. Both cost coins for a new
-  /// voice; both land in the same voiceover slot.
-  Future<void> _showTextToAudioChooser() async {
-    final choice = await showDialog<String>(
-      context: context,
-      builder: (ctx) => SimpleDialog(
-        title: const Text('Text se Audio — engine chunein'),
-        children: [
-          SimpleDialogOption(
-            onPressed: () => Navigator.pop(ctx, 'gemini'),
-            child: const Text('Gemini AI voice (50 coins)'),
-          ),
-          SimpleDialogOption(
-            onPressed: () => Navigator.pop(ctx, 'free'),
-            child: const Text('Free TTS — Asad/Uzma (50 coins)'),
-          ),
-        ],
-      ),
-    );
-    if (!mounted) return;
-    if (choice == 'gemini') {
-      await _buildVoice();
-    } else if (choice == 'free') {
+  /// Trio option 3 — Text se Audio, UNIFIED (v1.5.0: the old
+  /// Gemini-vs-Free chooser dialog AND the separate "Voice banao"
+  /// button were two controls for this one action — both removed).
+  /// The 8 voice chips below ARE the engine choice: a Gemini chip
+  /// builds via the Gemini path, an Edge chip (Asad/Uzma) via the
+  /// free-TTS path. Both cost coins for a new voice; both land in
+  /// the same voiceover slot.
+  Future<void> _buildSelectedVoice() async {
+    if (_selectedStudioVoice.engine == StudioTtsEngine.edge) {
       await _buildFreeTtsVoice();
+    } else {
+      await _buildVoice();
     }
   }
 
@@ -390,6 +394,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     project.tehreer = _tehreerController.text;
     project.tickerText = _tickerController.text;
     project.voice = _voice;
+    project.studioVoiceId = _studioVoiceId;
     await NewsProjectStore.save(project);
     if (!mounted) return;
     final now = DateTime.now();
@@ -539,6 +544,124 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     setState(() => _preset = preset);
   }
 
+  /// v1.5.0 (#32) — Add Video sheet: the SAME ClipPickerList as the
+  /// Clips section below (one control, two entry points — the list
+  /// in the sheet and the section share the project's clip list, so
+  /// they can never disagree). Add / photo / reorder / remove all
+  /// land in project.clipPaths and autosave.
+  void _showClipsSheet(NewsProject project) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, sheetSetState) => SafeArea(
+          child: SizedBox(
+            height: 440,
+            child: Column(
+              children: [
+                const ListTile(
+                  title: Text(
+                    'Apni video / photo — template ke main area ke liye',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  subtitle: Text(
+                    'Pehli clip preview mein dikhti hai; export mein '
+                    'saari clips order se lagti hain.',
+                  ),
+                ),
+                Expanded(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    child: ClipPickerList(
+                      paths: project.clipPaths,
+                      onChanged: (next) {
+                        setState(() => project.clipPaths = next);
+                        sheetSetState(() {});
+                        _scheduleSave();
+                      },
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// v1.5.0 (#32) — Templates sheet (shared picker): built-in
+  /// designs set the project's template kind (+ the preset's Final
+  /// variant for Final 3-Ribbon vs Classic 2-Ribbon); Store /
+  /// Library picks navigate.
+  Future<void> _showTemplatesSheet(NewsProject project) async {
+    final preset = _preset;
+    if (preset == null) return;
+    final pick = await showTemplatesPicker(
+      context,
+      currentKind: project.templateKind,
+      currentIsFinal3: preset.finalIs3Ribbon,
+    );
+    if (pick == null || !mounted) return;
+    if (await openTemplatePickDestination(context, pick)) {
+      await _reloadPreset();
+      return;
+    }
+    switch (pick) {
+      case TemplatePick.final3:
+        project.templateKind = 'nigraanFinal';
+        project.breaking = false;
+        await _applyFinalVariant(final3: true);
+      case TemplatePick.classic2:
+        project.templateKind = 'nigraanFinal';
+        project.breaking = false;
+        await _applyFinalVariant(final3: false);
+      case TemplatePick.breaking:
+        project.templateKind = 'breaking';
+        project.breaking = true;
+      case TemplatePick.classic:
+        project.templateKind = 'classic';
+        project.breaking = false;
+      case TemplatePick.store:
+      case TemplatePick.library:
+        break; // handled by openTemplatePickDestination above
+    }
+    if (!mounted) return;
+    setState(() {});
+    _scheduleSave();
+  }
+
+  /// The Final design variant lives on the PRESET (the export reads
+  /// the preset, so a preview-only variant would lie) — set +
+  /// persist it, exactly like Template & Studio does.
+  Future<void> _applyFinalVariant({required bool final3}) async {
+    final preset = _preset;
+    if (preset == null) return;
+    preset.finalVariant = final3 ? kFinalVariant3 : kFinalVariantClassic2;
+    await persistPresetChange(preset);
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  /// v1.5.0 (#32) — Ribbons sheet (shared picker): design picks
+  /// mutate + persist the working preset; Studio / Store navigate.
+  Future<void> _showRibbonsSheet() async {
+    final preset = _preset;
+    if (preset == null) return;
+    final pick = await showRibbonsPicker(
+      context,
+      currentIsFinal3: preset.finalIs3Ribbon,
+    );
+    if (pick == null || !mounted) return;
+    await handleRibbonPick(
+      context,
+      pick,
+      preset: preset,
+      persistPreset: () => persistPresetChange(preset),
+    );
+    await _reloadPreset();
+  }
+
   Future<void> _openSeo() async {
     final project = _project;
     if (project == null) return;
@@ -680,11 +803,22 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         const SizedBox(height: 8),
         Center(
           child: project.templateKind == 'nigraanFinal'
-              ? NigraanFinalPreview(
-                  preset: previewPreset,
-                  fontReady: _fontReady,
-                  height: 300,
-                )
+              ? project.clipPaths.isEmpty
+                  ? NigraanFinalPreview(
+                      preset: previewPreset,
+                      fontReady: _fontReady,
+                      height: 300,
+                    )
+                  // v1.5.0 (#32): the user's own video/photo sits in
+                  // the template's main area — the same composite
+                  // the export renders.
+                  : TemplateMediaPreview(
+                      key: const Key('makerMediaPreview'),
+                      preset: previewPreset,
+                      mediaPaths: project.clipPaths,
+                      fontReady: _fontReady,
+                      height: 300,
+                    )
               : project.templateKind == 'breaking'
                   ? BreakingTemplatePreview(
                       key: const Key('makerBreakingPreview'),
@@ -703,6 +837,60 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                       fontReady: _fontReady,
                       height: 300,
                     ),
+        ),
+        const SizedBox(height: 10),
+        // v1.5.0 (#32): the three controls the user asked for,
+        // always visible right under the preview — Add Video (own
+        // footage into the main area), Templates, Ribbons.
+        Row(
+          children: [
+            Expanded(
+              child: FilledButton.icon(
+                key: const Key('makerAddVideoButton'),
+                onPressed: () => _showClipsSheet(project),
+                icon: const Icon(Icons.add),
+                label: const FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text('Add Video'),
+                ),
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF7C3AED),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: OutlinedButton.icon(
+                key: const Key('makerTemplatesButton'),
+                onPressed: () => _showTemplatesSheet(project),
+                icon: const Icon(Icons.dashboard_customize_outlined),
+                label: const FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text('Templates'),
+                ),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: OutlinedButton.icon(
+                key: const Key('makerRibbonsButton'),
+                onPressed: _showRibbonsSheet,
+                icon: const Icon(Icons.view_agenda_outlined),
+                label: const FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text('Ribbons'),
+                ),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                ),
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 20),
         Row(
@@ -748,7 +936,9 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                 key: const Key('tickerField'),
                 controller: _tickerController,
                 decoration: const InputDecoration(
-                  hintText: 'Ticker text yahan paste karein…',
+                  // v1.5.0 (#22): shorter hint — the long one was
+                  // truncated mid-word in the field.
+                  hintText: 'Ticker text paste karein…',
                   border: OutlineInputBorder(),
                 ),
                 onChanged: (_) {
@@ -763,6 +953,9 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               onPressed: _pasteTicker,
               style: FilledButton.styleFrom(
                 backgroundColor: const Color(0xFF7C3AED),
+                // v1.5.0 (#22): explicit white label — the theme
+                // default left it washed out on the violet fill.
+                foregroundColor: Colors.white,
               ),
               child: const Text('Paste'),
             ),
@@ -785,10 +978,16 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                 key: const Key('audioRecordButton'),
                 onPressed: _voiceBusy ? null : _toggleRecord,
                 icon: Icon(_recording ? Icons.stop : Icons.mic),
-                label: Text(_recording ? 'Stop' : 'Record'),
+                // v1.5.0 (#17): labels scale down to fit the pill —
+                // never clipped, never wrapped.
+                label: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(_recording ? 'Stop' : 'Record'),
+                ),
                 style: FilledButton.styleFrom(
                   backgroundColor:
                       _recording ? Colors.redAccent : const Color(0xFF7C3AED),
+                  foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 12),
                 ),
               ),
@@ -799,7 +998,10 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                 key: const Key('audioImportButton'),
                 onPressed: _voiceBusy ? null : _importAudio,
                 icon: const Icon(Icons.audio_file_outlined),
-                label: const Text('Import'),
+                label: const FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text('Import'),
+                ),
                 style: OutlinedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 12),
                 ),
@@ -809,9 +1011,15 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             Expanded(
               child: OutlinedButton.icon(
                 key: const Key('audioTtsButton'),
-                onPressed: _voiceBusy ? null : _showTextToAudioChooser,
+                // v1.5.0: this pill IS the generate action now —
+                // it builds with the voice selected in the chips
+                // below (the chooser dialog is gone).
+                onPressed: _voiceBusy ? null : _buildSelectedVoice,
                 icon: const Icon(Icons.record_voice_over_outlined),
-                label: const Text('Text se Audio'),
+                label: const FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text('Text se Audio'),
+                ),
                 style: OutlinedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 12),
                 ),
@@ -836,32 +1044,27 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           ),
         const Text(
           'Record = apni awaz, Import = phone se audio file, '
-          'Text se Audio = tehreer se AI voice (nayi voice par '
-          '50 coins). Teeno ka result neeche preview mein sun sakte hain.',
+          'Text se Audio = tehreer se AI voice — neeche chuni hui '
+          'awaz mein (nayi voice par 50 coins). Teeno ka result '
+          'neeche preview mein sun sakte hain.',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
         const SizedBox(height: 20),
         const Text(
-          'Voiceover — Gemini',
+          'Voiceover — awaz chunein',
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: _voiceChoice(
-                voice: GeminiVoice.aoede,
-                label: 'Aoede • Female',
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: _voiceChoice(
-                voice: GeminiVoice.charon,
-                label: 'Charon • Male',
-              ),
-            ),
-          ],
+        // v1.5.0 (#19): the ONE unified 8-voice catalogue — the
+        // same StudioVoice.all the AI Voice Studio shows (6 Gemini
+        // + Asad/Uzma free TTS). One selection drives both build
+        // paths; there is no second voice list anywhere.
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: StudioVoice.all
+              .map((v) => _studioVoiceChip(v))
+              .toList(),
         ),
         const SizedBox(height: 8),
         Row(
@@ -922,35 +1125,29 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           'Speed resample pitch bhi badalta hai — ye normal hai.',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
-        const SizedBox(height: 8),
-        SizedBox(
-          width: double.infinity,
-          child: FilledButton.icon(
-            key: const Key('voiceBuildButton'),
-            onPressed: _voiceBusy ? null : () => _buildVoice(),
-            icon: _voiceBusy
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
-                    ),
-                  )
-                : const Icon(Icons.play_arrow),
-            label: Text(_voiceBusy ? 'Voice ban rahi hai…' : 'Voice banao'),
-            style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFF7C3AED),
-              padding: const EdgeInsets.symmetric(vertical: 14),
-            ),
+        // v1.5.0 (dedupe): the separate "Voice banao" button is
+        // REMOVED — it duplicated the trio's "Text se Audio" pill
+        // (two controls, one action). Building shows progress here;
+        // the pill above is the one generate control.
+        if (_voiceBusy) ...[
+          const SizedBox(height: 8),
+          const LinearProgressIndicator(
+            key: Key('voiceBusyProgress'),
+            minHeight: 3,
           ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          _voiceStatus,
-          key: const Key('voiceStatus'),
-          style: const TextStyle(color: Colors.grey, fontSize: 12),
-        ),
+        ],
+        // v1.5.0 (#18): the status line renders ONLY for a real
+        // status — the default 'Abhi voice nahi bani.' text is NOT
+        // repeated here; the VoicePreviewPlayer's empty card below
+        // is the one place that message lives.
+        if (_voiceStatus != 'Abhi voice nahi bani.') ...[
+          const SizedBox(height: 8),
+          Text(
+            _voiceStatus,
+            key: const Key('voiceStatus'),
+            style: const TextStyle(color: Colors.grey, fontSize: 12),
+          ),
+        ],
         // Cap line: non-admins only. Admins get -1 (unlimited)
         // from remainingToday() and see nothing here.
         if (_voiceRemaining != null && _voiceRemaining != -1)
@@ -976,9 +1173,18 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         VoicePreviewPlayer(
           filePath: project.voiceoverPath,
           durationSec: project.voiceoverDurationSec,
-          voiceLabel: _voice.apiName,
+          voiceLabel: _selectedStudioVoice.label,
           regenerating: _voiceBusy,
-          onRegenerate: () => _buildVoice(regenerate: true),
+          // "Dobara" rebuilds with the SELECTED voice's engine —
+          // Gemini regenerates (cache deleted, costs again); the
+          // Edge path rebuilds through free TTS.
+          onRegenerate: () {
+            if (_selectedStudioVoice.engine == StudioTtsEngine.edge) {
+              unawaited(_buildFreeTtsVoice());
+            } else {
+              unawaited(_buildVoice(regenerate: true));
+            }
+          },
         ),
         const SizedBox(height: 4),
         const Text(
@@ -1014,7 +1220,9 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         ),
         const SizedBox(height: 20),
         const Text(
-          'Clips',
+          // v1.5.0 (#32): named for what it is — the user's own
+          // footage for the template's main area.
+          'Add Video — clips & photos',
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
@@ -1100,11 +1308,15 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Flexible(
-                child: Text(
-                  label,
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                // v1.5.0 (#21): scale-to-fit instead of ellipsis —
+                // 'Final 3-Ribbon' was truncated to 'Final 3-Rib…'.
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    label,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                    maxLines: 1,
+                  ),
                 ),
               ),
               if (selected) ...[
@@ -1118,17 +1330,29 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     );
   }
 
-  Widget _voiceChoice({required GeminiVoice voice, required String label}) {
-    final selected = _voice == voice;
+  /// One chip of the unified 8-voice catalogue (v1.5.0, #19).
+  /// Selecting a Gemini voice also syncs [_voice] (the Gemini build
+  /// path + project.voice); selecting Asad/Uzma routes the build to
+  /// the free-TTS path via [_studioVoiceId] alone.
+  Widget _studioVoiceChip(StudioVoice v) {
+    final selected = _studioVoiceId == v.id;
     return InkWell(
-      key: Key('voiceChoice-${voice.apiName}'),
+      key: Key('voiceChoice-${v.label}'),
       onTap: () {
-        setState(() => _voice = voice);
+        setState(() {
+          _studioVoiceId = v.id;
+          if (v.engine == StudioTtsEngine.gemini) {
+            _voice = GeminiVoice.values.firstWhere(
+              (g) => g.name == v.id,
+              orElse: () => GeminiVoice.aoede,
+            );
+          }
+        });
         _scheduleSave();
       },
       borderRadius: BorderRadius.circular(12),
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
           color: selected
               ? const Color(0xFF7C3AED)
@@ -1139,15 +1363,12 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           ),
         ),
         child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Flexible(
-              child: Text(
-                label,
-                style: const TextStyle(fontWeight: FontWeight.bold),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
+            Text(
+              '${v.label} • ${v.gender}'
+              '${v.engine == StudioTtsEngine.edge ? ' • Free' : ''}',
+              style: const TextStyle(fontWeight: FontWeight.bold),
             ),
             if (selected) ...[
               const SizedBox(width: 4),

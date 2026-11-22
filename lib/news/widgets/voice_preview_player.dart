@@ -139,7 +139,12 @@ class _VoicePreviewPlayerState extends State<VoicePreviewPlayer> {
               SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Abhi voice nahi bani — "Voice banao" dabayein.',
+                  // v1.5.0 (#18 dedupe): this card is the ONE
+                  // no-voice message (the screen's status line no
+                  // longer repeats it); the generate action it names
+                  // is the trio's "Text se Audio" pill.
+                  'Abhi voice nahi bani — upar "Text se Audio" se '
+                  'banayein, ya Record / Import karein.',
                   style: TextStyle(color: Colors.grey),
                 ),
               ),

@@ -1,16 +1,23 @@
-/// News Studio home (Phase 2).
+/// News Studio home (Phase 2; v1.5.0 rebuild per mockup N1).
 ///
-/// Shows the LIVE Phase 2 model state — the selected channel preset with
-/// its three ribbons and the breaking-news templates — so the home card
-/// and the bottom-nav tab have a real screen to open. Nothing here is a
-/// dead button: every row shows stored state, and the Help row opens
-/// the real WhatsApp chat. Destinations are grouped: News banao /
-/// Studio / Voice & Captions / Publish, with Coins and Advertise as
-/// slim rows at the bottom.
+/// Layout (v1.5.0): the REAL template preview as the hero, the
+/// three #32 controls directly under it (Add Video / Templates /
+/// Ribbons — always visible), the Channel preset card with the
+/// RESOLVED design colours (#15), ONE tool line (#25-style: every
+/// studio destination in a single horizontal icon+label row), a
+/// News Maker summary card (project state, voiceover status shown
+/// ONCE), then Breaking templates / Publish / Coins / Advertise /
+/// Store / Recent projects / Help. The v1.4.0 grouped card lists
+/// (News banao / Studio / Voice & Captions) were duplicates of the
+/// tool line and are gone — every destination they held is in the
+/// tool line or the pickers, nothing was removed.
 ///
-/// Phase 10 wired the login/coins track in here too (Coins tile +
-/// Advertise page) — the coins balance pill lives in the home app bar.
+/// The bottom padding is deliberate (#20): this screen is also a
+/// bottom-nav tab body, and the list must never slide under the
+/// navigation bar.
 library;
+
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 
@@ -32,11 +39,13 @@ import 'news_project.dart';
 import 'seo_screen.dart';
 import 'store_screen.dart';
 import 'template_studio_screen.dart';
-import 'templates_library_screen.dart';
 import 'tts_studio_screen.dart';
 import 'widgets/breaking_preview.dart';
+import 'widgets/clip_picker.dart';
 import 'widgets/draft_recovery_card.dart';
 import 'widgets/nigraan_final_preview.dart';
+import 'widgets/studio_pickers.dart';
+import 'widgets/template_media_preview.dart';
 
 class NewsStudioScreen extends StatefulWidget {
   const NewsStudioScreen({super.key});
@@ -64,6 +73,7 @@ class _NewsStudioScreenState extends State<NewsStudioScreen> {
     final selectedId = await ChannelPresetStore.loadSelectedId();
     final templates = await BreakingTemplateStore.loadAll();
     final latestProject = await NewsProjectStore.loadLatest();
+    final allProjects = await NewsProjectStore.loadAll();
     final preset = selectedId == null
         ? presets.first
         : presets.firstWhere(
@@ -83,12 +93,16 @@ class _NewsStudioScreenState extends State<NewsStudioScreen> {
     } catch (_) {
       fontReady = false;
     }
+    final recent = List<NewsProject>.from(allProjects)
+      ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     return _StudioData(
       preset: preset,
       presetCount: presets.length,
       templates: templates,
       fontReady: fontReady,
       draft: findRecoverableDraft(latestProject),
+      latestProject: latestProject,
+      recentProjects: recent.take(5).toList(),
     );
   }
 
@@ -113,6 +127,130 @@ class _NewsStudioScreenState extends State<NewsStudioScreen> {
     _reload();
   }
 
+  Future<void> _open(BuildContext context, Widget screen) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => screen),
+    );
+    _reload();
+  }
+
+  /// v1.5.0 (#32) — Add Video sheet on the latest project (a fresh
+  /// one is created + saved when none exists yet). The SAME
+  /// ClipPickerList as in News Maker — one control, shared state.
+  void _showClipsSheet(BuildContext context, _StudioData data) {
+    final project = data.latestProject ??
+        NewsProject.create(presetId: data.preset.id);
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, sheetSetState) => SafeArea(
+          child: SizedBox(
+            height: 440,
+            child: Column(
+              children: [
+                const ListTile(
+                  title: Text(
+                    'Apni video / photo — template ke main area ke liye',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  subtitle: Text(
+                    'Pehli clip preview mein dikhti hai; export mein '
+                    'saari clips order se lagti hain.',
+                  ),
+                ),
+                Expanded(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    child: ClipPickerList(
+                      paths: project.clipPaths,
+                      onChanged: (next) {
+                        project.clipPaths = next;
+                        sheetSetState(() {});
+                        _saveProject(project);
+                      },
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ).whenComplete(_reload);
+  }
+
+  /// Fire-and-forget project save for sheet edits (the store is
+  /// fail-soft by design; the home reloads when the sheet closes).
+  void _saveProject(NewsProject project) {
+    unawaited(NewsProjectStore.save(project));
+  }
+
+  /// v1.5.0 (#32) — Templates sheet: design picks set the preset's
+  /// template kind + Final variant and persist; Store / Library
+  /// picks navigate (shared picker implementation).
+  Future<void> _showTemplatesSheet(
+    BuildContext context,
+    ChannelPreset preset,
+  ) async {
+    final pick = await showTemplatesPicker(
+      context,
+      currentKind: preset.templateKind,
+      currentIsFinal3: preset.finalIs3Ribbon,
+    );
+    if (pick == null || !context.mounted) return;
+    if (await openTemplatePickDestination(context, pick)) {
+      _reload();
+      return;
+    }
+    switch (pick) {
+      case TemplatePick.final3:
+        preset.templateKind = 'nigraanFinal';
+        preset.finalVariant = kFinalVariant3;
+      case TemplatePick.classic2:
+        preset.templateKind = 'nigraanFinal';
+        preset.finalVariant = kFinalVariantClassic2;
+      case TemplatePick.breaking:
+        preset.templateKind = 'breaking';
+      case TemplatePick.classic:
+        preset.templateKind = 'classic';
+      case TemplatePick.store:
+      case TemplatePick.library:
+        return; // handled above
+    }
+    await persistPresetChange(preset);
+    _reload();
+  }
+
+  /// v1.5.0 (#32) — Ribbons sheet (shared picker): design picks
+  /// mutate + persist the preset; Studio / Store navigate.
+  Future<void> _showRibbonsSheet(
+    BuildContext context,
+    ChannelPreset preset,
+  ) async {
+    final pick = await showRibbonsPicker(
+      context,
+      currentIsFinal3: preset.finalIs3Ribbon,
+    );
+    if (pick == null || !context.mounted) return;
+    await handleRibbonPick(
+      context,
+      pick,
+      preset: preset,
+      persistPreset: () => persistPresetChange(preset),
+    );
+    _reload();
+  }
+
+  static String _templateLabel(ChannelPreset preset) {
+    if (preset.templateKind == 'breaking') {
+      return 'Breaking • '
+          '${BreakingVariant.fromId(preset.breakingVariant).label}';
+    }
+    if (preset.templateKind == 'classic') return 'Classic';
+    return preset.finalIs3Ribbon ? 'Final 3-Ribbon' : 'Classic 2-Ribbon';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -125,9 +263,12 @@ class _NewsStudioScreenState extends State<NewsStudioScreen> {
           }
           final data = snapshot.data!;
           final preset = data.preset;
+          final latest = data.latestProject;
           return ListView(
             key: const Key('newsStudioList'),
-            padding: const EdgeInsets.all(20),
+            // #20: generous bottom padding — content never slides
+            // under the bottom navigation bar.
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 96),
             children: [
               // Phase 9 — project recovery: the autosaved draft is
               // offered back here (resume / discard / dismiss).
@@ -142,57 +283,24 @@ class _NewsStudioScreenState extends State<NewsStudioScreen> {
                 ),
                 const SizedBox(height: 12),
               ],
-              _SectionTitle('Channel — ${preset.name}'),
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Template: ${preset.templateKind == 'breaking' ? 'Breaking • ${BreakingVariant.fromId(preset.breakingVariant).label}' : preset.templateKind == 'classic' ? 'Classic' : 'Final 3-Ribbon'}',
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        preset.logoPath == null
-                            ? 'Logo: default (3D rotate on)'
-                            : 'Logo: custom (3D rotate on)',
-                      ),
-                      const SizedBox(height: 12),
-                      _RibbonRow(
-                        label: 'Top ticker',
-                        kind: 'Current story',
-                        ribbon: preset.topRibbon,
-                      ),
-                      _RibbonRow(
-                        label: 'Middle Urdu',
-                        kind: 'National news',
-                        ribbon: preset.urduRibbon,
-                      ),
-                      _RibbonRow(
-                        label: 'Bottom English',
-                        kind: 'International',
-                        ribbon: preset.englishRibbon,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                '${data.presetCount} channel preset(s) — create/edit in '
-                'Template & Studio.',
-                style: const TextStyle(color: Colors.grey),
-              ),
-              const SizedBox(height: 20),
-              const _SectionTitle('Template preview'),
+              // HERO — the real template preview; with the user's
+              // own media composited into the main area when the
+              // latest project has clips (#32).
               Center(
                 child: preset.templateKind == kTemplateFinal
-                    ? NigraanFinalPreview(
-                        preset: preset,
-                        fontReady: data.fontReady,
-                        height: 280,
-                      )
+                    ? (latest != null && latest.clipPaths.isNotEmpty)
+                        ? TemplateMediaPreview(
+                            key: const Key('studioMediaPreview'),
+                            preset: preset,
+                            mediaPaths: latest.clipPaths,
+                            fontReady: data.fontReady,
+                            height: 280,
+                          )
+                        : NigraanFinalPreview(
+                            preset: preset,
+                            fontReady: data.fontReady,
+                            height: 280,
+                          )
                     : preset.templateKind == kTemplateBreaking
                         ? BreakingTemplatePreview(
                             template: BreakingTemplate.fromPreset(preset),
@@ -206,166 +314,192 @@ class _NewsStudioScreenState extends State<NewsStudioScreen> {
                             height: 280,
                           ),
               ),
+              const SizedBox(height: 12),
+              // #32 — the three controls, always visible under the
+              // preview: Add Video / Templates / Ribbons.
+              Row(
+                children: [
+                  Expanded(
+                    child: FilledButton.icon(
+                      key: const Key('studioAddVideoButton'),
+                      onPressed: () => _showClipsSheet(context, data),
+                      icon: const Icon(Icons.add),
+                      label: const FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text('Add Video'),
+                      ),
+                      style: FilledButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      key: const Key('studioTemplatesButton'),
+                      onPressed: () => _showTemplatesSheet(context, preset),
+                      icon: const Icon(Icons.dashboard_customize_outlined),
+                      label: const FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text('Templates'),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      key: const Key('studioRibbonsButton'),
+                      onPressed: () => _showRibbonsSheet(context, preset),
+                      icon: const Icon(Icons.view_agenda_outlined),
+                      label: const FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text('Ribbons'),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
               const SizedBox(height: 20),
-              const _SectionTitle('News banao'),
+              _SectionTitle('Channel preset — ${preset.name}'),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Template: ${_templateLabel(preset)}'),
+                      const SizedBox(height: 4),
+                      Text(
+                        preset.logoPath == null
+                            ? 'Logo: default (3D rotate on)'
+                            : 'Logo: custom (3D rotate on)',
+                      ),
+                      const SizedBox(height: 12),
+                      // #15: the swatches show the RESOLVED design
+                      // colours (preset.design*Color) — the colours
+                      // the template actually renders — not the raw
+                      // factory values stored on the preset.
+                      _RibbonRow(
+                        label: 'Top',
+                        kind: 'Current story',
+                        color: preset.designTopColor,
+                        enabled: preset.topRibbon.enabled,
+                      ),
+                      _RibbonRow(
+                        label: 'Middle',
+                        kind: 'National news (Urdu)',
+                        color: preset.designUrduColor,
+                        enabled: preset.urduRibbon.enabled,
+                      ),
+                      _RibbonRow(
+                        label: 'Bottom',
+                        kind: 'International (English)',
+                        color: preset.designEnglishColor,
+                        enabled: preset.englishRibbon.enabled,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '${data.presetCount} channel preset(s) — create/edit in '
+                'Template & Studio.',
+                style: const TextStyle(color: Colors.grey),
+              ),
+              const SizedBox(height: 20),
+              // ONE tool line (#25 pattern): every studio
+              // destination, one horizontal icon+label row.
+              const _SectionTitle('Tools'),
+              SizedBox(
+                height: 84,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  children: [
+                    _ToolLineItem(
+                      icon: Icons.edit_note,
+                      label: 'News Maker',
+                      onTap: () =>
+                          _open(context, const NewsMakerScreen()),
+                    ),
+                    _ToolLineItem(
+                      icon: Icons.auto_awesome,
+                      label: 'AI News',
+                      onTap: () =>
+                          _open(context, const AiNewsMakerScreen()),
+                    ),
+                    _ToolLineItem(
+                      icon: Icons.dashboard_customize_outlined,
+                      label: 'Templates',
+                      onTap: () => _showTemplatesSheet(context, preset),
+                    ),
+                    _ToolLineItem(
+                      icon: Icons.tune,
+                      label: 'Studio',
+                      onTap: () =>
+                          _open(context, const TemplateStudioScreen()),
+                    ),
+                    _ToolLineItem(
+                      icon: Icons.branding_watermark,
+                      label: 'Branding',
+                      onTap: () => _open(
+                        context,
+                        ChannelBrandingScreen(initialPreset: preset),
+                      ),
+                    ),
+                    _ToolLineItem(
+                      icon: Icons.record_voice_over,
+                      label: 'Voice',
+                      onTap: () =>
+                          _open(context, const TtsStudioScreen()),
+                    ),
+                    _ToolLineItem(
+                      icon: Icons.subtitles,
+                      label: 'Captions',
+                      onTap: () =>
+                          _open(context, const CaptionStudioScreen()),
+                    ),
+                    _ToolLineItem(
+                      icon: Icons.audio_file,
+                      label: 'Audio',
+                      onTap: () =>
+                          _open(context, const AudioToolsScreen()),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+              // News Maker summary — the latest project's state at
+              // a glance; the voiceover status appears HERE once
+              // (and in News Maker itself), never duplicated.
+              const _SectionTitle('News Maker'),
               Card(
                 child: ListTile(
                   leading: const Icon(Icons.edit_note),
-                  title: const Text('News Maker'),
-                  subtitle: const Text(
-                    'Tehreer → Gemini voice → clips → template preview',
+                  title: Text(
+                    latest == null
+                        ? 'Naya project banayein'
+                        : (latest.title.trim().isNotEmpty
+                            ? latest.title
+                            : (latest.headline.trim().isNotEmpty
+                                ? latest.headline
+                                : 'Untitled project')),
                   ),
-                  trailing: const Icon(Icons.arrow_forward),
-                  onTap: () async {
-                    await Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const NewsMakerScreen(),
-                      ),
-                    );
-                    _reload();
-                  },
-                ),
-              ),
-              const SizedBox(height: 8),
-              Card(
-                child: ListTile(
-                  leading: const Icon(Icons.auto_awesome),
-                  title: const Text('One Click AI News Maker'),
-                  subtitle: const Text(
-                    'Paste tehreer → 13 steps → voice + preview',
-                  ),
-                  trailing: const Icon(Icons.arrow_forward),
-                  onTap: () async {
-                    await Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const AiNewsMakerScreen(),
-                      ),
-                    );
-                    _reload();
-                  },
-                ),
-              ),
-              const SizedBox(height: 20),
-              const _SectionTitle('Studio'),
-              Card(
-                child: ListTile(
-                  leading: const Icon(Icons.tune),
-                  title: const Text('Template & Studio'),
-                  subtitle: const Text(
-                    'Template, ticker, ribbons, lower third, chroma key, '
-                    'intro/outro',
-                  ),
-                  trailing: const Icon(Icons.arrow_forward),
-                  onTap: () async {
-                    await Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const TemplateStudioScreen(),
-                      ),
-                    );
-                    // Settings changed there — reload the live state.
-                    _reload();
-                  },
-                ),
-              ),
-              const SizedBox(height: 8),
-              Card(
-                child: ListTile(
-                  leading: const Icon(Icons.branding_watermark),
-                  title: const Text('Channel Branding'),
-                  subtitle: const Text(
-                    'Logo, brand colours, social handles, watermark, '
-                    'intro/outro — naye projects par auto-apply',
-                  ),
-                  trailing: const Icon(Icons.arrow_forward),
-                  onTap: () async {
-                    await Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) =>
-                            ChannelBrandingScreen(initialPreset: preset),
-                      ),
-                    );
-                    // Branding may have changed there — reload.
-                    _reload();
-                  },
-                ),
-              ),
-              const SizedBox(height: 8),
-              Card(
-                child: ListTile(
-                  leading: const Icon(Icons.dashboard_customize),
-                  title: const Text('Templates Library'),
                   subtitle: Text(
-                    '${data.templates.length} breaking templates — 13 '
-                    'categories + Final 3-Ribbon + Classic + customs',
+                    latest == null
+                        ? 'Tehreer → voice → apni video → template'
+                        : '${latest.clipPaths.length} clip(s) • '
+                            '${latest.voiceoverPath != null ? 'Voiceover tayyar hai' : 'Voiceover nahi bana'} • '
+                            '${latest.subtitles.length} subtitle lines',
                   ),
                   trailing: const Icon(Icons.arrow_forward),
-                  onTap: () async {
-                    await Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const TemplatesLibraryScreen(),
-                      ),
-                    );
-                    // Templates may have changed there — reload.
-                    _reload();
-                  },
-                ),
-              ),
-              const SizedBox(height: 20),
-              const _SectionTitle('Voice & Captions'),
-              Card(
-                child: ListTile(
-                  leading: const Icon(Icons.record_voice_over),
-                  title: const Text('AI Voice Studio'),
-                  subtitle: const Text(
-                    '8 voices, speed/pause, tone, music, MP3/WAV — 5/day cap',
-                  ),
-                  trailing: const Icon(Icons.arrow_forward),
-                  onTap: () async {
-                    await Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const TtsStudioScreen(),
-                      ),
-                    );
-                    _reload();
-                  },
-                ),
-              ),
-              const SizedBox(height: 8),
-              Card(
-                child: ListTile(
-                  leading: const Icon(Icons.subtitles),
-                  title: const Text('Caption Studio'),
-                  subtitle: const Text(
-                    '11 styles, karaoke preview, SRT/ASS export, video burn-in',
-                  ),
-                  trailing: const Icon(Icons.arrow_forward),
-                  onTap: () async {
-                    await Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const CaptionStudioScreen(),
-                      ),
-                    );
-                    _reload();
-                  },
-                ),
-              ),
-              const SizedBox(height: 8),
-              Card(
-                child: ListTile(
-                  leading: const Icon(Icons.audio_file),
-                  title: const Text('Audio Tools'),
-                  subtitle: const Text(
-                    'Converter, trimmer, join, video se audio',
-                  ),
-                  trailing: const Icon(Icons.arrow_forward),
-                  onTap: () async {
-                    await Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const AudioToolsScreen(),
-                      ),
-                    );
-                    _reload();
-                  },
+                  onTap: () => _open(context, const NewsMakerScreen()),
                 ),
               ),
               const SizedBox(height: 20),
@@ -450,14 +584,7 @@ class _NewsStudioScreenState extends State<NewsStudioScreen> {
                     ),
                   ),
                   trailing: const Icon(Icons.arrow_forward),
-                  onTap: () async {
-                    await Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const CoinsScreen(),
-                      ),
-                    );
-                    _reload();
-                  },
+                  onTap: () => _open(context, const CoinsScreen()),
                 ),
               ),
               const SizedBox(height: 8),
@@ -471,21 +598,14 @@ class _NewsStudioScreenState extends State<NewsStudioScreen> {
                     'Banner + WhatsApp booking + Watch Ads, Earn Coins',
                   ),
                   trailing: const Icon(Icons.arrow_forward),
-                  onTap: () async {
-                    await Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const AdvertiseScreen(),
-                      ),
-                    );
-                    _reload();
-                  },
+                  onTap: () => _open(context, const AdvertiseScreen()),
                 ),
               ),
               const SizedBox(height: 8),
-              // Online Store (v1.2.0): the same Drive-backed store as
-              // on Home — reachable from BOTH sides (structure rule);
-              // News Studio content stays here, store content is the
-              // shared catalogue.
+              // Online Store (v1.2.0): the same Drive-backed store
+              // as on Home — reachable from BOTH sides (structure
+              // rule); News Studio content stays here, store content
+              // is the shared catalogue.
               Card(
                 child: ListTile(
                   leading: const Icon(Icons.storefront),
@@ -494,16 +614,43 @@ class _NewsStudioScreenState extends State<NewsStudioScreen> {
                     'Templates, music, ribbons & more — new stock weekly',
                   ),
                   trailing: const Icon(Icons.arrow_forward),
-                  onTap: () async {
-                    await Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const StoreScreen(),
-                      ),
-                    );
-                    _reload();
-                  },
+                  onTap: () => _open(context, const StoreScreen()),
                 ),
               ),
+              if (data.recentProjects.isNotEmpty) ...[
+                const SizedBox(height: 20),
+                const _SectionTitle('Recent projects'),
+                ...data.recentProjects.map(
+                  (project) => Card(
+                    child: ListTile(
+                      leading: const Icon(Icons.folder_open_outlined),
+                      title: Text(
+                        project.title.trim().isNotEmpty
+                            ? project.title
+                            : (project.headline.trim().isNotEmpty
+                                ? project.headline
+                                : 'Untitled project'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: Text(
+                        '${project.clipPaths.length} clip(s) • '
+                        '${project.updatedAt.day}/${project.updatedAt.month} '
+                        '${project.updatedAt.hour.toString().padLeft(2, '0')}:'
+                        '${project.updatedAt.minute.toString().padLeft(2, '0')}',
+                      ),
+                      trailing: const Icon(Icons.arrow_forward),
+                      onTap: () => _open(
+                        context,
+                        NewsMakerScreen(
+                          initialPreset: preset,
+                          initialProject: project,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 20),
               // "For Help" row (Phase 10): WhatsApp support, number
               // from remote config — the shared HelpWhatsAppRow.
@@ -523,6 +670,8 @@ class _StudioData {
     required this.templates,
     required this.fontReady,
     required this.draft,
+    required this.latestProject,
+    required this.recentProjects,
   });
   final ChannelPreset preset;
   final int presetCount;
@@ -535,6 +684,13 @@ class _StudioData {
   /// The autosaved draft offered for recovery (Phase 9), or null
   /// when the latest project has nothing worth recovering.
   final RecoverableDraft? draft;
+
+  /// The most recently updated project (hero media + News Maker
+  /// summary), or null when no project exists yet.
+  final NewsProject? latestProject;
+
+  /// Up to 5 most recent projects for the Recent list.
+  final List<NewsProject> recentProjects;
 }
 
 class _SectionTitle extends StatelessWidget {
@@ -553,15 +709,62 @@ class _SectionTitle extends StatelessWidget {
   }
 }
 
+/// One item of the News Studio tool line: icon over label, fixed
+/// width, the label scales down instead of truncating.
+class _ToolLineItem extends StatelessWidget {
+  const _ToolLineItem({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 76,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: Colors.blueGrey.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(icon, size: 24),
+            ),
+            const SizedBox(height: 6),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(label, style: const TextStyle(fontSize: 12)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _RibbonRow extends StatelessWidget {
   const _RibbonRow({
     required this.label,
     required this.kind,
-    required this.ribbon,
+    required this.color,
+    required this.enabled,
   });
   final String label;
   final String kind;
-  final RibbonConfig ribbon;
+
+  /// The RESOLVED design colour (what the template renders).
+  final int color;
+  final bool enabled;
 
   @override
   Widget build(BuildContext context) {
@@ -573,7 +776,7 @@ class _RibbonRow extends StatelessWidget {
             width: 16,
             height: 16,
             decoration: BoxDecoration(
-              color: Color(ribbon.color),
+              color: Color(color),
               borderRadius: BorderRadius.circular(4),
             ),
           ),
@@ -581,7 +784,7 @@ class _RibbonRow extends StatelessWidget {
           Expanded(
             child: Text('$label — $kind'),
           ),
-          Text(ribbon.enabled ? 'ON' : 'OFF'),
+          Text(enabled ? 'ON' : 'OFF'),
         ],
       ),
     );
