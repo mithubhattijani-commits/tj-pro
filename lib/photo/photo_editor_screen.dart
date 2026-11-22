@@ -2056,8 +2056,11 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     );
   }
 
-  /// Panel header: tool name + ✓ top-right to confirm/close
-  /// (universal panel behaviour, requirements #2).
+  /// Panel header: tool name + hold-to-compare chip + ✓ top-right
+  /// to confirm/close (universal panel behaviour, requirements #2).
+  /// v1.5.0 (#4): the compare chip moved here from its floating
+  /// pill on the preview — same press-and-hold behaviour, no
+  /// preview clutter.
   Widget _photoPanelHeader(String toolKey) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
@@ -2072,6 +2075,30 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
                 fontSize: 16,
               ),
               overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          GestureDetector(
+            onTapDown: (_) => setState(() => _comparing = true),
+            onTapUp: (_) => setState(() => _comparing = false),
+            onTapCancel: () => setState(() => _comparing = false),
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: _comparing ? _accent : Colors.white12,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.compare, size: 14, color: Colors.white),
+                  SizedBox(width: 4),
+                  Text(
+                    'Compare (hold)',
+                    style: TextStyle(color: Colors.white, fontSize: 11),
+                  ),
+                ],
+              ),
             ),
           ),
           IconButton(
@@ -2486,6 +2513,10 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
   static const _adjControls = <(String, String, IconData)>[
     ('auto', 'Auto', Icons.auto_fix_high),
     ('lightness', 'Lightness', Icons.light_mode),
+    // v1.5.0 (#3): Exposure lives in the icon row like every other
+    // control — it used to ALSO render as an unconditional second
+    // slider under the shared one (two sliders open at once).
+    ('exposure', 'Exposure', Icons.exposure),
     ('contrast', 'Contrast', Icons.contrast),
     ('warmth', 'Warmth', Icons.thermostat),
     ('tint', 'Tint', Icons.format_color_fill),
@@ -2506,6 +2537,8 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     switch (key) {
       case 'lightness':
         return _brightness;
+      case 'exposure':
+        return _exposure;
       case 'contrast':
         return (_contrast - 1) * 100;
       case 'warmth':
@@ -2539,6 +2572,8 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     switch (key) {
       case 'lightness':
         _brightness = v;
+      case 'exposure':
+        _exposure = v;
       case 'contrast':
         _contrast = 1 + v / 100;
       case 'warmth':
@@ -2588,11 +2623,17 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
       children: [
         Row(
           children: [
-            const Text(
-              'Ek control chunein — neeche ek hi shared slider hai.',
-              style: TextStyle(color: Colors.grey, fontSize: 12),
+            // v1.5.0 (#2): the hint is Expanded + ellipsis — as a
+            // bare Text + Spacer it overflowed the row and painted
+            // the yellow/black stripe.
+            const Expanded(
+              child: Text(
+                'Ek control chunein — neeche ek hi shared slider hai.',
+                style: TextStyle(color: Colors.grey, fontSize: 12),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
-            const Spacer(),
             TextButton(
               onPressed: () {
                 setState(() {
@@ -2649,17 +2690,6 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
             min: _adjRange(_adjSel).$1,
             max: _adjRange(_adjSel).$2,
             onChanged: (v) => setState(() => _adjSet(_adjSel, v)),
-          ),
-        if (_adjSel != 'curve' && _adjSel != 'hsl')
-          _SliderRow(
-            label: 'Exposure',
-            value: _exposure,
-            min: -100,
-            max: 100,
-            onChanged: (v) {
-              setState(() => _exposure = v);
-              _schedulePixelPreview();
-            },
           ),
         if (file == null)
           const Text(
@@ -5000,27 +5030,6 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     );
   }
 
-  Widget _sideButton(IconData icon, VoidCallback? onTap) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          width: 42,
-          height: 42,
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            shape: BoxShape.circle,
-            boxShadow: [
-              BoxShadow(color: Colors.black26, blurRadius: 6),
-            ],
-          ),
-          child: Icon(icon, size: 20, color: Colors.black87),
-        ),
-      ),
-    );
-  }
-
   static const _toolbar = <(String, String, IconData)>[
     ('canvas', 'Canvas', Icons.aspect_ratio),
     ('filter', 'Filter', Icons.filter_vintage),
@@ -5135,24 +5144,12 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
                           : _previewArea(file),
                     ),
                     if (file != null) ...[
-                      // Floating side buttons: flip/mirror + canvas
-                      // ratio (S3 mockup, right edge).
-                      Positioned(
-                        right: 10,
-                        top: 90,
-                        child: Column(
-                          children: [
-                            _sideButton(
-                              Icons.flip,
-                              _busy ? null : _flipHorizontal,
-                            ),
-                            _sideButton(
-                              Icons.crop_square,
-                              () => _openTool('canvas'),
-                            ),
-                          ],
-                        ),
-                      ),
+                      // v1.5.0 (#4): the floating flip + canvas side
+                      // buttons are REMOVED — both duplicated real
+                      // controls (Flip lives in the Rotate panel,
+                      // Canvas is a toolbar tool) and cluttered the
+                      // preview. The preview now carries only the
+                      // undo/redo pill (bottom-left, per P1).
                       // Undo/redo pill, bottom-left of the preview.
                       Positioned(
                         left: 10,
@@ -5183,40 +5180,10 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
                           ),
                         ),
                       ),
-                      // Hold-to-compare chip (P6).
-                      Positioned(
-                        top: 8,
-                        right: 10,
-                        child: GestureDetector(
-                          onTapDown: (_) =>
-                              setState(() => _comparing = true),
-                          onTapUp: (_) =>
-                              setState(() => _comparing = false),
-                          onTapCancel: () =>
-                              setState(() => _comparing = false),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 6),
-                            decoration: BoxDecoration(
-                              color:
-                                  _comparing ? _accent : Colors.black54,
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            child: const Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.compare,
-                                    size: 14, color: Colors.white),
-                                SizedBox(width: 4),
-                                Text('Compare',
-                                    style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 11)),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
+                      // v1.5.0 (#4): the floating Compare pill is
+                      // REMOVED from the preview — hold-to-compare
+                      // itself is preserved as a press-and-hold chip
+                      // in the panel header (see _photoPanelHeader).
                       if (_activePhotoTool == 'canvas')
                         Positioned(
                           right: 10,
