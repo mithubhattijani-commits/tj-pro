@@ -26,6 +26,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:gal/gal.dart';
@@ -63,7 +64,7 @@ const _filterLabels = {
 };
 
 /// Filter category chips (requirements #2). Each category lists the
-/// look keys it shows: 'f:<PhotoFilter name>' or 'lut:<LUT name>'.
+/// look keys it shows: `f:<PhotoFilter name>` or `lut:<LUT name>`.
 const _filterCategories = <String, List<String>>{
   'Feature': [
     'f:normal', 'f:warm', 'f:cool', 'f:blackWhite', 'f:vivid',
@@ -1404,7 +1405,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
       final widthPx =
           math.max(2, (image.width * _outlineWidth / 1000).round());
       await _replaceWorking(
-        outlineFromAlpha(
+        await outlineFromAlpha(
           image,
           widthPx: widthPx,
           argb: _outlineColor.toARGB32(),
@@ -1848,42 +1849,6 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     } catch (_) {
       return base; // offline or font not cached yet
     }
-  }
-
-  /// The active layer's preview style at a given pixel size.
-  TextStyle _activeTextStyle(double fontSize) {
-    final base = TextStyle(
-      color: _textColor.withValues(alpha: _textOpacity),
-      fontSize: fontSize,
-      height: _textLineSpacing,
-      fontWeight: _textBold ? FontWeight.bold : FontWeight.normal,
-      fontStyle: _textItalic ? FontStyle.italic : FontStyle.normal,
-      letterSpacing: _textLetterSpacing,
-      shadows: _activeTextShadows(),
-    );
-    return _applyFontKey(_textFont, base);
-  }
-
-  List<Shadow> _activeTextShadows() {
-    final shadows = <Shadow>[];
-    if (_textGlow) {
-      shadows.add(Shadow(
-        color: _textGlowColor.withValues(alpha: 0.9),
-        blurRadius: _glowBlur,
-      ));
-      shadows.add(Shadow(
-        color: _textGlowColor.withValues(alpha: 0.6),
-        blurRadius: _glowBlur * 2,
-      ));
-    }
-    if (_textShadow) {
-      shadows.add(Shadow(
-        color: _textShadowColor.withValues(alpha: _shadowOpacity),
-        offset: Offset(_shadowDx, _shadowDy),
-        blurRadius: _shadowBlur,
-      ));
-    }
-    return shadows;
   }
 
   /// One-tap text style templates (daily upgrade 2026-10-31,
@@ -5421,7 +5386,7 @@ class _StrokePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final all = [...strokes, if (current != null) current!];
+    final all = [...strokes, ?current];
     for (final s in all) {
       final color = mode == 'doodle'
           ? Color(s.argb)

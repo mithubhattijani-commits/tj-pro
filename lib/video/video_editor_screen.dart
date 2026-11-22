@@ -1376,7 +1376,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         final nc = VideoClip(file, d, aspect);
         nc.trimStart = old.trimStart.clamp(0, d.inMilliseconds / 1000);
         final end = old.effectiveEnd.clamp(0, d.inMilliseconds / 1000);
-        nc.trimEnd = end > nc.trimStart ? end : -1;
+        nc.trimEnd = end > nc.trimStart ? end.toDouble() : -1;
         nc.volume = old.volume;
         nc.muted = old.muted;
         _clips[_selected] = nc;
@@ -1420,7 +1420,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       setState(() {
         clip.detachedAudioPath = out;
         clip.muted = true;
-        if (_musicPath == null) _musicPath = out;
+        _musicPath ??= out;
       });
       _setStatus(
         'Audio unlink ho gaya — awaz alag track par hai, clip mute hai.',
@@ -4139,7 +4139,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
                     busy ? null : () => unawaited(_freezeFrameInsert())),
                 _clipRowItem(Icons.history, 'Reverse',
                     () => _openToolTab('edit', 'speed')),
-                _clipRowItem(Icons.mask, 'Mask',
+                _clipRowItem(Icons.blur_on, 'Mask',
                     () => _openToolTab('overlay', 'pip')),
                 _clipRowItem(Icons.audio_file_outlined, 'Extract audio',
                     busy ? null : () => unawaited(_extractClipAudio())),

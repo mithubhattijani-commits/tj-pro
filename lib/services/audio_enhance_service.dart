@@ -96,7 +96,7 @@ class AudioEnhanceService {
         if (ok) return true;
         // arnndn missing/rejected in this ffmpeg build -> fallback.
       }
-      return _runChain(
+      return await _runChain(
         inPath,
         outPath,
         'aresample=48000,afftdn=nf=-25',
@@ -123,7 +123,7 @@ class AudioEnhanceService {
         'loudnorm=I=-16:TP=-1.5:LRA=11',
       );
       if (ok) return true;
-      return _runChain(
+      return await _runChain(
         inPath,
         outPath,
         'loudnorm=I=-16:TP=-1.5:LRA=11',

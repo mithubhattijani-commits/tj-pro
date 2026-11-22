@@ -463,9 +463,6 @@ class VideoExportService {
         }
       }
       final toWrite = lastMatte;
-      if (toWrite == null) {
-        throw Exception('MODNet matte nahi bana (pack issue).');
-      }
       final name = 'frame_${(i + 1).toString().padLeft(4, '0')}.png';
       await File(p.join(rgbaDir.path, name))
           .writeAsBytes(img.encodePng(toWrite));

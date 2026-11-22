@@ -1454,8 +1454,11 @@ Future<File> _exportCore({
   required bool keepAlpha,
 }) async {
   final bytes = await workingFile.readAsBytes();
-  var image = img.decodeImage(bytes);
-  if (image == null) throw Exception('Could not read the edited photo.');
+  final decodedImage = img.decodeImage(bytes);
+  if (decodedImage == null) {
+    throw Exception('Could not read the edited photo.');
+  }
+  var image = decodedImage;
   final matrix = buildColorMatrix(
     filter: params.filter,
     brightness: params.brightness,

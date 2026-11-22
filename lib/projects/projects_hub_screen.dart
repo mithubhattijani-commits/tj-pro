@@ -308,7 +308,7 @@ class _ProjectsHubScreenState extends State<ProjectsHubScreen> {
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               itemCount: _ratios.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
               itemBuilder: (BuildContext context, int i) {
                 final (String label, String sub) = _ratios[i];
                 final bool selected = label == _ratio;

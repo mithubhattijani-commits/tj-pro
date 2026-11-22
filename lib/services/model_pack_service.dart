@@ -8,7 +8,7 @@
 /// directory (not documents — they are re-downloadable caches, not
 /// user data):
 ///
-///   <app support>/model_packs/<packId>/<fileName>
+///   `<app support>/model_packs/<packId>/<fileName>`
 ///
 /// This service is the single registry + downloader every workstream
 /// consumes (API fixed by V140-BUILD-PLAN.md):
@@ -18,7 +18,7 @@
 ///   - [packFile] returns one downloaded file, or null.
 ///
 /// URLs live in [AppConfig.modelPackUrls] (keyed
-/// '<packId>/<fileName>'); a file with no URL is "not hosted yet"
+/// `<packId>/<fileName>`); a file with no URL is "not hosted yet"
 /// and [ensurePack] fails soft with false — never a placeholder
 /// download. Expected sizes below are the byte counts verified in
 /// the tool-test battery (V140-TOOL-TESTS.md); a downloaded file
@@ -203,7 +203,7 @@ class ModelPackService {
   /// Already-sane files are reused with no network use. Fail-soft:
   /// any error (unknown pack, missing URL, HTTP failure, truncated
   /// body, disk error) returns false and leaves no partial file
-  /// behind (downloads land in '<name>.part' first and are renamed
+  /// behind (downloads land in `<name>.part` first and are renamed
   /// only after the size sanity check passes).
   Future<bool> ensurePack(
     String packId, {
@@ -253,13 +253,13 @@ class ModelPackService {
         client.close();
       }
       onProgress?.call(1.0);
-      return isReady(packId);
+      return await isReady(packId);
     } catch (_) {
       return false;
     }
   }
 
-  /// Streams [url] into '<target>.part', verifies the byte count
+  /// Streams [url] into `<target>.part`, verifies the byte count
   /// (Content-Length when sent + the registry sanity floor), then
   /// renames it onto [target]. Returns false on any failure and
   /// removes the partial file.
