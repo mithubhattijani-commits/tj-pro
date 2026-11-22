@@ -1070,8 +1070,10 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     if (!ready) {
       final ok = await _ensurePackWithDialog(packId);
       if (!ok) {
-        _fail('AI pack download nahi ho saka — internet check '
-            'karke dobara try karein.');
+        // v1.5.0 (#27): the TRUE typed reason — a hosting/size
+        // problem is never misreported as the user's internet.
+        _fail(ModelPackService.describeFailure(
+            ModelPackService.instance.lastFailure));
         return false;
       }
     }

@@ -401,9 +401,10 @@ class VideoExportService {
     final packs = ModelPackService.instance;
     final ready = await packs.ensurePack('modnet');
     if (!ready) {
+      // v1.5.0 (#27): typed reason, never a blanket internet blame.
       throw Exception(
-        'MODNet model pack download nahi hua — internet se dobara '
-        'try karein.',
+        'MODNet model pack: '
+        '${ModelPackService.describeFailure(packs.lastFailure)}',
       );
     }
     final size = await probeVideoSize(File(input));
@@ -578,9 +579,11 @@ class VideoExportService {
     final packs = ModelPackService.instance;
     final ready = await packs.ensurePack('rife_v46');
     if (!ready) {
+      // v1.5.0 (#27): the pack IS hosted now (nigraantv.xyz mirror);
+      // whatever went wrong, say the true typed reason.
       throw Exception(
-        'Smooth Slow-Mo ka model pack (rife_v46) available nahi — '
-        'ye feature abhi download nahi ho sakta.',
+        'Smooth Slow-Mo ka model pack (rife_v46): '
+        '${ModelPackService.describeFailure(packs.lastFailure)}',
       );
     }
     final model = await packs.packFile('rife_v46', 'rife_v4.6.onnx');

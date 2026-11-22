@@ -60,6 +60,35 @@ class ModelPack {
   final List<ModelPackFile> files;
 }
 
+/// WHY a pack download failed (v1.5.0, fix #27). v1.4.0 collapsed
+/// every failure into one boolean, and callers translated it into
+/// "internet check karein" — even when the real cause was a broken
+/// URL serving a 132-byte LFS pointer. [ModelPackService.ensurePack]
+/// now records the typed reason in [ModelPackService.lastFailure],
+/// and callers surface [ModelPackService.describeFailure] so the
+/// user is told the TRUE cause (and a working internet is never
+/// blamed for a hosting problem).
+enum PackFailure {
+  /// Pack id is not in the registry.
+  unknownPack,
+
+  /// A pack file has no download URL yet (not hosted).
+  notHosted,
+
+  /// The server answered with a non-200 HTTP status.
+  httpError,
+
+  /// The download finished but the file is incomplete or fails the
+  /// size sanity check (truncated body, wrong file served, …).
+  incomplete,
+
+  /// The request itself failed (offline, DNS, timeout, TLS).
+  network,
+
+  /// A local file operation failed (disk full, rename, …).
+  storage,
+}
+
 class ModelPackService {
   ModelPackService._();
 
@@ -97,10 +126,9 @@ class ModelPackService {
     ModelPack('modnet', <ModelPackFile>[
       ModelPackFile('model.onnx', expectedBytes: 25888640),
     ]),
-    // RIFE v4.6 (MIT) — export-time slow-mo interpolation. Registered
-    // for the export workstream; no single-file host yet (the tested
-    // file came out of the vs-mlrt 7z package), so ensurePack fails
-    // soft until a URL is added to AppConfig.modelPackUrls.
+    // RIFE v4.6 (MIT) — export-time slow-mo interpolation. From
+    // v1.5.0 the tested file is mirrored on nigraantv.xyz (see
+    // AppConfig.modelPackUrls), so the pack downloads for real.
     ModelPack('rife_v46', <ModelPackFile>[
       ModelPackFile('rife_v4.6.onnx', expectedBytes: 21297017),
     ]),
@@ -115,15 +143,18 @@ class ModelPackService {
     ModelPack('fns_rain', <ModelPackFile>[
       ModelPackFile('rain-princess-9.onnx', expectedBytes: 6728029),
     ]),
-    // DeepFilterNet3 (MIT/Apache-2.0) — HD voice enhance. Registered
-    // per the contract; upstream ships only a release tar.gz, so no
-    // per-file URLs exist yet and the pack stays unhosted in v1.4.0
-    // (AudioEnhanceService ships its ffmpeg chain meanwhile).
+    // DeepFilterNet3 (MIT/Apache-2.0) — HD voice enhance. Upstream
+    // ships only a release tar.gz; from v1.5.0 the four files are
+    // mirrored on nigraantv.xyz (sizes below = the extracted files,
+    // pinned so the sanity check covers them too). The pack is
+    // downloadable, but the DFN3 DSP pipeline is NOT ported yet —
+    // AudioEnhanceService ships its ffmpeg chain meanwhile and
+    // never claims this pack.
     ModelPack('dfn3', <ModelPackFile>[
-      ModelPackFile('enc.onnx'),
-      ModelPackFile('erb_dec.onnx'),
-      ModelPackFile('df_dec.onnx'),
-      ModelPackFile('config.ini'),
+      ModelPackFile('enc.onnx', expectedBytes: 1954042),
+      ModelPackFile('erb_dec.onnx', expectedBytes: 3292397),
+      ModelPackFile('df_dec.onnx', expectedBytes: 3340803),
+      ModelPackFile('config.ini', expectedBytes: 2067),
     ]),
     // RNNoise .rnnn model(s) for ffmpeg's arnndn filter — reduce
     // noise (AudioEnhanceService). cb.rnnn is the general-purpose
@@ -195,8 +226,41 @@ class ModelPackService {
     }
   }
 
+  /// The typed reason the most recent [ensurePack] call failed, or
+  /// null when it succeeded (v1.5.0, fix #27). Callers read this
+  /// right after a false return and show [describeFailure].
+  PackFailure? lastFailure;
+
+  /// The honest user-facing line for a [PackFailure] — each reason
+  /// names its TRUE cause; only [PackFailure.network] mentions the
+  /// internet, because only that one is the user's connection.
+  static String describeFailure(PackFailure? failure) {
+    switch (failure) {
+      case PackFailure.unknownPack:
+        return 'Ye AI pack is app version mein maujood nahi.';
+      case PackFailure.notHosted:
+        return 'Ye AI pack abhi hosted nahi hai — ye feature is '
+            'waqt download nahi ho sakta.';
+      case PackFailure.httpError:
+        return 'AI pack ke server se error aaya — thodi der baad '
+            'dobara try karein.';
+      case PackFailure.incomplete:
+        return 'AI pack ki download adhoori ya ghalat file aayi — '
+            'dobara try karein.';
+      case PackFailure.network:
+        return 'AI pack download nahi ho saka — internet check '
+            'karke dobara try karein.';
+      case PackFailure.storage:
+        return 'Phone ki storage mein masla hai — jagah check '
+            'karke dobara try karein.';
+      case null:
+        return 'AI pack download nahi ho saka — dobara try karein.';
+    }
+  }
+
   /// Downloads any missing files of [packId] and returns true only
-  /// when the complete pack is present and sane afterwards.
+  /// when the complete pack is present and sane afterwards. On a
+  /// false return, [lastFailure] carries the typed reason.
   ///
   /// [onProgress] reports overall 0..1 across the pack's known-size
   /// files (files with unknown size count as done once downloaded).
@@ -209,8 +273,12 @@ class ModelPackService {
     String packId, {
     void Function(double progress)? onProgress,
   }) async {
+    lastFailure = null;
     final pack = packById(packId);
-    if (pack == null) return false;
+    if (pack == null) {
+      lastFailure = PackFailure.unknownPack;
+      return false;
+    }
     try {
       if (await isReady(packId)) {
         onProgress?.call(1.0);
@@ -230,8 +298,11 @@ class ModelPackService {
           }
           final String url =
               AppConfig.modelPackUrls['$packId/${spec.name}'] ?? '';
-          if (url.trim().isEmpty) return false;
-          final bool ok = await _download(
+          if (url.trim().isEmpty) {
+            lastFailure = PackFailure.notHosted;
+            return false;
+          }
+          final PackFailure? failure = await _download(
             client,
             url: url,
             target: target,
@@ -246,24 +317,30 @@ class ModelPackService {
                     );
                   },
           );
-          if (!ok) return false;
+          if (failure != null) {
+            lastFailure = failure;
+            return false;
+          }
           doneBytes += spec.expectedBytes;
         }
       } finally {
         client.close();
       }
       onProgress?.call(1.0);
-      return await isReady(packId);
+      final ready = await isReady(packId);
+      if (!ready) lastFailure = PackFailure.incomplete;
+      return ready;
     } catch (_) {
+      lastFailure ??= PackFailure.network;
       return false;
     }
   }
 
   /// Streams [url] into `<target>.part`, verifies the byte count
   /// (Content-Length when sent + the registry sanity floor), then
-  /// renames it onto [target]. Returns false on any failure and
-  /// removes the partial file.
-  Future<bool> _download(
+  /// renames it onto [target]. Returns null on success, otherwise
+  /// the typed [PackFailure]; the partial file is always removed.
+  Future<PackFailure?> _download(
     http.Client client, {
     required String url,
     required File target,
@@ -275,7 +352,9 @@ class ModelPackService {
       final http.StreamedResponse response = await client
           .send(http.Request('GET', Uri.parse(url)))
           .timeout(const Duration(minutes: 15));
-      if (response.statusCode != 200) return false;
+      if (response.statusCode != 200) {
+        return PackFailure.httpError;
+      }
       final int total = response.contentLength ?? -1;
       final IOSink sink = part.openWrite();
       int received = 0;
@@ -292,18 +371,23 @@ class ModelPackService {
       }
       if (total > 0 && received != total) {
         await _deleteQuiet(part);
-        return false;
+        return PackFailure.incomplete;
       }
       if (!await _fileOk(part, spec)) {
         await _deleteQuiet(part);
-        return false;
+        return PackFailure.incomplete;
       }
-      if (await target.exists()) await target.delete();
-      await part.rename(target.path);
-      return true;
+      try {
+        if (await target.exists()) await target.delete();
+        await part.rename(target.path);
+      } catch (_) {
+        await _deleteQuiet(part);
+        return PackFailure.storage;
+      }
+      return null;
     } catch (_) {
       await _deleteQuiet(part);
-      return false;
+      return PackFailure.network;
     }
   }
 

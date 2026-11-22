@@ -256,12 +256,14 @@ class AppConfig {
   // sizes/licences). A pack/file with NO entry here is simply not
   // hosted yet — ModelPackService fails soft (returns false) instead
   // of downloading garbage:
-  //   - dfn3: upstream ships ONLY a release tar.gz
-  //     (DeepFilterNet3_onnx.tar.gz with enc/erb_dec/df_dec.onnx +
-  //     config.ini inside), never per-file downloads; the pack is
-  //     registered but unhosted until the files are mirrored.
-  //   - rife_v46: the tested ONNX came out of the vs-mlrt 7z models
-  //     package; no single-file host yet.
+  //   - dfn3 (v1.5.0): upstream ships ONLY a release tar.gz, so the
+  //     four files were extracted from the tested tarball and are
+  //     mirrored on nigraantv.xyz (apps/models/) — the URLs below.
+  //     NOTE: the pack is downloadable, but the DFN3 DSP pipeline
+  //     is still NOT ported (see AudioEnhanceService's header);
+  //     nothing in the app claims DFN3 until that port is verified.
+  //   - rife_v46 (v1.5.0): the tested ONNX is mirrored on
+  //     nigraantv.xyz (apps/models/rife_v4.6.onnx) — URL below.
   static const Map<String, String> modelPackUrls = <String, String>{
     // Shruti Urdu sherpa-onnx pack (Apache-2.0) — Urdu auto captions.
     'shruti_ur/preprocess.onnx':
@@ -291,12 +293,33 @@ class AppConfig {
         'https://huggingface.co/Xenova/modnet/resolve/main/onnx/model.onnx',
     // Fast-neural-style (ONNX Model Zoo, Apache-2.0) — "Artistic
     // Styles". Candy is BANNED (eye artifact) and has no pack.
+    // v1.5.0 (#27 root cause): these MUST use media.githubusercontent
+    // .com — raw.githubusercontent.com serves a 132-byte Git LFS
+    // POINTER file for these .onnx binaries, not the model itself;
+    // the download "succeeded" and the size sanity then rejected it,
+    // which v1.4.0 misreported as an internet problem. The media
+    // host serves the real 6,728,029-byte files (verified live).
     'fns_udnie/udnie-9.onnx':
-        'https://raw.githubusercontent.com/onnx/models/main/validated/vision/style_transfer/fast_neural_style/model/udnie-9.onnx',
+        'https://media.githubusercontent.com/media/onnx/models/main/validated/vision/style_transfer/fast_neural_style/model/udnie-9.onnx',
     'fns_mosaic/mosaic-9.onnx':
-        'https://raw.githubusercontent.com/onnx/models/main/validated/vision/style_transfer/fast_neural_style/model/mosaic-9.onnx',
+        'https://media.githubusercontent.com/media/onnx/models/main/validated/vision/style_transfer/fast_neural_style/model/mosaic-9.onnx',
     'fns_rain/rain-princess-9.onnx':
-        'https://raw.githubusercontent.com/onnx/models/main/validated/vision/style_transfer/fast_neural_style/model/rain-princess-9.onnx',
+        'https://media.githubusercontent.com/media/onnx/models/main/validated/vision/style_transfer/fast_neural_style/model/rain-princess-9.onnx',
+    // RIFE v4.6 (MIT) — export-time slow-mo interpolation, mirrored
+    // on the Nigraan site (verified live: 200, 21,297,017 bytes).
+    'rife_v46/rife_v4.6.onnx':
+        'https://nigraantv.xyz/apps/models/rife_v4.6.onnx',
+    // DeepFilterNet3 (MIT/Apache-2.0) — the four files extracted
+    // from the tested upstream tarball and mirrored on the Nigraan
+    // site. Downloadable from v1.5.0; the DSP port is still pending
+    // verification (AudioEnhanceService keeps its ffmpeg chain and
+    // never claims this pack).
+    'dfn3/enc.onnx': 'https://nigraantv.xyz/apps/models/enc.onnx',
+    'dfn3/erb_dec.onnx':
+        'https://nigraantv.xyz/apps/models/erb_dec.onnx',
+    'dfn3/df_dec.onnx':
+        'https://nigraantv.xyz/apps/models/df_dec.onnx',
+    'dfn3/config.ini': 'https://nigraantv.xyz/apps/models/config.ini',
     // RNNoise model for ffmpeg's arnndn filter (official xiph models
     // mirrored by GregorR/rnnoise-models for exactly this filter):
     // cb.rnnn = the general-purpose speech model (conjoined-burgers).
