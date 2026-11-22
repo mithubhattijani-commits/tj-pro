@@ -218,7 +218,7 @@ class NigraanFinalPreview extends StatelessWidget {
     final h = height;
     final w = h * 9 / 16;
     // Parity fractions at preview scale (reference 1080x1920).
-    final g = ParityGeometry.forSize(1080, 1920);
+    final g = ParityGeometry(1080, 1920);
     final scaleW = w / 1080;
     final ribbonH = (g.ribbonH * (h / 1920)).clamp(22.0, 200.0);
     final tickerH = (h * 0.055).clamp(26.0, 44.0);
