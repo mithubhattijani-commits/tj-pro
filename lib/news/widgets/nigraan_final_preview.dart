@@ -32,6 +32,8 @@ import '../channel_preset.dart';
 import '../element_override.dart';
 import '../watermark.dart';
 import 'pip_inset.dart';
+import 'reporter_overlay.dart';
+import 'rotating_logo.dart';
 
 /// Horizontally scrolling ticker line.
 ///
@@ -233,6 +235,18 @@ class NigraanFinalPreview extends StatelessWidget {
     this.fontReady = false,
     this.height = 320,
     this.elementOverrides = const {},
+    this.tickerLabel,
+    this.headlineFontFamily,
+    this.tickerFontFamily,
+    this.headlineTextColor,
+    this.tickerTextColor,
+    this.tickerLabelColor,
+    this.headlineShadows,
+    this.tickerShadows,
+    this.reporterPhotoPath,
+    this.reporterName,
+    this.reporterFontFamily,
+    this.logoRotate = true,
   });
 
   final ChannelPreset preset;
@@ -245,6 +259,45 @@ class NigraanFinalPreview extends StatelessWidget {
   /// value (the geometry is constructed without overrides and
   /// every adjustment term is 0 / 1).
   final Map<String, ElementOverride> elementOverrides;
+
+  /// v1.5.1 (fix #49): the project's EDITABLE ticker side label.
+  /// Null/empty = no label chip (the pre-#49 render). final3: a
+  /// red chip at the LEFT of the bottom band, the ticker scrolling
+  /// right of it; classic2: it replaces the fixed 'HEADLINES'
+  /// chip text.
+  final String? tickerLabel;
+
+  /// v1.5.1 (fixes #51/#52): the project's chosen font families
+  /// for the headline ribbons / the ticker (null = the historic
+  /// Kasheeda-when-ready behaviour — the caller resolves the
+  /// house-default font id to null so the default render is
+  /// byte-identical).
+  final String? headlineFontFamily;
+  final String? tickerFontFamily;
+
+  /// v1.5.1 (fix #52): Text Style colours (ARGB) for the headline
+  /// band's text / the ticker text / the label chip's background.
+  /// Null = the design colours.
+  final int? headlineTextColor;
+  final int? tickerTextColor;
+  final int? tickerLabelColor;
+
+  /// v1.5.1 (fix #52): Text Style shadow/glow for the headline /
+  /// ticker text (null = none).
+  final List<Shadow>? headlineShadows;
+  final List<Shadow>? tickerShadows;
+
+  /// v1.5.1 (fix #50): the Reporter block — photo path + name
+  /// plate text + the plate's font family. Null photo = no block.
+  final String? reporterPhotoPath;
+  final String? reporterName;
+  final String? reporterFontFamily;
+
+  /// v1.5.1 (fix #47): a PICKED logo swings (3D) in the preview
+  /// when true — the preset's rotation choice. The final3 default
+  /// logo stays its keyed still (documented preview limit; the
+  /// export plays the real rotating video).
+  final bool logoRotate;
 
   String? _kasheeda(String text) =>
       fontReady && _hasArabicForPreview(text)
@@ -277,6 +330,7 @@ class NigraanFinalPreview extends StatelessWidget {
     final logoOv = ov(NewsElement.logo);
     final capOv = ov(NewsElement.capsule);
     final overlayOv = ov(NewsElement.overlay);
+    final repOv = ov(NewsElement.reporter);
     // The watermark's SIZE override applies through a cloned
     // preset (its mark sizes from preset.watermarkSize).
     final wmPreset = overlayOv.isIdentity
@@ -446,18 +500,31 @@ class NigraanFinalPreview extends StatelessWidget {
       required String fallback,
       required double fontSize,
       Color textColor = Colors.white,
+      List<Shadow>? shadows,
     }) {
       final shown = text.isEmpty ? fallback : text;
       final style = TextStyle(
         color: textColor,
         fontSize: fontSize,
         fontWeight: FontWeight.bold,
-        fontFamily: _kasheeda(text),
+        fontFamily: headlineFontFamily ?? _kasheeda(text),
+        shadows: shadows,
       );
       final parts = paritySplitHeadlines(shown);
       final seq = parts.isEmpty ? shown : '${parts.join('  ●  ')}  ●  ';
       final windowW = w - logoW;
-      final fits = measurePreviewTextWidth(seq, fontSize) <= windowW - 16;
+      // v1.5.1 (fix #41): measure with the REAL style (font family
+      // included) — the old measure used a bare bold style, so a
+      // wide font (Kasheeda) could be judged "fits" and then be
+      // ellipsized by the pinned Text ('HEADL…'). Now the
+      // fits/scroll decision matches what is actually drawn: a
+      // headline that does not fit SCROLLS, it is never cut.
+      final seqPainter = TextPainter(
+        text: TextSpan(text: seq, style: style),
+        textDirection: TextDirection.rtl,
+        maxLines: 1,
+      )..layout();
+      final fits = seqPainter.width <= windowW - 16;
       if (fits) {
         return Container(
           alignment: Alignment.centerRight,
@@ -738,11 +805,18 @@ class NigraanFinalPreview extends StatelessWidget {
                                 text: preset.urduRibbon.text,
                                 fallback: 'قومی خبریں',
                                 fontSize: f3MidH * 0.56,
+                                textColor: headlineTextColor != null
+                                    ? Color(headlineTextColor!)
+                                    : Colors.white,
+                                shadows: headlineShadows,
                               ),
                             ),
                     )
                   : Container(
-                      color: Color(preset.urduRibbon.color),
+                      // v1.5.1 (fix #40): the preview is the export's
+                      // twin — classic2 renders its RESOLVED design
+                      // colours here too, never the raw stored ones.
+                      color: Color(preset.designUrduColor),
                       child: Column(
                         children: [
                           Container(
@@ -767,11 +841,16 @@ class NigraanFinalPreview extends StatelessWidget {
                                             speedPxPerSec:
                                                 g.scrollSpeed * scaleW,
                                             style: TextStyle(
-                                              color: Colors.white,
+                                              color: headlineTextColor != null
+                                                  ? Color(headlineTextColor!)
+                                                  : Colors.white,
                                               fontSize: ribbonH * 0.5625,
                                               fontWeight: FontWeight.bold,
-                                              fontFamily: _kasheeda(
-                                                  preset.urduRibbon.text),
+                                              fontFamily:
+                                                  headlineFontFamily ??
+                                                      _kasheeda(preset
+                                                          .urduRibbon.text),
+                                              shadows: headlineShadows,
                                             ),
                                           ),
                                         ),
@@ -810,21 +889,101 @@ class NigraanFinalPreview extends StatelessWidget {
                               tickOv,
                               w,
                               h,
-                              _ParityScrollText(
-                                text: preset.englishRibbon.text.isEmpty
-                                    ? 'International headlines'
-                                    : preset.englishRibbon.text,
-                                rtl: false,
-                                speedPxPerSec: g.scrollSpeed * scaleW,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                ).copyWith(fontSize: f3BotH * 0.53),
-                              ),
+                              // v1.5.1 (fix #49): with an editable
+                              // label the band is [red chip | ticker
+                              // window]; without one the ticker
+                              // keeps the full width, as before.
+                              (tickerLabel != null &&
+                                      tickerLabel!.trim().isNotEmpty)
+                                  ? Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        Container(
+                                          width:
+                                              g.englishChipW * scaleW,
+                                          color: Color(
+                                              tickerLabelColor ??
+                                                  0xFFD50000),
+                                          alignment: Alignment.center,
+                                          padding: const EdgeInsets
+                                              .symmetric(horizontal: 4),
+                                          child: Text(
+                                            tickerLabel!.trim(),
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                              fontSize:
+                                                  fitPreviewChipFontSize(
+                                                tickerLabel!.trim(),
+                                                f3BotH * 0.53,
+                                                g.englishChipW * scaleW,
+                                              ),
+                                              fontWeight:
+                                                  FontWeight.bold,
+                                              fontFamily:
+                                                  tickerFontFamily ??
+                                                      _kasheeda(
+                                                          tickerLabel!),
+                                            ),
+                                            maxLines: 1,
+                                            softWrap: false,
+                                          ),
+                                        ),
+                                        Expanded(
+                                          child: _ParityScrollText(
+                                            text: preset.englishRibbon
+                                                    .text.isEmpty
+                                                ? 'International headlines'
+                                                : preset
+                                                    .englishRibbon.text,
+                                            rtl: false,
+                                            speedPxPerSec:
+                                                g.scrollSpeed * scaleW,
+                                            style: TextStyle(
+                                              color: tickerTextColor !=
+                                                      null
+                                                  ? Color(
+                                                      tickerTextColor!)
+                                                  : Colors.white,
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: f3BotH * 0.53,
+                                              fontFamily:
+                                                  tickerFontFamily ??
+                                                      _kasheeda(preset
+                                                          .englishRibbon
+                                                          .text),
+                                              shadows: tickerShadows,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    )
+                                  : _ParityScrollText(
+                                      text: preset.englishRibbon.text
+                                              .isEmpty
+                                          ? 'International headlines'
+                                          : preset.englishRibbon.text,
+                                      rtl: false,
+                                      speedPxPerSec:
+                                          g.scrollSpeed * scaleW,
+                                      style: TextStyle(
+                                        color: tickerTextColor != null
+                                            ? Color(tickerTextColor!)
+                                            : Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: f3BotH * 0.53,
+                                        fontFamily: tickerFontFamily ??
+                                            _kasheeda(
+                                                preset.englishRibbon.text),
+                                        shadows: tickerShadows,
+                                      ),
+                                    ),
                             ),
                     )
                   : Container(
-                      color: Color(preset.englishRibbon.color),
+                      // v1.5.1 (fix #40): resolved design colour,
+                      // like the export (see the Urdu ribbon note).
+                      color: Color(preset.designEnglishColor),
                       child: Column(
                         children: [
                           Container(
@@ -834,10 +993,19 @@ class NigraanFinalPreview extends StatelessWidget {
                             child: Row(
                               children: [
                                 parityChip(
-                                  label:
-                                      NigraanFinalLayout.englishChipText,
+                                  // v1.5.1 (fix #49): the editable
+                                  // label replaces the fixed chip
+                                  // text when the project carries one.
+                                  label: (tickerLabel != null &&
+                                          tickerLabel!.trim().isNotEmpty)
+                                      ? tickerLabel!.trim()
+                                      : NigraanFinalLayout.englishChipText,
                                   widthPx: g.englishChipW * scaleW,
                                   dividerOnLeft: false,
+                                  fontFamily: tickerFontFamily ??
+                                      _kasheeda(
+                                          NigraanFinalLayout
+                                              .englishChipText),
                                   fontSize: ribbonH * 0.45,
                                 ),
                                 Expanded(
@@ -855,11 +1023,21 @@ class NigraanFinalPreview extends StatelessWidget {
                                             rtl: false,
                                             speedPxPerSec:
                                                 g.scrollSpeed * scaleW,
-                                            style: const TextStyle(
-                                              color: Colors.white,
+                                            style: TextStyle(
+                                              color: tickerTextColor !=
+                                                      null
+                                                  ? Color(
+                                                      tickerTextColor!)
+                                                  : Colors.white,
                                               fontWeight: FontWeight.bold,
-                                            ).copyWith(
-                                                fontSize: ribbonH * 0.53),
+                                              fontSize: ribbonH * 0.53,
+                                              fontFamily:
+                                                  tickerFontFamily ??
+                                                      _kasheeda(preset
+                                                          .englishRibbon
+                                                          .text),
+                                              shadows: tickerShadows,
+                                            ),
                                           ),
                                         ),
                                 ),
@@ -885,6 +1063,7 @@ class NigraanFinalPreview extends StatelessWidget {
                   fontSize: f3TopH * 0.52,
                   // Yellow design top ribbon → BLACK headline text.
                   textColor: Color(preset.designTopTextColor),
+                  shadows: headlineShadows,
                 ),
               ),
             ),
@@ -911,6 +1090,7 @@ class NigraanFinalPreview extends StatelessWidget {
               width: logoW,
               height: logoH,
               isFinal3: isFinal3,
+              rotate: logoRotate,
             ),
           ),
           if (!capOv.hidden)
@@ -930,6 +1110,45 @@ class NigraanFinalPreview extends StatelessWidget {
               shortDate: isFinal3,
             ),
           ),
+          // v1.5.1 (fix #50): the Reporter block — photo + name
+          // plate on the side OPPOSITE the logo, from the shared
+          // ParityGeometry reporter rects (the export post-pass
+          // draws the same composition). Only when a caller
+          // passes a reporter photo.
+          if (reporterPhotoPath != null &&
+              reporterPhotoPath!.isNotEmpty &&
+              !repOv.hidden)
+            Positioned.fromRect(
+              rect: Rect.fromLTWH(
+                g.reporterBlockRect.left * scaleW,
+                g.reporterBlockRect.top * scaleH,
+                g.reporterBlockRect.width * scaleW,
+                g.reporterBlockRect.height * scaleH,
+              ),
+              child: ReporterOverlay(
+                photoRect: Rect.fromLTWH(
+                  (g.reporterPhotoRect.left -
+                          g.reporterBlockRect.left) *
+                      scaleW,
+                  (g.reporterPhotoRect.top - g.reporterBlockRect.top) *
+                      scaleH,
+                  g.reporterPhotoRect.width * scaleW,
+                  g.reporterPhotoRect.height * scaleH,
+                ),
+                plateRect: Rect.fromLTWH(
+                  (g.reporterPlateRect.left -
+                          g.reporterBlockRect.left) *
+                      scaleW,
+                  (g.reporterPlateRect.top - g.reporterBlockRect.top) *
+                      scaleH,
+                  g.reporterPlateRect.width * scaleW,
+                  g.reporterPlateRect.height * scaleH,
+                ),
+                photoPath: reporterPhotoPath!,
+                name: reporterName ?? '',
+                fontFamily: reporterFontFamily,
+              ),
+            ),
           if (preset.pipEnabled && !overlayOv.hidden)
             PipInset(
               position: preset.pipPosition,
@@ -962,6 +1181,7 @@ class _ParityLogoBox extends StatelessWidget {
     required this.width,
     required this.height,
     this.isFinal3 = false,
+    this.rotate = true,
   });
 
   final String? logoPath;
@@ -970,10 +1190,30 @@ class _ParityLogoBox extends StatelessWidget {
   final double height;
   final bool isFinal3;
 
+  /// v1.5.1 (fix #47): a picked logo SWINGS (3D) in the preview
+  /// when true — any uploaded logo rotates, not only the built-in
+  /// one (the export already overlays generated rotating frames
+  /// for a picked logo).
+  final bool rotate;
+
   @override
   Widget build(BuildContext context) {
     final path = logoPath;
     if (path != null && path.isNotEmpty) {
+      if (rotate) {
+        return SizedBox(
+          width: width,
+          height: height,
+          child: FittedBox(
+            fit: BoxFit.fill,
+            child: RotatingLogo(
+              logoPath: path,
+              initial: initial,
+              size: width,
+            ),
+          ),
+        );
+      }
       return SizedBox(
         width: width,
         height: height,
@@ -1099,15 +1339,22 @@ class _ParityCapsuleState extends State<_ParityCapsule> {
                 softWrap: false,
               ),
             )
-          : Text(
-              parityTimeString(now),
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: widget.height * 0.55,
-                fontWeight: FontWeight.bold,
+          // v1.5.1 (fix #41): the TIME face gets the same
+          // FittedBox the DATE face always had — the plain Text
+          // truncated the seconds ('08:08:5') whenever the
+          // capsule ran narrow.
+          : FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                parityTimeString(now),
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: widget.height * 0.55,
+                  fontWeight: FontWeight.bold,
+                ),
+                maxLines: 1,
+                softWrap: false,
               ),
-              maxLines: 1,
-              softWrap: false,
             ),
     );
   }

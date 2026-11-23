@@ -176,6 +176,11 @@ class _VoicePreviewPlayerState extends State<VoicePreviewPlayer> {
                   child: Text(
                     '♪ ${widget.voiceLabel}$durationLabel',
                     style: const TextStyle(fontWeight: FontWeight.bold),
+                    // v1.5.1 (overflow sweep): a long voice label
+                    // ellipsizes instead of pushing the Dobara
+                    // button off the row.
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
                 TextButton.icon(

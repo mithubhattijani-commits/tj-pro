@@ -26,9 +26,33 @@ import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../live/parity_template.dart';
+import '../../services/library_service.dart';
 import '../channel_preset.dart';
 import '../element_override.dart';
 import 'nigraan_final_preview.dart';
+import 'reporter_overlay.dart';
+
+/// v1.5.1 (fix #52): the preview approximation of a grading
+/// effect — one 4x5 colour matrix combining saturation, contrast,
+/// brightness and temperature (the export applies the same
+/// parameters through ffmpeg's eq + colorbalance; the numbers
+/// are close cousins, not twins).
+List<double> gradePreviewMatrix(LibraryGrade grade) {
+  final s = grade.saturation;
+  final c = grade.contrast;
+  // Brightness/contrast pivot: out = (in - 0.5) * c + 0.5 + b.
+  final t = (1 - c) * 0.5 * 255 + grade.brightness * 255;
+  final warm = grade.temperature * 18; // ±~18/255 at temperature ±1
+  return <double>[
+    (0.213 + 0.787 * s) * c, (0.715 - 0.715 * s) * c,
+    (0.072 - 0.072 * s) * c, 0, t + warm,
+    (0.213 - 0.213 * s) * c, (0.715 + 0.285 * s) * c,
+    (0.072 - 0.072 * s) * c, 0, t,
+    (0.213 - 0.213 * s) * c, (0.715 - 0.715 * s) * c,
+    (0.072 + 0.928 * s) * c, 0, t - warm,
+    0, 0, 0, 1, 0,
+  ];
+}
 
 /// True for file extensions the reel export treats as a still photo
 /// (photoClipCommand path) rather than a video (normalize path).
@@ -50,6 +74,19 @@ class TemplateMediaPreview extends StatefulWidget {
     this.fontReady = false,
     this.height = 300,
     this.elementOverrides = const {},
+    this.tickerLabel,
+    this.headlineFontFamily,
+    this.tickerFontFamily,
+    this.headlineTextColor,
+    this.tickerTextColor,
+    this.tickerLabelColor,
+    this.headlineShadows,
+    this.tickerShadows,
+    this.reporterPhotoPath,
+    this.reporterName,
+    this.reporterFontFamily,
+    this.logoRotate = true,
+    this.gradeEffect,
   });
 
   final ChannelPreset preset;
@@ -65,6 +102,32 @@ class TemplateMediaPreview extends StatefulWidget {
   final List<String> mediaPaths;
   final bool fontReady;
   final double height;
+
+  /// v1.5.1 opt-ins, passed straight through to the furniture
+  /// preview (see [NigraanFinalPreview]): the editable ticker
+  /// label (#49), the chosen fonts (#51), Text Style colours +
+  /// shadows (#52), the Reporter block (#50) and the picked
+  /// logo's rotation (#47). All default to the pre-1.5.1 render.
+  final String? tickerLabel;
+  final String? headlineFontFamily;
+  final String? tickerFontFamily;
+  final int? headlineTextColor;
+  final int? tickerTextColor;
+  final int? tickerLabelColor;
+  final List<Shadow>? headlineShadows;
+  final List<Shadow>? tickerShadows;
+  final String? reporterPhotoPath;
+  final String? reporterName;
+  final String? reporterFontFamily;
+  final bool logoRotate;
+
+  /// v1.5.1 (fix #52): the project's selected GRADING effect
+  /// (Library 'Effects', kind 'grade') — the media layer gets an
+  /// approximate colour filter so the preview hints at the
+  /// export's grade. Overlay effects cannot be previewed here
+  /// (no compositor in the preview path) — the export applies
+  /// them for real.
+  final LibraryGrade? gradeEffect;
 
   @override
   State<TemplateMediaPreview> createState() => _TemplateMediaPreviewState();
@@ -203,6 +266,11 @@ class _TemplateMediaPreviewState extends State<TemplateMediaPreview> {
     final logoTop = capTop - logoH;
     final logoLeft = w - g.logoMargin * scaleW - logoW + logoOv.dx * w;
 
+    final reporterOv =
+        overrideFor(widget.elementOverrides, NewsElement.reporter);
+    final showReporter = widget.reporterPhotoPath != null &&
+        widget.reporterPhotoPath!.isNotEmpty &&
+        !reporterOv.hidden;
     return SizedBox(
       width: w,
       height: h,
@@ -213,6 +281,18 @@ class _TemplateMediaPreviewState extends State<TemplateMediaPreview> {
             fontReady: widget.fontReady,
             height: h,
             elementOverrides: widget.elementOverrides,
+            tickerLabel: widget.tickerLabel,
+            headlineFontFamily: widget.headlineFontFamily,
+            tickerFontFamily: widget.tickerFontFamily,
+            headlineTextColor: widget.headlineTextColor,
+            tickerTextColor: widget.tickerTextColor,
+            tickerLabelColor: widget.tickerLabelColor,
+            headlineShadows: widget.headlineShadows,
+            tickerShadows: widget.tickerShadows,
+            reporterPhotoPath: widget.reporterPhotoPath,
+            reporterName: widget.reporterName,
+            reporterFontFamily: widget.reporterFontFamily,
+            logoRotate: widget.logoRotate,
           ),
           if (first != null && !mediaOv.hidden)
             Positioned.fill(
@@ -230,6 +310,43 @@ class _TemplateMediaPreviewState extends State<TemplateMediaPreview> {
                     child: _mediaLayer(first),
                   ),
                 ),
+              ),
+            ),
+          // v1.5.1 (fix #50): the Reporter block rides ABOVE the
+          // media (the furniture preview underneath draws it too,
+          // but the media layer would cover the part of the photo
+          // that hangs into the main area — the same reason the
+          // logo gets a notch). Same geometry, same widget.
+          if (showReporter)
+            Positioned.fromRect(
+              rect: Rect.fromLTWH(
+                g.reporterBlockRect.left * scaleW,
+                g.reporterBlockRect.top * scaleH,
+                g.reporterBlockRect.width * scaleW,
+                g.reporterBlockRect.height * scaleH,
+              ),
+              child: ReporterOverlay(
+                photoRect: Rect.fromLTWH(
+                  (g.reporterPhotoRect.left -
+                          g.reporterBlockRect.left) *
+                      scaleW,
+                  (g.reporterPhotoRect.top - g.reporterBlockRect.top) *
+                      scaleH,
+                  g.reporterPhotoRect.width * scaleW,
+                  g.reporterPhotoRect.height * scaleH,
+                ),
+                plateRect: Rect.fromLTWH(
+                  (g.reporterPlateRect.left -
+                          g.reporterBlockRect.left) *
+                      scaleW,
+                  (g.reporterPlateRect.top - g.reporterBlockRect.top) *
+                      scaleH,
+                  g.reporterPlateRect.width * scaleW,
+                  g.reporterPlateRect.height * scaleH,
+                ),
+                photoPath: widget.reporterPhotoPath!,
+                name: widget.reporterName ?? '',
+                fontFamily: widget.reporterFontFamily,
               ),
             ),
           if (first != null && widget.mediaPaths.length > 1)
@@ -255,25 +372,37 @@ class _TemplateMediaPreviewState extends State<TemplateMediaPreview> {
   }
 
   Widget _mediaLayer(String path) {
+    final Widget layer;
     if (isPhotoMediaPath(path)) {
-      return Image.file(
+      layer = Image.file(
         File(path),
         fit: BoxFit.cover,
         errorBuilder: (_, _, _) => const SizedBox.shrink(),
       );
+    } else {
+      final controller = _controller;
+      if (controller == null || !controller.value.isInitialized) {
+        return const ColoredBox(color: Color(0xFF101018));
+      }
+      layer = FittedBox(
+        fit: BoxFit.cover,
+        clipBehavior: Clip.hardEdge,
+        child: SizedBox(
+          width: controller.value.size.width,
+          height: controller.value.size.height,
+          child: VideoPlayer(controller),
+        ),
+      );
     }
-    final controller = _controller;
-    if (controller == null || !controller.value.isInitialized) {
-      return const ColoredBox(color: Color(0xFF101018));
-    }
-    return FittedBox(
-      fit: BoxFit.cover,
-      clipBehavior: Clip.hardEdge,
-      child: SizedBox(
-        width: controller.value.size.width,
-        height: controller.value.size.height,
-        child: VideoPlayer(controller),
-      ),
+    // v1.5.1 (fix #52): a selected GRADING effect tints the
+    // media through an approximate colour matrix (saturation /
+    // contrast / brightness / temperature) — a preview hint of
+    // the export's eq + colorbalance grade, not a pixel match.
+    final grade = widget.gradeEffect;
+    if (grade == null) return layer;
+    return ColorFiltered(
+      colorFilter: ColorFilter.matrix(gradePreviewMatrix(grade)),
+      child: layer,
     );
   }
 }
@@ -351,6 +480,9 @@ Map<String, Rect> finalElementRects({
     NewsElement.bottomRibbon: scale(bot),
     NewsElement.tickerText: scale(bot),
     NewsElement.logo: scale(g.logoVisible),
+    // v1.5.1 (fix #50): the Reporter block's hit rect (photo ∪
+    // plate, overrides applied by the geometry).
+    NewsElement.reporter: scale(g.reporterBlockRect),
     NewsElement.capsule: scale(g.capsule),
     NewsElement.overlay: Rect.fromLTWH(
       w - w * 0.2 - 8,
