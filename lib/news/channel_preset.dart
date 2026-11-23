@@ -91,11 +91,13 @@ enum RibbonDirection {
 const String kFinalVariant3 = 'final3';
 const String kFinalVariantClassic2 = 'classic2';
 
-/// Factory ribbon colours (the values a preset carries when the
-/// user has never customised them). The Final designs key off
-/// these: an un-customised ribbon renders in its DESIGN colour,
-/// a user-picked colour always wins (the colour pickers in
-/// Template Studio / Channel Branding stay live in both designs).
+/// Factory ribbon colours (the values a preset carried when the
+/// user had never customised them, up to v1.5.0). Kept as the
+/// classic2 design colours and as the migration keys for fix #40:
+/// the Final 3-Ribbon design now renders its FIXED design colours
+/// regardless of the stored values (see [finalDesignRibbonColor]),
+/// and [ChannelPresetStore.loadAll] rewrites stored factory values
+/// on the built-in preset to the Final colours.
 const int kFactoryTopRibbonColor = 0xFF01B0FF;
 const int kFactoryUrduRibbonColor = 0xFF3D5AFE;
 const int kFactoryEnglishRibbonColor = 0xFFEF0017;
@@ -114,33 +116,48 @@ const int kFinal3EnglishColor = 0xFF081E46;
 /// same rule as the other ribbons).
 const int kFinal3TopTextColor = 0xFF000000;
 
-/// Resolves one ribbon's render colour for a Final design: the
-/// preset's own colour when the user customised it (differs from
-/// the factory value), otherwise the design colour — for
-/// 'classic2' the design colour IS the factory colour, so classic
-/// rendering is unchanged by this resolver.
+/// Resolves one ribbon's render colour for a Final design.
+///
+/// v1.5.1 (fix #40): the Final 3-Ribbon design has FIXED identity
+/// colours — it ALWAYS renders [final3Color], whatever colour is
+/// stored on the preset. (Before this fix the resolver let any
+/// stored non-factory colour win, and the user's saved v1.4-era
+/// preset kept the old cyan/blue/red scheme, so the declared-FINAL
+/// colours never reached his phone.) The colour pickers in
+/// Template Studio / Channel Branding still edit the preset's
+/// stored colours — those drive the Breaking / Classic templates
+/// and the classic2 variant, never the final3 identity.
+///
+/// classic2: the design colour IS the factory colour. A stored
+/// colour equal to the factory value — or to the final3 value
+/// (the #40 migration rewrites stored factory values to the final
+/// colours on the built-in preset) — counts as un-customised and
+/// renders the factory colour, so classic2's look is unchanged by
+/// the migration; any other stored colour is a real user pick and
+/// wins, exactly as before.
 int finalDesignRibbonColor({
   required int presetColor,
   required int factoryColor,
   required int final3Color,
   required bool isFinal3,
-}) =>
-    presetColor != factoryColor
-        ? presetColor
-        : (isFinal3 ? final3Color : factoryColor);
+}) {
+  if (isFinal3) return final3Color;
+  if (presetColor == factoryColor || presetColor == final3Color) {
+    return factoryColor;
+  }
+  return presetColor;
+}
 
 /// Text colour for the final3 top ribbon: BLACK on the yellow
-/// design colour, WHITE when the user picked a custom top colour
-/// (or on any other variant — only the yellow design top takes
-/// black text).
+/// design colour. v1.5.1 (fix #40): final3's top is ALWAYS the
+/// yellow design colour (see [finalDesignRibbonColor]), so its
+/// text is always black; every other variant takes white text.
 int finalDesignTopTextColor({
   required int presetColor,
   required int factoryColor,
   required bool isFinal3,
 }) =>
-    (isFinal3 && presetColor == factoryColor)
-        ? kFinal3TopTextColor
-        : 0xFFFFFFFF;
+    isFinal3 ? kFinal3TopTextColor : 0xFFFFFFFF;
 
 /// Chroma-key (green screen) background choice (Phase 3, Template &
 /// Studio). The toggle + picker + sensitivity persist on the channel
@@ -351,8 +368,10 @@ class ChannelPreset {
   bool get finalIs3Ribbon => finalVariant != kFinalVariantClassic2;
 
   /// Resolved render colours of the three Final-design ribbons
-  /// (see [finalDesignRibbonColor]): design colours for an
-  /// un-customised preset, the user's picked colours otherwise.
+  /// (see [finalDesignRibbonColor]): for the Final 3-Ribbon design
+  /// these are ALWAYS the fixed design colours (fix #40); for
+  /// classic2 they are the factory colours unless the user picked
+  /// a custom colour.
   int get designTopColor => finalDesignRibbonColor(
         presetColor: topRibbon.color,
         factoryColor: kFactoryTopRibbonColor,
@@ -590,9 +609,12 @@ class ChannelPreset {
       // ribbon settings for the strict 2-ribbon look).
       finalVariant: kFinalVariant3,
       showOutro: false,
+      // v1.5.1 (fix #40): the built-in preset ships with the
+      // declared-FINAL design colours (yellow / red / navy), not
+      // the old v1.4 factory scheme.
       topRibbon: RibbonConfig(
         text: '',
-        color: 0xFF01B0FF,
+        color: kFinal3TopColor,
         speed: 1.0,
         direction: RibbonDirection.rtl,
         fontSize: 20,
@@ -601,7 +623,7 @@ class ChannelPreset {
       ),
       urduRibbon: RibbonConfig(
         text: '',
-        color: 0xFF3D5AFE,
+        color: kFinal3UrduColor,
         speed: 1.0,
         direction: RibbonDirection.rtl,
         fontSize: 20,
@@ -610,7 +632,7 @@ class ChannelPreset {
       ),
       englishRibbon: RibbonConfig(
         text: '',
-        color: 0xFFEF0017,
+        color: kFinal3EnglishColor,
         speed: 1.0,
         direction: RibbonDirection.ltr,
         fontSize: 18,
@@ -764,7 +786,41 @@ class ChannelPresetStore {
                 presets.add(ChannelPreset.fromJson(item));
               }
             }
-            if (presets.isNotEmpty) return presets;
+            if (presets.isNotEmpty) {
+              // v1.5.1 (fix #40) migration: a built-in Nigraan TV
+              // preset saved by an older version still carries the
+              // OLD factory ribbon colours — rewrite any band that
+              // still holds its old factory value to the Final
+              // design colour and persist once, so every surface
+              // that reads the preset's own colours (Template &
+              // Studio, Channel Branding, swatches) shows the
+              // Final scheme. A band the user deliberately set to
+              // any other colour is left untouched.
+              var migrated = false;
+              for (final preset in presets) {
+                if (preset.id != 'nigraan-tv') continue;
+                if (preset.topRibbon.color == kFactoryTopRibbonColor) {
+                  preset.topRibbon.color = kFinal3TopColor;
+                  migrated = true;
+                }
+                if (preset.urduRibbon.color == kFactoryUrduRibbonColor) {
+                  preset.urduRibbon.color = kFinal3UrduColor;
+                  migrated = true;
+                }
+                if (preset.englishRibbon.color ==
+                    kFactoryEnglishRibbonColor) {
+                  preset.englishRibbon.color = kFinal3EnglishColor;
+                  migrated = true;
+                }
+              }
+              if (migrated) {
+                await saveAll(
+                  presets,
+                  selectedId: data['selectedId'] as String?,
+                );
+              }
+              return presets;
+            }
           }
         }
       }

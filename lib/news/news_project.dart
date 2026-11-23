@@ -119,6 +119,16 @@ class NewsProject {
     this.templateKind = 'nigraanFinal',
     this.breakingVariant = 'breakingRedBanner',
     this.tickerText = '',
+    this.tickerLabel = 'BREAKING NEWS',
+    this.reporterPhotoPath,
+    this.reporterName = '',
+    this.headlineFontId = 'jameel_kasheeda',
+    this.tickerFontId = 'jameel_kasheeda',
+    this.reporterFontId = 'jameel_kasheeda',
+    this.headlineStyleId = '',
+    this.tickerStyleId = '',
+    this.transitionId = '',
+    this.effectId = '',
     this.tickerDirection,
     this.videoTemplateId = '',
     this.backgroundMusicAsset,
@@ -201,6 +211,46 @@ class NewsProject {
 
   /// Top ticker text — paste-to-run, same contract as Phase 3.
   String tickerText;
+
+  /// v1.5.1 (fix #49): the EDITABLE side label of the ticker band
+  /// (the chip at the ticker's side — 'BREAKING NEWS' by default).
+  /// Rendered as the label chip in the Final 3-Ribbon bottom band
+  /// in preview + export. Empty = no chip.
+  String tickerLabel;
+
+  /// v1.5.1 (fix #50): the Reporter (numainda) photo — a path in
+  /// the app's documents folder (the picked photo, its BG-removed
+  /// cutout, or its BG-replaced composite, whichever the user made
+  /// last), or null = no reporter block. Rendered opposite the
+  /// logo in the Final template (preview + export), positioned by
+  /// the [NewsElement.reporter] override.
+  String? reporterPhotoPath;
+
+  /// v1.5.1 (fix #50): the reporter's name, rendered as the name
+  /// plate under the reporter photo (e.g. 'Reporter: Rai Ghulam
+  /// Jillani Bhatti'). Empty = photo without a plate.
+  String reporterName;
+
+  /// v1.5.1 (fix #51): font choices for the headline text, the
+  /// ticker text and the reporter name plate — [UrduFonts] ids
+  /// (built-ins) or 'user:<id>' for a user-uploaded font (see
+  /// UserFontService). Default = the house Kasheeda font, which is
+  /// what every renderer used before these fields existed.
+  String headlineFontId;
+  String tickerFontId;
+  String reporterFontId;
+
+  /// v1.5.1 (fix #52): Library selections — Drive item folder
+  /// ids from the Library engine ('' = none). [headlineStyleId] /
+  /// [tickerStyleId] reference 'Text Styles' items (their font
+  /// ref, when present, wins over the surface's own font choice);
+  /// [transitionId] a 'Transitions' xfade item applied between
+  /// the media clips in export; [effectId] an 'Effects' item
+  /// (overlay or grade) applied to the main media in export.
+  String headlineStyleId;
+  String tickerStyleId;
+  String transitionId;
+  String effectId;
 
   /// Ticker scroll direction OVERRIDE (v1.2.0 §2.2): a
   /// [RibbonDirection] id ('rtl' / 'ltr') set by the video-template
@@ -324,6 +374,17 @@ class NewsProject {
     String? templateKind,
     String? breakingVariant,
     String? tickerText,
+    String? tickerLabel,
+    String? reporterPhotoPath,
+    bool clearReporterPhoto = false,
+    String? reporterName,
+    String? headlineFontId,
+    String? tickerFontId,
+    String? reporterFontId,
+    String? headlineStyleId,
+    String? tickerStyleId,
+    String? transitionId,
+    String? effectId,
     String? tickerDirection,
     String? videoTemplateId,
     String? backgroundMusicAsset,
@@ -361,6 +422,17 @@ class NewsProject {
       templateKind: templateKind ?? this.templateKind,
       breakingVariant: breakingVariant ?? this.breakingVariant,
       tickerText: tickerText ?? this.tickerText,
+      tickerLabel: tickerLabel ?? this.tickerLabel,
+      reporterPhotoPath:
+          clearReporterPhoto ? null : (reporterPhotoPath ?? this.reporterPhotoPath),
+      reporterName: reporterName ?? this.reporterName,
+      headlineFontId: headlineFontId ?? this.headlineFontId,
+      tickerFontId: tickerFontId ?? this.tickerFontId,
+      reporterFontId: reporterFontId ?? this.reporterFontId,
+      headlineStyleId: headlineStyleId ?? this.headlineStyleId,
+      tickerStyleId: tickerStyleId ?? this.tickerStyleId,
+      transitionId: transitionId ?? this.transitionId,
+      effectId: effectId ?? this.effectId,
       tickerDirection: tickerDirection ?? this.tickerDirection,
       videoTemplateId: videoTemplateId ?? this.videoTemplateId,
       backgroundMusicAsset:
@@ -406,6 +478,16 @@ class NewsProject {
         'templateKind': templateKind,
         'breakingVariant': breakingVariant,
         'tickerText': tickerText,
+        'tickerLabel': tickerLabel,
+        'reporterPhotoPath': reporterPhotoPath,
+        'reporterName': reporterName,
+        'headlineFontId': headlineFontId,
+        'tickerFontId': tickerFontId,
+        'reporterFontId': reporterFontId,
+        'headlineStyleId': headlineStyleId,
+        'tickerStyleId': tickerStyleId,
+        'transitionId': transitionId,
+        'effectId': effectId,
         'tickerDirection': tickerDirection,
         'videoTemplateId': videoTemplateId,
         'backgroundMusicAsset': backgroundMusicAsset,
@@ -498,6 +580,18 @@ class NewsProject {
       breakingVariant:
           (json['breakingVariant'] as String?) ?? 'breakingRedBanner',
       tickerText: (json['tickerText'] as String?) ?? '',
+      tickerLabel: (json['tickerLabel'] as String?) ?? 'BREAKING NEWS',
+      reporterPhotoPath: json['reporterPhotoPath'] as String?,
+      reporterName: (json['reporterName'] as String?) ?? '',
+      headlineFontId:
+          (json['headlineFontId'] as String?) ?? 'jameel_kasheeda',
+      tickerFontId: (json['tickerFontId'] as String?) ?? 'jameel_kasheeda',
+      reporterFontId:
+          (json['reporterFontId'] as String?) ?? 'jameel_kasheeda',
+      headlineStyleId: (json['headlineStyleId'] as String?) ?? '',
+      tickerStyleId: (json['tickerStyleId'] as String?) ?? '',
+      transitionId: (json['transitionId'] as String?) ?? '',
+      effectId: (json['effectId'] as String?) ?? '',
       tickerDirection: json['tickerDirection'] as String?,
       videoTemplateId: (json['videoTemplateId'] as String?) ?? '',
       backgroundMusicAsset: json['backgroundMusicAsset'] as String?,

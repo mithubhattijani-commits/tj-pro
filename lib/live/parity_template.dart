@@ -367,6 +367,91 @@ class ParityGeometry {
       f3MidH * 0.45 * _ov(NewsElement.headlineText).scale;
   double get f3BotFont =>
       f3BotH * 0.53 * _ov(NewsElement.tickerText).scale;
+
+  // ---- Reporter (numainda) block (v1.5.1, fix #50) ----
+  // Photo + name plate on the side OPPOSITE the logo, anchored to
+  // the ribbon stack's top-left over the media (the NS6
+  // composition: photo top-left, plate under it, the stack
+  // untouched below). Pure
+  // additions: nothing pre-#50 reads these getters, so every
+  // existing render is unchanged; the block is drawn (preview +
+  // export post-pass) only when a project carries a reporter
+  // photo. The photo and the plate share the ONE reporter
+  // override — they move / resize / hide as a single block.
+
+  /// Photo width: the logo block's DESIGNED width — the two
+  /// blocks balance each other across the frame.
+  double get reporterPhotoW => _logoBaseW;
+
+  /// Photo height: a near-square portrait box; the photo itself
+  /// is cover-fitted into it.
+  double get reporterPhotoH => reporterPhotoW * 1.08;
+
+  /// Name plate height: a readable fraction of the bottom band.
+  double get reporterPlateH =>
+      (isFinal3 ? _f3BaseBotH : ribbonH) * 0.85;
+
+  /// Name plate width: a third wider than the photo, centred on
+  /// it (NS6), clamped to the frame.
+  double get reporterPlateW {
+    final w = reporterPhotoW * 1.3;
+    return w > width ? width : w;
+  }
+
+  /// Left inset of the reporter block: final3's logo side is
+  /// flush, so the reporter keeps a small inset; classic2 mirrors
+  /// its logo margin.
+  double get _reporterLeft => isFinal3 ? width * (10 / 720) : 24 * s;
+
+  /// Top edge of the ribbon stack at its DESIGNED position —
+  /// the reporter block anchors here (NS6 composition: the block
+  /// floats over the media at the stack's top-left, its plate
+  /// ENDING where the stack begins, so it never covers the
+  /// ribbons, the ticker or its label chip).
+  double get _stackTopBase =>
+      isFinal3 ? _f3TopBaseStrip.top : _urduBaseStrip.top;
+
+  ui.Rect get _reporterPhotoBase {
+    final plateTop = _stackTopBase - reporterPlateH;
+    // The plate straddles the photo's bottom edge: the photo's
+    // bottom sits 35% of the plate height below the plate's top.
+    final photoBottom = plateTop + reporterPlateH * 0.35;
+    return ui.Rect.fromLTWH(
+      _reporterLeft,
+      photoBottom - reporterPhotoH,
+      reporterPhotoW,
+      reporterPhotoH,
+    );
+  }
+
+  ui.Rect get _reporterPlateBase {
+    final cx = _reporterPhotoBase.center.dx;
+    var left = cx - reporterPlateW / 2;
+    if (left < 0) left = 0;
+    if (left > width - reporterPlateW) left = width - reporterPlateW;
+    return ui.Rect.fromLTWH(
+      left,
+      _stackTopBase - reporterPlateH,
+      reporterPlateW,
+      reporterPlateH,
+    );
+  }
+
+  /// The reporter photo's rect WITH its manual override applied
+  /// (a hidden reporter parks a full frame below the picture,
+  /// like the capsule).
+  ui.Rect get reporterPhotoRect => isHidden(NewsElement.reporter)
+      ? _reporterPhotoBase.translate(0, height + 100)
+      : _xform(_reporterPhotoBase, NewsElement.reporter);
+
+  /// The reporter name plate's rect (same override as the photo).
+  ui.Rect get reporterPlateRect => isHidden(NewsElement.reporter)
+      ? _reporterPlateBase.translate(0, height + 100)
+      : _xform(_reporterPlateBase, NewsElement.reporter);
+
+  /// Photo ∪ plate — the block's hit/selection rect.
+  ui.Rect get reporterBlockRect =>
+      reporterPhotoRect.expandToInclude(reporterPlateRect);
 }
 
 /// Splits a ribbon's text into headlines: the app stores one string
@@ -445,6 +530,17 @@ bool _hasArabic(String text) =>
   double? fontAr,
   double? fontLat,
   int textColor = 0xFFFFFFFF,
+  // v1.5.1 (fix #51): opt-in font-family overrides for a
+  // project's chosen headline / ticker font (built-in registry
+  // family or a user-uploaded font's FontLoader family). Null
+  // (every pre-#51 caller) = the exact historic behaviour:
+  // Arabic runs take the Kasheeda family when [fontReady],
+  // Latin runs the default font.
+  String? fontFamilyAr,
+  String? fontFamilyLat,
+  // v1.5.1 (fix #52): opt-in text shadows from a Text Style
+  // recipe (shadow + glow). Null = historic rendering.
+  List<ui.Shadow>? shadows,
 }) {
   final builder = ui.ParagraphBuilder(
     ui.ParagraphStyle(
@@ -487,9 +583,11 @@ bool _hasArabic(String text) =>
             ? (fontAr ?? g.urduFontAr)
             : (fontLat ?? (urdu ? g.urduFontLat : g.englishFont)),
         fontWeight: ui.FontWeight.bold,
-        fontFamily: arabic && fontReady
-            ? AssetDownloadService.kasheedaFamily
-            : null,
+        fontFamily: arabic
+            ? (fontFamilyAr ??
+                (fontReady ? AssetDownloadService.kasheedaFamily : null))
+            : fontFamilyLat,
+        shadows: shadows,
       ),
     );
     builder.addText(run);
@@ -613,6 +711,70 @@ Future<File> renderParityChip({
   );
 }
 
+/// v1.5.1 (fix #49): the Final 3-Ribbon ticker's EDITABLE side
+/// label as a chip layer (frame width x ribbon height, transparent
+/// except the chip): a solid red chip at the LEFT of the bottom
+/// band carrying the project's label in white bold — the NS6
+/// composition. The chip's width is the classic English chip
+/// width; the caller passes the same value as the ribbon's chipW
+/// so the ticker strip scrolls in the window right of the chip.
+/// The label's font shrinks until it fits (never truncated).
+Future<File> renderParityLabelChip({
+  required Directory dir,
+  required ParityGeometry g,
+  required String label,
+  required double height,
+  String? fontFamily,
+  // v1.5.1 (fix #52): a Ticker Text Style's label background can
+  // recolour the chip; the NS6 red is the default.
+  int chipColor = 0xFFD50000,
+}) async {
+  final recorder = ui.PictureRecorder();
+  final canvas = ui.Canvas(recorder);
+  final chipW = g.englishChipW;
+  canvas.drawRect(
+    ui.Rect.fromLTWH(0, 0, chipW, height),
+    ui.Paint()..color = ui.Color(chipColor),
+  );
+  final maxW = chipW - 12 * g.s;
+  var size = height * 0.53;
+  ui.Paragraph para;
+  while (true) {
+    final builder = ui.ParagraphBuilder(
+      ui.ParagraphStyle(
+        textAlign: ui.TextAlign.center,
+        textDirection:
+            _hasArabic(label) ? ui.TextDirection.rtl : ui.TextDirection.ltr,
+        maxLines: 1,
+      ),
+    );
+    builder.pushStyle(
+      ui.TextStyle(
+        color: const ui.Color(0xFFFFFFFF),
+        fontSize: size,
+        fontWeight: ui.FontWeight.bold,
+        fontFamily: fontFamily,
+      ),
+    );
+    builder.addText(label);
+    para = builder.build();
+    para.layout(ui.ParagraphConstraints(width: maxW));
+    if (para.maxIntrinsicWidth <= maxW || size <= 8 * g.s) break;
+    size -= 2 * g.s;
+  }
+  canvas.drawParagraph(
+    para,
+    ui.Offset(6 * g.s, (height - para.height) / 2),
+  );
+  return _writePng(
+    recorder,
+    g.width.round(),
+    height.ceil(),
+    dir,
+    'parity_f3label.png',
+  );
+}
+
 /// One scrolling ticker strip. Returns the PNG and the scroll
 /// period (one full repeated sequence, `sw` in the reference
 /// formulas): the strip image is TWO copies of the sequence, and
@@ -632,6 +794,11 @@ Future<(File, double)> renderParityStrip({
   double? fontAr,
   double? fontLat,
   String? name,
+  // v1.5.1 (fix #51): opt-in font families (see _headlineParagraph).
+  String? fontFamilyAr,
+  String? fontFamilyLat,
+  // v1.5.1 (fix #52): opt-in shadows (see _headlineParagraph).
+  List<ui.Shadow>? shadows,
 }) async {
   final rH = ribbonH ?? g.ribbonH;
   (ui.Paragraph, double, bool) buildOne(String h) {
@@ -643,6 +810,9 @@ Future<(File, double)> renderParityStrip({
       fontAr: fontAr,
       fontLat: fontLat,
       textColor: textColor,
+      fontFamilyAr: fontFamilyAr,
+      fontFamilyLat: fontFamilyLat,
+      shadows: shadows,
     );
     return (r.$1, r.$2, _hasArabic(h));
   }
@@ -722,6 +892,11 @@ double paritySequenceWidth({
   required bool fontReady,
   double? fontAr,
   double? fontLat,
+  // v1.5.1 (fix #51): opt-in font families (see _headlineParagraph).
+  String? fontFamilyAr,
+  String? fontFamilyLat,
+  // v1.5.1 (fix #52): opt-in shadows (see _headlineParagraph).
+  List<ui.Shadow>? shadows,
 }) {
   var w = 0.0;
   for (final h in headlines) {
@@ -732,6 +907,9 @@ double paritySequenceWidth({
       g: g,
       fontAr: fontAr,
       fontLat: fontLat,
+      fontFamilyAr: fontFamilyAr,
+      fontFamilyLat: fontFamilyLat,
+      shadows: shadows,
     );
     w += r.$2 + 4;
   }
@@ -755,6 +933,11 @@ Future<File> renderParityHeadlineStill({
   required double fontLat,
   required String name,
   int textColor = 0xFFFFFFFF,
+  // v1.5.1 (fix #51): opt-in font families (see _headlineParagraph).
+  String? fontFamilyAr,
+  String? fontFamilyLat,
+  // v1.5.1 (fix #52): opt-in shadows (see _headlineParagraph).
+  List<ui.Shadow>? shadows,
 }) async {
   final recorder = ui.PictureRecorder();
   final canvas = ui.Canvas(recorder);
@@ -775,6 +958,9 @@ Future<File> renderParityHeadlineStill({
         fontAr: fontAr,
         fontLat: fontLat,
         textColor: textColor,
+        fontFamilyAr: fontFamilyAr,
+        fontFamilyLat: fontFamilyLat,
+        shadows: shadows,
       );
       return (r.$1, r.$2, _hasArabic(headlines[i]));
     }();
@@ -991,7 +1177,8 @@ class ParityRibbonAssets {
   /// their window — they are pinned, not scrolling).
   final File? still;
 
-  /// Chip layer (classic2 only; final3 has no chips).
+  /// Chip layer (classic2's fixed chips; final3 — only the
+  /// editable ticker label chip, fix #49).
   final File? chip;
 
   /// Strip motion: true = the Urdu formula (content moves
@@ -1004,7 +1191,8 @@ class ParityRibbonAssets {
   final double windowW;
 
   /// Chip width the English formula starts after (classic2
-  /// English ribbon; 0 for final3's chipless bottom ticker).
+  /// English ribbon; final3 — the label chip's width when a
+  /// ticker label is set, else 0).
   final double chipW;
 
   /// v1.5.0 (#33): the TEXT layer's manual offset from the band
@@ -1055,6 +1243,30 @@ Future<ParityAssets> renderParityAssets({
   String urduText = '',
   String englishText = '',
   Map<String, ElementOverride> overrides = const {},
+  // v1.5.1 opt-ins (fixes #49 + #51), all defaulting to the
+  // pre-#51 behaviour: [tickerLabel] — the project's EDITABLE
+  // ticker side label; when non-empty (final3 only) the bottom
+  // band gains its red label chip and the ticker scrolls in the
+  // window right of it. [headlineFontFamily] / [tickerFontFamily]
+  // — the project's chosen font families for the headline ribbons
+  // / the ticker (null = the historic Kasheeda/default split).
+  String? tickerLabel,
+  String? headlineFontFamily,
+  String? tickerFontFamily,
+  // v1.5.1 (fix #52): opt-in Text Style colours from the Library
+  // engine. [headlineTextColor] recolours the middle (headline)
+  // band's text — the final3 TOP band keeps its design text
+  // colour (black on yellow) so the style can never make it
+  // unreadable; the style's font still applies there.
+  // [tickerTextColor] recolours the ticker text + its separator
+  // dots; [tickerLabelColor] is the label chip's background.
+  int? headlineTextColor,
+  int? tickerTextColor,
+  int? tickerLabelColor,
+  // v1.5.1 (fix #52): opt-in Text Style shadows (shadow + glow)
+  // for the headline ribbons / the ticker. Null = no shadows.
+  List<ui.Shadow>? headlineShadows,
+  List<ui.Shadow>? tickerShadows,
 }) async {
   final variant = ParityVariant.fromId(preset.finalVariant);
   final g = ParityGeometry(
@@ -1109,8 +1321,12 @@ Future<ParityAssets> renderParityAssets({
               paritySplitHeadlines(urdu.isEmpty ? 'قومی خبریں' : urdu),
           fontReady: fontReady,
           ribbonH: g.urduStrip.height,
+          textColor: headlineTextColor ?? 0xFFFFFFFF,
           fontAr: g.urduFontAr,
           fontLat: g.urduFontLat,
+          fontFamilyAr: headlineFontFamily,
+          fontFamilyLat: headlineFontFamily,
+          shadows: headlineShadows,
         );
         ribbons.add(ParityRibbonAssets(
           bg: t1bg,
@@ -1161,6 +1377,10 @@ Future<ParityAssets> renderParityAssets({
           // (override-scaled) ones, identical when no override.
           fontAr: g.urduFontAr,
           fontLat: g.englishFont,
+          fontFamilyAr: tickerFontFamily,
+          fontFamilyLat: tickerFontFamily,
+          textColor: tickerTextColor ?? 0xFFFFFFFF,
+          shadows: tickerShadows,
         );
         ribbons.add(ParityRibbonAssets(
           bg: t2bg,
@@ -1222,6 +1442,10 @@ Future<ParityAssets> renderParityAssets({
     bool showText = true,
     double textDx = 0,
     double textDy = 0,
+    // v1.5.1 (fix #51): the project's headline font family.
+    String? fontFamily,
+    // v1.5.1 (fix #52): the headline Text Style's shadows.
+    List<ui.Shadow>? shadows,
   }) async {
     if (!showText) {
       return ParityRibbonAssets(bg: bg, y: y);
@@ -1235,6 +1459,9 @@ Future<ParityAssets> renderParityAssets({
       fontReady: fontReady,
       fontAr: fontAr,
       fontLat: fontLat,
+      fontFamilyAr: fontFamily,
+      fontFamilyLat: fontFamily,
+      shadows: shadows,
     );
     if (seqW <= g.f3TextWindowW) {
       final still = await renderParityHeadlineStill(
@@ -1248,6 +1475,9 @@ Future<ParityAssets> renderParityAssets({
         fontLat: fontLat,
         name: 'parity_f3${tag}still.png',
         textColor: textColor,
+        fontFamilyAr: fontFamily,
+        fontFamilyLat: fontFamily,
+        shadows: shadows,
       );
       return ParityRibbonAssets(
         bg: bg,
@@ -1269,6 +1499,9 @@ Future<ParityAssets> renderParityAssets({
       textColor: textColor,
       fontAr: fontAr,
       fontLat: fontLat,
+      fontFamilyAr: fontFamily,
+      fontFamilyLat: fontFamily,
+      shadows: shadows,
       name: 'parity_f3${tag}strip.png',
     );
     return ParityRibbonAssets(
@@ -1305,6 +1538,8 @@ Future<ParityAssets> renderParityAssets({
       // Yellow design top ribbon → BLACK headline text (and dots);
       // a user-customised top colour keeps white text.
       textColor: preset.designTopTextColor,
+      fontFamily: headlineFontFamily,
+      shadows: headlineShadows,
     ));
   }
   if (!g.isHidden(NewsElement.middleRibbon)) {
@@ -1329,6 +1564,11 @@ Future<ParityAssets> renderParityAssets({
       showText: !g.isHidden(NewsElement.headlineText),
       textDx: headOv.dx * g.width,
       textDy: headOv.dy * g.height,
+      fontFamily: headlineFontFamily,
+      // Fix #52: a headline Text Style's colour lands here (the
+      // default stays white).
+      textColor: headlineTextColor ?? 0xFFFFFFFF,
+      shadows: headlineShadows,
     ));
   }
   if (!g.isHidden(NewsElement.bottomRibbon)) {
@@ -1345,7 +1585,15 @@ Future<ParityAssets> renderParityAssets({
       ribbons.add(ParityRibbonAssets(bg: botBg, y: g.f3BotStrip.top));
     } else {
       // Bottom: the international ENGLISH ticker — always
-      // scrolling, full width, white dot separators.
+      // scrolling, white dot separators. v1.5.1 (fix #49): with
+      // an editable side label the band gains its red label chip
+      // and the ticker scrolls in the window RIGHT of the chip
+      // (the command's LTR formula starts the strip after
+      // chipW); without a label the ticker keeps the full width,
+      // exactly as before.
+      final label = (tickerLabel ?? '').trim();
+      final hasLabel = label.isNotEmpty;
+      final botWindowW = hasLabel ? g.width - g.englishChipW : g.width;
       final (botStrip, botPeriod) = await renderParityStrip(
         dir: dir,
         g: g,
@@ -1354,18 +1602,34 @@ Future<ParityAssets> renderParityAssets({
             english.isEmpty ? 'International headlines' : english),
         fontReady: fontReady,
         ribbonH: g.f3BotH,
-        windowW: g.width,
-        dotColor: 0xFFFFFFFF,
+        windowW: botWindowW,
+        dotColor: tickerTextColor ?? 0xFFFFFFFF,
+        textColor: tickerTextColor ?? 0xFFFFFFFF,
         fontAr: g.f3BotFont,
         fontLat: g.f3BotFont,
+        fontFamilyAr: tickerFontFamily,
+        fontFamilyLat: tickerFontFamily,
+        shadows: tickerShadows,
         name: 'parity_f3botstrip.png',
       );
+      final botChip = hasLabel
+          ? await renderParityLabelChip(
+              dir: dir,
+              g: g,
+              label: label,
+              height: g.f3BotH,
+              fontFamily: tickerFontFamily,
+              chipColor: tickerLabelColor ?? 0xFFD50000,
+            )
+          : null;
       ribbons.add(ParityRibbonAssets(
         bg: botBg,
         y: g.f3BotStrip.top,
         strip: botStrip,
         period: botPeriod,
-        windowW: g.width,
+        chip: botChip,
+        chipW: hasLabel ? g.englishChipW : 0,
+        windowW: botWindowW,
         textDx: tickOv.dx * g.width,
         textDy: tickOv.dy * g.height,
       ));

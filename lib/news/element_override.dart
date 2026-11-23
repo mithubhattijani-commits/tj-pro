@@ -90,10 +90,18 @@ class NewsElement {
   static const String tickerText = 'tickerText';
   static const String overlay = 'overlay';
 
+  /// v1.5.1 (fix #50): the Reporter (numainda) photo block — photo
+  /// + name plate on the side OPPOSITE the logo. Its content lives
+  /// on the project (reporterPhotoPath / reporterName); this id is
+  /// only its manual position/size override slot, like every other
+  /// element.
+  static const String reporter = 'reporter';
+
   /// Every element, in selection-row order.
   static const List<String> all = [
     media,
     logo,
+    reporter,
     topRibbon,
     middleRibbon,
     headlineText,
@@ -106,6 +114,7 @@ class NewsElement {
   static const Map<String, String> labels = {
     media: 'Video / Photo',
     logo: 'Logo',
+    reporter: 'Reporter',
     topRibbon: 'Top Ribbon',
     middleRibbon: 'Headline Ribbon',
     headlineText: 'Headline Text',
