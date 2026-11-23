@@ -3876,9 +3876,16 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
   }
 
   Widget _textTypePanel() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
+    // v1.5.1 (#53): the Type tab's rows (field + Text size + Bold/
+    // Italic/Copy + Letter spacing + Line spacing) are ~40px taller
+    // than the fixed 272px text zone leaves under the tab header —
+    // as a bare Column they painted "BOTTOM OVERFLOWED BY 40
+    // PIXELS". Scroll inside the zone instead, the same pattern the
+    // Colour tab already uses; no control removed or reordered.
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
         // Layer chips: tap to select the layer being edited.
         if (_layers.length > 1)
           SingleChildScrollView(
@@ -3990,7 +3997,8 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
             _saveActiveLayer();
           },
         ),
-      ],
+        ],
+      ),
     );
   }
 
