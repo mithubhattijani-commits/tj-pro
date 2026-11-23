@@ -1587,6 +1587,82 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
     ];
   }
 
+  /// Formal track header (Phase 2): every lane gets the same
+  /// 52-wide label cell (icon + name + show/hide eye) aligned with
+  /// the strip's fixed column, turning the summary lanes into
+  /// named tracks. Hiding collapses the lane to a slim strip; the
+  /// lane's content and taps return when it is shown again.
+  Widget _laneRow({
+    required String laneKey,
+    required IconData icon,
+    required String label,
+    required Widget child,
+  }) {
+    final hidden = _laneHidden.contains(laneKey);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        SizedBox(
+          width: 52,
+          child: Row(
+            children: [
+              Icon(icon, size: 12, color: Colors.white54),
+              const SizedBox(width: 2),
+              Expanded(
+                child: Text(
+                  label,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white54,
+                    fontSize: 9,
+                  ),
+                ),
+              ),
+              InkWell(
+                onTap: () => setState(() {
+                  if (hidden) {
+                    _laneHidden.remove(laneKey);
+                  } else {
+                    _laneHidden.add(laneKey);
+                  }
+                }),
+                child: Padding(
+                  padding: const EdgeInsets.all(2),
+                  child: Icon(
+                    hidden ? Icons.visibility_off : Icons.visibility,
+                    size: 13,
+                    color: Colors.white54,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 4),
+        Expanded(
+          child: hidden
+              ? Container(
+                  height: 14,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1B1B1B),
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                  alignment: Alignment.centerLeft,
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  child: Text(
+                    '$label hidden',
+                    style: const TextStyle(
+                      color: Colors.white38,
+                      fontSize: 9,
+                    ),
+                  ),
+                )
+              : child,
+        ),
+      ],
+    );
+  }
+
   /// v1.5.0 TIMELINE (mockups V1/V2, replacing _timelineSection +
   /// _timelineCard): contextual yellow hint → the centred-playhead
   /// strip (fixed red + column at left with Mute under it, ruler
@@ -1597,23 +1673,73 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
   /// the one TimelineClock model, #5/#30).
   Widget _timelineBar() {
     final total = _totalDurationSec;
+    // Phase 2: kick off the music waveform render (cached; the
+    // audio lane paints it as its background when it lands).
+    final mp = _musicPath;
+    if (mp != null && !_musicWaveCache.containsKey(mp)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_ensureMusicWave(mp));
+      });
+    }
+    final wavePath = mp == null ? null : _musicWaveCache[mp];
     return Container(
       color: const Color(0xFF161616),
       padding: const EdgeInsets.fromLTRB(10, 4, 10, 6),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            _elementRow && _fxPip
-                ? 'PIP element selected — Switch se main track par wapas.'
-                : _clipRow && _clips.isNotEmpty
-                    ? 'Long press to swap'
-                    : 'Select one track to edit.',
-            style: const TextStyle(
-              color: Color(0xFFFFD60A),
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _elementRow && _fxPip
+                      ? 'PIP element selected — Switch se main track par wapas.'
+                      : _clipRow && _clips.isNotEmpty
+                          ? 'Long press to swap'
+                          : 'Select one track to edit.',
+                  style: const TextStyle(
+                    color: Color(0xFFFFD60A),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              // Main-track lock (Phase 2): while locked, the
+              // timeline's trim handles and reorder are disabled
+              // (selection, playback and the panels still work).
+              InkWell(
+                onTap: () =>
+                    setState(() => _mainTrackLocked = !_mainTrackLocked),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 2,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        _mainTrackLocked ? Icons.lock : Icons.lock_open,
+                        size: 14,
+                        color: _mainTrackLocked
+                            ? TjProTheme.gold
+                            : Colors.white54,
+                      ),
+                      const SizedBox(width: 3),
+                      Text(
+                        'Video lock',
+                        style: TextStyle(
+                          color: _mainTrackLocked
+                              ? TjProTheme.gold
+                              : Colors.white54,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 4),
           LayoutBuilder(
@@ -1648,6 +1774,36 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
                           ),
                         ),
                         const SizedBox(height: 6),
+                        // Timeline zoom (Phase 2): − / + scale the
+                        // strip around the playhead centre.
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            InkWell(
+                              onTap: () => _tlZoomBy(1 / 1.4),
+                              child: const Padding(
+                                padding: EdgeInsets.all(2),
+                                child: Icon(
+                                  Icons.remove,
+                                  size: 15,
+                                  color: Colors.white70,
+                                ),
+                              ),
+                            ),
+                            InkWell(
+                              onTap: () => _tlZoomBy(1.4),
+                              child: const Padding(
+                                padding: EdgeInsets.all(2),
+                                child: Icon(
+                                  Icons.add,
+                                  size: 15,
+                                  color: Colors.white70,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 2),
                         if (_clips.isNotEmpty)
                           InkWell(
                             onTap: () {
@@ -1696,10 +1852,29 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
                           onNotification: (n) {
                             if (n is ScrollStartNotification) {
                               _tlUserScrolling = true;
+                            } else if (n is ScrollUpdateNotification) {
+                              // Live scrub (Phase 2): the preview
+                              // follows the drag (paused only,
+                              // debounced in _scheduleScrubSeek).
+                              _scheduleScrubSeek();
                             } else if (n is ScrollEndNotification) {
                               _tlUserScrolling = false;
-                              final centreSec =
+                              var centreSec =
                                   _tlScroll.offset / _tlPxPerSec;
+                              // Snap the resting playhead to a
+                              // clip boundary when it lands close
+                              // (Phase 2), with a light tick.
+                              final snapped = TimelineMath.snapSec(
+                                centreSec,
+                                TimelineMath.boundaries(
+                                  _effectiveDurations,
+                                ),
+                                0.15,
+                              );
+                              if (snapped != centreSec) {
+                                centreSec = snapped;
+                                HapticFeedback.selectionClick();
+                              }
                               unawaited(_seekToGlobalSec(centreSec));
                             }
                             return false;
@@ -1788,7 +1963,11 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
           ),
           if (_fxPip) ...[
             const SizedBox(height: 4),
-            InkWell(
+            _laneRow(
+              laneKey: 'pip',
+              icon: Icons.picture_in_picture_alt,
+              label: 'PIP',
+              child: InkWell(
               onTap: () => setState(() {
                 _elementRow = true;
                 _clipRow = false;
@@ -1823,10 +2002,15 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
                 ),
               ),
             ),
+            ),
           ],
           const SizedBox(height: 4),
           // Audio lane.
-          InkWell(
+          _laneRow(
+            laneKey: 'audio',
+            icon: Icons.music_note,
+            label: 'Audio',
+            child: InkWell(
             onTap: () => _openToolTab('audio', 'music'),
             child: Container(
               height: 22,
@@ -1835,6 +2019,15 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
                     ? const Color(0xFF37474F)
                     : const Color(0xFF222222),
                 borderRadius: BorderRadius.circular(4),
+                // Phase 2: the music file's waveform as the lane
+                // background (plain lane until it renders).
+                image: (wavePath != null && wavePath.isNotEmpty)
+                    ? DecorationImage(
+                        image: FileImage(File(wavePath)),
+                        fit: BoxFit.fill,
+                        opacity: 0.5,
+                      )
+                    : null,
               ),
               alignment: Alignment.centerLeft,
               padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -1863,9 +2056,14 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
               ),
             ),
           ),
+          ),
           const SizedBox(height: 4),
           // Text lane.
-          InkWell(
+          _laneRow(
+            laneKey: 'text',
+            icon: Icons.text_fields,
+            label: 'Text',
+            child: InkWell(
             onTap: () => _openTool('text'),
             child: Container(
               height: 22,
@@ -1903,6 +2101,7 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
                 ],
               ),
             ),
+          ),
           ),
           const SizedBox(height: 4),
           // Times row — current centred, total right, both from
@@ -1958,8 +2157,11 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
     final clip = _clips[i];
     final w = clip.effectiveDuration * _tlPxPerSec;
     final selected = i == _selected;
-    final thumbs = _thumbCache[clip.file.path];
+    final thumbs = _thumbCache[_thumbKey(clip)];
     return Positioned(
+      // Keyed by the clip OBJECT so a drag-reorder moves the
+      // block's element (and its live gesture) with the clip.
+      key: ObjectKey(clip),
       left: left,
       top: 14,
       width: w,
@@ -1973,7 +2175,16 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
           });
           unawaited(_loadPreview());
         },
-        onLongPress: () => _showSwapSheet(i),
+        // Long press: drag = live reorder (Phase 2); a stationary
+        // press still opens the swap sheet (the original path).
+        // Locked track: no reorder at all.
+        onLongPressStart: _mainTrackLocked
+            ? null
+            : (_) => _onClipDragStart(i),
+        onLongPressMoveUpdate: _mainTrackLocked ? null : _onClipDragMove,
+        onLongPressEnd: _mainTrackLocked
+            ? null
+            : (_) => _onClipDragEnd(i),
         child: Container(
           decoration: BoxDecoration(
             border: Border.all(
@@ -2022,7 +2233,7 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
                     color: Colors.white,
                   ),
                 ),
-              if (selected) ...[
+              if (selected && !_mainTrackLocked) ...[
                 Positioned(
                   left: 0,
                   top: 0,
@@ -2032,15 +2243,33 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
                     behavior: HitTestBehavior.opaque,
                     onHorizontalDragUpdate: (d) {
                       setState(() {
-                        clip.trimStart = (clip.trimStart +
+                        var v = (clip.trimStart +
                                 d.delta.dx / _tlPxPerSec)
-                            .clamp(
-                              0,
-                              clip.effectiveEnd - 0.3,
-                            );
+                            .clamp(0, clip.effectiveEnd - 0.3)
+                            .toDouble();
+                        // Snap to the clip's true start (Phase 2),
+                        // one haptic tick per engagement.
+                        final snapped = TimelineMath.snapSec(
+                          v,
+                          const [0.0],
+                          0.08,
+                        );
+                        if (snapped != v) {
+                          if (!_trimSnapped) {
+                            _trimSnapped = true;
+                            HapticFeedback.selectionClick();
+                          }
+                          v = snapped;
+                        } else {
+                          _trimSnapped = false;
+                        }
+                        clip.trimStart = v;
                       });
                     },
-                    onHorizontalDragEnd: (_) => _pushHistory(),
+                    onHorizontalDragEnd: (_) {
+                      _trimSnapped = false;
+                      _pushHistory();
+                    },
                     child: Container(
                       color: TjProTheme.gold.withValues(alpha: 0.85),
                       child: const Icon(
@@ -2061,15 +2290,31 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
                     onHorizontalDragUpdate: (d) {
                       setState(() {
                         final full = clip.duration.inMilliseconds / 1000;
-                        clip.trimEnd = (clip.effectiveEnd +
+                        var v = (clip.effectiveEnd +
                                 d.delta.dx / _tlPxPerSec)
-                            .clamp(
-                              clip.trimStart + 0.3,
-                              full,
-                            );
+                            .clamp(clip.trimStart + 0.3, full);
+                        // Snap to the clip's true end (Phase 2).
+                        final snapped = TimelineMath.snapSec(
+                          v,
+                          [full],
+                          0.08,
+                        );
+                        if (snapped != v) {
+                          if (!_trimSnapped) {
+                            _trimSnapped = true;
+                            HapticFeedback.selectionClick();
+                          }
+                          v = snapped;
+                        } else {
+                          _trimSnapped = false;
+                        }
+                        clip.trimEnd = v;
                       });
                     },
-                    onHorizontalDragEnd: (_) => _pushHistory(),
+                    onHorizontalDragEnd: (_) {
+                      _trimSnapped = false;
+                      _pushHistory();
+                    },
                     child: Container(
                       color: TjProTheme.gold.withValues(alpha: 0.85),
                       child: const Icon(
@@ -2291,6 +2536,9 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
           ('9:16', Icons.crop_portrait),
           ('16:9', Icons.crop_landscape),
           ('1:1', Icons.crop_square),
+          // Phase 1 (Build 2): 4:5 completes the chain — the
+          // stage frame and the export dims both honour it now.
+          ('4:5', Icons.crop_portrait),
         ])
           _iconChoiceItem(
             icon: a.$2,
@@ -2299,6 +2547,25 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
             onTap: () => setState(() => _aspect = a.$1),
           ),
       ]),
+      // Phase 1 (Build 2): stage guides + the interactive-canvas
+      // hint. The switch mirrors the stage's corner toggle.
+      Row(
+        children: [
+          const Icon(Icons.grid_on, size: 18, color: Colors.white70),
+          const SizedBox(width: 8),
+          const Expanded(child: Text('Grid + safe zones (stage par)')),
+          Switch(
+            value: _showGrid,
+            onChanged: (v) => setState(() => _showGrid = v),
+          ),
+        ],
+      ),
+      const Text(
+        'Stage par do unglion se pinch karke zoom, aik ungli se '
+        'ghuma kar pan, do unglion se rotate karein — double tap '
+        'reset. Yehi transform export mein bhi lagta hai.',
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
       const SizedBox(height: 6),
       const Text('Fill'),
       const SizedBox(height: 4),
@@ -3679,8 +3946,8 @@ const Text('Auto Captions (CapCut-style)',
                   style: TextStyle(fontWeight: FontWeight.bold)),
               const Text(
                 'Preview video par object ko tap karein, phir Track '
-                'dabayein. (Preview 16:9 box hai, is liye tap point '
-                'approximate hai.)',
+                'dabayein. (Tap point ab asal video frame par exact '
+                'map hota hai.)',
                 style: TextStyle(color: Colors.grey),
               ),
               const SizedBox(height: 8),

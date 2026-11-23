@@ -272,6 +272,14 @@ class FfmpegService {
             : q == 1
                 ? (1080, 1080)
                 : (720, 720);
+      case '4:5':
+        // Build 2 (Phase 1): the Canvas panel's 4:5 ratio is real
+        // end-to-end — width-driven like 9:16 (720 / 1080 / 2160).
+        return q == 2
+            ? (2160, 2700)
+            : q == 1
+                ? (1080, 1350)
+                : (720, 900);
       default:
         return null;
     }

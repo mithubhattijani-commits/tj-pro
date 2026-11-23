@@ -10,12 +10,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:gal/gal.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:open_filex/open_filex.dart';
@@ -50,6 +50,7 @@ import '../services/pro_service.dart';
 import '../services/reel_export_service.dart';
 import '../services/urdu_caption_service.dart';
 import '../services/video_export_service.dart';
+import 'editor_stage.dart';
 
 part 'video_editor_panels.dart';
 
@@ -290,6 +291,70 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   /// generated thumb or a plain block until they land.
   final Map<String, List<String>> _thumbCache = {};
 
+  // ---- Build 2 (Phase 1 + 2) state. ----
+  /// Stage guides: rule-of-thirds grid + safe zones over the
+  /// canvas frame (Canvas panel / stage corner toggle).
+  bool _showGrid = false;
+
+  /// The stage layer the user last tapped: null (none), 'pip' or
+  /// 'text'. A selected layer shows its outline on the stage and
+  /// its property panel/row below — the Phase 1 layer pattern.
+  String? _stageLayer;
+
+  /// The canvas frame + media contain rects from the last stage
+  /// layout (stage coordinates). Written during the stage build;
+  /// read by the PIP layer math and the tap mapping.
+  Rect _stageFrameRect = Rect.zero;
+  Rect _stageMediaRect = Rect.zero;
+
+  /// Pinch snapshot: the main-clip transform values + focal point
+  /// when the current stage scale gesture started. Updates are
+  /// computed FROM the snapshot (never accumulated per event, so
+  /// the gesture cannot drift). The transform itself is the §6.7
+  /// model ([_tfScale]/[_tfX]/[_tfY]/[_tfRot]) the Transform panel
+  /// sliders and the export already share.
+  double _pinchTfScale = 1;
+  double _pinchTfX = 0;
+  double _pinchTfY = 0;
+  double _pinchTfRot = 0;
+  Offset _pinchFocalStart = Offset.zero;
+
+  /// PIP drag: the inset's live offset while it is being dragged
+  /// on the stage; on release it snaps to the nearest corner (the
+  /// [PipPosition] model) and this returns to zero.
+  Offset _pipDragOffset = Offset.zero;
+  double _pinchPipScale = 0.3;
+
+  /// Formal-track state (Phase 2): the main track's lock (trim /
+  /// reorder on the timeline are disabled while locked; selection
+  /// and playback are not) and the collapsed lanes by key
+  /// ('pip' / 'audio' / 'text').
+  bool _mainTrackLocked = false;
+  final Set<String> _laneHidden = <String>{};
+
+  /// Live scrub seek debounce (Phase 2): while the user drags the
+  /// timeline (paused), the preview seeks to the centred frame —
+  /// throttled so the player is not flooded.
+  Timer? _scrubSeekTimer;
+
+  /// Trim-drag snap latch: true while the active trim value sits
+  /// on a snap point, so the haptic ticks once per engagement.
+  bool _trimSnapped = false;
+
+  /// Music-lane waveform (Phase 2): generated showwavespic PNG per
+  /// music path ('' while generating / after a failure).
+  final Map<String, String> _musicWaveCache = {};
+  final Set<String> _musicWavePending = <String>{};
+
+  /// Long-press drag reorder (Phase 2): the clip index being
+  /// dragged, its timeline start (seconds) when the press began —
+  /// the invariant reference for the drag math, since swaps move
+  /// the clip's own start — and whether it actually moved (a
+  /// stationary long press still opens the swap sheet, as before).
+  int? _dragClipIndex;
+  double _dragOriginStartSec = 0;
+  bool _dragMoved = false;
+
   /// Stabilizer level (v1.5.0): 0 = Original (off), 1 = Low,
   /// 2 = Standard, 3 = Most Stable. [_proStabilize] stays the
   /// export switch (level > 0); the level maps to vidstab
@@ -476,7 +541,6 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   // pro switch/dropdown off or neutral, so an untouched export is
   // byte-for-byte the old pipeline plus the guarded post-passes (which
   // are all skipped when their switches are off). ----
-  final _previewKey = GlobalKey();
 
   // Motion titles + sticker (rendered to PNG by pro_editor, never
   // through FFmpeg drawtext, so Urdu shaping stays correct).
@@ -677,25 +741,247 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     }
   }
 
-  /// Tap on the preview -> normalized (0..1, 0..1) coords.
-  /// APPROXIMATION (documented): the preview widget is a fixed 16:9
-  /// box, while the video inside it may be letterboxed/pillarboxed,
-  /// so the tap point is measured against the whole preview box, not
-  /// the video frame itself. Tracking treats it as the video-frame
-  /// point, which is close for 16:9 clips and approximate otherwise.
-  void _onPreviewTapDown(TapDownDetails d) {
-    final box = _previewKey.currentContext?.findRenderObject() as RenderBox?;
-    if (box == null) return;
-    final size = box.size;
-    if (size.width <= 0 || size.height <= 0) return;
-    final local = box.globalToLocal(d.globalPosition);
+  /// Tap on the preview media -> normalized (0..1, 0..1) coords.
+  ///
+  /// Build 2 (Phase 1): EXACT mapping. The gesture detector sits
+  /// INSIDE the stage's media subtree (within the canvas frame's
+  /// contain rect, under the stage transform), so [TapDownDetails]
+  /// .localPosition arrives already in the media box's own
+  /// coordinates — Flutter's hit testing inverts the transform —
+  /// and dividing by the box size gives the true video-frame
+  /// point. The old implementation measured against a fixed 16:9
+  /// box through a GlobalKey that was never attached to the stage
+  /// (the tap silently never registered); both the approximation
+  /// and the dead key are gone.
+  void _onPreviewTapDown(TapDownDetails d, Size mediaBox) {
+    if (mediaBox.width <= 0 || mediaBox.height <= 0) return;
+    final x = (d.localPosition.dx / mediaBox.width).clamp(0.0, 1.0);
+    final y = (d.localPosition.dy / mediaBox.height).clamp(0.0, 1.0);
     setState(() {
-      _trackStartX = (local.dx / size.width).clamp(0.0, 1.0);
-      _trackStartY = (local.dy / size.height).clamp(0.0, 1.0);
+      // A tap on bare media also clears any stage layer selection.
+      _stageLayer = null;
+      _trackStartX = x;
+      _trackStartY = y;
       _trackPoints = [];
       _status =
-          'Object tapped (${_trackStartX!.toStringAsFixed(2)}, ${_trackStartY!.toStringAsFixed(2)}) — ab Track dabayein.';
+          'Object tapped (${x.toStringAsFixed(2)}, ${y.toStringAsFixed(2)}) — ab Track dabayein.';
     });
+  }
+
+  // ---- Build 2 (Phase 1): interactive canvas gestures. ----
+  // The stage pinch/pan/rotate writes the §6.7 main-clip transform
+  // model ([_tfScale]/[_tfX]/[_tfY]/[_tfRot]) — the same values the
+  // Transform panel's sliders edit and the export's transform pass
+  // consumes, so what the user sets by hand on the stage is what
+  // the export renders. Like the sliders, gestures do not push
+  // undo history (the snapshot format has no transform fields);
+  // the panel's Reset button restores identity.
+
+  void _onStageScaleStart(ScaleStartDetails d) {
+    _pinchTfScale = _tfScale;
+    _pinchTfX = _tfX;
+    _pinchTfY = _tfY;
+    _pinchTfRot = _tfRot;
+    _pinchFocalStart = d.focalPoint;
+  }
+
+  void _onStageScaleUpdate(ScaleUpdateDetails d) {
+    final frame = _stageFrameRect;
+    if (frame.width <= 0 || frame.height <= 0) return;
+    setState(() {
+      // Clamps match the Transform panel sliders exactly, so a
+      // value set by hand and a value set by slider live in the
+      // same range (the export's own wider clamp still applies).
+      if (d.pointerCount >= 2) {
+        _tfScale = (_pinchTfScale * d.scale).clamp(0.5, 2.0);
+        _tfRot = (_pinchTfRot + d.rotation * 180 / math.pi).clamp(
+          -45.0,
+          45.0,
+        );
+      }
+      // Pan follows the focal point (one or two fingers); export
+      // posX/posY are fractions of the frame, so the pixel delta
+      // is divided by the frame size.
+      final delta = d.focalPoint - _pinchFocalStart;
+      _tfX = (_pinchTfX + delta.dx / frame.width).clamp(-0.5, 0.5);
+      _tfY = (_pinchTfY + delta.dy / frame.height).clamp(-0.5, 0.5);
+    });
+  }
+
+  /// Double-tap on the stage media: reset the canvas transform to
+  /// identity (the pinch/pan counterpart of the Transform panel's
+  /// Reset button).
+  void _resetStageTransform() {
+    setState(() {
+      _tfScale = 1;
+      _tfX = 0;
+      _tfY = 0;
+      _tfRot = 0;
+    });
+    _setStatus('Canvas transform reset ho gaya.');
+  }
+
+  /// The stage's render matrix for the main-clip transform:
+  /// translate (frame fractions) ∘ rotate (degrees) ∘ scale, about
+  /// the frame centre — the same composition the export's
+  /// transform pass applies (overlay offset from centre, rotate
+  /// about the frame's centre, scaled frame).
+  Matrix4 _stageTransformMatrix(Size frameSize) {
+    final m = Matrix4.identity();
+    m.translateByDouble(
+      _tfX * frameSize.width,
+      _tfY * frameSize.height,
+      0,
+      1,
+    );
+    m.rotateZ(_tfRot * math.pi / 180);
+    m.scaleByDouble(_tfScale, _tfScale, 1, 1);
+    return m;
+  }
+
+  /// The canvas frame's backdrop colour on stage: the chosen fill
+  /// colour when Canvas fill = Colour, else black. (Blur fill is
+  /// an export render; the stage keeps the plain backdrop.)
+  Color _frameBackdropColor() {
+    if (_canvasFill != 'color') return Colors.black;
+    switch (_canvasFillColor) {
+      case 'white':
+        return Colors.white;
+      case '0x1A1A2E':
+        return const Color(0xFF1A1A2E);
+      case '0x7C3AED':
+        return const Color(0xFF7C3AED);
+      default:
+        return Colors.black;
+    }
+  }
+
+  // ---- Build 2 (Phase 2): timeline helpers. ----
+
+  /// Timeline zoom (the − / + buttons in the strip's fixed
+  /// column): scales px-per-second around the CURRENT centre, so
+  /// the frame under the playhead stays under the playhead.
+  void _tlZoomBy(double factor) {
+    final old = _tlPxPerSec;
+    final next = (old * factor).clamp(12.0, 120.0);
+    if (next == old || !_tlScroll.hasClients) {
+      if (next != old) setState(() => _tlPxPerSec = next);
+      return;
+    }
+    final centreSec = _tlScroll.offset / old;
+    setState(() => _tlPxPerSec = next);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_tlScroll.hasClients) return;
+      final target = (centreSec * next).clamp(
+        0.0,
+        _tlScroll.position.maxScrollExtent,
+      );
+      _tlScroll.jumpTo(target);
+    });
+  }
+
+  /// Live scrub (Phase 2): while the user drags the strip with
+  /// playback paused, seek the preview to the centred frame —
+  /// debounced so the player is not flooded with seeks. The
+  /// ScrollEnd seek (with its boundary snap) still lands the
+  /// final position.
+  void _scheduleScrubSeek() {
+    if (_clock.isPlaying || !_tlUserScrolling) return;
+    _scrubSeekTimer?.cancel();
+    _scrubSeekTimer = Timer(const Duration(milliseconds: 90), () {
+      if (!mounted || _clock.isPlaying || !_tlScroll.hasClients) return;
+      unawaited(_seekToGlobalSec(_tlScroll.offset / _tlPxPerSec));
+    });
+  }
+
+  /// Music-lane waveform (Phase 2): render the music file's
+  /// showwavespic PNG once per file (cached in the work dir),
+  /// used as the audio lane's background. Any failure leaves the
+  /// lane exactly as it was (plain block + file name).
+  Future<void> _ensureMusicWave(String musicPath) async {
+    if (_musicWaveCache.containsKey(musicPath) ||
+        _musicWavePending.contains(musicPath)) {
+      return;
+    }
+    _musicWavePending.add(musicPath);
+    try {
+      final dir = await _workDir();
+      final key =
+          '${p.basenameWithoutExtension(musicPath)}_${musicPath.hashCode.abs()}';
+      final out = p.join(dir.path, 'music_wave_$key.png');
+      if (await File(out).exists()) {
+        _musicWaveCache[musicPath] = out;
+        if (mounted) setState(() {});
+        return;
+      }
+      final result = await FfmpegService.run(
+        '-y -i ${FfmpegService.q(musicPath)} -filter_complex '
+        '"showwavespic=s=640x44:colors=0xFFD60A" '
+        '-frames:v 1 ${FfmpegService.q(out)}',
+      );
+      _musicWaveCache[musicPath] =
+          (result.ok && await File(out).exists()) ? out : '';
+      if (mounted) setState(() {});
+    } catch (_) {
+      _musicWaveCache[musicPath] = '';
+    } finally {
+      _musicWavePending.remove(musicPath);
+    }
+  }
+
+  // Long-press drag reorder (Phase 2). The press still opens the
+  // swap sheet when it does not move (the original path); once it
+  // moves past a neighbour's midpoint the clips swap live, one
+  // history entry for the whole drag (pushed at press start).
+
+  void _onClipDragStart(int i) {
+    if (_mainTrackLocked) return;
+    _pushHistory();
+    _dragClipIndex = i;
+    _dragOriginStartSec = _clipStartSec(i);
+    _dragMoved = false;
+  }
+
+  void _onClipDragMove(LongPressMoveUpdateDetails d) {
+    final from = _dragClipIndex;
+    if (from == null || _mainTrackLocked) return;
+    final dxSec = d.offsetFromOrigin.dx / _tlPxPerSec;
+    if (dxSec.abs() < 0.05) return;
+    final dragged = _clips[from];
+    // The dragged clip's centre in absolute timeline seconds,
+    // measured from its ORIGINAL slot (invariant across swaps —
+    // the current slot start moves with every swap, the origin
+    // does not). The midpoint walk itself is TimelineMath's.
+    final centre =
+        _dragOriginStartSec + dragged.effectiveDuration / 2 + dxSec;
+    final idx = TimelineMath.dragTargetIndex(
+      _effectiveDurations,
+      from,
+      centre,
+    );
+    if (idx == from) return;
+    _dragMoved = true;
+    setState(() {
+      final clip = _clips.removeAt(from);
+      _clips.insert(idx, clip);
+      _selected = idx;
+      _dragClipIndex = idx;
+    });
+    HapticFeedback.selectionClick();
+  }
+
+  void _onClipDragEnd(int i) {
+    final wasDrag = _dragMoved;
+    _dragClipIndex = null;
+    _dragMoved = false;
+    if (wasDrag) {
+      // One preview reload for the whole drag (the swaps above
+      // deliberately do not reload per step).
+      unawaited(_loadPreview());
+    } else {
+      // Stationary long press: the original swap-sheet path.
+      _showSwapSheet(i);
+    }
   }
 
   Future<void> _trackObject() async {
@@ -1213,6 +1499,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   void dispose() {
     _clock.removeListener(_onClockTick);
     _clock.dispose();
+    _scrubSeekTimer?.cancel();
     _tlScroll.dispose();
     _controller?.dispose();
     _pipController?.dispose();
@@ -1234,21 +1521,25 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   }
 
   // ---- v1.5.0 timeline model: the ONE source of durations. ----
+  // Build 2 (Phase 2): the arithmetic now lives in [TimelineMath]
+  // (editor_stage.dart) so the #5/#29/#30 invariants are pinned by
+  // unit tests; these members keep their exact old semantics by
+  // delegating to it.
+
+  /// Effective durations in order — the list form of the ONE
+  /// timeline model.
+  List<double> get _effectiveDurations =>
+      _clips.map((c) => c.effectiveDuration).toList();
 
   /// Total timeline length (seconds) — the sum of every clip's
   /// effective (trimmed) duration, in order. EVERY readout
   /// (transport, panels, timeline) derives from this.
   double get _totalDurationSec =>
-      _clips.fold(0.0, (sum, c) => sum + c.effectiveDuration);
+      TimelineMath.totalSec(_effectiveDurations);
 
   /// Timeline position (seconds) where clip [index] starts.
-  double _clipStartSec(int index) {
-    var start = 0.0;
-    for (var j = 0; j < index && j < _clips.length; j++) {
-      start += _clips[j].effectiveDuration;
-    }
-    return start;
-  }
+  double _clipStartSec(int index) =>
+      TimelineMath.startSec(_effectiveDurations, index);
 
   /// The playhead's position on the TIMELINE (seconds): the
   /// selected clip's start + the clock position inside its trimmed
@@ -1274,16 +1565,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   Future<void> _seekToGlobalSec(double sec) async {
     if (_clips.isEmpty) return;
     final target = sec.clamp(0.0, _totalDurationSec);
-    var index = _clips.length - 1;
-    var acc = 0.0;
-    for (var i = 0; i < _clips.length; i++) {
-      if (target < acc + _clips[i].effectiveDuration ||
-          i == _clips.length - 1) {
-        index = i;
-        break;
-      }
-      acc += _clips[i].effectiveDuration;
-    }
+    final index = TimelineMath.indexAtSec(_effectiveDurations, target);
     final clip = _clips[index];
     final inside = (target - _clipStartSec(index)).clamp(
       0.0,
@@ -1304,13 +1586,28 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     }
   }
 
+  /// Filmstrip cache key: path + size + mtime (Build 2 cache
+  /// hardening) — a processed copy written over the same path
+  /// never shows the OLD clip's thumbnails.
+  String _thumbKey(VideoClip clip) {
+    var stamp = 'nostat';
+    try {
+      final st = clip.file.statSync();
+      stamp = '${st.size}:${st.modified.millisecondsSinceEpoch}';
+    } catch (_) {
+      // Keep the fallback stamp; generation below still guards
+      // every failure silently.
+    }
+    return '${clip.file.path}|$stamp';
+  }
+
   /// Lazily generate filmstrip thumbnails for [clip] (up to 8
   /// frames spread over its effective range) into the work dir.
   /// Fire-and-forget: the timeline renders plain blocks until the
   /// thumbs land, then rebuilds. Failures are silent — a clip
   /// without thumbs is still fully editable.
   Future<void> _ensureThumbs(VideoClip clip) async {
-    final key = clip.file.path;
+    final key = _thumbKey(clip);
     if (_thumbCache.containsKey(key)) return;
     _thumbCache[key] = const [];
     try {
@@ -1360,7 +1657,12 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   Future<void> _loadPreview() async {
     if (_clips.isEmpty) return;
     // v1.5.0: filmstrip thumbs for the timeline (lazy, cached).
-    unawaited(_ensureThumbs(_clips[_selected]));
+    // Build 2: pre-generate for EVERY clip, not just the selected
+    // one (each call is idempotent and cache-guarded), so timeline
+    // scrolling never waits on an unselected clip's strip.
+    for (final c in _clips) {
+      unawaited(_ensureThumbs(c));
+    }
     // v1.3.0 (§6.1): a photo clip has no video controller — the
     // stage shows the still image instead.
     if (_clips[_selected].isPhoto) {
@@ -4101,10 +4403,258 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     }();
   }
 
+  /// Build 2 (Phase 1): the stage canvas. The chosen Canvas ratio
+  /// becomes a real FRAME centred on the stage; the media is
+  /// contain-fitted inside it (never stretched — the VideoPlayer
+  /// texture previously filled the whole stage box, distorting
+  /// every non-stage-shaped clip); the §6.7 transform renders live
+  /// around the frame centre; the text overlay sits in frame
+  /// coordinates (the export's drawtext spot); PIP composites over
+  /// the frame AFTER the transform, exactly like the export; the
+  /// grid/safe-zone guides paint on top when enabled.
+  Widget _stageCanvas(
+    VideoClip clip,
+    VideoPlayerController? ctrl,
+    bool ready,
+  ) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final stageSize = constraints.biggest;
+        final mediaAspect = (!clip.isPhoto && ready && ctrl != null)
+            ? ctrl.value.aspectRatio
+            : clip.aspectRatio;
+        final ratio = CanvasGeometry.ratioFor(_aspect, mediaAspect);
+        final frame = CanvasGeometry.frameRect(stageSize, ratio);
+        _stageFrameRect = frame;
+        _stageMediaRect = CanvasGeometry.containRect(frame, mediaAspect);
+        if (frame.width <= 0 || frame.height <= 0) {
+          return const SizedBox.shrink();
+        }
+        final containLocal = _stageMediaRect.shift(-frame.topLeft);
+        return Stack(
+          children: [
+            // ---- The canvas frame ----
+            Positioned.fromRect(
+              rect: frame,
+              child: ClipRect(
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: ColoredBox(color: _frameBackdropColor()),
+                    ),
+                    // Transformed content (media + text + track
+                    // pin): the export's transform pass scales the
+                    // main pass output — which includes the
+                    // drawtext text — so all of it lives inside
+                    // the Transform.
+                    Positioned.fill(
+                      child: Transform(
+                        alignment: Alignment.center,
+                        transform: _stageTransformMatrix(frame.size),
+                        child: Stack(
+                          children: [
+                            Positioned.fromRect(
+                              rect: containLocal,
+                              child: _stageMediaLayer(
+                                clip,
+                                ctrl,
+                                ready,
+                                containLocal.size,
+                              ),
+                            ),
+                            if (_text.trim().isNotEmpty)
+                              _stageTextLayer(frame.size),
+                          ],
+                        ),
+                      ),
+                    ),
+                    // PIP live preview (§6.11): composited over the
+                    // frame, NOT transformed — the export applies
+                    // its PIP pass after the transform pass.
+                    if (_fxPip && _fxPipVideo.isNotEmpty)
+                      Positioned.fill(
+                        child: Stack(
+                          children: [_pipPreviewLayer(frame.size)],
+                        ),
+                      ),
+                    // Guides: thirds + safe zones over everything.
+                    if (_showGrid)
+                      Positioned.fill(
+                        child: CustomPaint(
+                          painter: const StageGridPainter(),
+                        ),
+                      ),
+                    // The frame's edge, so the canvas is visible as
+                    // an object on the black stage.
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            border: Border.all(color: Colors.white24),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            // Grid / safe-zone toggle (stage corner).
+            Positioned(
+              top: 2,
+              right: 2,
+              child: IconButton(
+                key: const Key('stageGridToggle'),
+                tooltip: 'Grid / safe zones',
+                icon: Icon(
+                  _showGrid ? Icons.grid_on : Icons.grid_off,
+                  color: _showGrid ? TjProTheme.gold : Colors.white54,
+                  size: 20,
+                ),
+                onPressed: () => setState(() => _showGrid = !_showGrid),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// The media itself inside the canvas frame's contain rect:
+  /// photo still or video texture, carrying the stage gestures —
+  /// tap = tracking point + layer deselect, hold = compare
+  /// (§6.2), scale = canvas transform (Phase 1), double-tap =
+  /// transform reset.
+  Widget _stageMediaLayer(
+    VideoClip clip,
+    VideoPlayerController? ctrl,
+    bool ready,
+    Size mediaBox,
+  ) {
+    if (clip.isPhoto) {
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onScaleStart: _onStageScaleStart,
+        onScaleUpdate: _onStageScaleUpdate,
+        onDoubleTap: _resetStageTransform,
+        child: ColorFiltered(
+          colorFilter: ColorFilter.matrix(_stageMatrix),
+          child: Image.file(
+            clip.file,
+            fit: BoxFit.contain,
+            width: double.infinity,
+            height: double.infinity,
+          ),
+        ),
+      );
+    }
+    if (!ready || ctrl == null) {
+      return const Center(
+        child: Text(
+          'Preview load ho raha hai…',
+          style: TextStyle(color: Colors.white70),
+        ),
+      );
+    }
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (d) => _onPreviewTapDown(d, mediaBox),
+      // §6.2 hold-to-compare: hold the stage to see the RAW frame,
+      // release for the graded one.
+      onLongPressStart: (_) => setState(() => _comparing = true),
+      onLongPressEnd: (_) => setState(() => _comparing = false),
+      onScaleStart: _onStageScaleStart,
+      onScaleUpdate: _onStageScaleUpdate,
+      onDoubleTap: _resetStageTransform,
+      child: Stack(
+        children: [
+          ColorFiltered(
+            colorFilter: ColorFilter.matrix(_stageMatrix),
+            child: VideoPlayer(ctrl),
+          ),
+          if (_trackStartX != null)
+            Align(
+              alignment: Alignment(
+                _trackStartX! * 2 - 1,
+                _trackStartY! * 2 - 1,
+              ),
+              child: const Icon(
+                Icons.location_on,
+                color: Colors.redAccent,
+                size: 28,
+              ),
+            ),
+          if (_comparing)
+            const Positioned(
+              top: 10,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: Chip(
+                  label: Text('Original'),
+                  backgroundColor: Colors.black54,
+                  labelStyle: TextStyle(color: Colors.white),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// The editor's text overlay as a stage layer (Phase 1): drawn
+  /// in frame coordinates at the export's drawtext spot (bottom
+  /// centre). Tapping it selects the layer and opens the Text
+  /// panel below — its property panel. The export position is
+  /// fixed by drawtext, so the layer is selectable but not
+  /// draggable; the gold outline shows the selection.
+  Widget _stageTextLayer(Size frameSize) {
+    final selected = _stageLayer == 'text';
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: frameSize.height * 0.055,
+      child: Center(
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () {
+            setState(() => _stageLayer = 'text');
+            _openToolTab('text', 'text');
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: selected
+                ? BoxDecoration(
+                    border: Border.all(color: TjProTheme.gold, width: 1.5),
+                    borderRadius: BorderRadius.circular(4),
+                  )
+                : null,
+            child: Text(
+              _text,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+                shadows: [Shadow(color: Colors.black, blurRadius: 6)],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   /// The stage's PIP layer: the inset composited over the main
   /// preview at the export's position/scale fractions, with the
   /// chosen blend mode (saveLayer), opacity and mask (the SAME
   /// generated mask PNG as the export, as a dstIn ImageShader).
+  /// Build 2: [stage] is now the CANVAS FRAME's size (the layer is
+  /// composited inside the frame); the §6.11 pixel-true sizing and
+  /// contain anchoring below are unchanged. On top of that:
+  /// tapping the inset selects the layer and opens its element
+  /// row, dragging moves it (release snaps to the nearest corner
+  /// — the [PipPosition] model), pinching rescales it.
   Widget _pipPreviewLayer(Size stage) {
     final clip = _clips.isEmpty ? null : _clips[_selected];
     final ctrl = _controller;
@@ -4189,12 +4739,56 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     if (mode != null) {
       content = _BlendLayer(mode: mode, child: content);
     }
+    // Build 2 (Phase 1): the inset is a stage LAYER — tap selects
+    // it (gold outline) and opens the Elements row, drag moves it
+    // (release snaps to the nearest corner of the contain rect —
+    // the PipPosition model the export consumes), pinch rescales
+    // it (the render clamp 0.15..0.5 above).
+    final selected = _stageLayer == 'pip';
     return Positioned(
-      left: lx,
-      top: ty,
+      left: lx + _pipDragOffset.dx,
+      top: ty + _pipDragOffset.dy,
       width: pipW,
       height: pipH,
-      child: content,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          setState(() => _stageLayer = 'pip');
+          _openToolTab('overlay', 'pip');
+        },
+        onScaleStart: (_) => _pinchPipScale = _pipScale,
+        onScaleUpdate: (d) {
+          setState(() {
+            if (d.pointerCount >= 2) {
+              _pipScale = (_pinchPipScale * d.scale).clamp(0.15, 0.5);
+            }
+            _pipDragOffset += d.focalPointDelta;
+          });
+        },
+        onScaleEnd: (_) {
+          final cxp = lx + _pipDragOffset.dx + pipW / 2;
+          final cyp = ty + _pipDragOffset.dy + pipH / 2;
+          final pos = (cxp < dispX + dispW / 2)
+              ? (cyp < dispY + dispH / 2
+                    ? PipPosition.topLeft
+                    : PipPosition.bottomLeft)
+              : (cyp < dispY + dispH / 2
+                    ? PipPosition.topRight
+                    : PipPosition.bottomRight);
+          setState(() {
+            _pipPosition = pos;
+            _pipDragOffset = Offset.zero;
+          });
+        },
+        child: Container(
+          decoration: selected
+              ? BoxDecoration(
+                  border: Border.all(color: TjProTheme.gold, width: 1.5),
+                )
+              : null,
+          child: content,
+        ),
+      ),
     );
   }
 
@@ -5379,105 +5973,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
                                         ),
                                       ),
                                     )
-                                  : clip.isPhoto
-                                  ? ColorFiltered(
-                                      colorFilter: ColorFilter.matrix(
-                                        _stageMatrix,
-                                      ),
-                                      child: Image.file(
-                                        clip.file,
-                                        fit: BoxFit.contain,
-                                        width: double.infinity,
-                                        height: double.infinity,
-                                      ),
-                                    )
-                                  : ready
-                                  ? GestureDetector(
-                                      onTapDown: _onPreviewTapDown,
-                                      // §6.2 hold-to-compare: hold
-                                      // the stage to see the RAW
-                                      // frame, release for the
-                                      // graded one.
-                                      onLongPressStart: (_) =>
-                                          setState(() => _comparing = true),
-                                      onLongPressEnd: (_) =>
-                                          setState(() => _comparing = false),
-                                      child: Stack(
-                                        alignment: Alignment.bottomCenter,
-                                        children: [
-                                          ColorFiltered(
-                                            colorFilter: ColorFilter.matrix(
-                                              _stageMatrix,
-                                            ),
-                                            child: VideoPlayer(ctrl),
-                                          ),
-                                          if (_trackStartX != null)
-                                            Align(
-                                              alignment: Alignment(
-                                                _trackStartX! * 2 - 1,
-                                                _trackStartY! * 2 - 1,
-                                              ),
-                                              child: const Icon(
-                                                Icons.location_on,
-                                                color: Colors.redAccent,
-                                                size: 28,
-                                              ),
-                                            ),
-                                          if (_text.trim().isNotEmpty)
-                                            Padding(
-                                              padding: const EdgeInsets.only(
-                                                bottom: 64,
-                                              ),
-                                              child: Text(
-                                                _text,
-                                                style: const TextStyle(
-                                                  color: Colors.white,
-                                                  fontSize: 22,
-                                                  fontWeight: FontWeight.bold,
-                                                  shadows: [
-                                                    Shadow(
-                                                      color: Colors.black,
-                                                      blurRadius: 6,
-                                                    ),
-                                                  ],
-                                                ),
-                                              ),
-                                            ),
-                                          if (_comparing)
-                                            const Positioned(
-                                              top: 10,
-                                              child: Chip(
-                                                label: Text('Original'),
-                                                backgroundColor: Colors.black54,
-                                                labelStyle: TextStyle(
-                                                  color: Colors.white,
-                                                ),
-                                              ),
-                                            ),
-                                        ],
-                                      ),
-                                    )
-                                  : const Center(
-                                      child: Text(
-                                        'Preview load ho raha hai…',
-                                        style: TextStyle(color: Colors.white70),
-                                      ),
-                                    ),
+                                  : _stageCanvas(clip, ctrl, ready),
                             ),
-                            // PIP live preview (§6.11 completion fix):
-                            // the inset composited on the stage with its
-                            // blend mode / mask / opacity, exactly where
-                            // the export will put it.
-                            if (_fxPip && _fxPipVideo.isNotEmpty)
-                              Positioned.fill(
-                                child: LayoutBuilder(
-                                  builder: (context, constraints) => Stack(
-                                    children: [
-                                      _pipPreviewLayer(constraints.biggest),
-                                    ],
-                                  ),
-                                ),
-                              ),
                             // Transient status chip (§3) — overlays the
                             // stage, auto-hides; never a permanent line.
                             if (_statusVisible)
