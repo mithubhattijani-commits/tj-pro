@@ -37,6 +37,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// One update entry parsed from the version manifest.
 class UpdateInfo {
@@ -155,6 +156,21 @@ class UpdateService {
   /// Native updater channel ("tj_pro/updater"): background download via
   /// Android DownloadManager, status polling, FileProvider install intent.
   static const MethodChannel _channel = MethodChannel('tj_pro/updater');
+
+  /// SharedPreferences keys for the persisted in-flight update
+  /// download (#34 fix design 3): written at enqueue time so a
+  /// later launch can re-attach to the system download after the
+  /// app was killed mid-download.
+  static const String _pendingDownloadIdKey = 'tjpro_pending_dl_id';
+  static const String _pendingVersionCodeKey = 'tjpro_pending_dl_code';
+  static const String _pendingVersionNameKey = 'tjpro_pending_dl_name';
+  static const String _pendingUrlKey = 'tjpro_pending_dl_url';
+  static const String _pendingNotesKey = 'tjpro_pending_dl_notes';
+
+  /// DownloadManager reports -1 while the total size is unknown;
+  /// the UI state must carry 0 instead (#34 fix design 5) and only
+  /// switch to real percent math when a positive total arrives.
+  static int clampTotalBytes(int raw) => raw > 0 ? raw : 0;
 
   /// Live background-download progress. Null when idle.
   /// Drives the non-blocking progress UI (Jaani, 2 Nov 2026).
@@ -607,9 +623,85 @@ class UpdateService {
       );
     }
 
-    // 4. Poll the system download for progress/completion.
+    // 4. Persist the pending download (#34 fix design 3), then poll
+    // it to a terminal state. The persisted record lets a later
+    // launch re-attach if this process dies mid-download.
+    await _persistPendingDownload(update, downloadId);
+    await _pollDownload(
+      downloadId: downloadId,
+      showMessage: (String message) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(message)),
+          );
+        }
+      },
+    );
+  }
+
+  /// Persists the in-flight system download (#34 fix design 3) so
+  /// [restorePendingDownload] can re-attach after an app kill.
+  /// Fail-soft: the live poll in this session is unaffected if the
+  /// write fails.
+  static Future<void> _persistPendingDownload(
+    UpdateInfo update,
+    int downloadId,
+  ) async {
     try {
-      for (var i = 0; i < 300; i++) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(_pendingDownloadIdKey, downloadId);
+      await prefs.setInt(_pendingVersionCodeKey, update.versionCode);
+      await prefs.setString(_pendingVersionNameKey, update.versionName);
+      await prefs.setString(_pendingUrlKey, update.url);
+      await prefs.setString(_pendingNotesKey, update.notes);
+    } catch (_) {}
+  }
+
+  /// Drops the persisted pending-download record (terminal state
+  /// reached, or the record proved stale).
+  static Future<void> _clearPendingDownload([
+    SharedPreferences? prefs,
+  ]) async {
+    try {
+      final p = prefs ?? await SharedPreferences.getInstance();
+      await p.remove(_pendingDownloadIdKey);
+      await p.remove(_pendingVersionCodeKey);
+      await p.remove(_pendingVersionNameKey);
+      await p.remove(_pendingUrlKey);
+      await p.remove(_pendingNotesKey);
+    } catch (_) {}
+  }
+
+  /// Polls the system DownloadManager for [downloadId] until the
+  /// download reaches a terminal state, driving [backgroundProgress]
+  /// and [updateState] exactly as the pre-Phase-0 inline loop did —
+  /// with the #34 fix design applied:
+  ///
+  /// - Channel errors are NOT swallowed silently: the first one is
+  ///   logged, and after 5 in a row the quiet failed state surfaces
+  ///   (Retry) instead of a fake frozen download.
+  /// - No ~10-minute cap: polling runs until success / failed /
+  ///   not_found, with a generous 6-hour safety cap; on cap expiry
+  ///   the phase STAYS downloading (the system notification remains
+  ///   the progress source and the persisted record lets the next
+  ///   launch re-attach) rather than dropping to idle.
+  /// - A raw total of -1 (DownloadManager "unknown") is clamped to
+  ///   0 in state via [clampTotalBytes], so the UI shows
+  ///   downloaded-MB + an indeterminate bar until the real total
+  ///   arrives.
+  ///
+  /// [showMessage] is optional: the launch-restore path passes
+  /// none, so its messages are skipped while state updates still
+  /// land. The caller wraps it in its own mounted check.
+  static Future<void> _pollDownload({
+    required int downloadId,
+    void Function(String message)? showMessage,
+  }) async {
+    // 2 s interval; 10800 polls ≈ 6 h safety cap.
+    const int maxPolls = 10800;
+    var consecutiveChannelFailures = 0;
+    try {
+      for (var i = 0; i < maxPolls; i++) {
         await Future.delayed(const Duration(seconds: 2));
         Map? status;
         try {
@@ -617,16 +709,33 @@ class UpdateService {
             'downloadStatus',
             <String, Object>{'downloadId': downloadId},
           );
-        } catch (_) {
+          consecutiveChannelFailures = 0;
+        } catch (e) {
+          consecutiveChannelFailures++;
+          if (consecutiveChannelFailures == 1) {
+            // #34 fix design 2: the first failure is VISIBLE in
+            // the log instead of being swallowed like the old
+            // loop did on every single poll.
+            debugPrint('[TJPro][update] downloadStatus poll failed: $e');
+          }
+          if (consecutiveChannelFailures >= 5) {
+            // The status channel itself is broken — surface the
+            // quiet failed state (Retry re-enqueues cleanly). The
+            // persisted record is KEPT: the system download may
+            // still finish, and the next launch re-attaches.
+            backgroundProgress.value = null;
+            _setUpdateState(UpdatePhase.failed);
+            return;
+          }
           continue;
         }
         final String? state = status?['status'] as String?;
-        final int downloaded =
-            (status?['bytesDownloaded'] as int?) ?? 0;
-        final int total = (status?['bytesTotal'] as int?) ?? 0;
+        final int downloaded = (status?['bytesDownloaded'] as int?) ?? 0;
+        final int total = clampTotalBytes(
+          (status?['bytesTotal'] as int?) ?? 0,
+        );
         if (total > 0) {
-          backgroundProgress.value =
-              (downloaded / total).clamp(0.0, 1.0);
+          backgroundProgress.value = (downloaded / total).clamp(0.0, 1.0);
           // §7: surface the poll's real byte counts to the UI state.
           _setUpdateState(
             UpdatePhase.downloading,
@@ -650,6 +759,7 @@ class UpdateService {
           if (path == null) {
             // Downloaded but unusable: quiet failed state with a
             // retry (existing behaviour simply returned silently).
+            await _clearPendingDownload();
             _setUpdateState(UpdatePhase.failed);
             return;
           }
@@ -664,6 +774,7 @@ class UpdateService {
             bytesDownloaded: total > 0 ? total : downloaded,
             bytesTotal: total,
           );
+          await _clearPendingDownload();
           try {
             await _channel.invokeMethod<void>(
               'installApk',
@@ -676,51 +787,116 @@ class UpdateService {
           backgroundProgress.value = null;
           // §7: quiet failed state — retry restarts cleanly via
           // [retryDownload]; no popup is ever shown for this.
+          await _clearPendingDownload();
           _setUpdateState(UpdatePhase.failed);
-          if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text(
-                  'Update download nahi ho saka. Internet check kar ke '
-                  'dobara koshish karein.',
-                ),
-              ),
-            );
-          }
+          showMessage?.call(
+            'Update download nahi ho saka. Internet check kar ke '
+            'dobara koshish karein.',
+          );
           return;
         }
         // running / pending / paused -> keep polling; the system
         // notification shows live progress meanwhile.
       }
-      // Timed out after ~10 minutes of polling.
+      // Safety cap reached (~6 h): NOT a failure and NOT idle —
+      // the download may still be running natively. The phase
+      // stays downloading and the persisted record stays, so the
+      // next launch re-attaches via [restorePendingDownload].
       backgroundProgress.value = null;
-      // §7: NOT a failure — the system download may still be running
-      // (its notification shows progress), so the state goes quiet
-      // (idle) instead of offering a conflicting retry.
-      _setUpdateState(UpdatePhase.idle);
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Update download me waqt lag raha hai — notification me '
-              'progress dekhte rahen.',
-            ),
-          ),
-        );
-      }
     } catch (_) {
       backgroundProgress.value = null;
       _setUpdateState(UpdatePhase.failed);
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Update download nahi ho saka. Internet check kar ke '
-              'dobara koshish karein.',
-            ),
-          ),
-        );
+      showMessage?.call(
+        'Update download nahi ho saka. Internet check kar ke '
+        'dobara koshish karein.',
+      );
+    }
+  }
+
+  /// Phase 0 (#34 fix design 3): re-attach to a system download a
+  /// previous session left behind. Called once from `main()`,
+  /// backgrounded; fully fail-soft — any problem simply means the
+  /// normal launch flow proceeds untouched.
+  ///
+  /// - The record's version is already installed -> the hop
+  ///   finished while we were gone; drop the record.
+  /// - Still running / pending / paused -> restore the downloading
+  ///   state (with the last known byte counts) and resume polling.
+  /// - Already successful -> surface the downloaded state so the
+  ///   banner offers Install for the APK on disk.
+  /// - Failed / not_found -> drop the stale record quietly.
+  /// - Channel unreachable or an unrecognised status -> KEEP the
+  ///   record; the next launch tries again rather than orphaning
+  ///   a possibly-live download.
+  static Future<void> restorePendingDownload() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final int? downloadId = prefs.getInt(_pendingDownloadIdKey);
+      if (downloadId == null) return;
+      final int code = prefs.getInt(_pendingVersionCodeKey) ?? 0;
+      if (code > 0) {
+        final packageInfo = await PackageInfo.fromPlatform();
+        final int installed = int.tryParse(packageInfo.buildNumber) ?? 0;
+        if (installed >= code) {
+          await _clearPendingDownload(prefs);
+          return;
+        }
       }
+      Map? status;
+      try {
+        status = await _channel.invokeMethod<Map>(
+          'downloadStatus',
+          <String, Object>{'downloadId': downloadId},
+        );
+      } catch (_) {
+        return;
+      }
+      final String? state = status?['status'] as String?;
+      final int downloaded = (status?['bytesDownloaded'] as int?) ?? 0;
+      final int total = clampTotalBytes(
+        (status?['bytesTotal'] as int?) ?? 0,
+      );
+      final update = UpdateInfo(
+        versionCode: code,
+        versionName: prefs.getString(_pendingVersionNameKey) ?? 'v$code',
+        url: prefs.getString(_pendingUrlKey) ?? '',
+        notes: prefs.getString(_pendingNotesKey) ?? '',
+      );
+      if (state == 'running' || state == 'pending' || state == 'paused') {
+        _activeUpdate = update;
+        _downloadedApkPath = null;
+        backgroundProgress.value =
+            total > 0 ? (downloaded / total).clamp(0.0, 1.0) : 0;
+        _setUpdateState(
+          UpdatePhase.downloading,
+          percent: total > 0
+              ? ((downloaded / total) * 100).round().clamp(0, 100)
+              : 0,
+          bytesDownloaded: downloaded,
+          bytesTotal: total,
+        );
+        await _pollDownload(downloadId: downloadId);
+      } else if (state == 'success') {
+        final String uri = (status?['localUri'] as String?) ?? '';
+        final String? path = _uriToPath(uri);
+        if (path == null) {
+          await _clearPendingDownload(prefs);
+          return;
+        }
+        _activeUpdate = update;
+        _downloadedApkPath = path;
+        _setUpdateState(
+          UpdatePhase.downloaded,
+          percent: 100,
+          bytesDownloaded: total > 0 ? total : downloaded,
+          bytesTotal: total,
+        );
+        await _clearPendingDownload(prefs);
+      } else if (state == 'failed' || state == 'not_found') {
+        await _clearPendingDownload(prefs);
+      }
+    } catch (_) {
+      // Restore is best-effort by design — never break startup.
     }
   }
 

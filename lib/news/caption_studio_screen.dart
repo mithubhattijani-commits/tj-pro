@@ -480,7 +480,9 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
         _burnProgress = result.success ? 1.0 : 0.0;
         _status = result.success
             ? 'Burn-in ho gaya: ${result.outputPath}'
-            : 'Burn-in fail: ${result.error}';
+            : result.cancelled
+                ? 'Burn-in cancel kar diya gaya.'
+                : 'Burn-in fail: ${result.error}';
       });
       if (result.success) _showMessage('Captioned video save ho gaya.');
     } catch (e) {
@@ -1410,6 +1412,23 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
         if (_burnBusy || _burnProgress > 0) ...[
           const SizedBox(height: 8),
           LinearProgressIndicator(value: _burnProgress),
+        ],
+        if (_burnBusy) ...[
+          const SizedBox(height: 4),
+          // Phase 0: burn-in CANCEL — kills the in-flight ffmpeg
+          // pass through VideoExportService's session registry;
+          // the export then returns a cancelled result instead of
+          // running its drawtext retry.
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              key: const Key('burnInCancelButton'),
+              onPressed: () =>
+                  unawaited(VideoExportService.cancelCurrentExport()),
+              icon: const Icon(Icons.stop_circle_outlined, size: 18),
+              label: const Text('Cancel'),
+            ),
+          ),
         ],
         const SizedBox(height: 8),
         Text(

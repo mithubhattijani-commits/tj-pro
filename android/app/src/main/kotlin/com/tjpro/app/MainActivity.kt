@@ -118,13 +118,22 @@ class MainActivity : FlutterActivity() {
                         }
                     }
                     "downloadStatus" -> {
-                        val downloadId = call.argument<Long>("downloadId")
-                            ?: call.argument<Int>("downloadId")?.toLong()
-                        if (downloadId == null) {
-                            result.error("NO_ID", "Missing download ID", null)
-                            return@setMethodCallHandler
-                        }
                         try {
+                            // Phase 0 (#34): Dart's StandardMessageCodec
+                            // sends a realistic (small) download id as a
+                            // Java Integer, NOT a Long. The old code read
+                            // it as Long BEFORE this try block, so the
+                            // checkcast threw ClassCastException on EVERY
+                            // poll and the in-app update banner froze at
+                            // 0.0 MB. Read it as a Number, INSIDE the try,
+                            // so any parse failure becomes result.error
+                            // instead of crashing the handler.
+                            val downloadId =
+                                (call.argument<Any>("downloadId") as? Number)?.toLong()
+                            if (downloadId == null) {
+                                result.error("NO_ID", "Missing download ID", null)
+                                return@setMethodCallHandler
+                            }
                             val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
                             val query = DownloadManager.Query().setFilterById(downloadId)
                             val cursor = dm.query(query)

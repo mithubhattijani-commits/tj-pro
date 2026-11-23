@@ -5,50 +5,173 @@
 /// them itself; file paths are single-quoted and escaped.
 library;
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
-import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit_config.dart';
+import 'package:ffmpeg_kit_flutter_new/ffmpeg_session.dart';
+import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 
 /// Result of one FFmpeg run.
 class FfmpegResult {
-  FfmpegResult(this.returnCode, this.logs);
+  FfmpegResult(this.returnCode, this.logs, {this.cancelled = false});
   final int returnCode;
   final String logs;
+
+  /// True when this run was stopped through [FfmpegService.cancel],
+  /// [FfmpegService.cancelCurrent] or [FfmpegService.prepareForNewRun]
+  /// (Phase 0) — callers can then say "cancelled" instead of
+  /// reporting a generic ffmpeg failure.
+  final bool cancelled;
+
   bool get ok => returnCode == 0;
 }
 
 /// Thin wrapper around FFmpegKit with progress reporting.
 class FfmpegService {
+  /// Session registry (Phase 0): the ids of every session currently
+  /// executing through [run], in start order. Before Phase 0 there
+  /// was no registry at all — a new export could not cancel a
+  /// leftover session, and the only cancel was the global kill in
+  /// [cancel]. Registration happens the moment a session starts;
+  /// the entry is removed when its run completes.
+  static final Set<int> _activeSessionIds = <int>{};
+
+  /// Ids cancelled through this service, so the owning [run] can
+  /// mark its [FfmpegResult.cancelled] even if the native cancel
+  /// return code is not the canonical one on some build.
+  static final Set<int> _cancelledSessionIds = <int>{};
+
+  /// Sessions currently executing through [run] (diagnostics/tests).
+  static int get activeSessionCount => _activeSessionIds.length;
+
   /// Runs [command]. [expectedMs] is the approximate output duration in
   /// milliseconds, used to turn statistics time into 0..1 progress.
+  ///
+  /// Phase 0: the run goes through `executeAsync` with a PER-SESSION
+  /// statistics callback. The old code installed the callback in the
+  /// GLOBAL FFmpegKitConfig slot and disabled it after every run —
+  /// two overlapping runs (an export pass and a thumbnail pass)
+  /// could steal or kill each other's progress stream. The session
+  /// is registered in [_activeSessionIds] for its whole lifetime.
   static Future<FfmpegResult> run(
     String command, {
     int? expectedMs,
     void Function(double progress)? onProgress,
   }) async {
-    if (onProgress != null && expectedMs != null && expectedMs > 0) {
-      FFmpegKitConfig.enableStatisticsCallback((statistics) {
-        final t = statistics.getTime();
-        if (t > 0) {
-          onProgress((t / expectedMs).clamp(0.0, 1.0));
+    final done = Completer<FFmpegSession>();
+    final session = await FFmpegKit.executeAsync(
+      command,
+      (completed) {
+        if (!done.isCompleted) done.complete(completed);
+      },
+      null,
+      (statistics) {
+        if (onProgress != null && expectedMs != null && expectedMs > 0) {
+          final t = statistics.getTime();
+          if (t > 0) {
+            onProgress((t / expectedMs).clamp(0.0, 1.0));
+          }
         }
-      });
+      },
+    );
+    final int sessionId = session.getSessionId() ?? -1;
+    final bool registered = sessionId >= 0;
+    if (registered) _activeSessionIds.add(sessionId);
+    try {
+      final completed = await done.future;
+      final rc = await completed.getReturnCode();
+      final code = rc?.getValue() ?? -1;
+      var output = await completed.getOutput() ?? '';
+      // Keep error text readable in the UI status line.
+      if (output.length > 800) {
+        output = output.substring(output.length - 800);
+      }
+      return FfmpegResult(
+        code,
+        output,
+        cancelled: (registered && _cancelledSessionIds.contains(sessionId)) ||
+            ReturnCode.isCancel(rc),
+      );
+    } finally {
+      if (registered) {
+        _activeSessionIds.remove(sessionId);
+        _cancelledSessionIds.remove(sessionId);
+      }
     }
-    final session = await FFmpegKit.execute(command);
-    final rc = await session.getReturnCode();
-    final code = rc?.getValue() ?? -1;
-    var output = await session.getOutput() ?? '';
-    // Keep error text readable in the UI status line.
-    if (output.length > 800) {
-      output = output.substring(output.length - 800);
-    }
-    FFmpegKitConfig.disableStatistics();
-    return FfmpegResult(code, output);
   }
 
+  /// Cancels ALL sessions currently running through [run] (the
+  /// long-standing behaviour the News export screen relies on),
+  /// plus a global backstop for any session started outside [run].
   static void cancel() {
-    FFmpegKit.cancel();
+    _cancelledSessionIds.addAll(_activeSessionIds);
+    unawaited(FFmpegKit.cancel());
+  }
+
+  /// Cancels only the MOST RECENT session running through [run] —
+  /// the in-flight export pass — leaving any other session (e.g. a
+  /// thumbnail pass) alone. A no-op when nothing is running.
+  static Future<void> cancelCurrent() async {
+    if (_activeSessionIds.isEmpty) return;
+    final int sessionId = _activeSessionIds.last;
+    _cancelledSessionIds.add(sessionId);
+    try {
+      await FFmpegKit.cancel(sessionId);
+    } catch (_) {
+      // Best-effort: the mark above still makes the owning run
+      // report itself cancelled when it unwinds.
+    }
+  }
+
+  /// Phase 0 pre-run discipline for EXPORT entry points: cancel
+  /// every session a previous (possibly crashed or abandoned) run
+  /// left behind, so a new export never competes with a zombie
+  /// ffmpeg for CPU/RAM. Callers: the reel export, the caption
+  /// burn-in export and the Video Editor export.
+  static Future<void> prepareForNewRun() async {
+    if (_activeSessionIds.isEmpty) return;
+    _cancelledSessionIds.addAll(_activeSessionIds);
+    try {
+      await FFmpegKit.cancel();
+    } catch (_) {
+      // Same best-effort rule as [cancelCurrent].
+    }
+  }
+
+  /// Best-effort cleanup of stale scratch files: entries inside
+  /// [dir] whose name starts with one of [prefixes] and that were
+  /// last modified before `now - maxAge` are deleted (directories
+  /// recursively). Used by the export entry points to keep the
+  /// temp cache from growing across crashed/killed runs. Never
+  /// throws and never touches fresh files, so a live export's own
+  /// intermediates are safe.
+  static Future<void> cleanStaleTempFiles(
+    Directory dir, {
+    required List<String> prefixes,
+    Duration maxAge = const Duration(hours: 6),
+  }) async {
+    try {
+      if (!await dir.exists()) return;
+      final cutoff = DateTime.now().subtract(maxAge);
+      await for (final entity in dir.list(followLinks: false)) {
+        try {
+          final name = entity.path.split(Platform.pathSeparator).last;
+          if (!prefixes.any(name.startsWith)) continue;
+          final stat = await entity.stat();
+          if (stat.modified.isAfter(cutoff)) continue;
+          if (entity is Directory) {
+            await entity.delete(recursive: true);
+          } else {
+            await entity.delete();
+          }
+        } catch (_) {
+          // One stubborn entry must not stop the sweep.
+        }
+      }
+    } catch (_) {
+      // Cleanup is housekeeping — never block an export over it.
+    }
   }
 
   /// Quote a file path for FFmpeg command strings.

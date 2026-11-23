@@ -371,6 +371,16 @@ class ReelExportService {
       final (w, h) = effectiveSettings.dims;
       final q = qualityFor(effectiveSettings.quality);
       final dir = workDirOverride ?? await _workDir();
+      // Phase 0 pre-run discipline: cancel any ffmpeg session a
+      // previous (crashed/abandoned) export left behind — the
+      // registry in FfmpegService now tracks them all — and sweep
+      // this work dir's stale scratch outputs from older runs
+      // (this run's own files are fresh and never touched).
+      await FfmpegService.prepareForNewRun();
+      await FfmpegService.cleanStaleTempFiles(
+        dir,
+        prefixes: const ['reel_'],
+      );
       final stamp = DateTime.now().millisecondsSinceEpoch;
       var out = p.join(dir.path, 'reel_export_$stamp.mp4');
 

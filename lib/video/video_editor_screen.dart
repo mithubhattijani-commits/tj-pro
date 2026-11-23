@@ -170,12 +170,26 @@ class VideoEditorScreen extends StatefulWidget {
   State<VideoEditorScreen> createState() => _VideoEditorScreenState();
 }
 
+/// Phase 0: thrown inside the export pipeline when the user has
+/// cancelled the export; caught by [_VideoEditorScreenState._export]
+/// and turned into the "Export cancel kar diya gaya." status.
+class _ExportCancelled implements Exception {
+  const _ExportCancelled();
+}
+
 class _VideoEditorScreenState extends State<VideoEditorScreen> {
   final _picker = ImagePicker();
   final List<VideoClip> _clips = [];
   int _selected = 0;
   VideoPlayerController? _controller;
   bool _busy = false;
+
+  /// Phase 0 export CANCEL state: [_exporting] is true only while
+  /// the export pipeline runs (unlike [_busy], which every long
+  /// tool sets); [_exportCancelRequested] is set by [_cancelExport]
+  /// and checked between pipeline stages via [_checkExportCancelled].
+  bool _exporting = false;
+  bool _exportCancelRequested = false;
   String _status = 'Pick a video to start.';
   double _speed = 1.0;
   String _filter = 'Normal';
@@ -1369,9 +1383,10 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       // the Volume panel's slider now drives the preview gain).
       final clip = _clips[_selected];
       await c.setVolume(clip.muted ? 0 : clip.volume);
-      setState(() {});
+      if (mounted) setState(() {});
     } catch (e) {
-      setState(() => _status = 'Preview failed: $e');
+      // Phase 0 sweep: was an unguarded setState after awaits.
+      if (mounted) setState(() => _status = 'Preview failed: $e');
     }
   }
 
@@ -1423,6 +1438,13 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   }
 
   void _setStatus(String s) {
+    // Phase 0 safety sweep: this is the ONE status funnel for the
+    // whole editor (screen + panels extension) and it is called
+    // after awaits all over both files. The unguarded setState
+    // here was the single biggest setState-after-dispose hazard
+    // in the editor — guarding this one method hardens every
+    // call site at once.
+    if (!mounted) return;
     setState(() => _status = s);
     _flashStatus();
   }
@@ -2371,6 +2393,28 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     return dir;
   }
 
+  /// Phase 0 export CANCEL: flags the pipeline to stop and kills
+  /// the in-flight ffmpeg session through the [FfmpegService]
+  /// registry. The pipeline notices at the next
+  /// [_checkExportCancelled] checkpoint (the killed stage itself
+  /// just reports a failed/cancelled result into its guarded
+  /// pass), and [_export] surfaces "Export cancel kar diya gaya."
+  /// — never a fake failure.
+  void _cancelExport() {
+    if (!_exporting || _exportCancelRequested) return;
+    _exportCancelRequested = true;
+    FfmpegService.cancel();
+    _setStatus('Export cancel ho raha hai…');
+  }
+
+  /// Pipeline checkpoint: throws [_ExportCancelled] when
+  /// [_cancelExport] has run. Placed between the export stages
+  /// (OUTSIDE their guarded try blocks) so a cancel stops the
+  /// NEXT stage from starting.
+  void _checkExportCancelled() {
+    if (_exportCancelRequested) throw const _ExportCancelled();
+  }
+
   Future<void> _exportInner() async {
     try {
       final dir = await _workDir();
@@ -2408,6 +2452,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           // a per-clip gain.
         }
       }
+      _checkExportCancelled();
       if (_clips.isNotEmpty) {
         final int idx = _selected < _clips.length ? _selected : 0;
         VideoClip clip = _clips[idx];
@@ -2442,6 +2487,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           }
         }
       }
+      _checkExportCancelled();
       _fontFile ??= FfmpegService.findFontFile();
       final hasText = _text.trim().isNotEmpty;
       if (hasText && _fontFile == null) {
@@ -2744,6 +2790,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         }
       }
 
+      _checkExportCancelled();
       double progress = 0;
       void onProgress(double v) {
         if ((v - progress).abs() > 0.05) {
@@ -2971,6 +3018,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       // v1.3.0 (§6.5): blur-fill reframe for the SINGLE-clip path
       // (the main pass ran with aspect 'Original'). Guarded like
       // every post-pass.
+      _checkExportCancelled();
       if (clips.length == 1 && _canvasFill == 'blur' && _aspect != 'Original') {
         try {
           final dims = FfmpegService.exportDims(_aspect, _fxQuality);
@@ -3003,6 +3051,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       // v1.3.0 (§6.8): auto music ducking — the music was kept out
       // of the main pass; here it is sidechain-ducked under the
       // clip's own audio (or becomes the track when there is none).
+      _checkExportCancelled();
       if (duckMusic) {
         try {
           _setStatus('Music ducking ho raha hai…');
@@ -3036,6 +3085,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       // so the voice stays on top; when the video has no audio track
       // the voiceover simply becomes the track. Guarded like the
       // other post-passes: a failure keeps the unmixed export.
+      _checkExportCancelled();
       if (_projectVoiceoverPath != null &&
           await File(_projectVoiceoverPath!).exists()) {
         try {
@@ -3069,6 +3119,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       // is kept, a status note is written, and the export continues —
       // a pro pass NEVER fails the whole export.
       // (a) Stabilization.
+      _checkExportCancelled();
       if (_proStabilize) {
         try {
           final stab = p.join(dir.path, 'pve_export_stab_$stamp.mp4');
@@ -3107,6 +3158,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       }
       // (a2) v1.3.0 (§6.7): main-clip transform (scale / position /
       // rotation / opacity over a blurred backdrop).
+      _checkExportCancelled();
       if (_transformActive) {
         try {
           final size = await VideoExportService.probeVideoSize(File(out));
@@ -3143,6 +3195,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       // (b) Chromakey OR video BG remover — mutually exclusive; if
       // both are on, the BG remover wins (status note).
       final useBgRemover = _proBgRemove;
+      _checkExportCancelled();
       if (useBgRemover && _proChroma) {
         _setStatus(
           'Note: BG remover aur chromakey dono on hain — BG remover use ho raha hai.',
@@ -3251,6 +3304,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       // (c) ONE combined animated-overlay pass (motion title/sticker +
       // keyframed overlay + tracked sticker). Skipped entirely when
       // none of them are set.
+      _checkExportCancelled();
       if (_proTitle.trim().isNotEmpty ||
           _proSticker.trim().isNotEmpty ||
           (_trackPoints.isNotEmpty && _trackSticker.trim().isNotEmpty)) {
@@ -3287,6 +3341,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       // it needs a second concurrent video track, but this timeline
       // is a single sequential clip list — there is no second input
       // to composite (see the reel export header for the full reason).
+      _checkExportCancelled();
       if (_fxPip && _fxPipVideo.isNotEmpty) {
         final String pipOut = p.join(dir.path, 'pve_export_pip_$stamp.mp4');
         // PIP position/scale: the long-standing defaults, or the
@@ -3385,6 +3440,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       // never a fallback-font lookalike). The plain editor's live
       // design keeps the static pass; its ticker/clock note in the
       // News panel was updated accordingly.
+      _checkExportCancelled();
       if (_newsEnabled) {
         var parityDone = false;
         if (_projectTemplateKind == 'nigraanFinal' &&
@@ -3621,6 +3677,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         }
       }
 
+      _checkExportCancelled();
       if (!await Gal.hasAccess()) {
         if (!await Gal.requestAccess()) {
           throw Exception('Gallery access was denied.');
@@ -3686,9 +3743,14 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     }
     setState(() {
       _busy = true;
+      _exporting = true;
+      _exportCancelRequested = false;
       _status = 'Exporting…';
     });
     try {
+      // Phase 0 pre-run discipline: no zombie ffmpeg session from
+      // an earlier abandoned run competes with this export.
+      await FfmpegService.prepareForNewRun();
       _captionDrawtextFallback = false;
       await _exportInner();
     } catch (e) {
@@ -3697,7 +3759,10 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           msg.contains('subtitle') ||
           msg.contains('no such filter') ||
           msg.contains('libass');
-      if (_captions.isNotEmpty &&
+      if (_exportCancelRequested || e is _ExportCancelled) {
+        // Phase 0: a user cancel is not a failure.
+        _setStatus('Export cancel kar diya gaya.');
+      } else if (_captions.isNotEmpty &&
           subFail &&
           !CaptionService.containsArabicInSegments(_captions)) {
         _setStatus('Subtitles filter failed, retrying with text captions…');
@@ -3705,13 +3770,24 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         try {
           await _exportInner();
         } catch (e2) {
-          _setStatus('Export failed: $e2');
+          if (_exportCancelRequested || e2 is _ExportCancelled) {
+            _setStatus('Export cancel kar diya gaya.');
+          } else {
+            _setStatus('Export failed: $e2');
+          }
         }
       } else {
         _setStatus('Export failed: $e');
       }
     } finally {
-      setState(() => _busy = false);
+      // Phase 0 sweep: this finally was an UNGUARDED setState —
+      // leaving the screen mid-export made it throw on completion.
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _exporting = false;
+        });
+      }
     }
   }
 
@@ -5047,11 +5123,17 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
             ),
           ),
           TextButton(
-            onPressed: _busy ? null : _export,
+            // Phase 0: while an export runs, this button is the
+            // CANCEL for it (the Export action returns the moment
+            // the export ends or is cancelled). Other busy states
+            // keep the old disabled "Exporting…" behaviour.
+            onPressed: _exporting
+                ? _cancelExport
+                : (_busy ? null : _export),
             child: Text(
-              _busy ? 'Exporting…' : 'Export',
-              style: const TextStyle(
-                color: TjProTheme.gold,
+              _exporting ? 'Cancel' : (_busy ? 'Exporting…' : 'Export'),
+              style: TextStyle(
+                color: _exporting ? Colors.redAccent : TjProTheme.gold,
                 fontWeight: FontWeight.bold,
                 fontSize: 16,
               ),

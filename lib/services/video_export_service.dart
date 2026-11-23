@@ -32,6 +32,7 @@ import 'package:onnxruntime/onnxruntime.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import 'ffmpeg_service.dart';
 import 'model_pack_service.dart';
 import 'onnx_image_service.dart';
 
@@ -85,11 +86,17 @@ class VideoExportResult {
     required this.success,
     this.outputPath,
     this.error,
+    this.cancelled = false,
   });
 
   final bool success;
   final String? outputPath;
   final String? error;
+
+  /// True when the export was stopped via
+  /// [VideoExportService.cancelCurrentExport] (Phase 0) — the UI
+  /// then says "cancelled" instead of showing an ffmpeg failure.
+  final bool cancelled;
 }
 
 class VideoExportService {
@@ -193,6 +200,27 @@ class VideoExportService {
     ];
   }
 
+  /// The FFmpeg session this service is currently running, if
+  /// any (Phase 0 registry for THIS service's direct FFmpegKit
+  /// calls — runs through [FfmpegService.run] register there
+  /// instead). Powers [cancelCurrentExport].
+  static int? _activeSessionId;
+
+  /// Cancels the ffmpeg pass this service is currently running
+  /// (Phase 0 export CANCEL path). The in-flight [exportVideo]
+  /// then returns a result with `cancelled == true` instead of
+  /// falling through to its drawtext retry. A no-op when idle.
+  static Future<void> cancelCurrentExport() async {
+    final int? sessionId = _activeSessionId;
+    if (sessionId == null) return;
+    try {
+      await FFmpegKit.cancel(sessionId);
+    } catch (_) {
+      // Best-effort: a failed cancel leaves the export running,
+      // which is the pre-Phase-0 behaviour — never a crash.
+    }
+  }
+
   /// Run one ffmpeg command asynchronously and wait for its
   /// completion callback. [onProgress] (0.0–1.0) fires from the
   /// statistics callback when [durationSeconds] is known.
@@ -202,7 +230,7 @@ class VideoExportService {
     double? durationSeconds,
   }) async {
     final done = Completer<FFmpegSession>();
-    await FFmpegKit.executeWithArgumentsAsync(
+    final session = await FFmpegKit.executeWithArgumentsAsync(
       args,
       (session) {
         if (!done.isCompleted) done.complete(session);
@@ -218,7 +246,14 @@ class VideoExportService {
         }
       },
     );
-    return done.future;
+    _activeSessionId = session.getSessionId();
+    try {
+      return await done.future;
+    } finally {
+      if (_activeSessionId == session.getSessionId()) {
+        _activeSessionId = null;
+      }
+    }
   }
 
   /// Burn [assContent] into [inputVideo] and write the captioned MP4
@@ -234,6 +269,14 @@ class VideoExportService {
   }) async {
     try {
       final tmp = await getTemporaryDirectory();
+      // Phase 0 pre-run discipline: cancel any ffmpeg session a
+      // previous run left behind, and sweep stale burn-in scratch
+      // files from crashed/killed runs out of the temp cache.
+      await FfmpegService.prepareForNewRun();
+      await FfmpegService.cleanStaleTempFiles(
+        tmp,
+        prefixes: const ['caption_burn_'],
+      );
       final stamp = DateTime.now().millisecondsSinceEpoch;
       final assFile = File('${tmp.path}/caption_burn_$stamp.ass');
       await assFile.writeAsString(assContent);
@@ -266,6 +309,15 @@ class VideoExportService {
         durationSeconds: size?.durationSeconds,
       );
       var rc = await session.getReturnCode();
+      if (ReturnCode.isCancel(rc)) {
+        // Phase 0: a user cancel must NOT fall through to the
+        // drawtext retry below — the export stops here.
+        return const VideoExportResult(
+          success: false,
+          cancelled: true,
+          error: 'Export cancel kar diya gaya.',
+        );
+      }
       if (ReturnCode.isSuccess(rc)) {
         return VideoExportResult(success: true, outputPath: outPath);
       }
@@ -291,6 +343,13 @@ class VideoExportService {
           durationSeconds: size?.durationSeconds,
         );
         rc = await session.getReturnCode();
+        if (ReturnCode.isCancel(rc)) {
+          return const VideoExportResult(
+            success: false,
+            cancelled: true,
+            error: 'Export cancel kar diya gaya.',
+          );
+        }
         if (ReturnCode.isSuccess(rc)) {
           return VideoExportResult(success: true, outputPath: outPath);
         }

@@ -22,6 +22,7 @@ import 'app_config.dart';
 import 'projects/projects_hub_screen.dart';
 import 'services/auth_service.dart';
 import 'services/coin_service.dart';
+import 'services/crash_guard.dart';
 import 'services/pro_service.dart';
 import 'services/referral_service.dart';
 import 'services/remote_config_service.dart';
@@ -40,26 +41,42 @@ import 'widgets/update_ui.dart';
 final RemoteConfigService remoteConfigService = RemoteConfigService();
 
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  // Ads are Unity-only (one-build, defect #4) — AdMob was removed.
-  UnityAdsService.init();
-  // Remote Config: returns fast (cache load only); the network refresh
-  // is backgrounded and never blocks startup.
-  await remoteConfigService.init();
-  // Login + Coins (Phase 10): restore the Supabase session (never
-  // throws, local-only mode when no anon key was supplied at build
-  // time) and load the local coin balance. Both are awaited here so
-  // the app-bar coins pill is correct on first paint.
-  await AuthService.init();
-  await CoinService.instance.load();
-  // Pro (v1.4.0): load the Pro entitlement next to the coin balance.
-  // Fully fail-soft — no table / offline means free mode.
-  await ProService.instance.init();
-  // Share & Earn (v1.3.0): referral capture (deep link / clipboard),
-  // first-ad hook, and the on-open reward claim. Fully fail-soft and
-  // backgrounded — it can never delay or break startup.
-  unawaited(ReferralService.instance.init());
-  runApp(const PhotoVideoEditorApp());
+  // Phase 0 crash guard: the whole startup runs inside a guarded
+  // zone; errors that escape it land in [CrashGuard.report] (logged
+  // + surfaced) instead of taking the app down silently. The
+  // framework/platform handlers are installed first thing inside.
+  await runZonedGuarded<Future<void>>(
+    () async {
+      WidgetsFlutterBinding.ensureInitialized();
+      CrashGuard.install();
+      // Ads are Unity-only (one-build, defect #4) — AdMob was removed.
+      UnityAdsService.init();
+      // Remote Config: returns fast (cache load only); the network refresh
+      // is backgrounded and never blocks startup.
+      await remoteConfigService.init();
+      // Login + Coins (Phase 10): restore the Supabase session (never
+      // throws, local-only mode when no anon key was supplied at build
+      // time) and load the local coin balance. Both are awaited here so
+      // the app-bar coins pill is correct on first paint.
+      await AuthService.init();
+      await CoinService.instance.load();
+      // Pro (v1.4.0): load the Pro entitlement next to the coin balance.
+      // Fully fail-soft — no table / offline means free mode.
+      await ProService.instance.init();
+      // Share & Earn (v1.3.0): referral capture (deep link / clipboard),
+      // first-ad hook, and the on-open reward claim. Fully fail-soft and
+      // backgrounded — it can never delay or break startup.
+      unawaited(ReferralService.instance.init());
+      // Phase 0 (#34): if a previous session was killed while the
+      // system DownloadManager was fetching an update, re-attach to
+      // that download so its progress/completion survive the kill.
+      // Backgrounded and fail-soft — never blocks startup.
+      unawaited(UpdateService.restorePendingDownload());
+      runApp(const PhotoVideoEditorApp());
+    },
+    (Object error, StackTrace stack) =>
+        CrashGuard.report(error, stack, source: 'zone'),
+  );
 }
 
 class PhotoVideoEditorApp extends StatelessWidget {
@@ -70,6 +87,9 @@ class PhotoVideoEditorApp extends StatelessWidget {
     return MaterialApp(
       title: AppConfig.appName,
       debugShowCheckedModeBanner: false,
+      // Phase 0: lets [CrashGuard] surface caught errors as a
+      // snackbar from anywhere, no BuildContext needed.
+      scaffoldMessengerKey: CrashGuard.messengerKey,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
             seedColor: TjProTheme.gold, brightness: Brightness.dark),

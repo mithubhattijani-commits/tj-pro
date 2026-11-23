@@ -1267,6 +1267,10 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
         _setStatus('AI Cut nahi hua. ${res.logs}');
         return;
       }
+      // Phase 0 sweep: the setState below sat after two ffmpeg
+      // awaits with NO mounted check — leaving the editor during
+      // an AI Cut crashed on completion.
+      if (!mounted) return;
       final keepTotal =
           keeps.fold(0.0, (sum, k) => sum + (k.$2 - k.$1));
       _pushHistory();
@@ -2339,7 +2343,9 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
               onPressed: () async {
                 final picked =
                     await _picker.pickVideo(source: ImageSource.gallery);
-                if (picked != null) {
+                // Phase 0 sweep: setState after an await needs the
+                // mounted check (the picker can outlive the screen).
+                if (picked != null && mounted) {
                   setState(() => _introClipPath = picked.path);
                 }
               },
@@ -2366,7 +2372,7 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
               onPressed: () async {
                 final picked =
                     await _picker.pickVideo(source: ImageSource.gallery);
-                if (picked != null) {
+                if (picked != null && mounted) {
                   setState(() => _outroClipPath = picked.path);
                 }
               },
@@ -3038,7 +3044,7 @@ if (AppConfig.crossfadeEnabled)
               onPressed: () async {
                 final XFile? picked =
                     await _picker.pickVideo(source: ImageSource.gallery);
-                if (picked != null) {
+                if (picked != null && mounted) {
                   setState(() {
                     _fxPipVideo = picked.path;
                   });
@@ -3174,6 +3180,9 @@ if (AppConfig.crossfadeEnabled)
                         source: ImageSource.gallery,
                       );
                       if (picked == null) return;
+                      // Phase 0 sweep: no setState after the picker
+                      // await without a mounted check.
+                      if (!mounted) return;
                       setState(() => _news.logoPath = picked.path);
                       await _news.save();
                     },
@@ -4087,6 +4096,9 @@ const Text('Auto Captions (CapCut-style)',
                         source: ImageSource.gallery,
                       );
                       if (picked == null) return;
+                      // Phase 0 sweep: no setState after the picker
+                      // await without a mounted check.
+                      if (!mounted) return;
                       setState(() => _news.logoPath = picked.path);
                       await _news.save();
                     },
