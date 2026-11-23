@@ -1,4 +1,27 @@
 name: Build TJ Pro APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /opt/hostedtoolcache || true
+          df -h
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: subosito/flutter-action@v2
+        with:
           channel: stable
           flutter-version: '3.47.8'
       - name: Prepare Android local properties
@@ -70,4 +93,7 @@ name: Build TJ Pro APK
           name: tj-pro-debug-apks
           path: |
             build/app/outputs/flutter-apk/app-armeabi-v7a-debug.apk
-            build/app/outputs/flutter-apk/
+            build/app/outputs/flutter-apk/app-arm64-v8a-debug.apk
+            build/app/outputs/flutter-apk/app-x86_64-debug.apk
+                      if-no-files-found: error
+                    
