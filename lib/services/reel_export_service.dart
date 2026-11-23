@@ -45,9 +45,10 @@
 ///   pinned at their start — the export screen says so plainly).
 ///   Within the parity pass, the OPTIONAL top ribbon (off in the
 ///   parity preset) is drawn as a still layer — it does not scroll.
-/// - No crossfade between clips: the project carries no transition
-///   choice, so clips join with a hard cut (the editor's own export
-///   has the transition picker for that).
+/// - Clip joins: a hard-cut concat by default; since v1.5.1
+///   (fix #52) a project that picked a Library Transition joins
+///   its clips with that recipe's xfade chain instead (falling
+///   back to the concat, with a note, on any failure).
 /// - No split screen (EXPLICITLY DEFERRED, Phase 7): split screen
 ///   needs a SECOND concurrent video track (two clips side by side
 ///   on the same timeline), but the editor timeline is a single
@@ -71,6 +72,7 @@
 library;
 
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart';
@@ -86,13 +88,17 @@ import 'caption_service.dart';
 import 'caption_styles.dart';
 import 'export_settings.dart';
 import 'ffmpeg_service.dart';
+import 'font_registry.dart';
+import 'library_service.dart';
 import 'logo_loop_service.dart';
+import 'user_font_service.dart';
 import 'pro_editor.dart';
 import 'video_export_service.dart';
 import '../news/breaking_templates.dart';
 import '../news/channel_preset.dart';
 import '../news/element_override.dart';
 import '../news/news_project.dart';
+import '../news/widgets/reporter_overlay.dart';
 import '../news/widgets/template_media_preview.dart' show isPhotoMediaPath;
 import '../news/project_handoff.dart';
 import '../news/watermark.dart';
@@ -394,9 +400,52 @@ class ReelExportService {
         );
       }
 
+      // --- v1.5.1 (#51/#52): user fonts + Library selections. ---
+      // User fonts register in this process too (an export can be
+      // reached without opening the News Maker first); fail-soft.
+      try {
+        await UserFontService.instance.loadAll();
+        await UserFontService.instance.syncIntoRegistry();
+      } catch (_) {
+        // Fonts are decorative here — never block an export.
+      }
+      final library = LibraryService.instance;
+      final headlineStyle = await library.itemById(
+        LibraryConfig.textStyles,
+        project.headlineStyleId,
+      );
+      final tickerStyle = await library.itemById(
+        LibraryConfig.textStyles,
+        project.tickerStyleId,
+      );
+      final transitionItem = await library.itemById(
+        LibraryConfig.transitions,
+        project.transitionId,
+      );
+      final effectItem = await library.itemById(
+        LibraryConfig.effects,
+        project.effectId,
+      );
+      // A style's font ref wins over the surface's own font choice.
+      final headlineFamily = newsFontFamilyForId(
+        headlineStyle?.recipe.styleFontRef ?? project.headlineFontId,
+      );
+      final tickerFamily = newsFontFamilyForId(
+        tickerStyle?.recipe.styleFontRef ?? project.tickerFontId,
+      );
+      final headlineShadows = headlineStyle == null
+          ? null
+          : libraryStyleShadows(headlineStyle.recipe);
+      final tickerShadows = tickerStyle == null
+          ? null
+          : libraryStyleShadows(tickerStyle.recipe);
+
       // --- 1. Normalise + join clips (export fps + dims). ---
       step('Clips tayyar ho rahe hain…', 0.05);
       final normFiles = <String>[];
+      // v1.5.1 (#52): per-clip durations for the transition
+      // chain's xfade offsets (null = unknown → no transition).
+      final normDurationsMs = <int?>[];
       final totalClips = handoff.clipPaths.length;
       for (var i = 0; i < totalClips; i++) {
         final cancelledClip = cancelledResult();
@@ -455,9 +504,71 @@ class ReelExportService {
           );
         }
         normFiles.add(nf);
+        normDurationsMs.add(isPhoto ? 5000 : clipMs);
       }
       if (normFiles.length == 1) {
         out = normFiles.first;
+      } else if (transitionItem != null &&
+          normDurationsMs.every((d) => d != null)) {
+        // --- 1b. Library transition (#52): xfade chain instead
+        // of the hard-cut concat. Any failure falls back to the
+        // concat below with a note — never a failed export.
+        step('Transition lag raha hai…', 0.25);
+        var allAudio = true;
+        for (final nf in normFiles) {
+          if (!await probeHasAudio(File(nf))) {
+            allAudio = false;
+            break;
+          }
+        }
+        final merged = p.join(dir.path, 'reel_merged_$stamp.mp4');
+        final xfadeCmd = proXfadeCommand(
+          inputs: normFiles,
+          durationsMs: [for (final d in normDurationsMs) d!],
+          transition: ProTransition(
+            name: transitionItem.recipe.xfadeType,
+            durationSec: transitionItem.recipe.xfadeDuration,
+          ),
+          hasAudio: allAudio,
+          output: merged,
+        );
+        var transitionDone = false;
+        if (xfadeCmd != null) {
+          final res = await runStage(xfadeCmd, 0.25, 0.30);
+          if (res.ok) {
+            out = merged;
+            transitionDone = true;
+          }
+        }
+        if (!transitionDone) {
+          notes.add(
+            'Library transition nahi laga — clips seedha join ho '
+            'rahe hain.',
+          );
+        }
+        if (!transitionDone) {
+          final listFile = p.join(dir.path, 'reel_concat_$stamp.txt');
+          await File(listFile).writeAsString(
+            normFiles
+                .map((f) => "file '${f.replaceAll("'", "'\\''")}'")
+                .join('\n'),
+          );
+          final res = await runStage(
+            FfmpegService.concatCommand(listFile: listFile, output: merged),
+            0.25,
+            0.30,
+            expectedMs: reelMs,
+          );
+          if (!res.ok) {
+            return ReelExportResult(
+              success: false,
+              error: 'Clips join nahi hue. ${res.logs}',
+              failedStep: 'Clips join karna',
+              notes: notes,
+            );
+          }
+          out = merged;
+        }
       } else {
         final listFile = p.join(dir.path, 'reel_concat_$stamp.txt');
         await File(listFile).writeAsString(
@@ -688,6 +799,80 @@ class ReelExportService {
         }
       }
 
+      // --- 3c. Library effect on the main media (v1.5.1, #52):
+      // a 'grade' recipe becomes an eq/colorbalance pass; an
+      // 'overlay' recipe blends its (looped) asset over the media
+      // at the recipe opacity. Applied BEFORE the template
+      // furniture so the ribbons/logo stay crisp. Any failure is
+      // a note — the export continues un-effected.
+      if (effectItem != null) {
+        step('Effect lag raha hai…', 0.57);
+        final fxOut = p.join(dir.path, 'reel_effect_$stamp.mp4');
+        String? fxCmd;
+        if (effectItem.recipe.kind == 'grade') {
+          final chain = libraryGradeFilterChain(effectItem.recipe.grade);
+          if (chain.isNotEmpty) {
+            fxCmd = '-y -i ${FfmpegService.q(out)} '
+                '-vf "$chain" -map 0:v -map 0:a? '
+                '-c:v libx264 -preset veryfast -crf 23 -c:a copy '
+                '-movflags +faststart ${FfmpegService.q(fxOut)}';
+          }
+        } else if (effectItem.recipe.kind == 'overlay') {
+          final assetName = effectItem.recipe.overlayAsset;
+          final assetFile = assetName == null
+              ? null
+              : await LibraryService.instance.ensureAsset(
+                  effectItem,
+                  assetName,
+                );
+          if (assetFile != null) {
+            const blendModes = <String>{
+              'screen',
+              'overlay',
+              'softlight',
+              'addition',
+              'multiply',
+              'lighten',
+              'darken',
+            };
+            final mode = blendModes.contains(effectItem.recipe.overlayBlend)
+                ? effectItem.recipe.overlayBlend
+                : 'screen';
+            final opacity =
+                effectItem.recipe.overlayOpacity.toStringAsFixed(2);
+            fxCmd = '-y -i ${FfmpegService.q(out)} '
+                '-stream_loop -1 -i ${FfmpegService.q(assetFile.path)} '
+                '-filter_complex "[1:v]scale=$w:$h,format=yuv420p[fx];'
+                '[0:v][fx]blend=all_mode=$mode:all_opacity=$opacity:'
+                'shortest=1[vout]" '
+                '-map "[vout]" -map 0:a? '
+                '-c:v libx264 -preset veryfast -crf 23 -c:a copy '
+                '-movflags +faststart ${FfmpegService.q(fxOut)}';
+          }
+        }
+        if (fxCmd == null) {
+          notes.add(
+            'Library effect (${effectItem.name}) nahi laga — baghair '
+            'effect ke export ho raha hai.',
+          );
+        } else {
+          final res = await runStage(
+            fxCmd,
+            0.57,
+            0.58,
+            expectedMs: reelMs,
+          );
+          if (res.ok) {
+            out = fxOut;
+          } else {
+            notes.add(
+              'Library effect (${effectItem.name}) nahi laga — '
+              'baghair effect ke export ho raha hai.',
+            );
+          }
+        }
+      }
+
       // --- 4. Template overlay (logo left OUT of the PNG). ---
       // nigraanFinal still-frame contract: every other still caller
       // of renderLiveTemplateImage (Template Studio frame export,
@@ -744,6 +929,16 @@ class ReelExportService {
           reelMs: reelMs,
           onProgress: onProgress,
           overrides: project.elementOverrides,
+          // v1.5.1 (#49/#51/#52): the project's editable ticker
+          // label + chosen fonts + Library Text Styles.
+          tickerLabel: project.tickerLabel,
+          headlineFontFamily: headlineFamily,
+          tickerFontFamily: tickerFamily,
+          headlineTextColor: headlineStyle?.recipe.styleColor,
+          tickerTextColor: tickerStyle?.recipe.styleColor,
+          tickerLabelColor: tickerStyle?.recipe.styleLabelBackground,
+          headlineShadows: headlineShadows,
+          tickerShadows: tickerShadows,
         );
         if (parityOut != null) {
           out = parityOut;
@@ -839,6 +1034,41 @@ class ReelExportService {
       );
       if (watermarkDone != null) out = watermarkDone;
       step('Watermark done.', 0.80);
+
+      {
+        final c = cancelledResult();
+        if (c != null) return c;
+      }
+      // --- 5c. Reporter block (v1.5.1, fix #50): the reporter
+      // photo + name plate, rendered as a full-frame PNG at the
+      // parity geometry's reporter rects (element overrides
+      // included) and overlaid over the templated video. Skipped
+      // with a note when the block is removed or the photo is
+      // missing — never a failed export.
+      final reporterPhotoPath = project.reporterPhotoPath;
+      if (reporterPhotoPath != null &&
+          reporterPhotoPath.isNotEmpty &&
+          !overrideFor(project.elementOverrides, NewsElement.reporter)
+              .hidden) {
+        step('Reporter lag raha hai…', 0.79);
+        final reporterDone = await _applyReporterOverlay(
+          input: out,
+          dir: dir,
+          stamp: stamp,
+          preset: effective,
+          width: w,
+          height: h,
+          photoPath: reporterPhotoPath,
+          name: project.reporterName,
+          fontFamily: newsFontFamilyForId(project.reporterFontId),
+          overrides: project.elementOverrides,
+          notes: notes,
+          reelMs: reelMs,
+          onProgress: onProgress,
+        );
+        if (reporterDone != null) out = reporterDone;
+        step('Reporter done.', 0.80);
+      }
 
       {
         final c = cancelledResult();
@@ -999,6 +1229,16 @@ class ReelExportService {
     int? reelMs,
     void Function(double progress)? onProgress,
     Map<String, ElementOverride> overrides = const {},
+    // v1.5.1 opt-ins (fixes #49/#51/#52) — forwarded verbatim to
+    // renderParityAssets; all default to the historic behaviour.
+    String? tickerLabel,
+    String? headlineFontFamily,
+    String? tickerFontFamily,
+    int? headlineTextColor,
+    int? tickerTextColor,
+    int? tickerLabelColor,
+    List<ui.Shadow>? headlineShadows,
+    List<ui.Shadow>? tickerShadows,
   }) async {
     try {
       final assets = await renderParityAssets(
@@ -1009,6 +1249,14 @@ class ReelExportService {
         now: DateTime.now(),
         fontReady: fontReady,
         overrides: overrides,
+        tickerLabel: tickerLabel,
+        headlineFontFamily: headlineFontFamily,
+        tickerFontFamily: tickerFontFamily,
+        headlineTextColor: headlineTextColor,
+        tickerTextColor: tickerTextColor,
+        tickerLabelColor: tickerLabelColor,
+        headlineShadows: headlineShadows,
+        tickerShadows: tickerShadows,
       );
       final svc = assetService ?? const AssetDownloadService();
       String? movPath;
@@ -1024,16 +1272,23 @@ class ReelExportService {
         movPath = mov.path;
       } else if (!logoHidden && preset.logoPath != null &&
           await File(preset.logoPath!).exists()) {
-        try {
-          final key = logoLoopCacheKey(logoFile: File(preset.logoPath!));
-          final dirFrames = Directory(p.join(dir.path, 'logo_loop_$key'));
-          await LogoLoopService.generateFrames(
-            logoFile: File(preset.logoPath!),
-            outDir: dirFrames,
-          );
-          framesDir = dirFrames.path;
-        } catch (_) {
+        // v1.5.1 (#47): rotation OFF keeps the picked logo a
+        // still in the export too (the preview already honours
+        // the switch) — no frames are generated.
+        if (!preset.logoRotate) {
           stillPath = preset.logoPath;
+        } else {
+          try {
+            final key = logoLoopCacheKey(logoFile: File(preset.logoPath!));
+            final dirFrames = Directory(p.join(dir.path, 'logo_loop_$key'));
+            await LogoLoopService.generateFrames(
+              logoFile: File(preset.logoPath!),
+              outDir: dirFrames,
+            );
+            framesDir = dirFrames.path;
+          } catch (_) {
+            stillPath = preset.logoPath;
+          }
         }
       }
       // final3 default logo (demo v4): the user's green-screen
@@ -1043,10 +1298,26 @@ class ReelExportService {
       String? gsPath;
       if (!logoHidden &&
           preset.finalIs3Ribbon &&
+          preset.logoRotate &&
           framesDir == null &&
           stillPath == null) {
         final gs = await svc.ensureLogoGsFile();
         gsPath = gs?.path;
+      }
+      // v1.5.1 (#47): rotation OFF + default logo → the keyed
+      // still frame of the same logo (the preview's still).
+      if (!logoHidden &&
+          preset.finalIs3Ribbon &&
+          !preset.logoRotate &&
+          movPath == null &&
+          framesDir == null &&
+          stillPath == null) {
+        final framePng = await _extractAsset(
+          'assets/templates/nigraan_logo_gs_frame.png',
+          dir,
+          'reel_logo_frame_$stamp.png',
+        );
+        if (framePng != null) stillPath = framePng.path;
       }
       // Clock font: bundled DejaVu → a system font → none (the
       // capsule then shows only its date face; a note says so).
@@ -1088,6 +1359,77 @@ class ReelExportService {
     }
   }
 
+  /// Step 5c — the reporter block overlay (v1.5.1, fix #50).
+  /// Renders the reporter PNG via [renderReporterOverlayPng] at
+  /// the parity geometry for the EFFECTIVE preset's variant and
+  /// overlays it at 0:0 (the PNG is full-frame). Returns the new
+  /// output path, or null when skipped (a note explains why).
+  static Future<String?> _applyReporterOverlay({
+    required String input,
+    required Directory dir,
+    required int stamp,
+    required ChannelPreset preset,
+    required int width,
+    required int height,
+    required String photoPath,
+    required String name,
+    required String? fontFamily,
+    required Map<String, ElementOverride> overrides,
+    required List<String> notes,
+    int? reelMs,
+    void Function(double progress)? onProgress,
+  }) async {
+    try {
+      if (!await File(photoPath).exists()) {
+        notes.add(
+          'Reporter photo nahi mili — reporter ke baghair export '
+          'ho raha hai.',
+        );
+        return null;
+      }
+      final g = ParityGeometry(
+        width.toDouble(),
+        height.toDouble(),
+        variant: ParityVariant.fromId(preset.finalVariant),
+        overrides: overrides,
+      );
+      final png = await renderReporterOverlayPng(
+        dir: dir,
+        g: g,
+        photoPath: photoPath,
+        name: name,
+        fontFamily: fontFamily,
+      );
+      if (png == null) {
+        notes.add(
+          'Reporter photo render nahi hui — reporter ke baghair '
+          'export ho raha hai.',
+        );
+        return null;
+      }
+      final reporterOut = p.join(dir.path, 'reel_reporter_$stamp.mp4');
+      final cmd = '-y -i ${FfmpegService.q(input)} '
+          '-i ${FfmpegService.q(png.path)} '
+          '-filter_complex "[0:v][1:v]overlay=0:0[vout]" '
+          '-map "[vout]" -map 0:a? '
+          '-c:v libx264 -preset veryfast -crf 23 -c:a copy '
+          '-movflags +faststart ${FfmpegService.q(reporterOut)}';
+      final res = await _runStage(
+        cmd,
+        0.79,
+        0.80,
+        expectedMs: reelMs,
+        onProgress: onProgress,
+      );
+      if (res.ok) return reporterOut;
+      notes.add('Reporter overlay nahi laga. ${res.logs}');
+      return null;
+    } catch (e) {
+      notes.add('Reporter overlay nahi laga ($e).');
+      return null;
+    }
+  }
+
   static Future<String?> _overlayRotatingLogo({
     required String input,
     required Directory dir,
@@ -1106,6 +1448,29 @@ class ReelExportService {
     try {
       final userLogo = preset.logoPath;
       if (userLogo != null && await File(userLogo).exists()) {
+        // v1.5.1 (#47): rotation OFF → the still twin command at
+        // the same bug rect; ON → the generated-frames loop.
+        if (!preset.logoRotate) {
+          final stillCmd = FfmpegService.logoStillOverlayCommand(
+            input: input,
+            output: logoOut,
+            width: width,
+            height: height,
+            topRibbonEnabled: topRibbonEnabled,
+            logoPath: userLogo,
+            videoBitrateKbps: settings.videoBitrateKbps,
+          );
+          final res = await _runStage(
+            stillCmd,
+            0.70,
+            0.78,
+            expectedMs: reelMs,
+            onProgress: onProgress,
+          );
+          if (res.ok) return logoOut;
+          notes.add('Logo overlay fail ho gaya — baghair logo ke export.');
+          return null;
+        }
         final key = logoLoopCacheKey(logoFile: File(userLogo));
         final framesDir = Directory(p.join(dir.path, 'logo_loop_$key'));
         await LogoLoopService.generateFrames(

@@ -815,6 +815,38 @@ class FfmpegService {
     return buf.toString();
   }
 
+  /// v1.5.1 (#47): the still twin of [logoLoopOverlayCommand] —
+  /// a picked logo held STATIC at the same bug rect when the
+  /// preset's rotation is OFF (the export honours the switch
+  /// exactly like the preview).
+  static String logoStillOverlayCommand({
+    required String input,
+    required String output,
+    required int width,
+    required int height,
+    required bool topRibbonEnabled,
+    required String logoPath,
+    int? videoBitrateKbps,
+  }) {
+    final (x, y, size) = logoBugRect(
+      width: width,
+      height: height,
+      topRibbonEnabled: topRibbonEnabled,
+    );
+    final videoArgs = videoBitrateKbps == null
+        ? '-c:v libx264 -preset veryfast -crf 23'
+        : '-c:v libx264 -preset veryfast '
+            '-b:v ${videoBitrateKbps}k '
+            '-maxrate ${(videoBitrateKbps * 3 / 2).round()}k '
+            '-bufsize ${videoBitrateKbps * 2}k';
+    return '-y -i ${q(input)} -i ${q(logoPath)} '
+        '-filter_complex "[1:v]format=yuva420p,scale=$size:-1[bug];'
+        '[0:v][bug]overlay=$x:$y[vout]" '
+        '-map "[vout]" -map 0:a? '
+        '$videoArgs -c:a copy '
+        '-movflags +faststart ${q(output)}';
+  }
+
   /// Normalize one segment AND guarantee it has an audio stream, so
   /// the concat demuxer can join it with the other segments: when
   /// [addSilentAudio] is true (the source has no audio — e.g. the
