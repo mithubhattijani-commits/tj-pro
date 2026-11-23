@@ -1,28 +1,4 @@
 name: Build TJ Pro APK
-
-on:
-  push:
-    branches: [main]
-  workflow_dispatch:
-
-permissions:
-  contents: write
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Free disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /opt/hostedtoolcache || true
-          df -h
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "21"
-      - uses: subosito/flutter-action@v2
-        with:
           channel: stable
           flutter-version: '3.47.8'
       - name: Prepare Android local properties
@@ -67,18 +43,18 @@ jobs:
             unzip -t "$APK" | tail -3
             "$AAPT2" dump badging "$APK" > badging.txt
             cat badging.txt
-            grep -F "package: name='com.tjpro.app' versionCode='$EXPECTED_CODE' versionName='1.5.3'" badging.txt
+            grep -F "package: name='com.tjpro.app' versionCode='$EXPECTED_CODE' versionName='1.5.4'" badging.txt
             grep -F "sdkVersion:'24'" badging.txt
             grep -F "targetSdkVersion:'36'" badging.txt
             grep -F "application-label:'TJ Pro'" badging.txt
             "$APKSIGNER" verify --print-certs "$APK" | tee certs.txt
             ACTUAL_DIGEST=$(grep "Signer #1 certificate SHA-256 digest" certs.txt | awk '{print $NF}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
             if [ "$ACTUAL_DIGEST" != "$EXPECTED_SIGNER_SHA256" ]; then echo "SIGNER MISMATCH on $APK: got $ACTUAL_DIGEST want $EXPECTED_SIGNER_SHA256"; exit 1; fi
-            echo "VERIFY OK: $APK versionCode=$EXPECTED_CODE versionName=1.5.3 signer matches TJ Pro day-1 key"
+            echo "VERIFY OK: $APK versionCode=$EXPECTED_CODE versionName=1.5.4 signer matches TJ Pro day-1 key"
           }
-          verify_one build/app/outputs/flutter-apk/app-armeabi-v7a-debug.apk 1017
-          verify_one build/app/outputs/flutter-apk/app-arm64-v8a-debug.apk 2017
-          verify_one build/app/outputs/flutter-apk/app-x86_64-debug.apk 4017
+          verify_one build/app/outputs/flutter-apk/app-armeabi-v7a-debug.apk 1018
+          verify_one build/app/outputs/flutter-apk/app-arm64-v8a-debug.apk 2018
+          verify_one build/app/outputs/flutter-apk/app-x86_64-debug.apk 4018
           echo "VERIFY OK: all 3 split APKs match package/version/SDKs/signer"
       - name: Upload APKs to Release
         env:
@@ -94,6 +70,4 @@ jobs:
           name: tj-pro-debug-apks
           path: |
             build/app/outputs/flutter-apk/app-armeabi-v7a-debug.apk
-            build/app/outputs/flutter-apk/app-arm64-v8a-debug.apk
-            build/app/outputs/flutter-apk/app-x86_64-debug.apk
-          if-no-files-found: error
+            build/app/outputs/flutter-apk/
