@@ -209,10 +209,31 @@ class UrduFonts {
     katibeh,
   ];
 
-  /// Lookup by [UrduFontOption.id]; unknown ids fall back to the
-  /// house font (Kasheeda), matching the app's Urdu default.
-  static UrduFontOption byId(String id) =>
-      all.firstWhere((f) => f.id == id, orElse: () => jameelKasheeda);
+  /// User-uploaded fonts (fix #51), rebuilt at runtime by
+  /// `UserFontService.syncIntoRegistry()` (lib/services/
+  /// user_font_service.dart) from the fonts the user added under
+  /// "Apna Font". Empty until that sync runs. This list is the ONLY
+  /// mutable part of the registry — the built-in [all] list above is
+  /// never touched by user fonts.
+  static final List<UrduFontOption> userFonts = <UrduFontOption>[];
+
+  /// Built-ins plus user fonts, in picker order — the list pickers
+  /// that support custom fonts should iterate.
+  static List<UrduFontOption> get allWithUser =>
+      <UrduFontOption>[...all, ...userFonts];
+
+  /// Lookup by [UrduFontOption.id]; built-ins are searched first,
+  /// then [userFonts]; unknown ids fall back to the house font
+  /// (Kasheeda), matching the app's Urdu default.
+  static UrduFontOption byId(String id) {
+    for (final font in all) {
+      if (font.id == id) return font;
+    }
+    for (final font in userFonts) {
+      if (font.id == id) return font;
+    }
+    return jameelKasheeda;
+  }
 
   /// Builds a ready [TextStyle] for font [id] at [fontSize] / [color]
   /// (weight defaults to bold — headlines, ribbons and captions in
@@ -236,4 +257,23 @@ class UrduFonts {
       ),
     );
   }
+}
+
+/// v1.5.1 (fixes #51/#52): resolves a saved font id to the
+/// font-family name the parity renderer (export) and the live
+/// preview should pass for it. The house Kasheeda id resolves to
+/// null — callers keep their exact historic behaviour (the parity
+/// engine's fontReady Kasheeda path; the preview's own default).
+/// Every other id (google_fonts built-ins, #51 user uploads)
+/// resolves to its registered family label; the family is live
+/// once the option's apply() ran in this process (google_fonts)
+/// or the font was FontLoader-registered (user fonts, via
+/// UserFontService.loadAll — the export and the News Maker both
+/// run it on entry).
+String? newsFontFamilyForId(String id) {
+  if (id == UrduFonts.jameelKasheeda.id) return null;
+  for (final font in UrduFonts.allWithUser) {
+    if (font.id == id) return font.familyLabel;
+  }
+  return null;
 }
