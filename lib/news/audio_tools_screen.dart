@@ -322,14 +322,24 @@ class _AudioToolsScreenState extends State<AudioToolsScreen> {
           children: [
             SizedBox(
               width: double.infinity,
-              child: OutlinedButton.icon(
+              child: OutlinedButton(
                 key: const Key('pickAudioButton'),
                 onPressed: _busy ? null : _pickFile,
-                icon: const Icon(Icons.audio_file, size: 18),
-                label: Text(
-                  _inputPath == null
-                      ? 'Audio / Video file chunein'
-                      : _inputPath!.split('/').last,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.audio_file, size: 18),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        _inputPath == null
+                            ? 'Audio / Video file chunein'
+                            : _inputPath!.split('/').last,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -351,17 +361,27 @@ class _AudioToolsScreenState extends State<AudioToolsScreen> {
             Row(
               children: [
                 const Text('Format'),
-                const Spacer(),
-                SegmentedButton<ConvertFormat>(
-                  segments: const [
-                    ButtonSegment(value: ConvertFormat.mp3, label: Text('MP3')),
-                    ButtonSegment(value: ConvertFormat.wav, label: Text('WAV')),
-                    ButtonSegment(value: ConvertFormat.m4a, label: Text('M4A')),
-                    ButtonSegment(value: ConvertFormat.ogg, label: Text('OGG')),
-                  ],
-                  selected: {_format},
-                  onSelectionChanged: (s) =>
-                      setState(() => _format = s.first),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerRight,
+                    child: SegmentedButton<ConvertFormat>(
+                      segments: const [
+                        ButtonSegment(
+                            value: ConvertFormat.mp3, label: Text('MP3')),
+                        ButtonSegment(
+                            value: ConvertFormat.wav, label: Text('WAV')),
+                        ButtonSegment(
+                            value: ConvertFormat.m4a, label: Text('M4A')),
+                        ButtonSegment(
+                            value: ConvertFormat.ogg, label: Text('OGG')),
+                      ],
+                      selected: {_format},
+                      onSelectionChanged: (s) =>
+                          setState(() => _format = s.first),
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -414,15 +434,21 @@ class _AudioToolsScreenState extends State<AudioToolsScreen> {
             Row(
               children: [
                 const Text('Channels'),
-                const Spacer(),
-                SegmentedButton<int>(
-                  segments: const [
-                    ButtonSegment(value: 1, label: Text('Mono')),
-                    ButtonSegment(value: 2, label: Text('Stereo')),
-                  ],
-                  selected: {_channels},
-                  onSelectionChanged: (s) =>
-                      setState(() => _channels = s.first),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerRight,
+                    child: SegmentedButton<int>(
+                      segments: const [
+                        ButtonSegment(value: 1, label: Text('Mono')),
+                        ButtonSegment(value: 2, label: Text('Stereo')),
+                      ],
+                      selected: {_channels},
+                      onSelectionChanged: (s) =>
+                          setState(() => _channels = s.first),
+                    ),
+                  ),
                 ),
               ],
             ),

@@ -53,6 +53,18 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
   bool _fbSelected = false;
   bool _ytSelected = false;
   bool _cameraReady = false;
+  // #35: frame-primed gate. The rtmp_streaming plugin exposes no
+  // first-frame callback, so "Camera ready." cannot be trusted the
+  // moment initCamera() returns — the preview can still be black.
+  // The gate is frame-based instead: once the camera reports ready,
+  // the preview must survive 3 consecutive post-frame callbacks
+  // before _previewPrimed flips and the ready state is shown.
+  bool _previewPrimed = false;
+  int _previewFrameCount = 0;
+  bool _primeCallbackScheduled = false;
+  // #36: the red "select a platform" hint is an error, so it only
+  // appears after the user has actually tapped GO LIVE once.
+  bool _goLiveAttempted = false;
   bool _muted = false;
   DateTime? _liveSince;
   Timer? _clockTimer;
@@ -73,7 +85,10 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
     _load();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final ok = await _service.initCamera();
-      if (mounted) setState(() => _cameraReady = ok);
+      if (mounted) {
+        setState(() => _cameraReady = ok);
+        if (ok) _schedulePreviewPrime();
+      }
     });
     _clockTimer = Timer.periodic(
       const Duration(seconds: 1),
@@ -100,6 +115,31 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
       _tickerTextCtrl.text = template.tickerText;
     });
     _service.setTemplate(template);
+  }
+
+  /// #35: counts post-frame callbacks after the camera reports
+  /// ready; the third consecutive one primes the preview. Chained
+  /// callbacks (not a timer) so the count tracks real frames drawn.
+  void _schedulePreviewPrime() {
+    if (_previewPrimed || _primeCallbackScheduled || !_cameraReady) {
+      return;
+    }
+    if (_service.previewWidget() == null) return;
+    _primeCallbackScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _primeCallbackScheduled = false;
+      if (!mounted || _previewPrimed) return;
+      if (!_cameraReady || _service.previewWidget() == null) {
+        _previewFrameCount = 0;
+        return;
+      }
+      _previewFrameCount++;
+      if (_previewFrameCount >= 3) {
+        setState(() => _previewPrimed = true);
+      } else {
+        _schedulePreviewPrime();
+      }
+    });
   }
 
   Future<void> _saveTemplate() async {
@@ -209,7 +249,9 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
               color: Colors.black54,
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
               child: Text(
-                'LIVE $_clockText',
+                // #37: 'LIVE' wording only while actually live;
+                // offline the chip is just a clock.
+                _service.isLive ? 'LIVE $_clockText' : _clockText,
                 style: const TextStyle(
                   color: Color(0xFFFFEB3B),
                   fontWeight: FontWeight.bold,
@@ -300,7 +342,9 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
   Widget build(BuildContext context) {
     final live = _service.isLive;
     // Per-live platform choice: Go Live streams only to the toggled-on
-    // platforms; with nothing toggled on it stays disabled.
+    // platforms. With nothing toggled on the button stays tappable
+    // (#36) so the tap itself can explain what is missing, instead of
+    // a red error sitting on screen before any user action.
     final anySelected = _fbSelected || _ytSelected;
     final goLiveLabel = _fbSelected && _ytSelected
         ? 'GO LIVE — dono par'
@@ -321,29 +365,37 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
           // Status row.
           ValueListenableBuilder<String>(
             valueListenable: _service.status,
-            builder: (_, status, _) => Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 5,
-                  ),
-                  decoration: BoxDecoration(
-                    color: live ? Colors.red : Colors.grey,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    live ? '● LIVE $_elapsed' : '● OFFLINE',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
+            builder: (_, status, _) {
+              // #35: never claim 'Camera ready.' while the preview
+              // is still priming (it may still be black).
+              final displayStatus =
+                  (!_previewPrimed && status == 'Camera ready.')
+                      ? 'Camera tayyar ho raha hai…'
+                      : status;
+              return Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: live ? Colors.red : Colors.grey,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      live ? '● LIVE $_elapsed' : '● OFFLINE',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(child: Text(status)),
-              ],
-            ),
+                  const SizedBox(width: 10),
+                  Expanded(child: Text(displayStatus)),
+                ],
+              );
+            },
           ),
           ValueListenableBuilder<String>(
             valueListenable: _service.statsLine,
@@ -375,6 +427,22 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
                                 ),
                           ),
                         ),
+                        // #35: until the preview is primed, keep the
+                        // 'tayyar ho raha hai' label on top so a
+                        // still-black preview is never presented as
+                        // ready.
+                        if (!_previewPrimed)
+                          Positioned.fill(
+                            child: Container(
+                              color: Colors.black,
+                              child: const Center(
+                                child: Text(
+                                  'Camera tayyar ho raha hai…',
+                                  style: TextStyle(color: Colors.white70),
+                                ),
+                              ),
+                            ),
+                          ),
                         Positioned.fill(
                           child: _templateOverlay(constraints),
                         ),
@@ -420,6 +488,18 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
                       ? (v) => setState(() => _ytSelected = v)
                       : null,
                 ),
+                // #36: plain guidance (not an error) when no key is
+                // saved yet — point at the Stream Keys fields below
+                // before the user ever taps GO LIVE.
+                if (!_fbConnected && !_ytConnected)
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
+                    child: Text(
+                      'Live ke liye pehle neeche Stream Keys mein apni '
+                      'key save karein — phir yahan platform on karein.',
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -429,9 +509,25 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
             children: [
               Expanded(
                 child: ElevatedButton.icon(
-                  onPressed: (!_cameraReady || live || !anySelected)
+                  onPressed: (!_cameraReady || !_previewPrimed || live)
                       ? null
                       : () async {
+                          // #36: no platform selected is handled here,
+                          // on the tap — guidance via SnackBar, and
+                          // only now may the red inline hint appear.
+                          if (!anySelected) {
+                            setState(() => _goLiveAttempted = true);
+                            final message =
+                                (!_fbConnected && !_ytConnected)
+                                    ? 'Live ke liye pehle neeche Stream '
+                                        'Keys mein apni key save karein, '
+                                        'phir platform select karein.'
+                                    : 'Kam az kam ik platform select karein.';
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text(message)),
+                            );
+                            return;
+                          }
                           final selected = <String>{
                             if (_fbSelected) 'facebook',
                             if (_ytSelected) 'youtube',
@@ -464,7 +560,8 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
                 ),
             ],
           ),
-          if (!live && !anySelected)
+          // #36: red inline error only after a GO LIVE attempt.
+          if (_goLiveAttempted && !anySelected && !live)
             const Padding(
               padding: EdgeInsets.only(bottom: 8),
               child: Text(
@@ -481,7 +578,15 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
                     await _service.switchCamera();
                     // Preview re-initializes with a new controller on
                     // switch, so rebuild to mount the new preview.
-                    if (mounted) setState(() {});
+                    // #35: the new preview must re-prime before it
+                    // can be called ready again.
+                    if (mounted) {
+                      setState(() {
+                        _previewPrimed = false;
+                        _previewFrameCount = 0;
+                      });
+                      _schedulePreviewPrime();
+                    }
                   },
                   icon: const Icon(Icons.switch_camera),
                   label: const Text('Camera badlein'),

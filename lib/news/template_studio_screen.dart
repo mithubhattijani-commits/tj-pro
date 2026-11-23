@@ -46,6 +46,7 @@ import 'package:path_provider/path_provider.dart';
 import '../app_config.dart';
 import '../live/news_template.dart';
 import '../services/asset_download_service.dart';
+import '../services/remote_config_service.dart';
 import 'breaking_templates.dart';
 import 'channel_branding_screen.dart';
 import 'channel_preset.dart';
@@ -98,6 +99,13 @@ class _TemplateStudioScreenState extends State<TemplateStudioScreen> {
   bool _lowerThirdExpanded = false;
 
   bool _fontReady = false;
+
+  /// True when an effective Kasheeda download URL exists (remote
+  /// config or the compile-time fallback) — gates the manual
+  /// Download/retry button, which must not key off the compile-time
+  /// constant alone (it is empty by design; the real URL is hosted
+  /// and arrives via remote config).
+  bool _fontUrlAvailable = false;
   String _fontStatus = 'Checking…';
   bool _exporting = false;
   Timer? _saveTimer;
@@ -158,26 +166,72 @@ class _TemplateStudioScreenState extends State<TemplateStudioScreen> {
     await _checkFont();
   }
 
+  /// The EFFECTIVE Kasheeda font URL: the remote config value
+  /// (`kasheeda_font_url` in tj-pro.json, read the same way
+  /// CoinService / HelpWhatsAppButton read theirs —
+  /// `RemoteConfigService.instance.config`) when non-empty, else
+  /// the compile-time [AppConfig.kasheedaFontUrl] fallback. The
+  /// compile-time constant is EMPTY by design, so keying the font
+  /// state off it alone always reported the hosted font as
+  /// unavailable. Fail-soft: any config-load failure falls back to
+  /// the [AppConfig] value, so this screen can never crash on it.
+  Future<String> _effectiveKasheedaFontUrl() async {
+    try {
+      await RemoteConfigService.instance.init();
+    } catch (_) {
+      // Fail-soft: keep whatever config is already resolved.
+    }
+    final remoteUrl =
+        RemoteConfigService.instance.config.kasheedaFontUrl.trim();
+    if (remoteUrl.isNotEmpty) return remoteUrl;
+    return AppConfig.kasheedaFontUrl.trim();
+  }
+
   /// Kasheeda font state: cached file -> load it via FontLoader and
-  /// render Urdu in Kasheeda; otherwise the renderer + preview use
-  /// the system fallback font and say so (never a crash, never a
-  /// silent wrong font).
+  /// render Urdu in Kasheeda; no cached file but an effective
+  /// download URL -> download + load it right here; no URL at all ->
+  /// the renderer + preview use the system fallback font and say so
+  /// (never a crash, never a silent wrong font).
   Future<void> _checkFont() async {
     final service = const AssetDownloadService();
     final cached =
         await service.cachedFile(AssetDownloadService.kasheedaFileName);
     if (!mounted) return;
-    if (cached == null) {
+    if (cached != null) {
+      try {
+        await AssetDownloadService.loadKasheedaFontFromFile(cached);
+        if (!mounted) return;
+        setState(() {
+          _fontReady = true;
+          _fontStatus = 'Urdu font (Kasheeda): ready';
+        });
+      } catch (_) {
+        if (!mounted) return;
+        setState(() {
+          _fontReady = false;
+          _fontStatus =
+              'Urdu font (Kasheeda): load nahi hua — fallback font use ho raha hai';
+        });
+      }
+      return;
+    }
+    final url = await _effectiveKasheedaFontUrl();
+    if (!mounted) return;
+    if (url.isEmpty) {
       setState(() {
         _fontReady = false;
-        _fontStatus = AppConfig.kasheedaFontUrl.isEmpty
-            ? 'Urdu font (Kasheeda): not downloaded yet — hosting pending, fallback font use ho raha hai'
-            : 'Urdu font (Kasheeda): not downloaded yet — fallback font use ho raha hai';
+        _fontUrlAvailable = false;
+        _fontStatus =
+            'Urdu font (Kasheeda): abhi available nahi — fallback font use ho raha hai';
       });
       return;
     }
+    setState(() {
+      _fontUrlAvailable = true;
+      _fontStatus = 'Urdu font (Kasheeda): downloading…';
+    });
     try {
-      await AssetDownloadService.loadKasheedaFontFromFile(cached);
+      await const AssetDownloadService().loadKasheedaFont(url: url);
       if (!mounted) return;
       setState(() {
         _fontReady = true;
@@ -188,15 +242,26 @@ class _TemplateStudioScreenState extends State<TemplateStudioScreen> {
       setState(() {
         _fontReady = false;
         _fontStatus =
-            'Urdu font (Kasheeda): load nahi hua — fallback font use ho raha hai';
+            'Urdu font (Kasheeda): download fail — fallback font use ho raha hai';
       });
     }
   }
 
   Future<void> _downloadFont() async {
-    final url = AppConfig.kasheedaFontUrl;
-    if (url.isEmpty) return;
-    setState(() => _fontStatus = 'Urdu font (Kasheeda): downloading…');
+    final url = await _effectiveKasheedaFontUrl();
+    if (!mounted) return;
+    if (url.isEmpty) {
+      setState(() {
+        _fontUrlAvailable = false;
+        _fontStatus =
+            'Urdu font (Kasheeda): abhi available nahi — fallback font use ho raha hai';
+      });
+      return;
+    }
+    setState(() {
+      _fontUrlAvailable = true;
+      _fontStatus = 'Urdu font (Kasheeda): downloading…';
+    });
     try {
       await const AssetDownloadService().loadKasheedaFont(url: url);
       if (!mounted) return;
@@ -590,7 +655,7 @@ class _TemplateStudioScreenState extends State<TemplateStudioScreen> {
                 style: const TextStyle(color: Colors.grey, fontSize: 12),
               ),
             ),
-            if (!_fontReady && AppConfig.kasheedaFontUrl.isNotEmpty)
+            if (!_fontReady && _fontUrlAvailable)
               TextButton(
                 onPressed: _downloadFont,
                 child: const Text('Download'),

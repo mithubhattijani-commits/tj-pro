@@ -463,9 +463,12 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                             : Colors.white24,
                       ),
                     ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
                         Text(
                           voice.label,
                           style: const TextStyle(
@@ -494,7 +497,8 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                         ),
                         if (selected)
                           const Icon(Icons.check, size: 16),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 );
@@ -503,18 +507,28 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
             const SizedBox(height: 8),
             SizedBox(
               width: double.infinity,
-              child: OutlinedButton.icon(
+              child: OutlinedButton(
                 key: const Key('voicePreviewButton'),
                 onPressed: _previewBusy ? null : _previewVoice,
-                icon: _previewBusy
-                    ? const SizedBox(
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    if (_previewBusy)
+                      const SizedBox(
                         width: 16,
                         height: 16,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : const Icon(Icons.play_arrow, size: 18),
-                label: Text(
-                  '▶ ${_voice.label} ki awaz suno (preview — pehli dafa 1 request)',
+                    else
+                      const Icon(Icons.play_arrow, size: 18),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        '▶ ${_voice.label} ki awaz suno (preview — pehli dafa 1 request)',
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -633,15 +647,21 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                   'Download format',
                   style: TextStyle(fontWeight: FontWeight.bold),
                 ),
-                const Spacer(),
-                SegmentedButton<String>(
-                  segments: const [
-                    ButtonSegment(value: 'wav', label: Text('WAV')),
-                    ButtonSegment(value: 'mp3', label: Text('MP3')),
-                  ],
-                  selected: {_format},
-                  onSelectionChanged: (s) =>
-                      setState(() => _format = s.first),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerRight,
+                    child: SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment(value: 'wav', label: Text('WAV')),
+                        ButtonSegment(value: 'mp3', label: Text('MP3')),
+                      ],
+                      selected: {_format},
+                      onSelectionChanged: (s) =>
+                          setState(() => _format = s.first),
+                    ),
+                  ),
                 ),
               ],
             ),
