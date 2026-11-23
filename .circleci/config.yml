@@ -91,13 +91,13 @@ jobs:
             APKSIGNER=$(ls "$SDK"/build-tools/*/apksigner | head -1)
             "$AAPT2" dump badging "$APK" > badging.txt
             cat badging.txt
-            grep -F "package: name='com.tjpro.app' versionCode='10' versionName='1.1.0'" badging.txt
+            grep -F "package: name='com.tjpro.app' versionCode='16' versionName='1.5.2'" badging.txt
             grep -F "sdkVersion:'24'" badging.txt
             grep -F "targetSdkVersion:'36'" badging.txt
             grep -F "application-label:'TJ Pro'" badging.txt
             "$APKSIGNER" verify --print-certs "$APK" | tee certs.txt
             grep -F "Signer #1 certificate SHA-256 digest: $EXPECTED_SIGNER_SHA256" certs.txt
-            echo "VERIFY OK: package/version/label/SDKs/signer all match TJ Pro day-1 key (v1.1.0+10)"
+            echo "VERIFY OK: package/version/label/SDKs/signer all match TJ Pro day-1 key (v1.5.2+16)"
       - run:
           name: Install GitHub CLI
           command: |
