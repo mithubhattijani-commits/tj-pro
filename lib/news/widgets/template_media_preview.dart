@@ -259,7 +259,7 @@ class _TemplateMediaPreviewState extends State<TemplateMediaPreview> {
       return Image.file(
         File(path),
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+        errorBuilder: (_, _, _) => const SizedBox.shrink(),
       );
     }
     final controller = _controller;

@@ -532,7 +532,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   double _fxFadeIn = 0.0;
   double _fxFadeOut = 0.0;
   bool _muteOriginal = false;
-  bool _fxReverse = false;
+  final bool _fxReverse = false;
   bool _fxSilenceRemove = false;
   bool _fxPip = false;
   String _fxPipVideo = '';

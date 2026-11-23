@@ -1325,16 +1325,15 @@ class _AccountSubtitle extends StatelessWidget {
 /// and Icons.workspace_premium reads as a medal/rosette. Three
 /// points + band + jewels, drawn in gold.
 class _CrownIcon extends StatelessWidget {
-  const _CrownIcon({this.size = 24, this.color = const Color(0xFFFFC107)});
+  const _CrownIcon({this.size = 24});
 
   final double size;
-  final Color color;
 
   @override
   Widget build(BuildContext context) {
     return CustomPaint(
       size: Size.square(size),
-      painter: _CrownPainter(color),
+      painter: const _CrownPainter(Color(0xFFFFC107)),
     );
   }
 }

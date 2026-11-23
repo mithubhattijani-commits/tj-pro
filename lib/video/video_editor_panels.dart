@@ -1577,10 +1577,6 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
     ];
   }
 
-  /// Overlay › Sticker tab: the legacy stickers body (emoji/text
-  /// overlay + animation preset rail).
-  List<Widget> _stickerTabChildren() => _panelBody('stickers');
-
   /// v1.5.0 TIMELINE (mockups V1/V2, replacing _timelineSection +
   /// _timelineCard): contextual yellow hint → the centred-playhead
   /// strip (fixed red + column at left with Mute under it, ruler
@@ -1864,7 +1860,7 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
             child: Container(
               height: 22,
               decoration: BoxDecoration(
-                color: _overlayText.trim().isNotEmpty
+                color: _text.trim().isNotEmpty
                     ? const Color(0xFF37474F)
                     : const Color(0xFF222222),
                 borderRadius: BorderRadius.circular(4),
@@ -1881,8 +1877,8 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
-                      _overlayText.trim().isNotEmpty
-                          ? _overlayText.trim()
+                      _text.trim().isNotEmpty
+                          ? _text.trim()
                           : _captions.isNotEmpty
                               ? '${_captions.length} captions'
                               : '+ Add text',
