@@ -1,4 +1,5 @@
-// Smoke test for TJ Pro: home screen shows both editor entries.
+// Smoke test for TJ Pro: home screen shows the CREATE NEW
+// entries (Video / Photo / News Studio circles).
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -28,28 +29,36 @@ void main() {
     await tester.pumpWidget(const PhotoVideoEditorApp());
 
     expect(find.text('TJ Pro'), findsOneWidget);
-    expect(find.text('Photo Editor'), findsOneWidget);
-    expect(find.text('Video Editor'), findsOneWidget);
+    // v1.5.2 (fix #54): the editors no longer have their own
+    // Home cards — they are the CREATE NEW circles ('Video' /
+    // 'Photo'), which open the project hubs that start the
+    // editors. The old full-name cards were duplicates.
+    expect(find.text('Photo'), findsWidgets);
+    expect(find.text('Video'), findsWidgets);
   });
 
-  testWidgets('News Studio card opens the live studio screen',
+  testWidgets('News Studio circle opens the news projects hub',
       (tester) async {
     _mockPathProvider();
     await tester.pumpWidget(const PhotoVideoEditorApp());
 
     expect(find.text('News Studio'), findsWidgets);
-    final cardTitle = find.text('News Studio').first;
-    await tester.ensureVisible(cardTitle);
+    // The circle's label sits below its tap area — tap the
+    // circle's newspaper icon (the first one; the second is the
+    // bottom-nav tab's icon).
+    final circleIcon = find.byIcon(Icons.newspaper).first;
+    await tester.ensureVisible(circleIcon);
     await tester.pump();
-    await tester.tap(cardTitle);
+    await tester.tap(circleIcon);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
-    // Navigation landed on the News Studio screen (its AppBar + back
-    // button). The screen's data (preset, templates, voice allowance)
-    // is verified by the store unit tests — loading it here would need
-    // real async the testWidgets fake zone cannot provide.
-    expect(find.text('News Studio'), findsWidgets);
+    // Navigation landed on the pushed News projects hub (its
+    // AppBar + back button) — the hub is where News Maker
+    // projects start from (v1.5.2: the old direct News Studio
+    // card was one of the duplicated Home entries; the bottom
+    // nav's News Studio tab is the studio's one Home entry).
+    expect(find.text('News Projects'), findsOneWidget);
     expect(find.byType(BackButton), findsOneWidget);
   });
 }

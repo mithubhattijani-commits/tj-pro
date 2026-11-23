@@ -396,18 +396,31 @@ void main() {
   });
 
   group('NewsMakerScreen widget smoke test', () {
-    /// Drags the screen's ListView down until [target] is built.
-    /// (Lazy ListView items do not exist until scrolled into view,
-    /// so ensureVisible/scrollUntilVisible cannot find them first.)
-    Future<void> scrollTo(WidgetTester tester, Finder target) async {
-      for (var i = 0; i < 15; i++) {
-        if (target.evaluate().isNotEmpty) return;
-        await tester.drag(
-          find.byKey(const Key('makerList')),
-          const Offset(0, -300),
-        );
+    // v1.5.2: the Maker is a tool-panel screen now (editors'
+    // interface law) — sections live inside tool panels opened
+    // from the ONE bottom tool line, not in a scrolling list.
+    Future<void> openTool(WidgetTester tester, String id) async {
+      // The bottom zone shows the tool line XOR the open panel:
+      // close any open panel first, then drag the tool line
+      // until the tool is built and tap it.
+      final done = find.byKey(const Key('makerPanelDone'));
+      if (done.evaluate().isNotEmpty) {
+        await tester.tap(done);
+        await tester.pump();
         await tester.pump(const Duration(milliseconds: 100));
       }
+      final target = find.byKey(Key('makerTool-$id'));
+      for (var i = 0; i < 10; i++) {
+        if (target.evaluate().isNotEmpty) break;
+        await tester.drag(
+          find.byKey(const Key('makerToolLine')),
+          const Offset(-240, 0),
+        );
+        await tester.pump(const Duration(milliseconds: 60));
+      }
+      await tester.tap(target);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
     }
 
     Future<void> pumpMaker(WidgetTester tester) async {
@@ -429,6 +442,9 @@ void main() {
       await pumpMaker(tester);
 
       expect(find.text('News Maker'), findsOneWidget);
+
+      // Tehreer lives in its tool panel now.
+      await openTool(tester, 'tehreer');
       expect(find.byKey(const Key('tehreerField')), findsOneWidget);
 
       // Typing tehreer updates the word count live.
@@ -439,25 +455,23 @@ void main() {
       await tester.pump();
       expect(find.textContaining('7 alfaz'), findsOneWidget);
 
-      // Voice controls sit below the fold — scroll to them first.
-      await scrollTo(tester, find.byKey(const Key('voiceBuildButton')));
-      await tester.pump();
+      // Voice panel (fix #61): text box + build button + voices.
+      await openTool(tester, 'voice');
+      expect(find.byKey(const Key('voiceTehreerField')), findsOneWidget);
       expect(find.byKey(const Key('voiceBuildButton')), findsOneWidget);
       expect(find.byKey(const Key('voiceChoice-Aoede')), findsOneWidget);
       expect(find.byKey(const Key('voiceChoice-Charon')), findsOneWidget);
-      // The screen ends at Preview + Save: no Export button anywhere.
+      // No standalone Export button on the Maker screen.
       expect(find.widgetWithText(FilledButton, 'Export'), findsNothing);
       expect(find.text('Export • 100 coins'), findsNothing);
 
-      // Clips section is real (further below — scroll to it).
-      await scrollTo(tester, find.byKey(const Key('addClipGallery')));
-      await tester.pump();
+      // Media panel holds the clip pickers.
+      await openTool(tester, 'media');
+      expect(find.byKey(const Key('addClipGallery')), findsOneWidget);
       expect(find.byKey(const Key('addClipFiles')), findsOneWidget);
 
-      // Phase 7: the real export card is at the very bottom — scroll
-      // to it and check the real buttons exist.
-      await scrollTo(tester, find.byKey(const Key('exportReelButton')));
-      await tester.pump();
+      // Export panel holds the real export card (Phase 7).
+      await openTool(tester, 'export');
       expect(find.byKey(const Key('exportReelButton')), findsOneWidget);
       expect(find.byKey(const Key('openTimelineButton')), findsOneWidget);
       expect(
@@ -469,15 +483,15 @@ void main() {
     testWidgets('voice choice switches Aoede -> Charon', (tester) async {
       await pumpMaker(tester);
 
-      await scrollTo(tester, find.byKey(const Key('voiceChoice-Charon')));
-      await tester.pump();
-      // Phase 6 added the template picker above the voice section,
-      // so the chip can be built (ListView cache extent) yet still
-      // off-screen — bring it fully into view before tapping.
-      await tester.ensureVisible(
-        find.byKey(const Key('voiceChoice-Charon')),
+      await openTool(tester, 'voice');
+      // The voice rail sits below the text box + build button in
+      // the panel's scroll view — scroll the panel down to it.
+      await tester.drag(
+        find.byKey(const Key('makerPanel-voice')),
+        const Offset(0, -160),
       );
       await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
       await tester.tap(find.byKey(const Key('voiceChoice-Charon')));
       await tester.pump();
       // Charon is now the selected voice (check icon moves to it).

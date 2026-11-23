@@ -162,7 +162,7 @@ class CoinService {
       );
 
   bool get canWatchAd =>
-      !isAdminNow && adsRemainingToday > 0 && AppConfig.unityAdsEnabled;
+      adsRemainingToday > 0 && AppConfig.unityAdsEnabled;
 
   /// True when today's daily coins have NOT been claimed yet.
   bool get canClaimDaily {
@@ -224,12 +224,10 @@ class CoinService {
   /// The server enforces the 50/day cap — when it answers cap
   /// reached, the local counter is set to the cap.
   Future<CoinEarnResult> watchRewardedAd() async {
-    if (isAdminNow) {
-      return const CoinEarnResult(
-        ok: false,
-        error: 'Admins do not need coins — everything is free.',
-      );
-    }
+    // v1.5.2 (fix #66): admins may earn too — the old admin
+    // early-return (plus the Coins screen's admin-hidden button)
+    // is why the owner found NO earning path anywhere. Admin
+    // SPENDS stay waived (canAffordAmount); earning is open.
     if (adsRemainingToday <= 0) {
       return const CoinEarnResult(
         ok: false,

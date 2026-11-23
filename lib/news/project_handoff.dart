@@ -248,6 +248,13 @@ ChannelPreset effectivePresetFor({
   final ticker = project.tickerText.trim();
   copy.topRibbon.text =
       ticker.isEmpty ? project.headline.trim() : ticker;
+  // v1.5.2 (fix #65): the project's English ticker text drives
+  // the bottom ribbon — the same rule the Maker preview applies,
+  // so preview and export can never disagree.
+  final englishTicker = project.englishTickerText.trim();
+  if (englishTicker.isNotEmpty) {
+    copy.englishRibbon.text = englishTicker;
+  }
   copy.templateKind = project.templateKind;
   copy.showBreakingBanner = project.breaking;
   return copy;

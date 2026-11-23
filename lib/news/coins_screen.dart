@@ -12,11 +12,17 @@ import '../theme.dart';
 ///   [ValueNotifier] fed on every earn/spend).
 /// * "Watch Ads, Earn Coins" button: one tap → one Unity rewarded ad
 ///   on the coins placement → 50 coins on full watch, up to 50 ads/day.
-///   HIDDEN for admins (server-confirmed admin status) — for them
-///   everything is free and there is nothing to earn.
+///   v1.5.2 (fix #66): shown for EVERYONE, admins included — it used
+///   to be hidden for admins, which on the owner's own phone read
+///   as "the earning button does not exist". (Admin spends stay
+///   waived; earning is open to all.)
 /// * Daily free claim (50 coins, once per calendar day).
 /// * Earn/spend history (server ledger, on-device cache offline).
-/// * Price list for the paid features (plan §15).
+/// * Price list — v1.5.2 (fix #66): ONLY what actions actually
+///   charge. Export resolutions carry NO coin price (720p is
+///   free; 1080p / 4K run with ads alongside) and are listed as
+///   FREE rows; features nothing spends (auto captions,
+///   multi-platform publish) are not listed at all.
 ///
 /// The screen never decides admin status itself: it listens to
 /// [AuthService.isAdmin], which is fed only by the server-side
@@ -145,52 +151,49 @@ class _CoinsScreenState extends State<CoinsScreen> {
               ),
             ),
             const SizedBox(height: 16),
-            // Watch Ads button — hidden for admins.
-            ValueListenableBuilder<bool>(
-              valueListenable: AuthService.isAdmin,
-              builder: (context, isAdmin, _) {
-                if (isAdmin) return const SizedBox.shrink();
-                return ValueListenableBuilder<int>(
-                  valueListenable: _coins.adsWatchedToday,
-                  builder: (context, watched, _) {
-                    final remaining = CoinService.maxRewardedAdsPerDay - watched;
-                    final canWatch =
-                        remaining > 0 && !_adBusy && !_coins.isLoading.value;
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        ElevatedButton.icon(
-                          onPressed: canWatch ? _watchAd : null,
-                          icon: const Icon(Icons.play_circle_fill),
-                          label: Text(
-                            _adBusy
-                                ? 'Loading ad…'
-                                : 'Watch Ads, Earn Coins  •  +${CoinService.rewardPerAd} coins',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: TjProTheme.gold,
-                            foregroundColor: Colors.black,
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                          ),
+            // Watch Ads button — v1.5.2 (fix #66): for EVERYONE,
+            // admins included (it was admin-hidden, which is why
+            // the owner could not find any earning button here).
+            ValueListenableBuilder<int>(
+              valueListenable: _coins.adsWatchedToday,
+              builder: (context, watched, _) {
+                final remaining = CoinService.maxRewardedAdsPerDay - watched;
+                final canWatch =
+                    remaining > 0 && !_adBusy && !_coins.isLoading.value;
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    ElevatedButton.icon(
+                      key: const Key('coinsWatchAdButton'),
+                      onPressed: canWatch ? _watchAd : null,
+                      icon: const Icon(Icons.play_circle_fill),
+                      label: Text(
+                        _adBusy
+                            ? 'Loading ad…'
+                            : 'Watch Ads, Earn Coins  •  +${CoinService.rewardPerAd} coins',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
                         ),
-                        const SizedBox(height: 6),
-                        Text(
-                          'Ads watched today: $watched / '
-                          '${CoinService.maxRewardedAdsPerDay} '
-                          '(max ${CoinService.maxAdCoinsPerDay} coins/day)',
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            color: Colors.grey,
-                          ),
-                        ),
-                      ],
-                    );
-                  },
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: TjProTheme.gold,
+                        foregroundColor: Colors.black,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Ads watched today: $watched / '
+                      '${CoinService.maxRewardedAdsPerDay} '
+                      '(max ${CoinService.maxAdCoinsPerDay} coins/day)',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: Colors.grey,
+                      ),
+                    ),
+                  ],
                 );
               },
             ),
@@ -227,12 +230,29 @@ class _CoinsScreenState extends State<CoinsScreen> {
                 padding: const EdgeInsets.all(8),
                 child: Column(
                   children: [
-                    for (final feature in CoinFeature.values)
+                    // v1.5.2 (fix #66): the list is CURATED to
+                    // what actions actually charge — the old list
+                    // iterated every CoinFeature and so advertised
+                    // the abolished export coin prices (720p 50 /
+                    // 1080p 100 / 4K 200) plus two features
+                    // nothing spends. Export is FREE (ads model);
+                    // chroma inside an export is the only
+                    // export-related charge, listed on its own.
+                    for (final (label, price) in const [
+                      ('One Click AI News Maker', '100 coins'),
+                      ('Voiceover', '50 coins'),
+                      ('Chroma key', '50 coins'),
+                      ('Premium template', '25 coins'),
+                      ('AI Enhance (Photo / Video)', '50 coins'),
+                      ('Export 720p', 'FREE'),
+                      ('Export 1080p', 'FREE • ads ke sath'),
+                      ('Export 4K', 'FREE • ads ke sath'),
+                    ])
                       ListTile(
                         dense: true,
-                        title: Text(CoinCosts.labelFor(feature)),
+                        title: Text(label),
                         trailing: Text(
-                          '${CoinCosts.costFor(feature)} coins',
+                          price,
                           style: const TextStyle(
                             fontWeight: FontWeight.w600,
                           ),

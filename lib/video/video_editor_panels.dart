@@ -28,12 +28,18 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
             ),
           ),
           const SizedBox(width: 8),
-          Text(
-            title,
-            style: const TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 15,
-              color: Colors.white,
+          // Flexible (v1.5.2, #69 sweep): long section titles
+          // overflowed the panel Row on narrow screens.
+          Flexible(
+            child: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 15,
+                color: Colors.white,
+              ),
             ),
           ),
         ],

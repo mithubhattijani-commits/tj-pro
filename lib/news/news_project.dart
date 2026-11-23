@@ -119,6 +119,7 @@ class NewsProject {
     this.templateKind = 'nigraanFinal',
     this.breakingVariant = 'breakingRedBanner',
     this.tickerText = '',
+    this.englishTickerText = '',
     this.tickerLabel = 'BREAKING NEWS',
     this.reporterPhotoPath,
     this.reporterName = '',
@@ -211,6 +212,15 @@ class NewsProject {
 
   /// Top ticker text — paste-to-run, same contract as Phase 3.
   String tickerText;
+
+  /// v1.5.2 (fix #65): the SECOND ticker's text — the English
+  /// ticker on the bottom ribbon. Before this field the Ticker
+  /// panel exposed only [tickerText], so the English ticker could
+  /// not be edited from the Maker at all (its text was whatever
+  /// the preset carried). Applied to the effective preset's
+  /// english ribbon in preview + export (see effectivePresetFor);
+  /// empty = the preset's own English ribbon text stands.
+  String englishTickerText;
 
   /// v1.5.1 (fix #49): the EDITABLE side label of the ticker band
   /// (the chip at the ticker's side — 'BREAKING NEWS' by default).
@@ -374,6 +384,7 @@ class NewsProject {
     String? templateKind,
     String? breakingVariant,
     String? tickerText,
+    String? englishTickerText,
     String? tickerLabel,
     String? reporterPhotoPath,
     bool clearReporterPhoto = false,
@@ -422,6 +433,7 @@ class NewsProject {
       templateKind: templateKind ?? this.templateKind,
       breakingVariant: breakingVariant ?? this.breakingVariant,
       tickerText: tickerText ?? this.tickerText,
+      englishTickerText: englishTickerText ?? this.englishTickerText,
       tickerLabel: tickerLabel ?? this.tickerLabel,
       reporterPhotoPath:
           clearReporterPhoto ? null : (reporterPhotoPath ?? this.reporterPhotoPath),
@@ -478,6 +490,7 @@ class NewsProject {
         'templateKind': templateKind,
         'breakingVariant': breakingVariant,
         'tickerText': tickerText,
+        'englishTickerText': englishTickerText,
         'tickerLabel': tickerLabel,
         'reporterPhotoPath': reporterPhotoPath,
         'reporterName': reporterName,
@@ -580,6 +593,7 @@ class NewsProject {
       breakingVariant:
           (json['breakingVariant'] as String?) ?? 'breakingRedBanner',
       tickerText: (json['tickerText'] as String?) ?? '',
+      englishTickerText: (json['englishTickerText'] as String?) ?? '',
       tickerLabel: (json['tickerLabel'] as String?) ?? 'BREAKING NEWS',
       reporterPhotoPath: json['reporterPhotoPath'] as String?,
       reporterName: (json['reporterName'] as String?) ?? '',

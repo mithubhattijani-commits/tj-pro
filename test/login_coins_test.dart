@@ -17,8 +17,11 @@ void main() {
     test('earn constants', () {
       expect(CoinService.rewardPerAd, 50);
       expect(CoinService.dailyFreeCoins, 50);
-      expect(CoinService.maxRewardedAdsPerDay, 20);
-      expect(CoinService.maxAdCoinsPerDay, 1000);
+      // The cap is 50 ads/day (the user's ads spec, also the
+      // server-side tjpro_reward_daily_cap) — this expectation
+      // still said 20/1000 from the first draft of the plan.
+      expect(CoinService.maxRewardedAdsPerDay, 50);
+      expect(CoinService.maxAdCoinsPerDay, 2500);
     });
 
     test('spend costs match the plan', () {

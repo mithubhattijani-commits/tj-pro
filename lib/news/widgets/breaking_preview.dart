@@ -813,18 +813,25 @@ class _VideoIntroPreviewState extends State<VideoIntroPreview> {
               color: const Color(0xFF01B0FF),
               child: Row(
                 children: [
-                  Container(
-                    color: const Color(0xFFD50000),
-                    alignment: Alignment.center,
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    child: Text(
-                      NigraanFinalLayout.tickerChipText,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: tickerH * 0.45,
-                        fontWeight: FontWeight.bold,
-                        fontFamily: _kasheeda(
-                          NigraanFinalLayout.tickerChipText,
+                  // Flexible (v1.5.2, #69 sweep): at small
+                  // preview widths (library cards) the chip alone
+                  // could exceed the band and overflow the Row.
+                  Flexible(
+                    child: Container(
+                      color: const Color(0xFFD50000),
+                      alignment: Alignment.center,
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      child: Text(
+                        NigraanFinalLayout.tickerChipText,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: tickerH * 0.45,
+                          fontWeight: FontWeight.bold,
+                          fontFamily: _kasheeda(
+                            NigraanFinalLayout.tickerChipText,
+                          ),
                         ),
                       ),
                     ),

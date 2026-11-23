@@ -1,7 +1,7 @@
 name: tj_pro
 description: "TJ Pro — free offline photo and video editor for Android."
 publish_to: 'none'
-version: 1.5.1+15
+version: 1.5.2+16
 
 environment:
   sdk: ^3.13.7

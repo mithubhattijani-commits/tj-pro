@@ -64,6 +64,7 @@ import 'news_project.dart';
 import 'template_studio_screen.dart';
 import 'widgets/breaking_preview.dart';
 import 'widgets/clip_picker.dart';
+import 'widgets/studio_pickers.dart';
 import 'widgets/nigraan_final_preview.dart';
 import 'widgets/reel_export_card.dart';
 import 'widgets/voice_preview_player.dart';
@@ -1038,6 +1039,11 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // v1.5.2 (coherence, fixes #57/#62b/#63b): the Final
+            // family is TWO choices — Final 3-Ribbon and Classic
+            // 2-Ribbon — and each sets the preset variant along
+            // with the kind, so this screen can never label a
+            // Classic render as 'Final 3-Ribbon' either.
             Row(
               children: [
                 Expanded(
@@ -1045,9 +1051,23 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
                     kind: 'nigraanFinal',
                     label: 'Final 3-Ribbon',
                     project: project,
+                    finalVariant: kFinalVariant3,
                   ),
                 ),
                 const SizedBox(width: 8),
+                Expanded(
+                  child: _templateChoice(
+                    kind: 'nigraanFinal',
+                    label: 'Classic 2-Ribbon',
+                    project: project,
+                    finalVariant: kFinalVariantClassic2,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
                 Expanded(
                   child: _templateChoice(
                     kind: 'breaking',
@@ -1181,7 +1201,7 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
               'Voiceover: ${project.voiceoverPath == null ? 'nahi bani' : '${project.voiceoverDurationSec == null ? '' : '${formatVoiceDuration(project.voiceoverDurationSec!)} • '}${_voice.apiName}'}',
             ),
             Text(
-              'Template: ${project.templateKind == 'nigraanFinal' ? 'Final 3-Ribbon' : project.templateKind == 'breaking' ? 'Breaking • ${BreakingVariant.fromId(project.breakingVariant).label}' : 'Classic'}',
+              'Template: ${templateDisplayLabel(templateKind: project.templateKind, isFinal3: _preset?.finalIs3Ribbon ?? true, breakingVariantLabel: BreakingVariant.fromId(project.breakingVariant).label)}',
             ),
             Text('Ticker: ${project.tickerText.isEmpty && _tickerController.text.trim().isEmpty ? 'off' : 'on'}'),
             Text('Subtitles: ${project.subtitles.length} lines'),
@@ -1487,15 +1507,26 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
     required String kind,
     required String label,
     required NewsProject project,
+    String? finalVariant,
   }) {
-    final selected = project.templateKind == kind;
+    // v1.5.2 (coherence): a Final-family choice is selected only
+    // when BOTH the kind and the preset variant match, and
+    // tapping it sets both — the same rule as the News Maker.
+    final selected = finalVariant == null
+        ? project.templateKind == kind
+        : project.templateKind == kind &&
+            (_preset?.finalVariant ?? kFinalVariant3) == finalVariant;
     return InkWell(
-      key: Key('aiTemplateChoice-$kind'),
+      key: Key('aiTemplateChoice-$kind-${finalVariant ?? 'plain'}'),
       onTap: () {
         setState(() {
           project.templateKind = kind;
           project.breaking = kind == 'breaking';
         });
+        if (finalVariant != null && _preset != null) {
+          _preset!.finalVariant = finalVariant;
+          unawaited(persistPresetChange(_preset!));
+        }
         _scheduleSave();
       },
       borderRadius: BorderRadius.circular(12),

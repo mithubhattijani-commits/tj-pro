@@ -5,7 +5,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+
 import 'package:url_launcher/url_launcher.dart';
 
 import 'theme.dart';
@@ -17,7 +17,7 @@ import 'news/share_earn_screen.dart';
 import 'news/store_screen.dart';
 import 'news/templates_library_screen.dart';
 import 'news/tts_studio_screen.dart';
-import 'photo/photo_editor_screen.dart';
+
 import 'app_config.dart';
 import 'projects/projects_hub_screen.dart';
 import 'services/auth_service.dart';
@@ -27,11 +27,10 @@ import 'services/referral_service.dart';
 import 'services/remote_config_service.dart';
 import 'services/unity_ads_service.dart';
 import 'services/update_service.dart';
-import 'video/video_editor_screen.dart';
+
 import 'live/live_studio_screen.dart';
 import 'news/news_studio_screen.dart';
 import 'widgets/banner_ad_widget.dart';
-import 'widgets/coins_pill.dart';
 import 'widgets/help_whatsapp_button.dart';
 import 'widgets/update_ui.dart';
 
@@ -227,16 +226,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  /// Support row tap: the same WhatsApp deep link the old Support
-  /// card used.
-  Future<void> _openSupportWhatsApp() async {
-    final uri = Uri.parse(AppConfig.supportWhatsAppLink);
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    }
-  }
-
-  /// About row tap: the old About card's text, as a dialog (the
+  /// About tap: the old About card's text, as a dialog (the
   /// card itself was part of the de-grouped MORE list).
   void _showAbout() {
     showDialog<void>(
@@ -283,9 +273,18 @@ class _HomeScreenState extends State<HomeScreen> {
                   tooltip: 'TJ Pro — Go Pro',
                   onPressed: () => _open(const ProScreen()),
                 ),
-                // Coins pill (Phase 10): live balance, hidden for
-                // admins; tap opens the Coins screen.
-                const CoinsPill(),
+                // v1.5.2 (fix #54, app-wide duplicate sweep): the
+                // Coins pill is GONE from the AppBar — it was a
+                // second Coins entry point next to the Watch Ads
+                // card below (which now carries the live balance
+                // itself). ONE entry point per action.
+                // Account (its ONE Home entry — it lived only in
+                // the deleted MORE list).
+                IconButton(
+                  icon: const Icon(Icons.person_outline),
+                  tooltip: 'Account',
+                  onPressed: _accountTap,
+                ),
               ],
             );
           },
@@ -580,17 +579,26 @@ class _HomeScreenState extends State<HomeScreen> {
                         const SizedBox(height: 16),
                         // Two half cards (S1): Watch Ads / Earn Coins
                         // (same Coins screen the old UI opened) and
-                        // Invite / Share & Earn.
+                        // Invite / Share & Earn. v1.5.2 (fix #55):
+                        // the Watch Ads card carries the LIVE coin
+                        // balance in its subtitle — the earning
+                        // entry point and the balance in one glance.
                         Row(
                           children: <Widget>[
                             Expanded(
-                              child: _HalfCard(
-                                icon: Icons.monetization_on,
-                                iconColor: const Color(0xFFF59E0B),
-                                title: 'Watch Ads',
-                                subtitle: 'Earn Coins',
-                                onTap: () =>
-                                    _open(const CoinsScreen()),
+                              child: ValueListenableBuilder<int>(
+                                valueListenable:
+                                    CoinService.instance.balance,
+                                builder: (context, balance, _) =>
+                                    _HalfCard(
+                                  icon: Icons.monetization_on,
+                                  iconColor: const Color(0xFFF59E0B),
+                                  title: 'Watch Ads',
+                                  subtitle:
+                                      'Earn Coins • Balance: $balance',
+                                  onTap: () =>
+                                      _open(const CoinsScreen()),
+                                ),
                               ),
                             ),
                             const SizedBox(width: 12),
@@ -602,6 +610,35 @@ class _HomeScreenState extends State<HomeScreen> {
                                 subtitle: 'Share & Earn',
                                 onTap: () =>
                                     _open(const ShareEarnScreen()),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        // v1.5.2 (fix #54): the second half-card row
+                        // re-homes the two MORE-list destinations
+                        // that had no top entry — Check for updates
+                        // and About — each exactly once.
+                        Row(
+                          children: <Widget>[
+                            Expanded(
+                              child: _HalfCard(
+                                icon: Icons.system_update,
+                                iconColor: const Color(0xFF38BDF8),
+                                title: 'Updates',
+                                subtitle: 'Check for updates',
+                                onTap: () => UpdateService.checkManually(
+                                    context),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: _HalfCard(
+                                icon: Icons.info_outline,
+                                iconColor: const Color(0xFFA78BFA),
+                                title: 'About',
+                                subtitle: 'TJ Pro • Nigraan TV',
+                                onTap: _showAbout,
                               ),
                             ),
                           ],
@@ -655,13 +692,10 @@ class _HomeScreenState extends State<HomeScreen> {
                                 onTap: () =>
                                     _open(const TtsStudioScreen()),
                               ),
-                              const SizedBox(width: 12),
-                              _WhatsNewCard(
-                                asset: 'assets/jaani_ad_banner.jpg',
-                                label: 'Effects Packs',
-                                onTap: () =>
-                                    _open(const StoreScreen()),
-                              ),
+                              // v1.5.2 (fix #54): the 'Effects
+                              // Packs' card is REMOVED — it opened
+                              // the Store, which the 'Store >' link
+                              // above already opens (one entry).
                             ],
                           ),
                         ),
@@ -688,142 +722,20 @@ class _HomeScreenState extends State<HomeScreen> {
                             );
                           },
                         ),
-                        // MORE (v1.5.0, H1 + fix #24): the old long
-                        // plain list of full-width cards is now
-                        // GROUPED cards — one card per theme, one row
-                        // per destination. Every destination the old
-                        // list carried is still here (nothing
-                        // removed): News Studio + Online Store, the
-                        // three editors, Coins & Pro (incl. Share &
-                        // Earn), Account & Support.
-                        const Text(
-                          'MORE',
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 1.5,
-                            color: Color(0xFFF5C542),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        _GroupedCard(
-                          rows: [
-                            if (AppConfig.newsStudioEnabled)
-                              _GroupedRow(
-                                icon: Icons.newspaper,
-                                title: 'News Studio',
-                                subtitle: 'Bulletins, templates, live',
-                                onTap: () =>
-                                    _open(const NewsStudioScreen()),
-                              ),
-                            _GroupedRow(
-                              icon: Icons.storefront,
-                              title: 'Online Store',
-                              subtitle: 'Templates, music, ribbons',
-                              onTap: () => _open(const StoreScreen()),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        _GroupedCard(
-                          rows: [
-                            if (AppConfig.photoEditorEnabled)
-                              _GroupedRow(
-                                icon: Icons.photo,
-                                title: 'Photo Editor',
-                                subtitle:
-                                    'Filters, crop, rotate, brightness, text, AI tools',
-                                onTap: () =>
-                                    _open(const PhotoEditorScreen()),
-                              ),
-                            if (AppConfig.videoEditorEnabled)
-                              _GroupedRow(
-                                icon: Icons.videocam,
-                                title: 'Video Editor',
-                                subtitle:
-                                    'Trim, cut & merge, text, music, speed, filters, crossfade',
-                                onTap: () =>
-                                    _open(const VideoEditorScreen()),
-                              ),
-                            if (AppConfig.liveStudioEnabled)
-                              _GroupedRow(
-                                icon: Icons.live_tv,
-                                title: 'Live Studio',
-                                subtitle:
-                                    'Facebook + YouTube par ek saath live',
-                                onTap: () =>
-                                    _open(const LiveStudioScreen()),
-                              ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        _GroupedCard(
-                          rows: [
-                            _GroupedRow(
-                              icon: Icons.monetization_on,
-                              title: 'Coins',
-                              subtitle: '',
-                              subtitleWidget:
-                                  ValueListenableBuilder<int>(
-                                valueListenable:
-                                    CoinService.instance.balance,
-                                builder: (context, balance, _) => Text(
-                                  'Balance: $balance coins — Watch Ads se kamayein.',
-                                ),
-                              ),
-                              onTap: () => _open(const CoinsScreen()),
-                            ),
-                            _GroupedRow(
-                              icon: Icons.workspace_premium,
-                              title: 'Go Pro',
-                              subtitle:
-                                  'Weekly Rs 200 • 15 din Rs 500 • Monthly Rs 1000',
-                              onTap: () => _open(const ProScreen()),
-                            ),
-                            _GroupedRow(
-                              icon: Icons.group_add,
-                              title: 'Share & Earn',
-                              subtitle:
-                                  'Apna link share karein — har naye user par 100 coins.',
-                              onTap: () =>
-                                  _open(const ShareEarnScreen()),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        _GroupedCard(
-                          rows: [
-                            _GroupedRow(
-                              icon: Icons.login,
-                              title: 'Account',
-                              subtitle: '',
-                              subtitleWidget: const _AccountSubtitle(),
-                              onTap: () => _accountTap(),
-                            ),
-                            _GroupedRow(
-                              icon: Icons.system_update,
-                              title: 'Check for updates',
-                              subtitle:
-                                  'Naya version aaye to yahan se update karein.',
-                              onTap: () =>
-                                  UpdateService.checkManually(context),
-                            ),
-                            _GroupedRow(
-                              icon: Icons.support_agent,
-                              title: 'مدد اور سپورٹ',
-                              subtitle:
-                                  'Jaani Bhatti — ${AppConfig.supportWhatsAppNumber}',
-                              onTap: _openSupportWhatsApp,
-                            ),
-                            _GroupedRow(
-                              icon: Icons.info_outline,
-                              title: 'About',
-                              subtitle:
-                                  'TJ Pro by Nigraan TV — offline photo & video editor',
-                              onTap: _showAbout,
-                            ),
-                          ],
-                        ),
+                        // v1.5.2 (fix #54 — the user's explicit
+                        // order): the ENTIRE bottom MORE list is
+                        // DELETED. Every row in it duplicated a top
+                        // entry (Invite, Coins, Pro, the editors,
+                        // Live Studio, News Studio, the Store) or
+                        // has been re-homed exactly once above:
+                        // Account -> the AppBar person icon,
+                        // Updates + About -> the second half-card
+                        // row, Support -> the HelpWhatsAppRow at
+                        // the bottom of this screen. The editors
+                        // live behind the CREATE NEW hubs, News
+                        // Studio behind its bottom-nav tab, the
+                        // Store behind 'Store >', Pro behind the
+                        // AppBar crown.
                         const SizedBox(height: 16),
                         const Text(
                           'Works offline. No account, no uploads — '
@@ -1300,26 +1212,6 @@ Future<void> _confirmSignOutFlow(
   }
 }
 
-/// The Account row's live subtitle (v1.5.0): signed-in email or the
-/// guest line, rebuilt on auth-state changes.
-class _AccountSubtitle extends StatelessWidget {
-  const _AccountSubtitle();
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<AuthState>(
-      stream: AuthService.authStateChanges,
-      builder: (context, snapshot) {
-        final signedIn = AuthService.isSignedIn;
-        return Text(
-          signedIn
-              ? (AuthService.currentEmail ?? 'Signed in')
-              : 'Guest — sign in to save your coins',
-        );
-      },
-    );
-  }
-}
 
 /// A real crown glyph (v1.5.0, #13) — Material has no crown icon,
 /// and Icons.workspace_premium reads as a medal/rosette. Three
@@ -1374,59 +1266,3 @@ class _CrownPainter extends CustomPainter {
   bool shouldRepaint(_CrownPainter oldDelegate) =>
       oldDelegate.color != color;
 }
-
-/// One row of a grouped MORE card (v1.5.0): plain data — the card
-/// renders it as a ListTile.
-class _GroupedRow {
-  const _GroupedRow({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.onTap,
-    this.subtitleWidget,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final VoidCallback onTap;
-
-  /// When set, rendered as the subtitle instead of [subtitle]
-  /// (live values: coins balance, account email).
-  final Widget? subtitleWidget;
-}
-
-/// A grouped MORE card (v1.5.0, H1): several destination rows in
-/// ONE card with hairline dividers — the grouped replacement for
-/// the old list of separate full-width cards.
-class _GroupedCard extends StatelessWidget {
-  const _GroupedCard({required this.rows});
-
-  final List<_GroupedRow> rows;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      elevation: 2,
-      child: Column(
-        children: [
-          for (var i = 0; i < rows.length; i++) ...[
-            if (i > 0) const Divider(height: 1, indent: 56),
-            ListTile(
-              leading: Icon(
-                rows[i].icon,
-                color: Theme.of(context).colorScheme.primary,
-              ),
-              title: Text(rows[i].title),
-              subtitle: rows[i].subtitleWidget ??
-                  Text(rows[i].subtitle),
-              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-              onTap: rows[i].onTap,
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-

@@ -413,8 +413,12 @@ void main() {
         ),
       );
       await _pumpFrames(tester);
+      // v1.5.2: template choices live in the Template TOOL panel
+      // as visual cards (the old inline choice row is gone).
+      await tester.tap(find.byKey(const Key('makerTool-template')));
+      await _pumpFrames(tester);
       await tester.tap(
-        find.byKey(const Key('makerTemplateChoice-breaking')),
+        find.byKey(const Key('templateCard-breaking')),
       );
       await _pumpFrames(tester);
       expect(project.templateKind, 'breaking');
@@ -476,6 +480,13 @@ void main() {
         find.byKey(const Key('aiBreakingVariant-topHeadlineBar')),
         findsOneWidget,
       );
+      // v1.5.2: the graphics step grew (two template rows), so
+      // the chip can be built yet below the fold — bring it fully
+      // into view before tapping or the tap misses.
+      await tester.ensureVisible(
+        find.byKey(const Key('aiBreakingVariant-topHeadlineBar')),
+      );
+      await _pumpFrames(tester);
       await tester.tap(
         find.byKey(const Key('aiBreakingVariant-topHeadlineBar')),
       );

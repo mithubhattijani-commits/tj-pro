@@ -67,9 +67,17 @@ const _filterLabels = {
 /// look keys it shows: `f:<PhotoFilter name>` or `lut:<LUT name>`.
 const _filterCategories = <String, List<String>>{
   'Feature': [
-    'f:normal', 'f:warm', 'f:cool', 'f:blackWhite', 'f:vivid',
-    'f:sepia', 'lut:TealOrange', 'lut:Vintage', 'lut:Noir',
-    'lut:Golden', 'lut:CoolNight',
+    'f:normal',
+    'f:warm',
+    'f:cool',
+    'f:blackWhite',
+    'f:vivid',
+    'f:sepia',
+    'lut:TealOrange',
+    'lut:Vintage',
+    'lut:Noir',
+    'lut:Golden',
+    'lut:CoolNight',
   ],
   'Lunar': ['f:blackWhite', 'f:cool', 'lut:Noir', 'lut:CoolNight'],
   'Skin': ['f:warm', 'f:sepia', 'lut:Golden'],
@@ -101,8 +109,22 @@ const _palette = <Color>[
 ];
 
 const _stickerGlyphs = <String>[
-  '★', '♥', '⚡', '☀', '☾', '♠', '♣', '♦',
-  '😊', '😂', '🔥', '👍', '🎉', '✨', '🌟', '💛',
+  '★',
+  '♥',
+  '⚡',
+  '☀',
+  '☾',
+  '♠',
+  '♣',
+  '♦',
+  '😊',
+  '😂',
+  '🔥',
+  '👍',
+  '🎉',
+  '✨',
+  '🌟',
+  '💛',
 ];
 
 /// Top-level size probe for compute() (same pattern as AiService).
@@ -336,8 +358,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
   String? _activePhotoTool;
   // InShot-style HSL state: 8 colors × [hue, sat, light].
   // Colors: Red, Orange, Yellow, Green, Cyan, Blue, Purple, Magenta.
-  List<List<double>> _hslAdjustments =
-      List.generate(8, (_) => [0.0, 1.0, 0.0]);
+  List<List<double>> _hslAdjustments = List.generate(8, (_) => [0.0, 1.0, 0.0]);
   int _hslSelectedColor = 0;
   final GlobalKey _previewKey2 = GlobalKey();
   // Rotate/scale handle drag bookkeeping (text box handle).
@@ -393,43 +414,39 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
   void _fail(String s) {
     _setStatus(s);
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(s)),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(s)));
     }
   }
 
   List<double> get _matrix => buildColorMatrix(
-        filter: _filter,
-        brightness: _brightness,
-        contrast: _contrast,
-        saturation: _saturation,
-        filterIntensity: _filterIntensity,
-        exposure: _exposure,
-        temperature: _temperature,
-        tint: _tint,
-        vibrance: _vibrance,
-        fade: _fade,
-      );
+    filter: _filter,
+    brightness: _brightness,
+    contrast: _contrast,
+    saturation: _saturation,
+    filterIntensity: _filterIntensity,
+    exposure: _exposure,
+    temperature: _temperature,
+    tint: _tint,
+    vibrance: _vibrance,
+    fade: _fade,
+  );
 
-  bool get _hslIsNeutral => _hslAdjustments.every(
-        (a) => a[0] == 0 && a[1] == 1.0 && a[2] == 0,
-      );
+  bool get _hslIsNeutral =>
+      _hslAdjustments.every((a) => a[0] == 0 && a[1] == 1.0 && a[2] == 0);
 
   bool get _curveIsNeutral => _curvePoints.values.every(
-        (pts) =>
-            pts.length == 2 &&
-            pts.first == const Offset(0, 0) &&
-            pts.last == const Offset(1, 1),
-      );
+    (pts) =>
+        pts.length == 2 &&
+        pts.first == const Offset(0, 0) &&
+        pts.last == const Offset(1, 1),
+  );
 
   /// Build the four 256-entry curve LUTs ([rgb, r, g, b]) from the
   /// editor's control points (sorted by x, linear interpolation,
   /// endpoints pinned) — the exact tables applyToneCurve consumes.
   List<List<int>> _buildCurveLuts() {
     List<int> lutFor(String ch) {
-      final pts = [..._curvePoints[ch]!]
-        ..sort((a, b) => a.dx.compareTo(b.dx));
+      final pts = [..._curvePoints[ch]!]..sort((a, b) => a.dx.compareTo(b.dx));
       final lut = List<int>.filled(256, 0);
       for (var i = 0; i < 256; i++) {
         final x = i / 255;
@@ -635,9 +652,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     _fade = 0;
     _hueShift = 0;
     _grain = 0;
-    _curvePoints.updateAll(
-      (_, _) => [const Offset(0, 0), const Offset(1, 1)],
-    );
+    _curvePoints.updateAll((_, _) => [const Offset(0, 0), const Offset(1, 1)]);
     _straighten = 0;
     _cropPreset = 'free';
     _hslAdjustments = List.generate(8, (_) => [0.0, 1.0, 0.0]);
@@ -961,7 +976,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
         _fail(
           res.error == 'insufficient_balance'
               ? 'Coins kam hain — Coins section se rewarded ads '
-                  'dekh kar coins kamayein.'
+                    'dekh kar coins kamayein.'
               : 'Unlock nahi hua (${res.error ?? 'error'}).',
         );
         return false;
@@ -990,8 +1005,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
   }
 
   /// Runs a FREE enhance job (no coin gate). Shows busy state.
-  Future<bool> _runEnhance(
-      String label, Future<void> Function() job) async {
+  Future<bool> _runEnhance(String label, Future<void> Function() job) async {
     final file = _workingFile;
     if (file == null || _busy) return false;
     setState(() {
@@ -1021,11 +1035,13 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
       onProgress: (v) => progress.value = v,
     );
     if (!mounted) return future;
-    unawaited(future.whenComplete(() {
-      if (mounted) {
-        Navigator.of(context, rootNavigator: true).pop();
-      }
-    }));
+    unawaited(
+      future.whenComplete(() {
+        if (mounted) {
+          Navigator.of(context, rootNavigator: true).pop();
+        }
+      }),
+    );
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -1038,8 +1054,10 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
             children: [
               LinearProgressIndicator(value: v > 0 ? v : null),
               const SizedBox(height: 10),
-              Text('${(v * 100).round()}% — pehli dafa hi download '
-                  'hota hai, phir offline chalta hai.'),
+              Text(
+                '${(v * 100).round()}% — pehli dafa hi download '
+                'hota hai, phir offline chalta hai.',
+              ),
             ],
           ),
         ),
@@ -1072,8 +1090,11 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
       if (!ok) {
         // v1.5.0 (#27): the TRUE typed reason — a hosting/size
         // problem is never misreported as the user's internet.
-        _fail(ModelPackService.describeFailure(
-            ModelPackService.instance.lastFailure));
+        _fail(
+          ModelPackService.describeFailure(
+            ModelPackService.instance.lastFailure,
+          ),
+        );
         return false;
       }
     }
@@ -1175,9 +1196,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
   Future<void> _flattenOnColor() async {
     final ok = await _runEnhance('Applying colour background', () async {
       final image = await _decodeWorking();
-      await _replaceWorking(
-        flattenOnColor(image, _replaceBgColor.toARGB32()),
-      );
+      await _replaceWorking(flattenOnColor(image, _replaceBgColor.toARGB32()));
     });
     if (ok) setState(() => _hasTransparency = false);
   }
@@ -1315,11 +1334,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     final value = _effectValue / 100;
     final ok = await _runEnhance('Applying effect', () async {
       final image = await _decodeWorking();
-      final out = await applyClassicEffect(
-        image,
-        effect,
-        intensity: value,
-      );
+      final out = await applyClassicEffect(image, effect, intensity: value);
       await _replaceWorking(out);
     });
     if (ok) {
@@ -1369,11 +1384,8 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
   Future<void> _applyFrame() async {
     await _runEnhance('Adding frame', () async {
       final image = await _decodeWorking();
-      final widthPx =
-          math.max(2, (image.width * _frameWidthPct / 100).round());
-      await _replaceWorking(
-        addBorder(image, widthPx, _frameColor.toARGB32()),
-      );
+      final widthPx = math.max(2, (image.width * _frameWidthPct / 100).round());
+      await _replaceWorking(addBorder(image, widthPx, _frameColor.toARGB32()));
     });
   }
 
@@ -1398,14 +1410,15 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
   /// edge (needs a cutout first).
   Future<void> _applyOutline() async {
     if (!_hasTransparency) {
-      _fail('Pehle Cutout karein — outline transparent edge par '
-          'lagta hai.');
+      _fail(
+        'Pehle Cutout karein — outline transparent edge par '
+        'lagta hai.',
+      );
       return;
     }
     await _runEnhance('Adding outline', () async {
       final image = await _decodeWorking();
-      final widthPx =
-          math.max(2, (image.width * _outlineWidth / 1000).round());
+      final widthPx = math.max(2, (image.width * _outlineWidth / 1000).round());
       await _replaceWorking(
         await outlineFromAlpha(
           image,
@@ -1580,21 +1593,25 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
             shadow: false,
             bold: false,
           );
-          overlayParams.add(PhotoOverlayLayerParams(
-            pngBytes: png,
-            centerX: o.center.dx,
-            centerY: o.center.dy,
-            scaleFrac: o.scaleFrac,
-            rotationDegrees: o.rotation,
-          ));
+          overlayParams.add(
+            PhotoOverlayLayerParams(
+              pngBytes: png,
+              centerX: o.center.dx,
+              centerY: o.center.dy,
+              scaleFrac: o.scaleFrac,
+              rotationDegrees: o.rotation,
+            ),
+          );
         } else if (o.path != null) {
-          overlayParams.add(PhotoOverlayLayerParams(
-            imagePath: o.path,
-            centerX: o.center.dx,
-            centerY: o.center.dy,
-            scaleFrac: o.scaleFrac,
-            rotationDegrees: o.rotation,
-          ));
+          overlayParams.add(
+            PhotoOverlayLayerParams(
+              imagePath: o.path,
+              centerX: o.center.dx,
+              centerY: o.center.dy,
+              scaleFrac: o.scaleFrac,
+              rotationDegrees: o.rotation,
+            ),
+          );
         }
       }
       final layerParams = _layers
@@ -1630,8 +1647,8 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
               textAlign: l.alignIndex == 0
                   ? TextAlign.left
                   : l.alignIndex == 2
-                      ? TextAlign.right
-                      : TextAlign.center,
+                  ? TextAlign.right
+                  : TextAlign.center,
             ),
           )
           .toList();
@@ -1724,8 +1741,8 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     l.alignIndex = _textAlign == TextAlign.left
         ? 0
         : _textAlign == TextAlign.right
-            ? 2
-            : 1;
+        ? 2
+        : 1;
     l.shadow = _textShadow;
     l.shadowArgb = _shadowArgbEffective;
     l.shadowDx = _shadowDx;
@@ -1762,8 +1779,8 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     _textAlign = l.alignIndex == 0
         ? TextAlign.left
         : l.alignIndex == 2
-            ? TextAlign.right
-            : TextAlign.center;
+        ? TextAlign.right
+        : TextAlign.center;
     _textShadow = l.shadow;
     _textShadowColor = Color(l.shadowArgb & 0x00FFFFFF | 0xFF000000);
     _shadowOpacity = ((l.shadowArgb >> 24) & 0xFF) / 255;
@@ -1982,11 +1999,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              icon,
-              size: 24,
-              color: selected ? _exportRed : Colors.white,
-            ),
+            Icon(icon, size: 24, color: selected ? _exportRed : Colors.white),
             const SizedBox(height: 3),
             Text(
               label,
@@ -2038,7 +2051,8 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
                   textAlign: TextAlign.center,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: labelStyle ??
+                  style:
+                      labelStyle ??
                       const TextStyle(color: Colors.white, fontSize: 10),
                 ),
               ],
@@ -2082,8 +2096,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
             onTapUp: (_) => setState(() => _comparing = false),
             onTapCancel: () => setState(() => _comparing = false),
             child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
                 color: _comparing ? _accent : Colors.white12,
                 borderRadius: BorderRadius.circular(16),
@@ -2197,7 +2210,12 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
       label: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(label),
+          // Flexible (v1.5.2, #69 sweep): two AI buttons side by
+          // side on a narrow screen overflowed the label Row —
+          // the text ellipsizes instead.
+          Flexible(
+            child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+          ),
           const SizedBox(width: 6),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -2382,10 +2400,10 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
             icon: r.$2 == 0
                 ? Icons.crop_original
                 : r.$2 > r.$3
-                    ? Icons.crop_landscape
-                    : r.$2 == r.$3
-                        ? Icons.crop_square
-                        : Icons.crop_portrait,
+                ? Icons.crop_landscape
+                : r.$2 == r.$3
+                ? Icons.crop_square
+                : Icons.crop_portrait,
             label: r.$1,
             selected: selected.$1 == r.$1,
             onTap: () => onSelect(r),
@@ -2417,8 +2435,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
         SizedBox(
           width: double.infinity,
           child: ElevatedButton.icon(
-            onPressed:
-                _busy || _canvasRatio.$2 == 0 ? null : _applyCanvas,
+            onPressed: _busy || _canvasRatio.$2 == 0 ? null : _applyCanvas,
             icon: const Icon(Icons.check),
             label: const Text('Apply canvas'),
           ),
@@ -2443,8 +2460,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
                   child: ChoiceChip(
                     label: Text(cat),
                     selected: _filterCategory == cat,
-                    onSelected: (_) =>
-                        setState(() => _filterCategory = cat),
+                    onSelected: (_) => setState(() => _filterCategory = cat),
                   ),
                 ),
             ],
@@ -2460,14 +2476,17 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
               for (final key in catKeys)
                 if (key.startsWith('f:'))
                   _lookThumb(
-                    label: _filterLabels[PhotoFilter.values.firstWhere(
-                      (f) => f.name == key.substring(2),
-                    )]!,
-                    selected: _selectedLut.isEmpty &&
+                    label:
+                        _filterLabels[PhotoFilter.values.firstWhere(
+                          (f) => f.name == key.substring(2),
+                        )]!,
+                    selected:
+                        _selectedLut.isEmpty &&
                         _filter.name == key.substring(2),
-                    thumb: _filterThumbs[PhotoFilter.values.firstWhere(
-                      (f) => f.name == key.substring(2),
-                    )],
+                    thumb:
+                        _filterThumbs[PhotoFilter.values.firstWhere(
+                          (f) => f.name == key.substring(2),
+                        )],
                     onTap: () {
                       setState(() {
                         _filter = PhotoFilter.values.firstWhere(
@@ -2683,9 +2702,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
           _hslEditor()
         else
           _SliderRow(
-            label: _adjControls
-                .firstWhere((c) => c.$1 == _adjSel)
-                .$2,
+            label: _adjControls.firstWhere((c) => c.$1 == _adjSel).$2,
             value: _adjValue(_adjSel),
             min: _adjRange(_adjSel).$1,
             max: _adjRange(_adjSel).$2,
@@ -2796,12 +2813,24 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
   Widget _hslEditor() {
     final file = _workingFile;
     const colorNames = <String>[
-      'Red', 'Orange', 'Yellow', 'Green',
-      'Cyan', 'Blue', 'Purple', 'Magenta',
+      'Red',
+      'Orange',
+      'Yellow',
+      'Green',
+      'Cyan',
+      'Blue',
+      'Purple',
+      'Magenta',
     ];
     const colorDots = <Color>[
-      Colors.red, Colors.orange, Colors.yellow, Colors.green,
-      Colors.cyan, Colors.blue, Colors.purple, Colors.pink,
+      Colors.red,
+      Colors.orange,
+      Colors.yellow,
+      Colors.green,
+      Colors.cyan,
+      Colors.blue,
+      Colors.purple,
+      Colors.pink,
     ];
     final adj = _hslAdjustments[_hslSelectedColor];
     return Column(
@@ -2989,15 +3018,18 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
               _aiAction(
                 label: 'Replace with image',
                 icon: Icons.image,
-                onPressed:
-                    file == null || _busy ? null : _replaceBackgroundImage,
+                onPressed: file == null || _busy
+                    ? null
+                    : _replaceBackgroundImage,
               ),
             ],
           ),
           const SizedBox(height: 10),
         ],
-        const Text('Replace with colour',
-            style: TextStyle(fontWeight: FontWeight.bold)),
+        const Text(
+          'Replace with colour',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
         const SizedBox(height: 6),
         _swatchRow(
           value: _replaceBgColor,
@@ -3012,8 +3044,9 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
               _aiAction(
                 label: 'Replace (subject)',
                 icon: Icons.format_color_fill,
-                onPressed:
-                    file == null || _busy ? null : _replaceBackgroundColor,
+                onPressed: file == null || _busy
+                    ? null
+                    : _replaceBackgroundColor,
               ),
             if (_hasTransparency)
               _plainAction(
@@ -3095,8 +3128,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
           value: o.scaleFrac * 100,
           min: 8,
           max: 120,
-          onChanged: (v) =>
-              setState(() => o.scaleFrac = v / 100),
+          onChanged: (v) => setState(() => o.scaleFrac = v / 100),
         ),
         _SliderRow(
           label: 'Rotate',
@@ -3315,8 +3347,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
               _aiAction(
                 label: 'Cutout',
                 icon: Icons.content_cut,
-                onPressed:
-                    file == null || _busy ? null : _removeBackground,
+                onPressed: file == null || _busy ? null : _removeBackground,
               ),
             _plainAction(
               label: 'HQ Cutout',
@@ -3351,16 +3382,14 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
-              onPressed:
-                  _busy || _strokes.isEmpty ? null : _applyEraser,
+              onPressed: _busy || _strokes.isEmpty ? null : _applyEraser,
               icon: const Icon(Icons.check),
               label: const Text('Apply eraser'),
             ),
           ),
         ],
         const Divider(height: 22),
-        const Text('Outline',
-            style: TextStyle(fontWeight: FontWeight.bold)),
+        const Text('Outline', style: TextStyle(fontWeight: FontWeight.bold)),
         const SizedBox(height: 6),
         _swatchRow(
           value: _outlineColor,
@@ -3427,8 +3456,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
             const SizedBox(width: 8),
             Expanded(
               child: ElevatedButton.icon(
-                onPressed:
-                    _busy || _strokes.isEmpty ? null : _applyDoodle,
+                onPressed: _busy || _strokes.isEmpty ? null : _applyDoodle,
                 icon: const Icon(Icons.check),
                 label: const Text('Apply doodle'),
               ),
@@ -3558,8 +3586,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
             ),
         ]),
         const Divider(height: 22),
-        const Text('Straighten',
-            style: TextStyle(fontWeight: FontWeight.bold)),
+        const Text('Straighten', style: TextStyle(fontWeight: FontWeight.bold)),
         _SliderRow(
           label: 'Angle',
           value: _straighten,
@@ -3570,10 +3597,9 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
         SizedBox(
           width: double.infinity,
           child: ElevatedButton.icon(
-            onPressed:
-                file == null || _busy || _straighten == 0
-                    ? null
-                    : _applyStraighten,
+            onPressed: file == null || _busy || _straighten == 0
+                ? null
+                : _applyStraighten,
             icon: const Icon(Icons.check),
             label: const Text('Apply straighten'),
           ),
@@ -3668,8 +3694,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
           children: [
             Expanded(
               child: ElevatedButton.icon(
-                onPressed:
-                    file == null || _busy ? null : () => _rotate(3),
+                onPressed: file == null || _busy ? null : () => _rotate(3),
                 icon: const Icon(Icons.rotate_left),
                 label: const Text('Rotate left'),
               ),
@@ -3677,8 +3702,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
             const SizedBox(width: 8),
             Expanded(
               child: ElevatedButton.icon(
-                onPressed:
-                    file == null || _busy ? null : () => _rotate(1),
+                onPressed: file == null || _busy ? null : () => _rotate(1),
                 icon: const Icon(Icons.rotate_right),
                 label: const Text('Rotate right'),
               ),
@@ -3690,8 +3714,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
           children: [
             Expanded(
               child: OutlinedButton.icon(
-                onPressed:
-                    file == null || _busy ? null : _flipHorizontal,
+                onPressed: file == null || _busy ? null : _flipHorizontal,
                 icon: const Icon(Icons.flip),
                 label: const Text('Flip horizontal'),
               ),
@@ -3707,8 +3730,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
           ],
         ),
         const Divider(height: 22),
-        const Text('Straighten',
-            style: TextStyle(fontWeight: FontWeight.bold)),
+        const Text('Straighten', style: TextStyle(fontWeight: FontWeight.bold)),
         _SliderRow(
           label: 'Angle',
           value: _straighten,
@@ -3719,10 +3741,9 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
         SizedBox(
           width: double.infinity,
           child: ElevatedButton.icon(
-            onPressed:
-                file == null || _busy || _straighten == 0
-                    ? null
-                    : _applyStraighten,
+            onPressed: file == null || _busy || _straighten == 0
+                ? null
+                : _applyStraighten,
             icon: const Icon(Icons.check),
             label: const Text('Apply straighten'),
           ),
@@ -3778,8 +3799,9 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
   // above-bar toolbar + typing bar / Style / Colour / Font panels.
   // ------------------------------------------------------------------
 
-  String get _styleSample =>
-      _text.isEmpty ? 'Nigraan TV' : (_text.length > 16 ? _text.substring(0, 16) : _text);
+  String get _styleSample => _text.isEmpty
+      ? 'Nigraan TV'
+      : (_text.length > 16 ? _text.substring(0, 16) : _text);
 
   Widget _textZone() {
     return Column(
@@ -3800,15 +3822,20 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
                 color: _textTab == 'type' ? _accentLight : Colors.white,
               ),
             ),
-            TextButton(
-              onPressed: () => setState(() => _textTab = 'style'),
-              child: Text(
-                'STYLE',
-                style: TextStyle(
-                  color: _textTab == 'style'
-                      ? _accentLight
-                      : Colors.white,
-                  fontWeight: FontWeight.bold,
+            // Flexible (v1.5.2, #69 sweep): this toolbar Row
+            // overflowed narrow screens — the STYLE button
+            // shrinks/ellipsizes first.
+            Flexible(
+              child: TextButton(
+                onPressed: () => setState(() => _textTab = 'style'),
+                child: Text(
+                  'STYLE',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: _textTab == 'style' ? _accentLight : Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
             ),
@@ -3817,8 +3844,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
               onPressed: () => setState(() => _textTab = 'colour'),
               icon: Icon(
                 Icons.color_lens,
-                color:
-                    _textTab == 'colour' ? _accentLight : Colors.white,
+                color: _textTab == 'colour' ? _accentLight : Colors.white,
               ),
             ),
             TextButton(
@@ -3826,9 +3852,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
               child: Text(
                 'Aa',
                 style: TextStyle(
-                  color: _textTab == 'font'
-                      ? _accentLight
-                      : Colors.white,
+                  color: _textTab == 'font' ? _accentLight : Colors.white,
                   fontWeight: FontWeight.bold,
                   fontSize: 16,
                 ),
@@ -3841,8 +3865,8 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
                   _textAlign = _textAlign == TextAlign.left
                       ? TextAlign.center
                       : _textAlign == TextAlign.center
-                          ? TextAlign.right
-                          : TextAlign.left;
+                      ? TextAlign.right
+                      : TextAlign.left;
                 });
                 _saveActiveLayer();
               },
@@ -3850,8 +3874,8 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
                 _textAlign == TextAlign.left
                     ? Icons.format_align_left
                     : _textAlign == TextAlign.right
-                        ? Icons.format_align_right
-                        : Icons.format_align_center,
+                    ? Icons.format_align_right
+                    : Icons.format_align_center,
                 color: Colors.white,
               ),
             ),
@@ -3886,117 +3910,117 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-        // Layer chips: tap to select the layer being edited.
-        if (_layers.length > 1)
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                for (var i = 0; i < _layers.length; i++)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 6),
-                    child: ChoiceChip(
-                      label: Text('Text ${i + 1}'),
-                      selected: _activeLayer == i,
-                      onSelected: (_) => setState(() {
-                        _saveActiveLayer();
-                        _loadLayer(i);
-                      }),
+          // Layer chips: tap to select the layer being edited.
+          if (_layers.length > 1)
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (var i = 0; i < _layers.length; i++)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: ChoiceChip(
+                        label: Text('Text ${i + 1}'),
+                        selected: _activeLayer == i,
+                        onSelected: (_) => setState(() {
+                          _saveActiveLayer();
+                          _loadLayer(i);
+                        }),
+                      ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
-          ),
-        const SizedBox(height: 6),
-        // Bottom typing bar — every letter updates the canvas LIVE.
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: _textCtrl,
-                focusNode: _textFocus,
-                decoration: const InputDecoration(
-                  hintText: 'Yahan likhein — canvas par live ayega',
-                  border: OutlineInputBorder(),
-                  isDense: true,
+          const SizedBox(height: 6),
+          // Bottom typing bar — every letter updates the canvas LIVE.
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _textCtrl,
+                  focusNode: _textFocus,
+                  decoration: const InputDecoration(
+                    hintText: 'Yahan likhein — canvas par live ayega',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  onChanged: (v) {
+                    setState(() => _text = v);
+                    _saveActiveLayer();
+                  },
                 ),
-                onChanged: (v) {
-                  setState(() => _text = v);
+              ),
+              IconButton(
+                tooltip: 'Add text layer',
+                onPressed: _addTextLayer,
+                icon: const Icon(Icons.add_circle, color: _accentLight),
+              ),
+              IconButton(
+                tooltip: 'Delete this text',
+                onPressed: _activeLayer < 0 ? null : _deleteActiveLayer,
+                icon: const Icon(Icons.delete, color: Colors.redAccent),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          _SliderRow(
+            label: 'Text size',
+            value: _textSize,
+            min: 20,
+            max: 110,
+            onChanged: (v) {
+              setState(() => _textSize = v);
+              _saveActiveLayer();
+            },
+          ),
+          Row(
+            children: [
+              _photoIconChoiceItem(
+                icon: Icons.format_bold,
+                label: 'Bold',
+                selected: _textBold,
+                onTap: () {
+                  setState(() => _textBold = !_textBold);
                   _saveActiveLayer();
                 },
               ),
-            ),
-            IconButton(
-              tooltip: 'Add text layer',
-              onPressed: _addTextLayer,
-              icon: const Icon(Icons.add_circle, color: _accentLight),
-            ),
-            IconButton(
-              tooltip: 'Delete this text',
-              onPressed: _activeLayer < 0 ? null : _deleteActiveLayer,
-              icon: const Icon(Icons.delete, color: Colors.redAccent),
-            ),
-          ],
-        ),
-        const SizedBox(height: 6),
-        _SliderRow(
-          label: 'Text size',
-          value: _textSize,
-          min: 20,
-          max: 110,
-          onChanged: (v) {
-            setState(() => _textSize = v);
-            _saveActiveLayer();
-          },
-        ),
-        Row(
-          children: [
-            _photoIconChoiceItem(
-              icon: Icons.format_bold,
-              label: 'Bold',
-              selected: _textBold,
-              onTap: () {
-                setState(() => _textBold = !_textBold);
-                _saveActiveLayer();
-              },
-            ),
-            _photoIconChoiceItem(
-              icon: Icons.format_italic,
-              label: 'Italic',
-              selected: _textItalic,
-              onTap: () {
-                setState(() => _textItalic = !_textItalic);
-                _saveActiveLayer();
-              },
-            ),
-            _photoIconChoiceItem(
-              icon: Icons.copy,
-              label: 'Copy',
-              selected: false,
-              onTap: _activeLayer < 0 ? null : _duplicateActiveLayer,
-            ),
-          ],
-        ),
-        _SliderRow(
-          label: 'Letter spacing',
-          value: _textLetterSpacing,
-          min: -2,
-          max: 10,
-          onChanged: (v) {
-            setState(() => _textLetterSpacing = v);
-            _saveActiveLayer();
-          },
-        ),
-        _SliderRow(
-          label: 'Line spacing',
-          value: _textLineSpacing,
-          min: 0.8,
-          max: 2.0,
-          onChanged: (v) {
-            setState(() => _textLineSpacing = v);
-            _saveActiveLayer();
-          },
-        ),
+              _photoIconChoiceItem(
+                icon: Icons.format_italic,
+                label: 'Italic',
+                selected: _textItalic,
+                onTap: () {
+                  setState(() => _textItalic = !_textItalic);
+                  _saveActiveLayer();
+                },
+              ),
+              _photoIconChoiceItem(
+                icon: Icons.copy,
+                label: 'Copy',
+                selected: false,
+                onTap: _activeLayer < 0 ? null : _duplicateActiveLayer,
+              ),
+            ],
+          ),
+          _SliderRow(
+            label: 'Letter spacing',
+            value: _textLetterSpacing,
+            min: -2,
+            max: 10,
+            onChanged: (v) {
+              setState(() => _textLetterSpacing = v);
+              _saveActiveLayer();
+            },
+          ),
+          _SliderRow(
+            label: 'Line spacing',
+            value: _textLineSpacing,
+            min: 0.8,
+            max: 2.0,
+            onChanged: (v) {
+              setState(() => _textLineSpacing = v);
+              _saveActiveLayer();
+            },
+          ),
         ],
       ),
     );
@@ -4114,124 +4138,21 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
             childAspectRatio: 1.5,
             children: switch (_styleTab) {
               'CAPTIONS' => [
-                  for (final s in StudioCaptionStyles.all)
-                    _styleTile(
-                      label: s.nameEn,
-                      preview: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: s.backgroundColor != 0
-                              ? Color(s.backgroundColor)
-                              : null,
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          sample,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.center,
-                          style: _applyFontKey(
-                            s.fontId ?? 'default',
-                            TextStyle(
-                              color: Color(s.textColor),
-                              fontSize: 13,
-                              fontWeight: s.bold
-                                  ? FontWeight.bold
-                                  : FontWeight.normal,
-                              shadows: s.shadow
-                                  ? const [
-                                      Shadow(
-                                          color: Colors.black,
-                                          blurRadius: 4)
-                                    ]
-                                  : null,
-                            ),
-                          ),
-                        ),
+                for (final s in StudioCaptionStyles.all)
+                  _styleTile(
+                    label: s.nameEn,
+                    preview: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 3,
                       ),
-                      onTap: () => _applyStudioStyle(s),
-                    ),
-                ],
-              'LABEL' => [
-                  for (final s in StudioCaptionStyles.all.where(
-                    (s) => s.backgroundColor != 0 || s.highlightBg != 0,
-                  ))
-                    _styleTile(
-                      label: s.nameEn,
-                      preview: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Color(
-                            s.backgroundColor != 0
-                                ? s.backgroundColor
-                                : s.highlightBg,
-                          ),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          sample,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
+                      decoration: BoxDecoration(
+                        color: s.backgroundColor != 0
+                            ? Color(s.backgroundColor)
+                            : null,
+                        borderRadius: BorderRadius.circular(6),
                       ),
-                      onTap: () => _applyStudioStyle(s, label: true),
-                    ),
-                  for (final v in const [
-                    ('Message bubble', 0xFF37474F, 0xFFFFFFFF),
-                    ('Sticky note', 0xFFFFF176, 0xFF000000),
-                    ('Brush note', 0xFFFF7043, 0xFFFFFFFF),
-                    ('Paper tape', 0xFFECEFF1, 0xFF000000),
-                    ('Pixel bubble', 0xFF3D5AFE, 0xFFFFFFFF),
-                  ])
-                    _styleTile(
-                      label: v.$1,
-                      preview: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Color(v.$2),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          sample,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: Color(v.$3),
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                      onTap: () => setState(() {
-                        _textBg = true;
-                        _textBgColor = Color(v.$2);
-                        _textColor = Color(v.$3);
-                        _textBold = true;
-                        _saveActiveLayer();
-                      }),
-                    ),
-                ],
-              'TITLE' => [
-                  for (final s in StudioCaptionStyles.all.where(
-                    (s) => const {
-                      'bold_pop',
-                      'one_word',
-                      'spotlight',
-                      'urdu_gulzar_headline',
-                      'pop_up',
-                    }.contains(s.id),
-                  ))
-                    _styleTile(
-                      label: s.nameEn,
-                      preview: Text(
+                      child: Text(
                         sample,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
@@ -4239,44 +4160,153 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
                         style: _applyFontKey(
                           s.fontId ?? 'default',
                           TextStyle(
-                            color: Color(s.highlightColor),
-                            fontSize: 17,
-                            fontWeight: FontWeight.bold,
+                            color: Color(s.textColor),
+                            fontSize: 13,
+                            fontWeight: s.bold
+                                ? FontWeight.bold
+                                : FontWeight.normal,
+                            shadows: s.shadow
+                                ? const [
+                                    Shadow(color: Colors.black, blurRadius: 4),
+                                  ]
+                                : null,
                           ),
                         ),
                       ),
-                      onTap: () => _applyStudioStyle(s),
                     ),
-                ],
-              _ => [
-                  for (final t in const [
-                    ('classic', 'Classic'),
-                    ('neon', 'Neon Lights'),
-                    ('breaking', 'Breaking'),
-                    ('elegant', 'Elegant'),
-                    ('urdu', 'Urdu Gold'),
-                    ('script', 'Script Glow'),
-                  ])
-                    _styleTile(
-                      label: t.$2,
-                      preview: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: t.$1 == 'breaking' ? Colors.red : null,
-                          borderRadius: BorderRadius.circular(6),
+                    onTap: () => _applyStudioStyle(s),
+                  ),
+              ],
+              'LABEL' => [
+                for (final s in StudioCaptionStyles.all.where(
+                  (s) => s.backgroundColor != 0 || s.highlightBg != 0,
+                ))
+                  _styleTile(
+                    label: s.nameEn,
+                    preview: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Color(
+                          s.backgroundColor != 0
+                              ? s.backgroundColor
+                              : s.highlightBg,
                         ),
-                        child: Text(
-                          sample,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.center,
-                          style: _templatePreviewStyle(t.$1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        sample,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
-                      onTap: () => _applyTextTemplate(t.$1),
                     ),
-                ],
+                    onTap: () => _applyStudioStyle(s, label: true),
+                  ),
+                for (final v in const [
+                  ('Message bubble', 0xFF37474F, 0xFFFFFFFF),
+                  ('Sticky note', 0xFFFFF176, 0xFF000000),
+                  ('Brush note', 0xFFFF7043, 0xFFFFFFFF),
+                  ('Paper tape', 0xFFECEFF1, 0xFF000000),
+                  ('Pixel bubble', 0xFF3D5AFE, 0xFFFFFFFF),
+                ])
+                  _styleTile(
+                    label: v.$1,
+                    preview: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Color(v.$2),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        sample,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Color(v.$3),
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    onTap: () => setState(() {
+                      _textBg = true;
+                      _textBgColor = Color(v.$2);
+                      _textColor = Color(v.$3);
+                      _textBold = true;
+                      _saveActiveLayer();
+                    }),
+                  ),
+              ],
+              'TITLE' => [
+                for (final s in StudioCaptionStyles.all.where(
+                  (s) => const {
+                    'bold_pop',
+                    'one_word',
+                    'spotlight',
+                    'urdu_gulzar_headline',
+                    'pop_up',
+                  }.contains(s.id),
+                ))
+                  _styleTile(
+                    label: s.nameEn,
+                    preview: Text(
+                      sample,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: _applyFontKey(
+                        s.fontId ?? 'default',
+                        TextStyle(
+                          color: Color(s.highlightColor),
+                          fontSize: 17,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    onTap: () => _applyStudioStyle(s),
+                  ),
+              ],
+              _ => [
+                for (final t in const [
+                  ('classic', 'Classic'),
+                  ('neon', 'Neon Lights'),
+                  ('breaking', 'Breaking'),
+                  ('elegant', 'Elegant'),
+                  ('urdu', 'Urdu Gold'),
+                  ('script', 'Script Glow'),
+                ])
+                  _styleTile(
+                    label: t.$2,
+                    preview: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: t.$1 == 'breaking' ? Colors.red : null,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        sample,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: _templatePreviewStyle(t.$1),
+                      ),
+                    ),
+                    onTap: () => _applyTextTemplate(t.$1),
+                  ),
+              ],
             },
           ),
         ),
@@ -4293,7 +4323,12 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
           child: Row(
             children: [
               for (final t in const [
-                'TEXT', 'BORDER', 'SHADOW', 'GLOW', 'LABEL', 'OPACITY',
+                'TEXT',
+                'BORDER',
+                'SHADOW',
+                'GLOW',
+                'LABEL',
+                'OPACITY',
               ])
                 Padding(
                   padding: const EdgeInsets.only(right: 6),
@@ -4311,228 +4346,223 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
           child: SingleChildScrollView(
             child: switch (_colourTab) {
               'BORDER' => Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Text('Outline'),
-                        const Spacer(),
-                        Switch(
-                          value: _textOutline,
-                          onChanged: (v) {
-                            setState(() => _textOutline = v);
-                            _saveActiveLayer();
-                          },
-                        ),
-                      ],
-                    ),
-                    _swatchRow(
-                      value: _textOutlineColor,
-                      onChanged: (c) {
-                        setState(() {
-                          _textOutlineColor = c;
-                          _textOutline = true;
-                        });
-                        _saveActiveLayer();
-                      },
-                    ),
-                    _SliderRow(
-                      label: 'Width',
-                      value: _textOutlineWidth,
-                      min: 1,
-                      max: 8,
-                      onChanged: (v) {
-                        setState(() => _textOutlineWidth = v);
-                        _saveActiveLayer();
-                      },
-                    ),
-                  ],
-                ),
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Text('Outline'),
+                      const Spacer(),
+                      Switch(
+                        value: _textOutline,
+                        onChanged: (v) {
+                          setState(() => _textOutline = v);
+                          _saveActiveLayer();
+                        },
+                      ),
+                    ],
+                  ),
+                  _swatchRow(
+                    value: _textOutlineColor,
+                    onChanged: (c) {
+                      setState(() {
+                        _textOutlineColor = c;
+                        _textOutline = true;
+                      });
+                      _saveActiveLayer();
+                    },
+                  ),
+                  _SliderRow(
+                    label: 'Width',
+                    value: _textOutlineWidth,
+                    min: 1,
+                    max: 8,
+                    onChanged: (v) {
+                      setState(() => _textOutlineWidth = v);
+                      _saveActiveLayer();
+                    },
+                  ),
+                ],
+              ),
               'SHADOW' => Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Text('Shadow'),
-                        const Spacer(),
-                        Switch(
-                          value: _textShadow,
-                          onChanged: (v) {
-                            setState(() => _textShadow = v);
-                            _saveActiveLayer();
-                          },
-                        ),
-                      ],
-                    ),
-                    _swatchRow(
-                      value: _textShadowColor,
-                      onChanged: (c) {
-                        setState(() {
-                          _textShadowColor = c;
-                          _textShadow = true;
-                        });
-                        _saveActiveLayer();
-                      },
-                    ),
-                    _SliderRow(
-                      label: 'X offset',
-                      value: _shadowDx,
-                      min: -20,
-                      max: 20,
-                      onChanged: (v) {
-                        setState(() => _shadowDx = v);
-                        _saveActiveLayer();
-                      },
-                    ),
-                    _SliderRow(
-                      label: 'Y offset',
-                      value: _shadowDy,
-                      min: -20,
-                      max: 20,
-                      onChanged: (v) {
-                        setState(() => _shadowDy = v);
-                        _saveActiveLayer();
-                      },
-                    ),
-                    _SliderRow(
-                      label: 'Blur',
-                      value: _shadowBlur,
-                      min: 0,
-                      max: 30,
-                      onChanged: (v) {
-                        setState(() => _shadowBlur = v);
-                        _saveActiveLayer();
-                      },
-                    ),
-                    _SliderRow(
-                      label: 'Opacity %',
-                      value: _shadowOpacity * 100,
-                      min: 0,
-                      max: 100,
-                      onChanged: (v) {
-                        setState(() => _shadowOpacity = v / 100);
-                        _saveActiveLayer();
-                      },
-                    ),
-                  ],
-                ),
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Text('Shadow'),
+                      const Spacer(),
+                      Switch(
+                        value: _textShadow,
+                        onChanged: (v) {
+                          setState(() => _textShadow = v);
+                          _saveActiveLayer();
+                        },
+                      ),
+                    ],
+                  ),
+                  _swatchRow(
+                    value: _textShadowColor,
+                    onChanged: (c) {
+                      setState(() {
+                        _textShadowColor = c;
+                        _textShadow = true;
+                      });
+                      _saveActiveLayer();
+                    },
+                  ),
+                  _SliderRow(
+                    label: 'X offset',
+                    value: _shadowDx,
+                    min: -20,
+                    max: 20,
+                    onChanged: (v) {
+                      setState(() => _shadowDx = v);
+                      _saveActiveLayer();
+                    },
+                  ),
+                  _SliderRow(
+                    label: 'Y offset',
+                    value: _shadowDy,
+                    min: -20,
+                    max: 20,
+                    onChanged: (v) {
+                      setState(() => _shadowDy = v);
+                      _saveActiveLayer();
+                    },
+                  ),
+                  _SliderRow(
+                    label: 'Blur',
+                    value: _shadowBlur,
+                    min: 0,
+                    max: 30,
+                    onChanged: (v) {
+                      setState(() => _shadowBlur = v);
+                      _saveActiveLayer();
+                    },
+                  ),
+                  _SliderRow(
+                    label: 'Opacity %',
+                    value: _shadowOpacity * 100,
+                    min: 0,
+                    max: 100,
+                    onChanged: (v) {
+                      setState(() => _shadowOpacity = v / 100);
+                      _saveActiveLayer();
+                    },
+                  ),
+                ],
+              ),
               'GLOW' => Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Text('Glow'),
-                        const Spacer(),
-                        Switch(
-                          value: _textGlow,
-                          onChanged: (v) {
-                            setState(() => _textGlow = v);
-                            _saveActiveLayer();
-                          },
-                        ),
-                      ],
-                    ),
-                    _swatchRow(
-                      value: _textGlowColor,
-                      onChanged: (c) {
-                        setState(() {
-                          _textGlowColor = c;
-                          _textGlow = true;
-                        });
-                        _saveActiveLayer();
-                      },
-                    ),
-                    _SliderRow(
-                      label: 'Intensity',
-                      value: _glowBlur,
-                      min: 4,
-                      max: 40,
-                      onChanged: (v) {
-                        setState(() => _glowBlur = v);
-                        _saveActiveLayer();
-                      },
-                    ),
-                  ],
-                ),
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Text('Glow'),
+                      const Spacer(),
+                      Switch(
+                        value: _textGlow,
+                        onChanged: (v) {
+                          setState(() => _textGlow = v);
+                          _saveActiveLayer();
+                        },
+                      ),
+                    ],
+                  ),
+                  _swatchRow(
+                    value: _textGlowColor,
+                    onChanged: (c) {
+                      setState(() {
+                        _textGlowColor = c;
+                        _textGlow = true;
+                      });
+                      _saveActiveLayer();
+                    },
+                  ),
+                  _SliderRow(
+                    label: 'Intensity',
+                    value: _glowBlur,
+                    min: 4,
+                    max: 40,
+                    onChanged: (v) {
+                      setState(() => _glowBlur = v);
+                      _saveActiveLayer();
+                    },
+                  ),
+                ],
+              ),
               'LABEL' => Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _photoIconChoiceRail([
-                      _photoIconChoiceItem(
-                        icon: Icons.block,
-                        label: 'None',
-                        selected: !_textBg,
-                        onTap: () {
-                          setState(() => _textBg = false);
-                          _saveActiveLayer();
-                        },
-                      ),
-                      _photoIconChoiceItem(
-                        icon: Icons.bookmark,
-                        label: 'Ribbon',
-                        selected: _textBg,
-                        onTap: () {
-                          setState(() => _textBg = true);
-                          _saveActiveLayer();
-                        },
-                      ),
-                    ]),
-                    const SizedBox(height: 8),
-                    _swatchRow(
-                      value: _textBgColor,
-                      onChanged: (c) {
-                        setState(() {
-                          _textBgColor = c;
-                          _textBg = true;
-                        });
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _photoIconChoiceRail([
+                    _photoIconChoiceItem(
+                      icon: Icons.block,
+                      label: 'None',
+                      selected: !_textBg,
+                      onTap: () {
+                        setState(() => _textBg = false);
                         _saveActiveLayer();
                       },
                     ),
-                  ],
-                ),
+                    _photoIconChoiceItem(
+                      icon: Icons.bookmark,
+                      label: 'Ribbon',
+                      selected: _textBg,
+                      onTap: () {
+                        setState(() => _textBg = true);
+                        _saveActiveLayer();
+                      },
+                    ),
+                  ]),
+                  const SizedBox(height: 8),
+                  _swatchRow(
+                    value: _textBgColor,
+                    onChanged: (c) {
+                      setState(() {
+                        _textBgColor = c;
+                        _textBg = true;
+                      });
+                      _saveActiveLayer();
+                    },
+                  ),
+                ],
+              ),
               'OPACITY' => _SliderRow(
-                  label: 'Opacity %',
-                  value: _textOpacity * 100,
-                  min: 0,
-                  max: 100,
-                  onChanged: (v) {
-                    setState(() => _textOpacity = v / 100);
-                    _saveActiveLayer();
-                  },
-                ),
+                label: 'Opacity %',
+                value: _textOpacity * 100,
+                min: 0,
+                max: 100,
+                onChanged: (v) {
+                  setState(() => _textOpacity = v / 100);
+                  _saveActiveLayer();
+                },
+              ),
               _ => Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _swatchRow(
-                      value: _textColor,
-                      onChanged: (c) {
-                        setState(() => _textColor = c);
-                        _saveActiveLayer();
-                      },
-                    ),
-                    const SizedBox(height: 6),
-                    const Text(
-                      'Custom rang (rainbow):',
-                      style: TextStyle(color: Colors.grey, fontSize: 12),
-                    ),
-                    Slider(
-                      value: HSVColor.fromColor(_textColor).hue,
-                      min: 0,
-                      max: 360,
-                      onChanged: (v) {
-                        setState(() {
-                          _textColor = HSVColor.fromAHSV(
-                            1,
-                            v,
-                            0.85,
-                            1,
-                          ).toColor();
-                        });
-                        _saveActiveLayer();
-                      },
-                    ),
-                  ],
-                ),
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _swatchRow(
+                    value: _textColor,
+                    onChanged: (c) {
+                      setState(() => _textColor = c);
+                      _saveActiveLayer();
+                    },
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Custom rang (rainbow):',
+                    style: TextStyle(color: Colors.grey, fontSize: 12),
+                  ),
+                  Slider(
+                    value: HSVColor.fromColor(_textColor).hue,
+                    min: 0,
+                    max: 360,
+                    onChanged: (v) {
+                      setState(() {
+                        _textColor = HSVColor.fromAHSV(1, v, 0.85, 1).toColor();
+                      });
+                      _saveActiveLayer();
+                    },
+                  ),
+                ],
+              ),
             },
           ),
         ),
@@ -4589,17 +4619,21 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
   TextStyle _layerStyle(_TextLayerData layer, double fontPx, double s) {
     final shadows = <Shadow>[];
     if (layer.glow) {
-      shadows.add(Shadow(
-        color: Color(layer.glowArgb).withValues(alpha: 0.9),
-        blurRadius: layer.glowBlur * s,
-      ));
+      shadows.add(
+        Shadow(
+          color: Color(layer.glowArgb).withValues(alpha: 0.9),
+          blurRadius: layer.glowBlur * s,
+        ),
+      );
     }
     if (layer.shadow) {
-      shadows.add(Shadow(
-        color: Color(layer.shadowArgb),
-        offset: Offset(layer.shadowDx * s, layer.shadowDy * s),
-        blurRadius: layer.shadowBlur * s,
-      ));
+      shadows.add(
+        Shadow(
+          color: Color(layer.shadowArgb),
+          offset: Offset(layer.shadowDx * s, layer.shadowDy * s),
+          blurRadius: layer.shadowBlur * s,
+        ),
+      );
     }
     final base = TextStyle(
       color: Color(layer.colorArgb).withValues(alpha: layer.opacity),
@@ -4619,8 +4653,8 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     final align = layer.alignIndex == 0
         ? TextAlign.left
         : layer.alignIndex == 2
-            ? TextAlign.right
-            : TextAlign.center;
+        ? TextAlign.right
+        : TextAlign.center;
     Widget tw;
     if (layer.outline) {
       tw = Stack(
@@ -4714,8 +4748,9 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
                   });
                 }
               },
-              onLongPress:
-                  _activePhotoTool == 'text' ? () => _layerMenu(index) : null,
+              onLongPress: _activePhotoTool == 'text'
+                  ? () => _layerMenu(index)
+                  : null,
               onPanUpdate: (d) {
                 if (_activePhotoTool != 'text') return;
                 if (!isActive) {
@@ -4727,10 +4762,14 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
                 }
                 setState(() {
                   layer.offset = Offset(
-                    (layer.offset.dx + d.delta.dx / box.width)
-                        .clamp(0.05, 0.95),
-                    (layer.offset.dy + d.delta.dy / box.height)
-                        .clamp(0.05, 0.95),
+                    (layer.offset.dx + d.delta.dx / box.width).clamp(
+                      0.05,
+                      0.95,
+                    ),
+                    (layer.offset.dy + d.delta.dy / box.height).clamp(
+                      0.05,
+                      0.95,
+                    ),
                   );
                   _textOffset = layer.offset;
                 });
@@ -4741,11 +4780,12 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
                   Container(
                     width: w,
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 6, vertical: 4),
+                      horizontal: 6,
+                      vertical: 4,
+                    ),
                     decoration: showHandles
                         ? BoxDecoration(
-                            border:
-                                Border.all(color: Colors.white, width: 1.2),
+                            border: Border.all(color: Colors.white, width: 1.2),
                           )
                         : null,
                     child: _layerTextWidget(layer, s),
@@ -4788,8 +4828,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
                           final local = _toPreviewLocal(d.globalPosition);
                           final v = local - center;
                           _handleStartAngle = math.atan2(v.dy, v.dx);
-                          _handleStartDist =
-                              math.max(20, v.distance);
+                          _handleStartDist = math.max(20, v.distance);
                           _handleStartRot = layer.rotation;
                           _handleStartSize = layer.size;
                         },
@@ -4797,15 +4836,16 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
                           final local = _toPreviewLocal(d.globalPosition);
                           final v = local - center;
                           setState(() {
-                            layer.rotation = _handleStartRot +
-                                (math.atan2(v.dy, v.dx) -
-                                        _handleStartAngle) *
+                            layer.rotation =
+                                _handleStartRot +
+                                (math.atan2(v.dy, v.dx) - _handleStartAngle) *
                                     180 /
                                     math.pi;
-                            layer.size = (_handleStartSize *
-                                    v.distance /
-                                    _handleStartDist)
-                                .clamp(14, 300);
+                            layer.size =
+                                (_handleStartSize *
+                                        v.distance /
+                                        _handleStartDist)
+                                    .clamp(14, 300);
                             _textRotation = layer.rotation;
                             _textSize = layer.size;
                           });
@@ -4884,7 +4924,8 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
 
   Widget _overlayWidget(_OverlayData o, int index, Size box) {
     final w = o.scaleFrac * box.width;
-    final selected = index == _activeOverlay &&
+    final selected =
+        index == _activeOverlay &&
         (_activePhotoTool == 'sticker' || _activePhotoTool == 'pip');
     return Positioned(
       left: o.center.dx * box.width,
@@ -4909,15 +4950,8 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
                     )
                   : null,
               child: o.glyph != null
-                  ? Text(
-                      o.glyph!,
-                      style: TextStyle(fontSize: w * 0.85),
-                    )
-                  : Image.file(
-                      File(o.path!),
-                      width: w,
-                      fit: BoxFit.contain,
-                    ),
+                  ? Text(o.glyph!, style: TextStyle(fontSize: w * 0.85))
+                  : Image.file(File(o.path!), width: w, fit: BoxFit.contain),
             ),
           ),
         ),
@@ -4934,9 +4968,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
       _eraseMaskNear(n);
       return;
     }
-    final argb = _paintMode == 'doodle'
-        ? _doodleColor.toARGB32()
-        : 0xFFFFFFFF;
+    final argb = _paintMode == 'doodle' ? _doodleColor.toARGB32() : 0xFFFFFFFF;
     setState(() {
       _currentStroke = StrokePath(
         argb: argb,
@@ -5000,11 +5032,11 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
                   child: _comparing && _originalFile != null
                       ? Image.file(_originalFile!, fit: BoxFit.fill)
                       : _previewBytes != null && _previewKey == file.path
-                          ? Image.memory(_previewBytes!, fit: BoxFit.fill)
-                          : ColorFiltered(
-                              colorFilter: ColorFilter.matrix(_matrix),
-                              child: Image.file(file, fit: BoxFit.fill),
-                            ),
+                      ? Image.memory(_previewBytes!, fit: BoxFit.fill)
+                      : ColorFiltered(
+                          colorFilter: ColorFilter.matrix(_matrix),
+                          child: Image.file(file, fit: BoxFit.fill),
+                        ),
                 ),
                 for (var i = 0; i < _overlays.length; i++)
                   _overlayWidget(_overlays[i], i, size),
@@ -5016,8 +5048,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
                     child: GestureDetector(
                       behavior: HitTestBehavior.opaque,
                       onPanStart: (d) => _paintStart(d.localPosition, size),
-                      onPanUpdate: (d) =>
-                          _paintUpdate(d.localPosition, size),
+                      onPanUpdate: (d) => _paintUpdate(d.localPosition, size),
                       onPanEnd: (_) => _paintEnd(),
                       child: CustomPaint(
                         painter: _StrokePainter(
@@ -5066,7 +5097,9 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
       // P13: violet identity, same as the rest of the app.
       data: ThemeData.dark().copyWith(
         colorScheme: ColorScheme.fromSeed(
-            seedColor: _accent, brightness: Brightness.dark),
+          seedColor: _accent,
+          brightness: Brightness.dark,
+        ),
       ),
       child: Scaffold(
         backgroundColor: const Color(0xFF121212),
@@ -5081,26 +5114,31 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
                     onPressed: () => Navigator.of(context).maybePop(),
                     icon: const Icon(Icons.arrow_back, color: Colors.white),
                   ),
-                  const Text(
-                    'Photo Editor',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
+                  // Flexible (v1.5.2, #69 sweep): the fixed
+                  // title + 3 icon buttons + Export pill overflow
+                  // narrow screens — the title ellipsizes first.
+                  const Flexible(
+                    child: Text(
+                      'Photo Editor',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
                     ),
                   ),
                   const Spacer(),
                   IconButton(
                     tooltip: 'Pick photo',
                     onPressed: _busy ? null : _pick,
-                    icon: const Icon(Icons.photo_library,
-                        color: Colors.white),
+                    icon: const Icon(Icons.photo_library, color: Colors.white),
                   ),
                   IconButton(
                     tooltip: 'Reset all',
                     onPressed: file == null || _busy ? null : _resetAll,
-                    icon: const Icon(Icons.restart_alt,
-                        color: Colors.white),
+                    icon: const Icon(Icons.restart_alt, color: Colors.white),
                   ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(2, 8, 12, 8),
@@ -5121,8 +5159,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
                   ),
                 ],
               ),
-              if (_busy)
-                const LinearProgressIndicator(minHeight: 2),
+              if (_busy) const LinearProgressIndicator(minHeight: 2),
               // Big preview centre, with floating controls.
               Expanded(
                 child: Stack(
@@ -5134,12 +5171,16 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
                               child: Column(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  const Icon(Icons.photo_library,
-                                      size: 64, color: Colors.white38),
+                                  const Icon(
+                                    Icons.photo_library,
+                                    size: 64,
+                                    color: Colors.white38,
+                                  ),
                                   const SizedBox(height: 12),
-                                  const Text('No photo selected',
-                                      style: TextStyle(
-                                          color: Colors.white70)),
+                                  const Text(
+                                    'No photo selected',
+                                    style: TextStyle(color: Colors.white70),
+                                  ),
                                   const SizedBox(height: 12),
                                   ElevatedButton.icon(
                                     onPressed: _pick,
@@ -5172,17 +5213,21 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
                             children: [
                               IconButton(
                                 tooltip: 'Undo',
-                                onPressed:
-                                    _canUndo && !_busy ? _undo : null,
-                                icon: const Icon(Icons.undo,
-                                    color: Colors.white, size: 19),
+                                onPressed: _canUndo && !_busy ? _undo : null,
+                                icon: const Icon(
+                                  Icons.undo,
+                                  color: Colors.white,
+                                  size: 19,
+                                ),
                               ),
                               IconButton(
                                 tooltip: 'Redo',
-                                onPressed:
-                                    _canRedo && !_busy ? _redo : null,
-                                icon: const Icon(Icons.redo,
-                                    color: Colors.white, size: 19),
+                                onPressed: _canRedo && !_busy ? _redo : null,
+                                icon: const Icon(
+                                  Icons.redo,
+                                  color: Colors.white,
+                                  size: 19,
+                                ),
                               ),
                             ],
                           ),
@@ -5198,7 +5243,9 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
                           bottom: 10,
                           child: Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 6),
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
                             decoration: BoxDecoration(
                               color: Colors.black.withValues(alpha: 0.65),
                               borderRadius: BorderRadius.circular(16),
@@ -5206,7 +5253,9 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
                             child: const Text(
                               'Pinch to zoom',
                               style: TextStyle(
-                                  color: Colors.white, fontSize: 11),
+                                color: Colors.white,
+                                fontSize: 11,
+                              ),
                             ),
                           ),
                         ),
@@ -5220,10 +5269,11 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
                           alignment: Alignment.topCenter,
                           child: Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 6),
+                              horizontal: 12,
+                              vertical: 6,
+                            ),
                             decoration: BoxDecoration(
-                              color:
-                                  Colors.black.withValues(alpha: 0.75),
+                              color: Colors.black.withValues(alpha: 0.75),
                               borderRadius: BorderRadius.circular(16),
                             ),
                             child: Text(
@@ -5231,7 +5281,9 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
-                                  color: Colors.white, fontSize: 12),
+                                color: Colors.white,
+                                fontSize: 12,
+                              ),
                             ),
                           ),
                         ),
@@ -5271,11 +5323,9 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
                   color: const Color(0xFF1B1B1B),
                   child: ListView(
                     scrollDirection: Axis.horizontal,
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 6),
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
                     children: [
-                      for (final t in _toolbar)
-                        _toolItem(t.$1, t.$2, t.$3),
+                      for (final t in _toolbar) _toolItem(t.$1, t.$2, t.$3),
                     ],
                   ),
                 ),
@@ -5335,10 +5385,7 @@ class _CheckerPainter extends CustomPainter {
     for (var y = 0; y * cell < size.height; y++) {
       for (var x = 0; x * cell < size.width; x++) {
         if ((x + y) % 2 == 0) continue;
-        canvas.drawRect(
-          Rect.fromLTWH(x * cell, y * cell, cell, cell),
-          dark,
-        );
+        canvas.drawRect(Rect.fromLTWH(x * cell, y * cell, cell, cell), dark);
       }
     }
   }
@@ -5368,8 +5415,8 @@ class _StrokePainter extends CustomPainter {
       final color = mode == 'doodle'
           ? Color(s.argb)
           : mode == 'erase'
-              ? Colors.white.withValues(alpha: 0.55)
-              : Colors.red.withValues(alpha: 0.45);
+          ? Colors.white.withValues(alpha: 0.55)
+          : Colors.red.withValues(alpha: 0.45);
       final paint = Paint()
         ..color = color
         ..strokeWidth = s.widthFrac * size.width

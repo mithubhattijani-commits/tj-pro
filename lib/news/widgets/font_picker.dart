@@ -77,20 +77,26 @@ class NewsFontPicker extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final fonts = UrduFonts.allWithUser;
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        for (final font in fonts)
+    // v1.5.2 (fix #60, editors' interface law): ONE horizontal
+    // swipeable rail of chips — the same presentation the Video /
+    // Photo Editor panels use for every choice row — instead of a
+    // multi-row Wrap with uneven rows.
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+        for (final font in fonts) ...[
           ChoiceChip(
             key: Key('fontChoice-${font.id}'),
             label: Text(font.name),
             selected: selectedId == font.id,
             onSelected: (_) => onChanged(font.id),
           ),
+          const SizedBox(width: 8),
+        ],
         // The selected USER font can be removed again (its file +
         // registry entry go away; surfaces fall back to Kasheeda).
-        if (selectedId.startsWith('user:'))
+        if (selectedId.startsWith('user:')) ...[
           ActionChip(
             key: const Key('fontDeleteChip'),
             avatar: const Icon(Icons.delete_outline, size: 16),
@@ -104,13 +110,16 @@ class NewsFontPicker extends StatelessWidget {
               }
             },
           ),
+          const SizedBox(width: 8),
+        ],
         ActionChip(
           key: const Key('fontAddChip'),
           avatar: const Icon(Icons.add, size: 16),
           label: const Text('Apna Font lagayen'),
           onPressed: () => _addFont(context),
         ),
-      ],
+        ],
+      ),
     );
   }
 }
