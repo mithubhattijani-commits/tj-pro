@@ -50,10 +50,13 @@ import 'package:record/record.dart';
 
 import '../services/asset_download_service.dart';
 import '../services/coin_service.dart';
+import '../services/font_registry.dart';
 import '../services/gemini_voice_service.dart';
+import '../services/library_service.dart';
 import '../services/pro_service.dart';
 import '../services/tts_processing.dart';
 import '../services/tts_studio_service.dart';
+import '../services/user_font_service.dart';
 import 'breaking_templates.dart';
 import 'caption_studio_screen.dart';
 import 'channel_preset.dart';
@@ -65,8 +68,10 @@ import 'seo_screen.dart';
 import 'template_studio_screen.dart';
 import 'widgets/breaking_preview.dart';
 import 'widgets/clip_picker.dart';
+import 'widgets/font_picker.dart';
 import 'widgets/nigraan_final_preview.dart';
 import 'widgets/reel_export_card.dart';
+import 'widgets/reporter_overlay.dart';
 import 'widgets/studio_pickers.dart';
 import 'widgets/template_media_preview.dart';
 import 'widgets/voice_preview_player.dart';
@@ -92,6 +97,27 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
 
   final _tehreerController = TextEditingController();
   final _tickerController = TextEditingController();
+
+  /// v1.5.1 (#49/#50): controllers for the Ticker panel's side
+  /// label and the Reporter panel's name field.
+  final _tickerLabelController = TextEditingController();
+  final _reporterNameController = TextEditingController();
+
+  /// v1.5.1 (News Studio step, NS2): the open tool of the tool
+  /// line (null = the summary card shows).
+  String? _activeTool;
+
+  /// v1.5.1 (#52): Library listings (cache-first; refreshed by
+  /// _initFontsAndLibrary on entry).
+  List<LibraryItem> _textStyles = const [];
+  List<LibraryItem> _transitions = const [];
+  List<LibraryItem> _effects = const [];
+
+  /// v1.5.1 (#50): Reporter panel state — BG work in flight, its
+  /// status line, and the BG Replace colour row's visibility.
+  bool _reporterBusy = false;
+  String _reporterStatus = '';
+  bool _reporterShowBgChoices = false;
 
   GeminiVoice _voice = GeminiVoice.aoede;
 
@@ -139,9 +165,12 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           : _project!.voice.name;
       _tehreerController.text = _project!.tehreer;
       _tickerController.text = _project!.tickerText;
+      _tickerLabelController.text = _project!.tickerLabel;
+      _reporterNameController.text = _project!.reporterName;
       _loaded = true;
       _refreshVoiceStatus();
       _checkFont();
+      _initFontsAndLibrary();
     } else {
       _load();
     }
@@ -168,10 +197,13 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           : project.voice.name;
       _tehreerController.text = project.tehreer;
       _tickerController.text = project.tickerText;
+      _tickerLabelController.text = project.tickerLabel;
+      _reporterNameController.text = project.reporterName;
       _loaded = true;
     });
     await _refreshVoiceStatus();
     await _checkFont();
+    await _initFontsAndLibrary();
   }
 
   Future<void> _refreshVoiceStatus() async {
@@ -198,6 +230,8 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     unawaited(_recorder.dispose());
     _tehreerController.dispose();
     _tickerController.dispose();
+    _tickerLabelController.dispose();
+    _reporterNameController.dispose();
     super.dispose();
   }
 
@@ -403,6 +437,8 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     if (project == null) return;
     project.tehreer = _tehreerController.text;
     project.tickerText = _tickerController.text;
+    project.tickerLabel = _tickerLabelController.text.trim();
+    project.reporterName = _reporterNameController.text;
     project.voice = _voice;
     project.studioVoiceId = _studioVoiceId;
     await NewsProjectStore.save(project);
@@ -519,6 +555,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   static const _hitPriority = [
     NewsElement.capsule,
     NewsElement.logo,
+    NewsElement.reporter,
     NewsElement.headlineText,
     NewsElement.tickerText,
     NewsElement.topRibbon,
@@ -542,7 +579,15 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     Offset pos,
   ) {
     final hit = _hitElement(rects, pos);
-    if (hit != null) setState(() => _selectedElement = hit);
+    if (hit != null) {
+      setState(() {
+        _selectedElement = hit;
+        // v1.5.1: tapping the logo / reporter in the preview
+        // opens their own tool panels (NS6/NS7 behaviour).
+        if (hit == NewsElement.logo) _activeTool = 'logo';
+        if (hit == NewsElement.reporter) _activeTool = 'reporter';
+      });
+    }
   }
 
   void _elementPanStart(
@@ -600,31 +645,27 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
 
   /// v1.5.0 (#33): the Elements panel — element chips, the
   /// selected element's move/size sliders (the panel half of the
-  /// corner-handle resize), hide/show (= remove), reset, and the
-  /// Add row (video/photo via the clips sheet, text, watermark).
+  /// corner-handle resize), hide/show (= remove), reset, and
+  /// (v1.5.1) the preset watermark toggle.
   Widget _elementsPanel(NewsProject project) {
     final sel = _selectedElement;
     final ov = _elementOv(project, sel);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            const Text(
-              'Elements — manual control',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        // v1.5.1: the panel shell carries the 'Elements' title
+        // now; this row keeps only the Reset-all action.
+        if (project.elementOverrides.isNotEmpty)
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: () {
+                setState(() => project.elementOverrides.clear());
+                _scheduleSave();
+              },
+              child: const Text('Reset all'),
             ),
-            const Spacer(),
-            if (project.elementOverrides.isNotEmpty)
-              TextButton(
-                onPressed: () {
-                  setState(() => project.elementOverrides.clear());
-                  _scheduleSave();
-                },
-                child: const Text('Reset all'),
-              ),
-          ],
-        ),
+          ),
         const Text(
           'Preview par tap karke element select karein, drag karke '
           'move karein, corner handle se size badlein. Neeche '
@@ -703,67 +744,34 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           ],
         ),
         const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: () => _showClipsSheet(project),
-                icon: const Icon(Icons.video_call_outlined, size: 18),
-                label: const FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text('Add Video'),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: () {
-                  _setElementOverride(
-                    NewsElement.headlineText,
-                    _elementOv(project, NewsElement.headlineText)
-                        .copyWith(hidden: false),
-                  );
-                  setState(
-                    () => _selectedElement = NewsElement.headlineText,
-                  );
-                  _showMessage(
-                    'Headline text select ho gaya — Tehreer se '
-                    'headline aati hai.',
-                  );
-                },
-                icon: const Icon(Icons.text_fields, size: 18),
-                label: const FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text('Add Text'),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: () async {
-                  final preset = _preset;
-                  if (preset == null) return;
-                  preset.watermarkEnabled = true;
-                  await persistPresetChange(preset);
-                  _setElementOverride(
-                    NewsElement.overlay,
-                    _elementOv(project, NewsElement.overlay)
-                        .copyWith(hidden: false),
-                  );
-                  setState(
-                    () => _selectedElement = NewsElement.overlay,
-                  );
-                },
-                icon: const Icon(Icons.branding_watermark, size: 18),
-                label: const FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text('Add Watermark'),
-                ),
-              ),
-            ),
-          ],
+        // v1.5.1 (#45 dedupe): the old Add row is gone — Add
+        // Video lives in the quick row + Media panel, Add Text
+        // is the headline chip's Show action above. The
+        // watermark toggle stays: it is the ONLY Maker control
+        // for the preset watermark.
+        OutlinedButton.icon(
+          key: const Key('elementWatermarkButton'),
+          onPressed: () async {
+            final preset = _preset;
+            if (preset == null) return;
+            preset.watermarkEnabled = !preset.watermarkEnabled;
+            await persistPresetChange(preset);
+            if (preset.watermarkEnabled) {
+              _setElementOverride(
+                NewsElement.overlay,
+                _elementOv(project, NewsElement.overlay)
+                    .copyWith(hidden: false),
+              );
+            }
+            if (!mounted) return;
+            setState(() {});
+          },
+          icon: const Icon(Icons.branding_watermark, size: 18),
+          label: Text(
+            (_preset?.watermarkEnabled ?? false)
+                ? 'Watermark ON (band karein)'
+                : 'Watermark OFF (lagayein)',
+          ),
         ),
       ],
     );
@@ -1119,16 +1127,243 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     );
   }
 
+  /// v1.5.1 (News Studio step, NS2): the tool line — 12 tools in
+  /// the approved order. Tapping one opens its panel under the
+  /// preview; tapping it again returns to the summary card.
+  static const _toolDefs = <(String, IconData, String)>[
+    ('template', Icons.dashboard_customize_outlined, 'Template'),
+    ('media', Icons.video_library_outlined, 'Media'),
+    ('elements', Icons.widgets_outlined, 'Elements'),
+    ('tehreer', Icons.edit_note, 'Tehreer'),
+    ('ticker', Icons.short_text, 'Ticker'),
+    ('ribbons', Icons.view_agenda_outlined, 'Ribbons'),
+    ('logo', Icons.image_outlined, 'Logo'),
+    ('reporter', Icons.person_pin_outlined, 'Reporter'),
+    ('audio', Icons.audiotrack_outlined, 'Audio'),
+    ('voice', Icons.record_voice_over_outlined, 'Voice'),
+    ('captions', Icons.closed_caption_outlined, 'Captions'),
+    ('export', Icons.ios_share_outlined, 'Export'),
+  ];
+
+  Widget _toolLine() {
+    return SizedBox(
+      key: const Key('makerToolLine'),
+      height: 62,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: _toolDefs.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 4),
+        itemBuilder: (ctx, i) {
+          final (id, icon, label) = _toolDefs[i];
+          final active = _activeTool == id;
+          final color =
+              active ? const Color(0xFFF5C542) : Colors.white70;
+          return InkWell(
+            key: Key('makerTool-$id'),
+            onTap: () =>
+                setState(() => _activeTool = active ? null : id),
+            borderRadius: BorderRadius.circular(10),
+            child: Container(
+              width: 64,
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              decoration: BoxDecoration(
+                color: active
+                    ? const Color(0xFF2A2118)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(10),
+                border: Border(
+                  bottom: BorderSide(
+                    color: active
+                        ? const Color(0xFFF5C542)
+                        : Colors.transparent,
+                    width: 2,
+                  ),
+                ),
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(icon, size: 22, color: color),
+                  const SizedBox(height: 3),
+                  Text(
+                    label,
+                    maxLines: 1,
+                    style: TextStyle(fontSize: 11, color: color),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  /// Panel scaffold (editors' pattern): title + ONE gold ✓ that
+  /// closes the panel back to the summary.
+  Widget _panelShell(String title, List<Widget> children) {
+    return Column(
+      key: Key('makerPanel-$_activeTool'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            InkWell(
+              key: const Key('makerPanelDone'),
+              onTap: () => setState(() => _activeTool = null),
+              borderRadius: BorderRadius.circular(14),
+              child: Container(
+                width: 28,
+                height: 28,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFF5C542),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.check,
+                  size: 17,
+                  color: Colors.black,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        ...children,
+      ],
+    );
+  }
+
+  /// The no-tool summary card (NS2): preset + project + template
+  /// + save state — the long card list is gone.
+  Widget _summaryCard(
+    ChannelPreset preset,
+    NewsProject project,
+    String templateLabel,
+  ) {
+    return Container(
+      key: const Key('makerSummaryCard'),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF181828),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Channel preset — ${preset.name}',
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            project.title.isEmpty ? 'Untitled Project' : project.title,
+            style: const TextStyle(color: Colors.white70, fontSize: 13),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            '$templateLabel • Portrait 9:16 • '
+            '${project.clipPaths.length} clips'
+            '${_saveStatus.isEmpty ? '' : ' • $_saveStatus'}',
+            style: const TextStyle(color: Colors.grey, fontSize: 12),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Upar tool line se koi tool chunein — Template, Media, '
+            'Tehreer, Ticker, Reporter, Voice, Export sab yahin '
+            'hain.',
+            style: TextStyle(color: Colors.grey, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+
+  LibraryItem? _libraryById(List<LibraryItem> items, String id) {
+    if (id.isEmpty) return null;
+    for (final item in items) {
+      if (item.folderId == id) return item;
+    }
+    return null;
+  }
+
+  /// One Library picker (Text Styles / Transitions / Effects):
+  /// 'Koi nahi' + one chip per valid Drive item. An empty library
+  /// shows the honest note instead of a dead control.
+  Widget _libraryPicker({
+    required String keyPrefix,
+    required List<LibraryItem> items,
+    required String selectedId,
+    required ValueChanged<String> onChanged,
+    required String emptyNote,
+  }) {
+    if (items.isEmpty) {
+      return Text(
+        emptyNote,
+        style: const TextStyle(color: Colors.grey, fontSize: 12),
+      );
+    }
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        ChoiceChip(
+          key: Key('$keyPrefix-none'),
+          label: const Text('Koi nahi'),
+          selected: selectedId.isEmpty,
+          onSelected: (_) => onChanged(''),
+        ),
+        for (final item in items)
+          ChoiceChip(
+            key: Key('$keyPrefix-${item.folderId}'),
+            label: Text(item.name),
+            selected: selectedId == item.folderId,
+            onSelected: (_) => onChanged(item.folderId),
+          ),
+      ],
+    );
+  }
+
   Widget _buildBody(ChannelPreset preset, NewsProject project) {
     final previewPreset = _previewPreset();
-    final tehreer = _tehreerController.text;
-    final langLabel =
-        GeminiVoiceService.detectLang(tehreer) == 'ur' ? 'Urdu' : 'English';
     final templateLabel = project.templateKind == 'nigraanFinal'
         ? 'Final 3-Ribbon'
         : project.templateKind == 'breaking'
             ? 'Breaking • ${BreakingVariant.fromId(project.breakingVariant).label}'
             : 'Classic';
+    // v1.5.1 (#51/#52): the resolved preview inputs — a Text
+    // Style's font ref wins over the surface's own font choice.
+    final headlineStyle =
+        _libraryById(_textStyles, project.headlineStyleId);
+    final tickerStyle = _libraryById(_textStyles, project.tickerStyleId);
+    final headlineFamily = newsFontFamilyForId(
+      headlineStyle?.recipe.styleFontRef ?? project.headlineFontId,
+    );
+    final tickerFamily = newsFontFamilyForId(
+      tickerStyle?.recipe.styleFontRef ?? project.tickerFontId,
+    );
+    final headlineShadows = headlineStyle == null
+        ? null
+        : libraryStyleShadows(headlineStyle.recipe);
+    final tickerShadows = tickerStyle == null
+        ? null
+        : libraryStyleShadows(tickerStyle.recipe);
+    final effectItem = _libraryById(_effects, project.effectId);
+    final gradeEffect = (effectItem != null &&
+            effectItem.recipe.kind == 'grade' &&
+            !effectItem.recipe.grade.isIdentity)
+        ? effectItem.recipe.grade
+        : null;
+    final reporterFamily = newsFontFamilyForId(project.reporterFontId);
     return ListView(
       key: const Key('makerList'),
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
@@ -1146,98 +1381,80 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             ),
           ),
         const SizedBox(height: 12),
-        const Text(
-          'Template',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            _templateChoice(
-              kind: 'nigraanFinal',
-              label: 'Final 3-Ribbon',
-              project: project,
-            ),
-            const SizedBox(width: 8),
-            _templateChoice(
-              kind: 'breaking',
-              label: 'Breaking',
-              project: project,
-            ),
-            const SizedBox(width: 8),
-            _templateChoice(
-              kind: 'classic',
-              label: 'Classic',
-              project: project,
-            ),
-          ],
-        ),
-        if (project.templateKind == 'breaking') ...[
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: BreakingVariant.values.map((variant) {
-              final selected = project.breakingVariant == variant.id;
-              return ChoiceChip(
-                key: Key('makerBreakingVariant-${variant.id}'),
-                label: Text(variant.label),
-                selected: selected,
-                onSelected: (_) {
-                  setState(() => project.breakingVariant = variant.id);
-                  _scheduleSave();
-                },
-              );
-            }).toList(),
-          ),
-        ],
-        const SizedBox(height: 12),
-        const Text(
-          'Preview',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 8),
         Center(
           child: _withElementGestures(
             project,
             previewPreset,
             project.templateKind == 'nigraanFinal'
-              ? project.clipPaths.isEmpty
-                  ? NigraanFinalPreview(
-                      preset: previewPreset,
-                      fontReady: _fontReady,
-                      height: 300,
-                      elementOverrides: project.elementOverrides,
-                    )
-                  // v1.5.0 (#32): the user's own video/photo sits in
-                  // the template's main area — the same composite
-                  // the export renders.
-                  : TemplateMediaPreview(
-                      key: const Key('makerMediaPreview'),
-                      preset: previewPreset,
-                      mediaPaths: project.clipPaths,
-                      fontReady: _fontReady,
-                      height: 300,
-                      elementOverrides: project.elementOverrides,
-                    )
-              : project.templateKind == 'breaking'
-                  ? BreakingTemplatePreview(
-                      key: const Key('makerBreakingPreview'),
-                      template: BreakingTemplate.fromProject(
-                        project,
-                        previewPreset,
-                        tickerText: previewPreset.topRibbon.text,
+                ? project.clipPaths.isEmpty
+                    ? NigraanFinalPreview(
+                        preset: previewPreset,
+                        fontReady: _fontReady,
+                        height: 300,
+                        elementOverrides: project.elementOverrides,
+                        tickerLabel: project.tickerLabel.isEmpty
+                            ? null
+                            : project.tickerLabel,
+                        headlineFontFamily: headlineFamily,
+                        tickerFontFamily: tickerFamily,
+                        headlineTextColor:
+                            headlineStyle?.recipe.styleColor,
+                        tickerTextColor: tickerStyle?.recipe.styleColor,
+                        tickerLabelColor:
+                            tickerStyle?.recipe.styleLabelBackground,
+                        headlineShadows: headlineShadows,
+                        tickerShadows: tickerShadows,
+                        reporterPhotoPath: project.reporterPhotoPath,
+                        reporterName: project.reporterName,
+                        reporterFontFamily: reporterFamily,
+                        logoRotate: previewPreset.logoRotate,
+                      )
+                    // v1.5.0 (#32): the user's own video/photo sits
+                    // in the template's main area — the same
+                    // composite the export renders.
+                    : TemplateMediaPreview(
+                        key: const Key('makerMediaPreview'),
+                        preset: previewPreset,
+                        mediaPaths: project.clipPaths,
+                        fontReady: _fontReady,
+                        height: 300,
+                        elementOverrides: project.elementOverrides,
+                        tickerLabel: project.tickerLabel.isEmpty
+                            ? null
+                            : project.tickerLabel,
+                        headlineFontFamily: headlineFamily,
+                        tickerFontFamily: tickerFamily,
+                        headlineTextColor:
+                            headlineStyle?.recipe.styleColor,
+                        tickerTextColor: tickerStyle?.recipe.styleColor,
+                        tickerLabelColor:
+                            tickerStyle?.recipe.styleLabelBackground,
+                        headlineShadows: headlineShadows,
+                        tickerShadows: tickerShadows,
+                        reporterPhotoPath: project.reporterPhotoPath,
+                        reporterName: project.reporterName,
+                        reporterFontFamily: reporterFamily,
+                        logoRotate: previewPreset.logoRotate,
+                        gradeEffect: gradeEffect,
+                      )
+                : project.templateKind == 'breaking'
+                    ? BreakingTemplatePreview(
+                        key: const Key('makerBreakingPreview'),
+                        template: BreakingTemplate.fromProject(
+                          project,
+                          previewPreset,
+                          tickerText: previewPreset.topRibbon.text,
+                        ),
+                        preset: previewPreset,
+                        fontReady: _fontReady,
+                        height: 300,
+                      )
+                    : ClassicPreview(
+                        key: const Key('makerClassicPreview'),
+                        preset: previewPreset,
+                        fontReady: _fontReady,
+                        height: 300,
                       ),
-                      preset: previewPreset,
-                      fontReady: _fontReady,
-                      height: 300,
-                    )
-                  : ClassicPreview(
-                      key: const Key('makerClassicPreview'),
-                      preset: previewPreset,
-                      fontReady: _fontReady,
-                      height: 300,
-                    ),
           ),
         ),
         const SizedBox(height: 10),
@@ -1294,388 +1511,1207 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             ),
           ],
         ),
-        const SizedBox(height: 20),
-        _elementsPanel(project),
-        const SizedBox(height: 20),
-        Row(
-          children: [
-            const Text(
-              'Tehreer',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        const SizedBox(height: 14),
+        _toolLine(),
+        const SizedBox(height: 14),
+        switch (_activeTool) {
+          'template' => _templatePanel(preset, project),
+          'media' => _mediaPanel(project),
+          'elements' => _panelShell(
+              'Elements',
+              [_elementsPanel(project)],
             ),
-            const Spacer(),
-            Text(
-              '$langLabel • ${countWords(tehreer)} alfaz',
-              style: const TextStyle(color: Colors.grey, fontSize: 12),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        TextField(
-          key: const Key('tehreerField'),
-          controller: _tehreerController,
-          maxLines: 5,
-          minLines: 5,
-          textAlign: TextAlign.right,
-          textDirection: TextDirection.rtl,
-          decoration: const InputDecoration(
-            hintText: 'Tehreer yahan likhein ya paste karein…',
-            border: OutlineInputBorder(),
+          'tehreer' => _tehreerPanel(project),
+          'ticker' => _tickerPanel(project),
+          'ribbons' => _ribbonsPanel(preset, project),
+          'logo' => _logoPanel(preset, project),
+          'reporter' => _reporterPanel(project),
+          'audio' => _audioPanel(project),
+          'voice' => _voicePanel(project),
+          'captions' => _captionsPanel(project),
+          'export' => _exportPanel(preset, project),
+          _ => _summaryCard(preset, project, templateLabel),
+        },
+      ],
+    );
+  }
+
+  /// Template panel (NS3): the three template choices + Breaking
+  /// variants + the shared Templates sheet + the ONE Template &
+  /// Studio entry (moved here from the old bottom row — #45).
+  Widget _templatePanel(ChannelPreset preset, NewsProject project) {
+    return _panelShell('Template', [
+      Row(
+        children: [
+          _templateChoice(
+            kind: 'nigraanFinal',
+            label: 'Final 3-Ribbon',
+            project: project,
           ),
-          onChanged: (_) {
-            setState(() {});
-            _scheduleSave();
-          },
-        ),
-        const SizedBox(height: 20),
-        const Text(
-          'Ticker text — paste karein, chal jaye ga',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                key: const Key('tickerField'),
-                controller: _tickerController,
-                decoration: const InputDecoration(
-                  // v1.5.0 (#22): shorter hint — the long one was
-                  // truncated mid-word in the field.
-                  hintText: 'Ticker text paste karein…',
-                  border: OutlineInputBorder(),
-                ),
-                onChanged: (_) {
-                  setState(() {});
-                  _scheduleSave();
-                },
-              ),
-            ),
-            const SizedBox(width: 8),
-            FilledButton(
-              key: const Key('pasteTickerButton'),
-              onPressed: _pasteTicker,
-              style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFF7C3AED),
-                // v1.5.0 (#22): explicit white label — the theme
-                // default left it washed out on the violet fill.
-                foregroundColor: Colors.white,
-              ),
-              child: const Text('Paste'),
-            ),
-          ],
-        ),
-        const SizedBox(height: 20),
-        // v1.4.0 audio trio (requirements #6): Record / Import /
-        // Text se Audio — teeno ek hi voiceover slot mein jate
-        // hain; jo bhi source ho, neeche wala preview player aur
-        // export usi ko use karte hain.
-        const Text(
-          'Audio — 3 options',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: FilledButton.icon(
-                key: const Key('audioRecordButton'),
-                onPressed: _voiceBusy ? null : _toggleRecord,
-                icon: Icon(_recording ? Icons.stop : Icons.mic),
-                // v1.5.0 (#17): labels scale down to fit the pill —
-                // never clipped, never wrapped.
-                label: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text(_recording ? 'Stop' : 'Record'),
-                ),
-                style: FilledButton.styleFrom(
-                  backgroundColor:
-                      _recording ? Colors.redAccent : const Color(0xFF7C3AED),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: OutlinedButton.icon(
-                key: const Key('audioImportButton'),
-                onPressed: _voiceBusy ? null : _importAudio,
-                icon: const Icon(Icons.audio_file_outlined),
-                label: const FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text('Import'),
-                ),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: OutlinedButton.icon(
-                key: const Key('audioTtsButton'),
-                // v1.5.0: this pill IS the generate action now —
-                // it builds with the voice selected in the chips
-                // below (the chooser dialog is gone).
-                onPressed: _voiceBusy ? null : _buildSelectedVoice,
-                icon: const Icon(Icons.record_voice_over_outlined),
-                label: const FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text('Text se Audio'),
-                ),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                ),
-              ),
-            ),
-          ],
-        ),
-        if (_recording)
-          const Padding(
-            padding: EdgeInsets.only(top: 6),
-            child: Row(
-              children: [
-                Icon(Icons.fiber_manual_record,
-                    color: Colors.redAccent, size: 14),
-                SizedBox(width: 6),
-                Text(
-                  'Recording ho rahi hai… Stop dabane par voiceover lag jayega.',
-                  style: TextStyle(color: Colors.redAccent, fontSize: 12),
-                ),
-              ],
-            ),
+          const SizedBox(width: 8),
+          _templateChoice(
+            kind: 'breaking',
+            label: 'Breaking',
+            project: project,
           ),
-        const Text(
-          'Record = apni awaz, Import = phone se audio file, '
-          'Text se Audio = tehreer se AI voice — neeche chuni hui '
-          'awaz mein (nayi voice par 50 coins). Teeno ka result '
-          'neeche preview mein sun sakte hain.',
-          style: TextStyle(color: Colors.grey, fontSize: 12),
-        ),
-        const SizedBox(height: 20),
-        const Text(
-          'Voiceover — awaz chunein',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-        ),
+          const SizedBox(width: 8),
+          _templateChoice(
+            kind: 'classic',
+            label: 'Classic',
+            project: project,
+          ),
+        ],
+      ),
+      if (project.templateKind == 'breaking') ...[
         const SizedBox(height: 8),
-        // v1.5.0 (#19): the ONE unified 8-voice catalogue — the
-        // same StudioVoice.all the AI Voice Studio shows (6 Gemini
-        // + Asad/Uzma free TTS). One selection drives both build
-        // paths; there is no second voice list anywhere.
         Wrap(
           spacing: 8,
           runSpacing: 8,
-          children: StudioVoice.all
-              .map((v) => _studioVoiceChip(v))
-              .toList(),
+          children: BreakingVariant.values.map((variant) {
+            final selected = project.breakingVariant == variant.id;
+            return ChoiceChip(
+              key: Key('makerBreakingVariant-${variant.id}'),
+              label: Text(variant.label),
+              selected: selected,
+              onSelected: (_) {
+                setState(() => project.breakingVariant = variant.id);
+                _scheduleSave();
+              },
+            );
+          }).toList(),
         ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            const Expanded(child: Text('Speed')),
-            SizedBox(
-              width: 200,
-              child: Slider(
-                key: const Key('voiceSpeedSlider'),
-                value: project.voiceSpeed,
-                min: 0.5,
-                max: 2.0,
-                divisions: 15,
-                label: '${project.voiceSpeed.toStringAsFixed(2)}x',
-                onChanged: (v) {
-                  setState(() => project.voiceSpeed = v);
-                  _scheduleSave();
-                },
-              ),
+      ],
+      const SizedBox(height: 12),
+      OutlinedButton.icon(
+        key: const Key('makerTemplatesSheetButton'),
+        onPressed: () => _showTemplatesSheet(project),
+        icon: const Icon(Icons.storefront_outlined, size: 18),
+        label: const Text('Templates — Store / Library'),
+      ),
+      const SizedBox(height: 8),
+      OutlinedButton.icon(
+        key: const Key('templateStudioButton'),
+        onPressed: () async {
+          await _saveNow();
+          if (!mounted) return;
+          await Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => const TemplateStudioScreen(),
             ),
-            Text('${project.voiceSpeed.toStringAsFixed(2)}x'),
-          ],
-        ),
-        Row(
-          children: [
-            const Expanded(child: Text('Pause (sentences ke beech)')),
-            SizedBox(
-              width: 200,
-              child: Slider(
-                key: const Key('voicePauseSlider'),
-                value: project.voicePauseSec,
-                min: 0,
-                max: 1.0,
-                divisions: 10,
-                label: '${project.voicePauseSec.toStringAsFixed(1)}s',
-                onChanged: (v) {
-                  setState(() => project.voicePauseSec = v);
-                  _scheduleSave();
-                },
-              ),
+          );
+          await _reloadPreset();
+        },
+        icon: const Icon(Icons.tune_outlined, size: 18),
+        label: const Text('Template & Studio →'),
+      ),
+      const SizedBox(height: 8),
+      const Text(
+        'Final 3-Ribbon = channel ka asal design (yellow / red / '
+        'navy). Breaking aur Classic apni styles rakhte hain.',
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+    ]);
+  }
+
+  /// Media panel: the clip list (the quick-row Add Video sheet
+  /// edits the SAME list) + the Library Effect picker (#52 — the
+  /// effect lands on the main media; a grade shows in the
+  /// preview, an overlay blends in the export).
+  Widget _mediaPanel(NewsProject project) {
+    return _panelShell('Media', [
+      const Text(
+        'Clips & photos — pehli clip preview mein dikhti hai; '
+        'export mein saari order se lagti hain.',
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      const SizedBox(height: 8),
+      ClipPickerList(
+        paths: project.clipPaths,
+        onChanged: (next) {
+          setState(() => project.clipPaths = next);
+          _scheduleSave();
+        },
+      ),
+      const SizedBox(height: 16),
+      const Text(
+        'Effect (Library)',
+        style: TextStyle(fontWeight: FontWeight.bold),
+      ),
+      const SizedBox(height: 6),
+      _libraryPicker(
+        keyPrefix: 'effectPick',
+        items: _effects,
+        selectedId: project.effectId,
+        onChanged: (id) {
+          setState(() => project.effectId = id);
+          _scheduleSave();
+        },
+        emptyNote: 'Abhi koi Library effect nahi — Store ke '
+            '"Effects" folder mein recipe wala item dalte hi '
+            'yahan aa jayega.',
+      ),
+      const SizedBox(height: 6),
+      const Text(
+        'Grade effect preview mein bhi dikhta hai; overlay '
+        '(light leak waghera) export mein blend hota hai.',
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+    ]);
+  }
+
+  /// Tehreer panel: the script field + headline font (#51) +
+  /// headline Text Style (#52).
+  Widget _tehreerPanel(NewsProject project) {
+    final tehreer = _tehreerController.text;
+    final langLabel =
+        GeminiVoiceService.detectLang(tehreer) == 'ur' ? 'Urdu' : 'English';
+    return _panelShell('Tehreer', [
+      Row(
+        children: [
+          const Expanded(
+            child: Text(
+              'Khabar ki tehreer — voiceover isi se banta hai.',
+              style: TextStyle(color: Colors.grey, fontSize: 12),
             ),
-            Text('${project.voicePauseSec.toStringAsFixed(1)}s'),
-          ],
-        ),
-        SwitchListTile(
-          key: const Key('voiceMusicSwitch'),
-          title: const Text('Background music (soft pad)'),
-          subtitle: const Text(
-            'Halki si ambient music voice ke neeche.',
           ),
-          value: project.voiceMusic,
-          onChanged: (v) {
-            setState(() => project.voiceMusic = v);
-            _scheduleSave();
-          },
-        ),
-        const Text(
-          'Speed resample pitch bhi badalta hai — ye normal hai.',
-          style: TextStyle(color: Colors.grey, fontSize: 12),
-        ),
-        // v1.5.0 (dedupe): the separate "Voice banao" button is
-        // REMOVED — it duplicated the trio's "Text se Audio" pill
-        // (two controls, one action). Building shows progress here;
-        // the pill above is the one generate control.
-        if (_voiceBusy) ...[
-          const SizedBox(height: 8),
-          const LinearProgressIndicator(
-            key: Key('voiceBusyProgress'),
-            minHeight: 3,
-          ),
-        ],
-        // v1.5.0 (#18): the status line renders ONLY for a real
-        // status — the default 'Abhi voice nahi bani.' text is NOT
-        // repeated here; the VoicePreviewPlayer's empty card below
-        // is the one place that message lives.
-        if (_voiceStatus != 'Abhi voice nahi bani.') ...[
-          const SizedBox(height: 8),
           Text(
-            _voiceStatus,
-            key: const Key('voiceStatus'),
+            '$langLabel • ${countWords(tehreer)} alfaz',
             style: const TextStyle(color: Colors.grey, fontSize: 12),
           ),
         ],
-        // Cap line: non-admins only. Admins get -1 (unlimited)
-        // from remainingToday() and see nothing here.
-        if (_voiceRemaining != null && _voiceRemaining != -1)
-          Padding(
-            padding: const EdgeInsets.only(top: 2),
+      ),
+      const SizedBox(height: 8),
+      TextField(
+        key: const Key('tehreerField'),
+        controller: _tehreerController,
+        maxLines: 5,
+        minLines: 5,
+        textAlign: TextAlign.right,
+        textDirection: TextDirection.rtl,
+        decoration: const InputDecoration(
+          hintText: 'Tehreer yahan likhein ya paste karein…',
+          border: OutlineInputBorder(),
+        ),
+        onChanged: (_) {
+          setState(() {});
+          _scheduleSave();
+        },
+      ),
+      const SizedBox(height: 14),
+      const Text(
+        'Headline font',
+        style: TextStyle(fontWeight: FontWeight.bold),
+      ),
+      const SizedBox(height: 6),
+      NewsFontPicker(
+        selectedId: project.headlineFontId,
+        onChanged: (id) {
+          setState(() => project.headlineFontId = id);
+          _warmFont(id);
+          _scheduleSave();
+        },
+      ),
+      const SizedBox(height: 14),
+      const Text(
+        'Headline Text Style (Library)',
+        style: TextStyle(fontWeight: FontWeight.bold),
+      ),
+      const SizedBox(height: 6),
+      _libraryPicker(
+        keyPrefix: 'headlineStylePick',
+        items: _textStyles,
+        selectedId: project.headlineStyleId,
+        onChanged: (id) {
+          setState(() => project.headlineStyleId = id);
+          _scheduleSave();
+        },
+        emptyNote: 'Abhi koi Library text style nahi — Store ke '
+            '"Text Styles" folder mein recipe wala item dalte hi '
+            'yahan aa jayega.',
+      ),
+    ]);
+  }
+
+  /// Ticker panel: ticker text + Paste + the EDITABLE side label
+  /// (#49) + ticker font (#51) + ticker Text Style (#52).
+  Widget _tickerPanel(NewsProject project) {
+    return _panelShell('Ticker', [
+      const Text(
+        'Ticker text — paste karein, chal jaye ga',
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      const SizedBox(height: 8),
+      Row(
+        children: [
+          Expanded(
+            child: TextField(
+              key: const Key('tickerField'),
+              controller: _tickerController,
+              decoration: const InputDecoration(
+                hintText: 'Ticker text paste karein…',
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (_) {
+                setState(() {});
+                _scheduleSave();
+              },
+            ),
+          ),
+          const SizedBox(width: 8),
+          FilledButton(
+            key: const Key('pasteTickerButton'),
+            onPressed: _pasteTicker,
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF7C3AED),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Paste'),
+          ),
+        ],
+      ),
+      const SizedBox(height: 14),
+      const Text(
+        'Side label (chip)',
+        style: TextStyle(fontWeight: FontWeight.bold),
+      ),
+      const SizedBox(height: 6),
+      TextField(
+        key: const Key('tickerLabelField'),
+        controller: _tickerLabelController,
+        decoration: const InputDecoration(
+          hintText: 'BREAKING NEWS',
+          border: OutlineInputBorder(),
+        ),
+        onChanged: (v) {
+          setState(() => project.tickerLabel = v.trim());
+          _scheduleSave();
+        },
+      ),
+      const Text(
+        'Ye label ticker ke left chip mein aata hai — khaali '
+        'chhorne par chip nahi banta. Preview + export dono mein.',
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      const SizedBox(height: 14),
+      const Text(
+        'Ticker font',
+        style: TextStyle(fontWeight: FontWeight.bold),
+      ),
+      const SizedBox(height: 6),
+      NewsFontPicker(
+        selectedId: project.tickerFontId,
+        onChanged: (id) {
+          setState(() => project.tickerFontId = id);
+          _warmFont(id);
+          _scheduleSave();
+        },
+      ),
+      const SizedBox(height: 14),
+      const Text(
+        'Ticker Text Style (Library)',
+        style: TextStyle(fontWeight: FontWeight.bold),
+      ),
+      const SizedBox(height: 6),
+      _libraryPicker(
+        keyPrefix: 'tickerStylePick',
+        items: _textStyles,
+        selectedId: project.tickerStyleId,
+        onChanged: (id) {
+          setState(() => project.tickerStyleId = id);
+          _scheduleSave();
+        },
+        emptyNote: 'Abhi koi Library text style nahi — Store ke '
+            '"Text Styles" folder mein recipe wala item dalte hi '
+            'yahan aa jayega.',
+      ),
+    ]);
+  }
+
+  /// Ribbons panel (#48): per-band HEIGHT sliders — they write
+  /// the band elements' override scale, which the parity
+  /// geometry multiplies into the band heights (preview AND
+  /// export) — plus the shared Ribbons sheet (designs/colours).
+  Widget _ribbonsPanel(ChannelPreset preset, NewsProject project) {
+    final isFinal3 = preset.finalIs3Ribbon &&
+        project.templateKind == 'nigraanFinal';
+    final bands = isFinal3
+        ? const [
+            (NewsElement.topRibbon, 'Top ribbon (yellow)'),
+            (NewsElement.middleRibbon, 'Middle ribbon (red)'),
+            (NewsElement.bottomRibbon, 'Bottom ribbon (ticker)'),
+          ]
+        : const [
+            (NewsElement.middleRibbon, 'Urdu ribbon'),
+            (NewsElement.bottomRibbon, 'English ribbon'),
+          ];
+    return _panelShell('Ribbons', [
+      const Text(
+        'Har ribbon ki height (size) alag se badlein — preview '
+        'aur export dono mein lagta hai.',
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      const SizedBox(height: 4),
+      for (final (id, label) in bands)
+        _elementSlider(
+          label: label,
+          value: _elementOv(project, id).scale,
+          min: 0.6,
+          max: 1.8,
+          onChanged: (v) => _setElementOverride(
+            id,
+            _elementOv(project, id).copyWith(scale: v),
+          ),
+        ),
+      const SizedBox(height: 8),
+      OutlinedButton.icon(
+        key: const Key('makerRibbonsSheetButton'),
+        onPressed: _showRibbonsSheet,
+        icon: const Icon(Icons.palette_outlined, size: 18),
+        label: const Text('Ribbons — design / colours'),
+      ),
+    ]);
+  }
+
+  /// Logo panel (#47): pick / remove the channel logo, the
+  /// rotate switch (preset), and the logo element's own
+  /// position/size sliders (the preview also takes tap + drag).
+  Widget _logoPanel(ChannelPreset preset, NewsProject project) {
+    final logoOv = _elementOv(project, NewsElement.logo);
+    final logoPath = preset.logoPath;
+    final hasLogo = logoPath != null && File(logoPath).existsSync();
+    return _panelShell('Logo', [
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              color: const Color(0xFF181828),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: hasLogo
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.file(
+                      File(logoPath),
+                      fit: BoxFit.contain,
+                    ),
+                  )
+                : const Icon(
+                    Icons.image_outlined,
+                    color: Colors.grey,
+                  ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
             child: Text(
-              'Aaj ki voice limit: $_voiceRemaining / 5 baaki',
+              hasLogo
+                  ? 'Apna logo laga hua hai — preview + export '
+                      'mein yehi (rotate on ho to) ghoomta hai.'
+                  : 'Abhi default Nigraan logo hai (Final template '
+                      'ka apna rotating logo). Apna logo lagayein '
+                      'to wahi preview + export mein aayega.',
+              style: const TextStyle(
+                color: Colors.white70,
+                fontSize: 12.5,
+              ),
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 10),
+      Row(
+        children: [
+          Expanded(
+            child: FilledButton.icon(
+              key: const Key('logoPickButton'),
+              onPressed: _pickLogo,
+              icon: const Icon(Icons.upload_file_outlined, size: 18),
+              label: const FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text('Logo chunein'),
+              ),
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF7C3AED),
+                foregroundColor: Colors.white,
+              ),
+            ),
+          ),
+          if (logoPath != null) ...[
+            const SizedBox(width: 8),
+            Expanded(
+              child: OutlinedButton.icon(
+                key: const Key('logoRemoveButton'),
+                onPressed: _removeLogo,
+                icon: const Icon(Icons.delete_outline, size: 18),
+                label: const FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text('Logo hatayein'),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+      SwitchListTile(
+        key: const Key('logoRotateSwitch'),
+        title: const Text('Logo rotate (3D swing)'),
+        subtitle: const Text(
+          'Preview + export dono mein logo ghoomta hai.',
+        ),
+        value: preset.logoRotate,
+        onChanged: (v) async {
+          preset.logoRotate = v;
+          await persistPresetChange(preset);
+          if (mounted) setState(() {});
+        },
+      ),
+      const Text(
+        'Position / size — preview mein logo par tap + drag bhi '
+        'chalta hai:',
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      _elementSlider(
+        label: 'Left / Right',
+        value: logoOv.dx,
+        min: -0.3,
+        max: 0.3,
+        onChanged: (v) => _setElementOverride(
+          NewsElement.logo,
+          logoOv.copyWith(dx: v),
+        ),
+      ),
+      _elementSlider(
+        label: 'Up / Down',
+        value: logoOv.dy,
+        min: -0.3,
+        max: 0.3,
+        onChanged: (v) => _setElementOverride(
+          NewsElement.logo,
+          logoOv.copyWith(dy: v),
+        ),
+      ),
+      _elementSlider(
+        label: 'Size',
+        value: logoOv.scale,
+        min: 0.5,
+        max: 2.0,
+        onChanged: (v) => _setElementOverride(
+          NewsElement.logo,
+          logoOv.copyWith(scale: v),
+        ),
+      ),
+    ]);
+  }
+
+  Future<void> _pickLogo() async {
+    final preset = _preset;
+    if (preset == null) return;
+    final picked = await FilePicker.pickFiles(type: FileType.image);
+    if (picked.isEmpty || picked.first.path == null) return;
+    try {
+      final docs = await getApplicationDocumentsDirectory();
+      final dir = Directory(p.join(docs.path, 'news_logos'));
+      if (!await dir.exists()) await dir.create(recursive: true);
+      final ext = p.extension(picked.first.path!);
+      final dest = p.join(
+        dir.path,
+        'logo_${DateTime.now().millisecondsSinceEpoch}$ext',
+      );
+      await File(picked.first.path!).copy(dest);
+      preset.logoPath = dest;
+      await persistPresetChange(preset);
+      if (!mounted) return;
+      setState(() {});
+      _showMessage('Logo lag gaya — preview mein dekhein.');
+    } catch (e) {
+      _showMessage('Logo nahi laga: $e');
+    }
+  }
+
+  Future<void> _removeLogo() async {
+    final preset = _preset;
+    if (preset == null) return;
+    preset.logoPath = null;
+    await persistPresetChange(preset);
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  /// Reporter panel (NS7, #50): photo slot opposite the logo,
+  /// BG Remove (BiRefNet) / BG Replace, the name plate field +
+  /// its font, and the reporter element's position/size sliders.
+  Widget _reporterPanel(NewsProject project) {
+    final photo = project.reporterPhotoPath;
+    final repOv = _elementOv(project, NewsElement.reporter);
+    return _panelShell('Reporter', [
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 64,
+            height: 72,
+            decoration: BoxDecoration(
+              color: const Color(0xFF181828),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: photo != null && File(photo).existsSync()
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.file(
+                      File(photo),
+                      fit: BoxFit.cover,
+                    ),
+                  )
+                : const Icon(
+                    Icons.person_outline,
+                    color: Colors.grey,
+                    size: 30,
+                  ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                FilledButton.icon(
+                  key: const Key('reporterPhotoButton'),
+                  onPressed: _reporterBusy ? null : _pickReporterPhoto,
+                  icon: const Icon(Icons.add_a_photo_outlined, size: 18),
+                  label: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      photo == null ? 'Photo lagayen' : 'Photo badlein',
+                    ),
+                  ),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF7C3AED),
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+                if (photo != null) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          key: const Key('reporterBgRemoveButton'),
+                          onPressed:
+                              _reporterBusy ? null : _reporterBgRemove,
+                          child: const FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text('BG Remove'),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton(
+                          key: const Key('reporterBgReplaceButton'),
+                          onPressed: _reporterBusy
+                              ? null
+                              : () => setState(
+                                    () => _reporterShowBgChoices =
+                                        !_reporterShowBgChoices,
+                                  ),
+                          child: const FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text('BG Replace'),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+      if (photo != null && _reporterShowBgChoices) ...[
+        const SizedBox(height: 10),
+        const Text(
+          'Background colour chunein:',
+          style: TextStyle(color: Colors.grey, fontSize: 12),
+        ),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final (label, argb) in const [
+              ('Kaala', 0xFF000000),
+              ('Safed', 0xFFFFFFFF),
+              ('Navy', 0xFF081E46),
+              ('Sabz (chroma)', 0xFF00B140),
+              ('Surkh', 0xFF880C03),
+            ])
+              ActionChip(
+                key: Key('reporterBgColor-$argb'),
+                avatar: CircleAvatar(
+                  radius: 8,
+                  backgroundColor: Color(argb),
+                ),
+                label: Text(label),
+                onPressed: _reporterBusy
+                    ? null
+                    : () => _reporterBgReplaceColor(argb),
+              ),
+            ActionChip(
+              key: const Key('reporterBgImageChip'),
+              avatar: const Icon(Icons.wallpaper_outlined, size: 16),
+              label: const Text('BG Photo'),
+              onPressed: _reporterBusy ? null : _reporterBgReplaceImage,
+            ),
+          ],
+        ),
+      ],
+      if (_reporterBusy) ...[
+        const SizedBox(height: 10),
+        const LinearProgressIndicator(
+          key: Key('reporterBusyProgress'),
+          minHeight: 3,
+        ),
+      ],
+      if (_reporterStatus.isNotEmpty) ...[
+        const SizedBox(height: 8),
+        Text(
+          _reporterStatus,
+          key: const Key('reporterStatus'),
+          style: const TextStyle(color: Colors.grey, fontSize: 12),
+        ),
+      ],
+      const SizedBox(height: 14),
+      const Text(
+        'NUMAINDAY KA NAAM',
+        style: TextStyle(
+          fontWeight: FontWeight.bold,
+          fontSize: 12,
+          letterSpacing: 0.6,
+        ),
+      ),
+      const SizedBox(height: 6),
+      TextField(
+        key: const Key('reporterNameField'),
+        controller: _reporterNameController,
+        decoration: const InputDecoration(
+          hintText: 'Reporter ka naam likhein…',
+          border: OutlineInputBorder(),
+        ),
+        onChanged: (v) {
+          setState(() => project.reporterName = v);
+          _scheduleSave();
+        },
+      ),
+      const SizedBox(height: 12),
+      const Text(
+        'Naam ka font',
+        style: TextStyle(fontWeight: FontWeight.bold),
+      ),
+      const SizedBox(height: 6),
+      NewsFontPicker(
+        selectedId: project.reporterFontId,
+        onChanged: (id) {
+          setState(() => project.reporterFontId = id);
+          _warmFont(id);
+          _scheduleSave();
+        },
+      ),
+      const SizedBox(height: 12),
+      const Text(
+        'Position / size — photo lagte hi block khud sahi jagah '
+        'aa jata hai (logo ke opposite); sliders se fine-tune '
+        'karein:',
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      _elementSlider(
+        label: 'Size',
+        value: repOv.scale,
+        min: 0.5,
+        max: 2.0,
+        onChanged: (v) => _setElementOverride(
+          NewsElement.reporter,
+          repOv.copyWith(scale: v),
+        ),
+      ),
+      _elementSlider(
+        label: 'Left / Right',
+        value: repOv.dx,
+        min: -0.3,
+        max: 0.3,
+        onChanged: (v) => _setElementOverride(
+          NewsElement.reporter,
+          repOv.copyWith(dx: v),
+        ),
+      ),
+      _elementSlider(
+        label: 'Up / Down',
+        value: repOv.dy,
+        min: -0.3,
+        max: 0.3,
+        onChanged: (v) => _setElementOverride(
+          NewsElement.reporter,
+          repOv.copyWith(dy: v),
+        ),
+      ),
+      if (photo != null) ...[
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          key: const Key('reporterRemoveButton'),
+          onPressed: _reporterBusy
+              ? null
+              : () {
+                  setState(() {
+                    project.reporterPhotoPath = null;
+                    _reporterStatus = '';
+                    _reporterShowBgChoices = false;
+                  });
+                  _scheduleSave();
+                },
+          icon: const Icon(Icons.person_remove_outlined, size: 18),
+          label: const Text('Reporter hatayein'),
+        ),
+      ],
+    ]);
+  }
+
+  Future<void> _pickReporterPhoto() async {
+    final project = _project;
+    if (project == null || _reporterBusy) return;
+    final picked = await FilePicker.pickFiles(type: FileType.image);
+    if (picked.isEmpty || picked.first.path == null) return;
+    final copied = await copyReporterPhoto(picked.first.path!);
+    if (!mounted) return;
+    if (copied == null) {
+      _showMessage('Photo copy nahi hui — dobara try karein.');
+      return;
+    }
+    setState(() {
+      project.reporterPhotoPath = copied;
+      _reporterStatus = 'Photo lag gaya — block preview mein '
+          'logo ke opposite aa gaya hai.';
+    });
+    _scheduleSave();
+  }
+
+  Future<void> _reporterBgRemove() async {
+    final project = _project;
+    final photo = project?.reporterPhotoPath;
+    if (project == null || photo == null || _reporterBusy) return;
+    setState(() {
+      _reporterBusy = true;
+      _reporterStatus = 'Background remove ho raha hai — pehli '
+          'dafa model pack download hoga, thora waqt lagega…';
+    });
+    try {
+      final out = await reporterRemoveBackground(photo);
+      if (!mounted) return;
+      setState(() {
+        project.reporterPhotoPath = out;
+        _reporterStatus = 'Background remove ho gaya.';
+      });
+      _scheduleSave();
+    } on ReporterBgException catch (e) {
+      if (mounted) setState(() => _reporterStatus = e.message);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _reporterStatus = 'BG remove nahi hua: $e');
+      }
+    } finally {
+      if (mounted) setState(() => _reporterBusy = false);
+    }
+  }
+
+  Future<void> _reporterBgReplaceColor(int argb) async {
+    final project = _project;
+    final photo = project?.reporterPhotoPath;
+    if (project == null || photo == null || _reporterBusy) return;
+    setState(() {
+      _reporterBusy = true;
+      _reporterStatus = 'Background badla ja raha hai…';
+    });
+    try {
+      final out = await reporterReplaceBackground(
+        photo,
+        colorArgb: argb,
+      );
+      if (!mounted) return;
+      setState(() {
+        project.reporterPhotoPath = out;
+        _reporterStatus = 'Background badal gaya.';
+        _reporterShowBgChoices = false;
+      });
+      _scheduleSave();
+    } on ReporterBgException catch (e) {
+      if (mounted) setState(() => _reporterStatus = e.message);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _reporterStatus = 'BG replace nahi hua: $e');
+      }
+    } finally {
+      if (mounted) setState(() => _reporterBusy = false);
+    }
+  }
+
+  Future<void> _reporterBgReplaceImage() async {
+    final project = _project;
+    final photo = project?.reporterPhotoPath;
+    if (project == null || photo == null || _reporterBusy) return;
+    final picked = await FilePicker.pickFiles(type: FileType.image);
+    if (picked.isEmpty || picked.first.path == null) return;
+    setState(() {
+      _reporterBusy = true;
+      _reporterStatus = 'Background photo lagayi ja rahi hai…';
+    });
+    try {
+      final out = await reporterReplaceBackground(
+        photo,
+        bgImagePath: picked.first.path!,
+      );
+      if (!mounted) return;
+      setState(() {
+        project.reporterPhotoPath = out;
+        _reporterStatus = 'Background photo lag gayi.';
+        _reporterShowBgChoices = false;
+      });
+      _scheduleSave();
+    } on ReporterBgException catch (e) {
+      if (mounted) setState(() => _reporterStatus = e.message);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _reporterStatus = 'BG replace nahi hua: $e');
+      }
+    } finally {
+      if (mounted) setState(() => _reporterBusy = false);
+    }
+  }
+
+  /// Audio panel (NS4): the v1.4.0 trio — Record / Import /
+  /// Text se Audio, all landing in the one voiceover slot.
+  Widget _audioPanel(NewsProject project) {
+    return _panelShell('Audio', [
+      Row(
+        children: [
+          Expanded(
+            child: FilledButton.icon(
+              key: const Key('audioRecordButton'),
+              onPressed: _voiceBusy ? null : _toggleRecord,
+              icon: Icon(_recording ? Icons.stop : Icons.mic),
+              label: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(_recording ? 'Stop' : 'Record'),
+              ),
+              style: FilledButton.styleFrom(
+                backgroundColor:
+                    _recording ? Colors.redAccent : const Color(0xFF7C3AED),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: OutlinedButton.icon(
+              key: const Key('audioImportButton'),
+              onPressed: _voiceBusy ? null : _importAudio,
+              icon: const Icon(Icons.audio_file_outlined),
+              label: const FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text('Import'),
+              ),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: OutlinedButton.icon(
+              key: const Key('audioTtsButton'),
+              onPressed: _voiceBusy ? null : _buildSelectedVoice,
+              icon: const Icon(Icons.record_voice_over_outlined),
+              label: const FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text('Text se Audio'),
+              ),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+            ),
+          ),
+        ],
+      ),
+      if (_recording)
+        const Padding(
+          padding: EdgeInsets.only(top: 6),
+          child: Row(
+            children: [
+              Icon(Icons.fiber_manual_record,
+                  color: Colors.redAccent, size: 14),
+              SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  'Recording ho rahi hai… Stop dabane par '
+                  'voiceover lag jayega.',
+                  style: TextStyle(color: Colors.redAccent, fontSize: 12),
+                ),
+              ),
+            ],
+          ),
+        ),
+      const SizedBox(height: 8),
+      const Text(
+        'Record = apni awaz, Import = phone se audio file, '
+        'Text se Audio = tehreer se AI voice — Voice tool mein '
+        'chuni hui awaz mein (nayi voice par 50 coins). Teeno ka '
+        'result Voice tool ke preview mein sun sakte hain.',
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+    ]);
+  }
+
+  /// Voice panel: the unified 8-voice catalogue (#19) + speed /
+  /// pause / music controls + status + the preview player.
+  Widget _voicePanel(NewsProject project) {
+    return _panelShell('Voice', [
+      const Text(
+        'Awaz chunein — yahi selection "Text se Audio" use '
+        'karti hai.',
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      const SizedBox(height: 8),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: StudioVoice.all
+            .map((v) => _studioVoiceChip(v))
+            .toList(),
+      ),
+      const SizedBox(height: 8),
+      Row(
+        children: [
+          const Expanded(child: Text('Speed')),
+          SizedBox(
+            width: 200,
+            child: Slider(
+              key: const Key('voiceSpeedSlider'),
+              value: project.voiceSpeed,
+              min: 0.5,
+              max: 2.0,
+              divisions: 15,
+              label: '${project.voiceSpeed.toStringAsFixed(2)}x',
+              onChanged: (v) {
+                setState(() => project.voiceSpeed = v);
+                _scheduleSave();
+              },
+            ),
+          ),
+          Text('${project.voiceSpeed.toStringAsFixed(2)}x'),
+        ],
+      ),
+      Row(
+        children: [
+          const Expanded(child: Text('Pause (sentences ke beech)')),
+          SizedBox(
+            width: 200,
+            child: Slider(
+              key: const Key('voicePauseSlider'),
+              value: project.voicePauseSec,
+              min: 0,
+              max: 1.0,
+              divisions: 10,
+              label: '${project.voicePauseSec.toStringAsFixed(1)}s',
+              onChanged: (v) {
+                setState(() => project.voicePauseSec = v);
+                _scheduleSave();
+              },
+            ),
+          ),
+          Text('${project.voicePauseSec.toStringAsFixed(1)}s'),
+        ],
+      ),
+      SwitchListTile(
+        key: const Key('voiceMusicSwitch'),
+        title: const Text('Background music (soft pad)'),
+        subtitle: const Text(
+          'Halki si ambient music voice ke neeche.',
+        ),
+        value: project.voiceMusic,
+        onChanged: (v) {
+          setState(() => project.voiceMusic = v);
+          _scheduleSave();
+        },
+      ),
+      const Text(
+        'Speed resample pitch bhi badalta hai — ye normal hai.',
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      if (_voiceBusy) ...[
+        const SizedBox(height: 8),
+        const LinearProgressIndicator(
+          key: Key('voiceBusyProgress'),
+          minHeight: 3,
+        ),
+      ],
+      // v1.5.0 (#18): the status line renders ONLY for a real
+      // status — the default 'Abhi voice nahi bani.' text is NOT
+      // repeated here; the VoicePreviewPlayer's empty card below
+      // is the one place that message lives.
+      if (_voiceStatus != 'Abhi voice nahi bani.') ...[
+        const SizedBox(height: 8),
+        Text(
+          _voiceStatus,
+          key: const Key('voiceStatus'),
+          style: const TextStyle(color: Colors.grey, fontSize: 12),
+        ),
+      ],
+      if (_voiceRemaining != null && _voiceRemaining != -1)
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Text(
+            'Aaj ki voice limit: $_voiceRemaining / 5 baaki',
+            style: const TextStyle(color: Colors.grey, fontSize: 12),
+          ),
+        ),
+      if (ProService.instance.proActive)
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Text(
+            'Pro active: AI voice ki roz limit '
+            '${ProService.instance.limitFor(5, 25)}/day hai.',
+            style: const TextStyle(color: Colors.amber, fontSize: 12),
+          ),
+        ),
+      const SizedBox(height: 8),
+      VoicePreviewPlayer(
+        filePath: project.voiceoverPath,
+        durationSec: project.voiceoverDurationSec,
+        voiceLabel: _selectedStudioVoice.label,
+        regenerating: _voiceBusy,
+        onRegenerate: () {
+          if (_selectedStudioVoice.engine == StudioTtsEngine.edge) {
+            unawaited(_buildFreeTtsVoice());
+          } else {
+            unawaited(_buildVoice(regenerate: true));
+          }
+        },
+      ),
+      const SizedBox(height: 4),
+      const Text(
+        '"Dobara" cached voice delete kar ke nayi banata hai — '
+        'nayi proxy request(s) lagti hain.',
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+    ]);
+  }
+
+  /// Captions panel: the karaoke-sync summary + the ONE
+  /// Caption Studio entry.
+  Widget _captionsPanel(NewsProject project) {
+    return _panelShell('Captions', [
+      Row(
+        children: [
+          Expanded(
+            child: Text(
+              project.subtitles.isEmpty
+                  ? 'Abhi koi subtitles nahi — voiceover banayein, '
+                      'phir subtitles us ki real length se sync '
+                      'honge.'
+                  : 'Subtitles: ${project.subtitles.length} lines'
+                      '${project.voiceoverDurationSec == null ? ' (basic split — voiceover se sync nahi)' : ' — voiceover se synced (${project.voiceoverDurationSec!.toStringAsFixed(1)}s)'}',
               style: const TextStyle(color: Colors.grey, fontSize: 12),
             ),
           ),
-        // v1.4.0 PRO: Pro users get the raised daily AI-voice cap
-        // (ProService.limitFor — free 5/day, Pro 25/day).
-        if (ProService.instance.proActive)
-          Padding(
-            padding: const EdgeInsets.only(top: 2),
-            child: Text(
-              'Pro active: AI voice ki roz limit '
-              '${ProService.instance.limitFor(5, 25)}/day hai.',
-              style: const TextStyle(color: Colors.amber, fontSize: 12),
-            ),
+          const SizedBox(width: 8),
+          OutlinedButton(
+            key: const Key('captionsButton'),
+            onPressed: _openCaptions,
+            child: const Text('Captions →'),
           ),
-        const SizedBox(height: 8),
-        VoicePreviewPlayer(
-          filePath: project.voiceoverPath,
-          durationSec: project.voiceoverDurationSec,
-          voiceLabel: _selectedStudioVoice.label,
-          regenerating: _voiceBusy,
-          // "Dobara" rebuilds with the SELECTED voice's engine —
-          // Gemini regenerates (cache deleted, costs again); the
-          // Edge path rebuilds through free TTS.
-          onRegenerate: () {
-            if (_selectedStudioVoice.engine == StudioTtsEngine.edge) {
-              unawaited(_buildFreeTtsVoice());
-            } else {
-              unawaited(_buildVoice(regenerate: true));
-            }
-          },
+        ],
+      ),
+    ]);
+  }
+
+  /// Export panel: the Library Transition picker (#52 — applied
+  /// between the clips in the export) + the real ReelExportCard
+  /// + the ONE SEO entry (moved here from the old bottom row).
+  Widget _exportPanel(ChannelPreset preset, NewsProject project) {
+    return _panelShell('Export', [
+      const Text(
+        'Transition (Library) — clips ke beech',
+        style: TextStyle(fontWeight: FontWeight.bold),
+      ),
+      const SizedBox(height: 6),
+      _libraryPicker(
+        keyPrefix: 'transitionPick',
+        items: _transitions,
+        selectedId: project.transitionId,
+        onChanged: (id) {
+          setState(() => project.transitionId = id);
+          _scheduleSave();
+        },
+        emptyNote: 'Abhi koi Library transition nahi — Store ke '
+            '"Transitions" folder mein recipe wala item dalte '
+            'hi yahan aa jayega. Baghair transition ke clips '
+            'seedha join hote hain.',
+      ),
+      const SizedBox(height: 16),
+      ReelExportCard(project: project, preset: preset),
+      const SizedBox(height: 12),
+      FilledButton.icon(
+        key: const Key('seoButton'),
+        onPressed: _openSeo,
+        icon: const Icon(Icons.trending_up_outlined, size: 18),
+        label: const Text('SEO →'),
+        style: FilledButton.styleFrom(
+          backgroundColor: const Color(0xFF7C3AED),
+          foregroundColor: Colors.white,
         ),
-        const SizedBox(height: 4),
-        const Text(
-          '"Dobara" cached voice delete kar ke nayi banata hai — '
-          'nayi proxy request(s) lagti hain.',
-          style: TextStyle(color: Colors.grey, fontSize: 12),
-        ),
-        const SizedBox(height: 20),
-        const Text(
-          'Subtitles — karaoke sync',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                project.subtitles.isEmpty
-                    ? 'Abhi koi subtitles nahi — voiceover banayein, phir '
-                        'subtitles us ki real length se sync honge.'
-                    : 'Subtitles: ${project.subtitles.length} lines'
-                        '${project.voiceoverDurationSec == null ? ' (basic split — voiceover se sync nahi)' : ' — voiceover se synced (${project.voiceoverDurationSec!.toStringAsFixed(1)}s)'}',
-                style: const TextStyle(color: Colors.grey, fontSize: 12),
-              ),
-            ),
-            const SizedBox(width: 8),
-            OutlinedButton(
-              key: const Key('captionsButton'),
-              onPressed: _openCaptions,
-              child: const Text('Captions →'),
-            ),
-          ],
-        ),
-        const SizedBox(height: 20),
-        const Text(
-          // v1.5.0 (#32): named for what it is — the user's own
-          // footage for the template's main area.
-          'Add Video — clips & photos',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 8),
-        ClipPickerList(
-          paths: project.clipPaths,
-          onChanged: (next) {
-            setState(() => project.clipPaths = next);
-            _scheduleSave();
-          },
-        ),
-        const SizedBox(height: 20),
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton(
-                key: const Key('templateStudioButton'),
-                onPressed: () async {
-                  await _saveNow();
-                  if (!mounted) return;
-                  await Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => const TemplateStudioScreen(),
-                    ),
-                  );
-                  await _reloadPreset();
-                },
-                child: const Text('Template & Studio →'),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: FilledButton(
-                key: const Key('seoButton'),
-                onPressed: _openSeo,
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFF7C3AED),
-                ),
-                child: const Text('SEO →'),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        // Phase 7 — real export + timeline handoff (no fake buttons):
-        // "Export Reel" runs the FFmpeg reel export, "Open in
-        // Timeline" opens the video editor with this project loaded.
-        ReelExportCard(project: project, preset: preset),
-      ],
-    );
+      ),
+    ]);
+  }
+
+  /// v1.5.1 (#51/#52): registers the user's uploaded fonts in
+  /// this process, warms the project's three font choices (so
+  /// google_fonts families are live for the preview + the parity
+  /// export), and loads the Library listings (cache-first).
+  Future<void> _initFontsAndLibrary() async {
+    try {
+      await UserFontService.instance.loadAll();
+      await UserFontService.instance.syncIntoRegistry();
+    } catch (_) {
+      // Fonts are fail-soft — the pickers still show built-ins.
+    }
+    final project = _project;
+    if (project != null) {
+      _warmFont(project.headlineFontId);
+      _warmFont(project.tickerFontId);
+      _warmFont(project.reporterFontId);
+    }
+    final styles =
+        await LibraryService.instance.listItems(LibraryConfig.textStyles);
+    final transitions =
+        await LibraryService.instance.listItems(LibraryConfig.transitions);
+    final effects =
+        await LibraryService.instance.listItems(LibraryConfig.effects);
+    if (!mounted) return;
+    setState(() {
+      _textStyles = styles;
+      _transitions = transitions;
+      _effects = effects;
+    });
+  }
+
+  /// Triggers a google_fonts family load for [id] (its apply()
+  /// runs the package getter); built-in Kasheeda + user fonts
+  /// are FontLoader-registered already, so this is a no-op for
+  /// them beyond the lookup.
+  void _warmFont(String id) {
+    try {
+      UrduFonts.byId(id).apply(const TextStyle());
+    } catch (_) {}
   }
 
   /// Template picker chip — persists the choice on the project

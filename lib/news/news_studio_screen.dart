@@ -1,16 +1,17 @@
 /// News Studio home (Phase 2; v1.5.0 rebuild per mockup N1).
 ///
-/// Layout (v1.5.0): the REAL template preview as the hero, the
-/// three #32 controls directly under it (Add Video / Templates /
-/// Ribbons — always visible), the Channel preset card with the
-/// RESOLVED design colours (#15), ONE tool line (#25-style: every
-/// studio destination in a single horizontal icon+label row), a
-/// News Maker summary card (project state, voiceover status shown
-/// ONCE), then Breaking templates / Publish / Coins / Advertise /
-/// Store / Recent projects / Help. The v1.4.0 grouped card lists
-/// (News banao / Studio / Voice & Captions) were duplicates of the
-/// tool line and are gone — every destination they held is in the
-/// tool line or the pickers, nothing was removed.
+/// Layout (v1.5.0; v1.5.1 NS1, fixes #44/#45): the REAL template
+/// preview as the hero, the three #32 controls directly under it
+/// (Add Video / Templates / Ribbons — always visible), the
+/// Channel preset card with the RESOLVED design colours (#15),
+/// ONE tool line (every studio destination in a single horizontal
+/// icon+label row — News Maker, Live Studio, AI News, Templates,
+/// Studio, Branding, Voice, Captions, Audio), Recent projects,
+/// Help, and ONE "More" group (Publish/SEO, Export, Coins,
+/// Advertise, Online Store — one entry point each). The v1.5.1
+/// step removed the News Maker summary card and the Breaking
+/// templates list from the home (both live on inside News Maker);
+/// nothing was removed from the app.
 ///
 /// The bottom padding is deliberate (#20): this screen is also a
 /// bottom-nav tab body, and the list must never slide under the
@@ -23,6 +24,7 @@ import 'package:flutter/material.dart';
 
 import '../services/asset_download_service.dart';
 import '../services/coin_service.dart';
+import '../live/live_studio_screen.dart';
 import '../services/project_recovery.dart';
 import '../widgets/help_whatsapp_button.dart';
 import 'advertise_screen.dart';
@@ -71,7 +73,6 @@ class _NewsStudioScreenState extends State<NewsStudioScreen> {
   static Future<_StudioData> _load() async {
     final presets = await ChannelPresetStore.loadAll();
     final selectedId = await ChannelPresetStore.loadSelectedId();
-    final templates = await BreakingTemplateStore.loadAll();
     final latestProject = await NewsProjectStore.loadLatest();
     final allProjects = await NewsProjectStore.loadAll();
     final preset = selectedId == null
@@ -98,7 +99,6 @@ class _NewsStudioScreenState extends State<NewsStudioScreen> {
     return _StudioData(
       preset: preset,
       presetCount: presets.length,
-      templates: templates,
       fontReady: fontReady,
       draft: findRecoverableDraft(latestProject),
       latestProject: latestProject,
@@ -296,6 +296,12 @@ class _NewsStudioScreenState extends State<NewsStudioScreen> {
                             fontReady: data.fontReady,
                             height: 280,
                             elementOverrides: latest.elementOverrides,
+                            tickerLabel: latest.tickerLabel.isEmpty
+                                ? null
+                                : latest.tickerLabel,
+                            reporterPhotoPath: latest.reporterPhotoPath,
+                            reporterName: latest.reporterName,
+                            logoRotate: preset.logoRotate,
                           )
                         : NigraanFinalPreview(
                             preset: preset,
@@ -303,6 +309,13 @@ class _NewsStudioScreenState extends State<NewsStudioScreen> {
                             height: 280,
                             elementOverrides:
                                 latest?.elementOverrides ?? const {},
+                            tickerLabel: (latest?.tickerLabel ?? '')
+                                    .isEmpty
+                                ? null
+                                : latest!.tickerLabel,
+                            reporterPhotoPath: latest?.reporterPhotoPath,
+                            reporterName: latest?.reporterName,
+                            logoRotate: preset.logoRotate,
                           )
                     : preset.templateKind == kTemplateBreaking
                         ? BreakingTemplatePreview(
@@ -432,6 +445,12 @@ class _NewsStudioScreenState extends State<NewsStudioScreen> {
                           _open(context, const NewsMakerScreen()),
                     ),
                     _ToolLineItem(
+                      icon: Icons.sensors,
+                      label: 'Live Studio',
+                      onTap: () =>
+                          _open(context, const LiveStudioScreen()),
+                    ),
+                    _ToolLineItem(
                       icon: Icons.auto_awesome,
                       label: 'AI News',
                       onTap: () =>
@@ -478,146 +497,100 @@ class _NewsStudioScreenState extends State<NewsStudioScreen> {
                 ),
               ),
               const SizedBox(height: 20),
-              // News Maker summary — the latest project's state at
-              // a glance; the voiceover status appears HERE once
-              // (and in News Maker itself), never duplicated.
-              const _SectionTitle('News Maker'),
+              // v1.5.1 (NS1, fixes #44/#45): ONE "More" group —
+              // the News Maker summary card, the Breaking
+              // templates list and the separate Publish / Coins /
+              // Advertise / Store cards are GONE from the home.
+              // News Maker lives in the tool line; Breaking
+              // templates live in the Maker's Template tool; the
+              // five secondary destinations below keep exactly
+              // one entry point each, grouped here.
+              const _SectionTitle('More'),
               Card(
-                child: ListTile(
-                  leading: const Icon(Icons.edit_note),
-                  title: Text(
-                    latest == null
-                        ? 'Naya project banayein'
-                        : (latest.title.trim().isNotEmpty
-                            ? latest.title
-                            : (latest.headline.trim().isNotEmpty
-                                ? latest.headline
-                                : 'Untitled project')),
-                  ),
-                  subtitle: Text(
-                    latest == null
-                        ? 'Tehreer → voice → apni video → template'
-                        : '${latest.clipPaths.length} clip(s) • '
-                            '${latest.voiceoverPath != null ? 'Voiceover tayyar hai' : 'Voiceover nahi bana'} • '
-                            '${latest.subtitles.length} subtitle lines',
-                  ),
-                  trailing: const Icon(Icons.arrow_forward),
-                  onTap: () => _open(context, const NewsMakerScreen()),
-                ),
-              ),
-              const SizedBox(height: 20),
-              const _SectionTitle('Breaking News templates'),
-              ...data.templates.map(
-                (t) => Card(
-                  child: ListTile(
-                    title: Text(t.displayName),
-                    subtitle: Text(
-                      t.isCustom ? 'Custom template' : 'Built-in',
-                    ),
-                    trailing: Text(
-                      t.isFree ? 'FREE' : '${t.coinCost} coins',
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 20),
-              const _SectionTitle('Publish'),
-              Card(
-                child: ListTile(
-                  leading: const Icon(Icons.search),
-                  title: const Text('SEO'),
-                  subtitle: const Text(
-                    'Title, hashtags, keywords — latest project',
-                  ),
-                  trailing: const Icon(Icons.arrow_forward),
-                  onTap: () async {
-                    final project =
-                        await NewsProjectStore.loadLatest() ??
-                            NewsProject.create(presetId: preset.id);
-                    if (!context.mounted) return;
-                    await Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => SeoScreen(project: project),
+                child: Column(
+                  children: [
+                    ListTile(
+                      leading: const Icon(Icons.search),
+                      title: const Text('Publish — SEO'),
+                      subtitle: const Text(
+                        'Title, hashtags, keywords — latest project',
                       ),
-                    );
-                    _reload();
-                  },
-                ),
-              ),
-              const SizedBox(height: 8),
-              Card(
-                child: ListTile(
-                  leading: const Icon(Icons.file_upload),
-                  title: const Text('Export'),
-                  subtitle: const Text(
-                    'Resolution, format, progress — latest project',
-                  ),
-                  trailing: const Icon(Icons.arrow_forward),
-                  onTap: () async {
-                    final project =
-                        await NewsProjectStore.loadLatest() ??
-                            NewsProject.create(presetId: preset.id);
-                    if (!context.mounted) return;
-                    await Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => ExportScreen(
-                          project: project,
-                          preset: preset,
+                      trailing: const Icon(Icons.arrow_forward),
+                      onTap: () async {
+                        final project =
+                            await NewsProjectStore.loadLatest() ??
+                                NewsProject.create(presetId: preset.id);
+                        if (!context.mounted) return;
+                        await Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => SeoScreen(project: project),
+                          ),
+                        );
+                        _reload();
+                      },
+                    ),
+                    const Divider(height: 1),
+                    ListTile(
+                      leading: const Icon(Icons.file_upload),
+                      title: const Text('Export'),
+                      subtitle: const Text(
+                        'Resolution, format, progress — latest project',
+                      ),
+                      trailing: const Icon(Icons.arrow_forward),
+                      onTap: () async {
+                        final project =
+                            await NewsProjectStore.loadLatest() ??
+                                NewsProject.create(presetId: preset.id);
+                        if (!context.mounted) return;
+                        await Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => ExportScreen(
+                              project: project,
+                              preset: preset,
+                            ),
+                          ),
+                        );
+                        _reload();
+                      },
+                    ),
+                    const Divider(height: 1),
+                    ListTile(
+                      leading: const Icon(Icons.monetization_on),
+                      title: const Text('Coins'),
+                      subtitle: ValueListenableBuilder<int>(
+                        valueListenable: CoinService.instance.balance,
+                        builder: (context, balance, _) => Text(
+                          'Balance: $balance coins — Watch Ads, daily '
+                          'free, history',
                         ),
                       ),
-                    );
-                    _reload();
-                  },
-                ),
-              ),
-              const SizedBox(height: 20),
-              // Coins (Phase 10): live balance + Watch Ads lives on
-              // the Coins screen; admins see the free-everything note
-              // there instead of the earn buttons.
-              Card(
-                child: ListTile(
-                  leading: const Icon(Icons.monetization_on),
-                  title: const Text('Coins'),
-                  subtitle: ValueListenableBuilder<int>(
-                    valueListenable: CoinService.instance.balance,
-                    builder: (context, balance, _) => Text(
-                      'Balance: $balance coins — Watch Ads, daily free, '
-                      'history',
+                      trailing: const Icon(Icons.arrow_forward),
+                      onTap: () => _open(context, const CoinsScreen()),
                     ),
-                  ),
-                  trailing: const Icon(Icons.arrow_forward),
-                  onTap: () => _open(context, const CoinsScreen()),
-                ),
-              ),
-              const SizedBox(height: 8),
-              // Advertise (Phase 10): the DEDICATED Advertise page —
-              // banner (BoxFit.contain) + WhatsApp + Watch Ads.
-              Card(
-                child: ListTile(
-                  leading: const Icon(Icons.campaign),
-                  title: const Text('Advertise'),
-                  subtitle: const Text(
-                    'Banner + WhatsApp booking + Watch Ads, Earn Coins',
-                  ),
-                  trailing: const Icon(Icons.arrow_forward),
-                  onTap: () => _open(context, const AdvertiseScreen()),
-                ),
-              ),
-              const SizedBox(height: 8),
-              // Online Store (v1.2.0): the same Drive-backed store
-              // as on Home — reachable from BOTH sides (structure
-              // rule); News Studio content stays here, store content
-              // is the shared catalogue.
-              Card(
-                child: ListTile(
-                  leading: const Icon(Icons.storefront),
-                  title: const Text('Online Store'),
-                  subtitle: const Text(
-                    'Templates, music, ribbons & more — new stock weekly',
-                  ),
-                  trailing: const Icon(Icons.arrow_forward),
-                  onTap: () => _open(context, const StoreScreen()),
+                    const Divider(height: 1),
+                    ListTile(
+                      leading: const Icon(Icons.campaign),
+                      title: const Text('Advertise'),
+                      subtitle: const Text(
+                        'Banner + WhatsApp booking + Watch Ads, '
+                        'Earn Coins',
+                      ),
+                      trailing: const Icon(Icons.arrow_forward),
+                      onTap: () =>
+                          _open(context, const AdvertiseScreen()),
+                    ),
+                    const Divider(height: 1),
+                    ListTile(
+                      leading: const Icon(Icons.storefront),
+                      title: const Text('Online Store'),
+                      subtitle: const Text(
+                        'Templates, music, ribbons & more — new '
+                        'stock weekly',
+                      ),
+                      trailing: const Icon(Icons.arrow_forward),
+                      onTap: () => _open(context, const StoreScreen()),
+                    ),
+                  ],
                 ),
               ),
               if (data.recentProjects.isNotEmpty) ...[
@@ -670,7 +643,6 @@ class _StudioData {
   _StudioData({
     required this.preset,
     required this.presetCount,
-    required this.templates,
     required this.fontReady,
     required this.draft,
     required this.latestProject,
@@ -678,7 +650,6 @@ class _StudioData {
   });
   final ChannelPreset preset;
   final int presetCount;
-  final List<BreakingTemplate> templates;
 
   /// True once the Kasheeda font loaded in this process (home preview
   /// renders Urdu in Kasheeda when true, fallback font otherwise).
