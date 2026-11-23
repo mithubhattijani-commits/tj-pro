@@ -14,7 +14,7 @@
 ///
 ///   user_fonts/
 ///     user_fonts.json   — registry: [{id, name, family, fileName}]
-///     userfont_<id>.ttf — the copied font files
+///     `userfont_<id>.ttf` — the copied font files
 ///
 /// Failure discipline: [loadAll], [deleteFont] and
 /// [syncIntoRegistry] NEVER throw (a broken registry or a missing

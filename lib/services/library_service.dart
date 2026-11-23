@@ -29,7 +29,7 @@
 ///                             "temperature": 0.12, "gamma": 1.0 }
 ///   Text Styles / "textStyle":
 ///     { "font": "jameel_kasheeda",        // UrduFonts id or
-///                                         // 'user:<id>' (#51)
+///                                         // `user:<id>` (#51)
 ///       "color": "#F5C542",
 ///       "labelBackground": "#D50000",
 ///       "shadow": { "color": "#000000", "blur": 6, "dx": 0, "dy": 2 },
@@ -256,7 +256,7 @@ class LibraryRecipe {
   LibraryGrade get grade => LibraryGrade.fromParams(params);
 
   // -- Text Styles --
-  /// Font reference: an UrduFonts id or 'user:<id>' (#51). Null =
+  /// Font reference: an UrduFonts id or `user:<id>` (#51). Null =
   /// the surface's own font choice stays in charge.
   String? get styleFontRef {
     final f = params['font'];
@@ -573,7 +573,7 @@ class LibraryService {
   // ----------------------------------------------------------------
 
   /// Ensures one of [item]'s asset files is on-device (downloaded
-  /// into documents/tj_pro_library/<Category>/<folderId>/).
+  /// into `documents/tj_pro_library/<Category>/<folderId>/`).
   /// Returns the file, or null on any failure. Never throws.
   Future<File?> ensureAsset(LibraryItem item, String fileName) async {
     try {

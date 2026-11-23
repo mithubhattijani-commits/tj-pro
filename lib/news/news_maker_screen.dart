@@ -1152,7 +1152,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: _toolDefs.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 4),
+        separatorBuilder: (_, _) => const SizedBox(width: 4),
         itemBuilder: (ctx, i) {
           final (id, icon, label) = _toolDefs[i];
           final active = _activeTool == id;

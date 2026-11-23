@@ -233,7 +233,7 @@ class NewsProject {
 
   /// v1.5.1 (fix #51): font choices for the headline text, the
   /// ticker text and the reporter name plate — [UrduFonts] ids
-  /// (built-ins) or 'user:<id>' for a user-uploaded font (see
+  /// (built-ins) or `user:<id>` for a user-uploaded font (see
   /// UserFontService). Default = the house Kasheeda font, which is
   /// what every renderer used before these fields existed.
   String headlineFontId;

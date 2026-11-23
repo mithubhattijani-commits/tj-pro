@@ -27,7 +27,7 @@ class NewsFontPicker extends StatelessWidget {
   });
 
   /// The currently selected [UrduFontOption.id] (built-in id or
-  /// 'user:<id>' for an upload).
+  /// `user:<id>` for an upload).
   final String selectedId;
 
   /// Called with the new font id on selection / successful add /
