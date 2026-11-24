@@ -1,0 +1,924 @@
+// Build 2 (Master Plan Phase 1 + 2): pure stage geometry, timeline
+// math and the stage guide painter for the Video Editor.
+//
+// Everything in this file is side-effect free and unit-tested
+// (test/build2_stage_timeline_test.dart). The editor's State keeps
+// the widgets and the gestures; the NUMBERS live here so the
+// canvas/timeline behaviour can be pinned by tests — the Phase 2
+// rule for the #5/#29/#30 sync family: tests first, changes after.
+//
+// Nothing here removes or alters any existing behaviour by itself:
+// the State delegates to these helpers only where the old inline
+// math did exactly the same thing (timeline totals/starts), or
+// where Phase 1/2 explicitly adds the new behaviour (canvas frame,
+// snapping).
+
+import 'dart:math' as math;
+import 'dart:ui' as ui;
+
+import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:video_player/video_player.dart';
+import '../../services/fx_pack.dart';
+import '../../services/pro_editor.dart';
+import '../../theme.dart';
+import '../editor_models.dart';
+import '../video_editor_controller.dart';
+
+/// Geometry of the interactive canvas (Phase 1): the canvas frame
+/// is the stage's centre of truth — the chosen Canvas ratio made
+/// real on screen. The media is contain-fitted inside the frame
+/// (never stretched), and every stage tap maps through the frame's
+/// actual rects instead of the old fixed-16:9 approximation.
+class CanvasGeometry {
+  CanvasGeometry._();
+
+  /// Canvas ratio (width / height) for a Canvas-panel key.
+  /// 'Original' (and any unknown key) keeps the media's own ratio;
+  /// a broken media ratio falls back to 16:9 rather than dividing
+  /// by zero downstream.
+  static double ratioFor(String aspectKey, double mediaAspect) {
+    switch (aspectKey) {
+      case '9:16':
+        return 9 / 16;
+      case '16:9':
+        return 16 / 9;
+      case '1:1':
+        return 1;
+      case '4:5':
+        return 4 / 5;
+      default:
+        return (mediaAspect.isFinite && mediaAspect > 0)
+            ? mediaAspect
+            : 16 / 9;
+    }
+  }
+
+  /// The largest rect of [ratio] (width / height) centred inside
+  /// [stage]. A degenerate stage or ratio yields [Rect.zero].
+  static Rect frameRect(Size stage, double ratio) {
+    if (stage.width <= 0 || stage.height <= 0 || ratio <= 0) {
+      return Rect.zero;
+    }
+    var w = stage.width;
+    var h = w / ratio;
+    if (h > stage.height) {
+      h = stage.height;
+      w = h * ratio;
+    }
+    return Rect.fromLTWH(
+      (stage.width - w) / 2,
+      (stage.height - h) / 2,
+      w,
+      h,
+    );
+  }
+
+  /// Contain fit: the largest rect of [mediaAspect] inside [frame],
+  /// centred — the whole media visible, letterboxed, NEVER
+  /// stretched (Phase 1's core promise, PRO-SPEC point 11).
+  static Rect containRect(Rect frame, double mediaAspect) {
+    if (frame.width <= 0 || frame.height <= 0 || mediaAspect <= 0) {
+      return frame;
+    }
+    var w = frame.width;
+    var h = w / mediaAspect;
+    if (h > frame.height) {
+      h = frame.height;
+      w = h * mediaAspect;
+    }
+    return Rect.fromLTWH(
+      frame.left + (frame.width - w) / 2,
+      frame.top + (frame.height - h) / 2,
+      w,
+      h,
+    );
+  }
+
+  /// Cover fit: the smallest rect of [mediaAspect] that covers
+  /// [frame], centred (overflow cropped by the frame's clip).
+  static Rect coverRect(Rect frame, double mediaAspect) {
+    if (frame.width <= 0 || frame.height <= 0 || mediaAspect <= 0) {
+      return frame;
+    }
+    var w = frame.width;
+    var h = w / mediaAspect;
+    if (h < frame.height) {
+      h = frame.height;
+      w = h * mediaAspect;
+    }
+    return Rect.fromLTWH(
+      frame.left + (frame.width - w) / 2,
+      frame.top + (frame.height - h) / 2,
+      w,
+      h,
+    );
+  }
+
+  /// Map [point] (in the same coordinate space as [rect]) to
+  /// rect-normalized 0..1 coordinates; null when the point falls
+  /// outside [rect] — a letterbox tap is NOT a media point.
+  static Offset? normalizedIn(Rect rect, Offset point) {
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    final x = (point.dx - rect.left) / rect.width;
+    final y = (point.dy - rect.top) / rect.height;
+    if (x < 0 || x > 1 || y < 0 || y > 1) return null;
+    return Offset(x, y);
+  }
+
+  /// Same mapping as [normalizedIn] but clamped into the rect —
+  /// edge taps count as edge points instead of being dropped.
+  static Offset normalizedClamped(Rect rect, Offset point) {
+    if (rect.width <= 0 || rect.height <= 0) return Offset.zero;
+    return Offset(
+      ((point.dx - rect.left) / rect.width).clamp(0.0, 1.0),
+      ((point.dy - rect.top) / rect.height).clamp(0.0, 1.0),
+    );
+  }
+}
+
+/// The ONE timeline model's pure math (Phase 2). The State's
+/// `_totalDurationSec` / `_clipStartSec` / seek-index logic delegate
+/// here so the #5/#29/#30 invariants (one total, starts are prefix
+/// sums, seek lands in the containing clip) are unit-testable
+/// without a platform video player.
+class TimelineMath {
+  TimelineMath._();
+
+  /// Total timeline length: the sum of every clip's effective
+  /// (trimmed) duration, in order.
+  static double totalSec(List<double> durations) =>
+      durations.fold(0.0, (sum, d) => sum + d);
+
+  /// Timeline position (seconds) where clip [index] starts — the
+  /// prefix sum of the durations before it. Out-of-range indices
+  /// clamp to the ends.
+  static double startSec(List<double> durations, int index) {
+    var start = 0.0;
+    final upto = math.min(index, durations.length);
+    for (var j = 0; j < upto; j++) {
+      start += durations[j];
+    }
+    return start;
+  }
+
+  /// The clip containing timeline position [sec]: the first clip
+  /// whose end is past [sec], or the last clip when [sec] runs to
+  /// the very end (the seek loop's long-standing semantics).
+  /// Returns -1 for an empty timeline.
+  static int indexAtSec(List<double> durations, double sec) {
+    if (durations.isEmpty) return -1;
+    var acc = 0.0;
+    for (var i = 0; i < durations.length; i++) {
+      if (sec < acc + durations[i] || i == durations.length - 1) {
+        return i;
+      }
+      acc += durations[i];
+    }
+    return durations.length - 1;
+  }
+
+  /// Clip boundary times (every clip start + the total) — the
+  /// snap points for scrubbing.
+  static List<double> boundaries(List<double> durations) {
+    final pts = <double>[0];
+    var acc = 0.0;
+    for (final d in durations) {
+      acc += d;
+      pts.add(acc);
+    }
+    return pts;
+  }
+
+  /// Snap [value] to the nearest of [points] when it is within
+  /// [threshold]; otherwise return [value] unchanged.
+  /// Build 4 player fix: a timeline ScrollEnd may only turn into
+  /// a scrub-seek when the user actually scrubbed — never while
+  /// the player is playing (the strip is following it) and never
+  /// for a programmatic jumpTo's manufactured notifications.
+  static bool scrubSeekOnScrollEnd({
+    required bool isPlaying,
+    required bool programmaticScroll,
+  }) => !isPlaying && !programmaticScroll;
+
+  static double snapSec(
+    double value,
+    List<double> points,
+    double threshold,
+  ) {
+    var best = value;
+    var bestDist = threshold;
+    for (final p in points) {
+      final dist = (p - value).abs();
+      if (dist <= bestDist) {
+        best = p;
+        bestDist = dist;
+      }
+    }
+    return best;
+  }
+
+  /// Long-press drag reorder (Phase 2): the index the dragged
+  /// clip should occupy when its centre reaches [centreSec]
+  /// (absolute timeline seconds), walking from [from] across
+  /// neighbour midpoints in the CURRENT arrangement described by
+  /// [durations] (effective seconds per clip, in order).
+  static int dragTargetIndex(
+    List<double> durations,
+    int from,
+    double centreSec,
+  ) {
+    if (from < 0 || from >= durations.length) return from;
+    var idx = from;
+    var start = 0.0;
+    for (var i = 0; i < from; i++) {
+      start += durations[i];
+    }
+    final draggedDur = durations[from];
+    while (idx < durations.length - 1 &&
+        centreSec > start + draggedDur + durations[idx + 1] / 2) {
+      // The dragged clip's new slot starts after the neighbour it
+      // just crossed.
+      start += durations[idx + 1];
+      idx++;
+    }
+    while (idx > 0 && centreSec < start - durations[idx - 1] / 2) {
+      start -= durations[idx - 1];
+      idx--;
+    }
+    return idx;
+  }
+}
+
+/// Rule-of-thirds grid + safe zones drawn over the canvas frame
+/// (Phase 1, PRO-SPEC point 15). Pure guide lines: thirds in faint
+/// white, the 90% action-safe and 80% title-safe rects in faint
+/// gold. Painted only while the user's grid toggle is on.
+class StageGridPainter extends CustomPainter {
+  const StageGridPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.width <= 0 || size.height <= 0) return;
+    final third = Paint()
+      ..color = const Color(0x3DFFFFFF)
+      ..strokeWidth = 1;
+    for (final f in const [1 / 3, 2 / 3]) {
+      canvas.drawLine(
+        Offset(size.width * f, 0),
+        Offset(size.width * f, size.height),
+        third,
+      );
+      canvas.drawLine(
+        Offset(0, size.height * f),
+        Offset(size.width, size.height * f),
+        third,
+      );
+    }
+    final safe = Paint()
+      ..color = const Color(0x59FFD76A)
+      ..strokeWidth = 1
+      ..style = PaintingStyle.stroke;
+    // Action-safe (5% inset) and title-safe (10% inset).
+    canvas.drawRect(
+      Rect.fromLTWH(
+        size.width * 0.05,
+        size.height * 0.05,
+        size.width * 0.9,
+        size.height * 0.9,
+      ),
+      safe,
+    );
+    canvas.drawRect(
+      Rect.fromLTWH(
+        size.width * 0.1,
+        size.height * 0.1,
+        size.width * 0.8,
+        size.height * 0.8,
+      ),
+      safe,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+/// Build 3 (Phase 3): the Custom speed-ramp graph's geometry — ONE
+/// mapping shared by the curve painter (which draws the three
+/// plateaus + drag handles) and the panel's drag handler (which
+/// turns a finger position back into a point speed), so the point
+/// the user grabs is exactly the point that moves. The ramp model
+/// is three plateaus (start / middle / end thirds) with speeds in
+/// [minSpeed]..[maxSpeed] — the same range the point sliders use.
+class SpeedRampMath {
+  SpeedRampMath._();
+
+  static const double minSpeed = 0.25;
+  static const double maxSpeed = 2.0;
+
+  /// The graph's plot area: a 4 px baseline inset at the bottom
+  /// and 6 px of headroom at the top (the painter's long-standing
+  /// margins).
+  static double yForSpeed(double speed, double height) {
+    final s = speed.clamp(minSpeed, maxSpeed);
+    return height - 4 - (s / maxSpeed) * (height - 10);
+  }
+
+  /// Inverse of [yForSpeed]: the speed a drag at vertical position
+  /// [y] (in a graph of [height]) sets, clamped to the point range.
+  static double speedForY(double y, double height) {
+    if (height <= 10) return 1.0;
+    final v = (height - 4 - y) / (height - 10) * maxSpeed;
+    return v.clamp(minSpeed, maxSpeed);
+  }
+
+  /// Which plateau a horizontal position falls in: 0 = start
+  /// third, 1 = middle third, 2 = end third.
+  static int thirdForX(double x, double width) {
+    if (width <= 0) return 0;
+    final t = (x / width * 3).floor();
+    return t.clamp(0, 2);
+  }
+
+  /// The horizontal centre of plateau [third] — where its drag
+  /// handle is drawn.
+  static double centreX(int third, double width) =>
+      width * (third + 0.5) / 3;
+}
+
+class StageCanvas extends StatelessWidget {
+  final VideoEditorController host;
+  final VideoClip clip;
+  final VideoPlayerController? ctrl;
+  final bool ready;
+  const StageCanvas({super.key, required this.host, required this.clip, required this.ctrl, required this.ready});
+
+  @override
+  Widget build(BuildContext context) {
+    final ctrl = this.ctrl;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final stageSize = constraints.biggest;
+        final mediaAspect = (!clip.isPhoto && ready && ctrl != null)
+            ? ctrl.value.aspectRatio
+            : clip.aspectRatio;
+        final ratio = CanvasGeometry.ratioFor(host.aspect, mediaAspect);
+        final frame = CanvasGeometry.frameRect(stageSize, ratio);
+        host.stageFrameRect = frame;
+        host.stageMediaRect = CanvasGeometry.containRect(frame, mediaAspect);
+        if (frame.width <= 0 || frame.height <= 0) {
+          return const SizedBox.shrink();
+        }
+        final containLocal = host.stageMediaRect.shift(-frame.topLeft);
+        return Stack(
+          children: [
+            // ---- The canvas frame ----
+            Positioned.fromRect(
+              rect: frame,
+              child: ClipRect(
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: ColoredBox(color: host.frameBackdropColor()),
+                    ),
+                    // Transformed content (media + text + track
+                    // pin): the export's transform pass scales the
+                    // main pass output — which includes the
+                    // drawtext text — so all of it lives inside
+                    // the Transform.
+                    Positioned.fill(
+                      child: Transform(
+                        alignment: Alignment.center,
+                        transform: host.stageTransformMatrix(frame.size),
+                        child: Stack(
+                          children: [
+                            Positioned.fromRect(
+                              rect: containLocal,
+                              child: _stageMediaLayer(
+                                clip,
+                                ctrl,
+                                ready,
+                                containLocal.size,
+                              ),
+                            ),
+                            if (host.text.trim().isNotEmpty)
+                              _stageTextLayer(frame.size),
+                          ],
+                        ),
+                      ),
+                    ),
+                    // PIP live preview (§6.11): composited over the
+                    // frame, NOT transformed — the export applies
+                    // its PIP pass after the transform pass.
+                    // Build 3: the layer rebuilds on every clock
+                    // tick so a keyframed inset's pose interpolates
+                    // LIVE with playback/scrubbing.
+                    if (host.fxPip && host.fxPipVideo.isNotEmpty)
+                      Positioned.fill(
+                        child: AnimatedBuilder(
+                          animation: host.clock,
+                          builder: (context, _) => Stack(
+                            children: [_pipPreviewLayer(frame.size)],
+                          ),
+                        ),
+                      ),
+                    // Build 3: the keyframed title/sticker posed
+                    // live at the playhead (preview interpolation —
+                    // the export renders the real PNG with the same
+                    // track; this pill is its stage stand-in).
+                    if (host.proKeyframes &&
+                        (host.proTitle.trim().isNotEmpty ||
+                            host.proSticker.trim().isNotEmpty))
+                      AnimatedBuilder(
+                        animation: host.clock,
+                        builder: (context, _) => _kfTitleChip(containLocal),
+                      ),
+                    // Guides: thirds + safe zones over everything.
+                    if (host.showGrid)
+                      Positioned.fill(
+                        child: CustomPaint(
+                          painter: const StageGridPainter(),
+                        ),
+                      ),
+                    // The frame's edge, so the canvas is visible as
+                    // an object on the black stage.
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            border: Border.all(color: Colors.white24),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            // Grid / safe-zone toggle (stage corner).
+            Positioned(
+              top: 2,
+              right: 2,
+              child: IconButton(
+                key: const Key('stageGridToggle'),
+                tooltip: 'Grid / safe zones',
+                icon: Icon(
+                  host.showGrid ? Icons.grid_on : Icons.grid_off,
+                  color: host.showGrid ? TjProTheme.gold : Colors.white54,
+                  size: 20,
+                ),
+                onPressed: () => host.update(() => host.showGrid = !host.showGrid),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _mainMasked(Widget media, double aspect) {
+    if (host.mainMask == 'none') return media;
+    var mw = 480;
+    var mh = (480 / aspect).round();
+    if (mh > 480) {
+      mh = 480;
+      mw = (480 * aspect).round();
+    }
+    if (mw < 2 || mh < 2) return media;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (host.mounted) host.ensureMainMaskImage(mw, mh);
+    });
+    final img = host.mainMaskImage;
+    if (img == null) return media;
+    return ShaderMask(
+      shaderCallback: (bounds) => ui.ImageShader(
+        img,
+        ui.TileMode.clamp,
+        ui.TileMode.clamp,
+        (Matrix4.diagonal3Values(
+          bounds.width / img.width,
+          bounds.height / img.height,
+          1.0,
+        )).storage,
+      ),
+      blendMode: BlendMode.dstIn,
+      child: media,
+    );
+  }
+
+  Widget _stageMediaLayer(
+    VideoClip clip,
+    VideoPlayerController? ctrl,
+    bool ready,
+    Size mediaBox,
+  ) {
+    if (clip.isPhoto) {
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onScaleStart: host.onStageScaleStart,
+        onScaleUpdate: host.onStageScaleUpdate,
+        onDoubleTap: host.resetStageTransform,
+        child: _mainMasked(
+          ColorFiltered(
+            colorFilter: ColorFilter.matrix(host.stageMatrix),
+            child: Image.file(
+              clip.file,
+              fit: BoxFit.contain,
+              width: double.infinity,
+              height: double.infinity,
+            ),
+          ),
+          clip.aspectRatio,
+        ),
+      );
+    }
+    if (!ready || ctrl == null) {
+      return const Center(
+        child: Text(
+          'Preview load ho raha hai…',
+          style: TextStyle(color: Colors.white70),
+        ),
+      );
+    }
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (d) => host.onPreviewTapDown(d, mediaBox),
+      // §6.2 hold-to-compare: hold the stage to see the RAW frame,
+      // release for the graded one.
+      onLongPressStart: (_) => host.update(() => host.comparing = true),
+      onLongPressEnd: (_) => host.update(() => host.comparing = false),
+      onScaleStart: host.onStageScaleStart,
+      onScaleUpdate: host.onStageScaleUpdate,
+      onDoubleTap: host.resetStageTransform,
+      child: Stack(
+        children: [
+          _mainMasked(
+            ColorFiltered(
+              colorFilter: ColorFilter.matrix(host.stageMatrix),
+              child: VideoPlayer(ctrl),
+            ),
+            ctrl.value.aspectRatio,
+          ),
+          if (host.trackStartX != null)
+            Align(
+              alignment: Alignment(
+                host.trackStartX! * 2 - 1,
+                host.trackStartY! * 2 - 1,
+              ),
+              child: const Icon(
+                Icons.location_on,
+                color: Colors.redAccent,
+                size: 28,
+              ),
+            ),
+          if (host.comparing)
+            const Positioned(
+              top: 10,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: Chip(
+                  label: Text('Original'),
+                  backgroundColor: Colors.black54,
+                  labelStyle: TextStyle(color: Colors.white),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _kfTitleChip(Rect containLocal) {
+    final label = host.proTitle.trim().isNotEmpty
+        ? host.proTitle.trim()
+        : host.proSticker.trim();
+    final total = host.totalDurationSec;
+    final f = total > 0
+        ? (host.globalPositionSec / total).clamp(0.0, 1.0)
+        : 0.0;
+    final pose = keyframePoseAt(
+      KeyframeTrack(
+        start: ProKeyframe(
+          timeSec: 0,
+          xNorm: host.kfStartX,
+          yNorm: host.kfStartY,
+          scale: host.kfStartScale,
+          opacity: host.kfStartOpacity,
+          rotationDeg: host.kfStartRotation,
+        ),
+        end: ProKeyframe(
+          timeSec: 1,
+          xNorm: host.kfEndX,
+          yNorm: host.kfEndY,
+          scale: host.kfEndScale,
+          opacity: host.kfEndOpacity,
+          rotationDeg: host.kfEndRotation,
+        ),
+      ),
+      f,
+      host.kfEasing,
+    );
+    return Positioned.fill(
+      child: Stack(
+        children: [
+          Positioned(
+            left: containLocal.left + pose.xNorm * containLocal.width,
+            top: containLocal.top + pose.yNorm * containLocal.height,
+            child: Opacity(
+              opacity: pose.opacity.clamp(0.0, 1.0),
+              child: Transform.rotate(
+                angle: pose.rotationDeg * math.pi / 180,
+                child: Transform.scale(
+                  scale: pose.scale.clamp(0.1, 3.0),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      label,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _stageTextLayer(Size frameSize) {
+    final selected = host.stageLayer == 'text';
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: frameSize.height * 0.055,
+      child: Center(
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () {
+            host.update(() => host.stageLayer = 'text');
+            host.openToolTab('text', 'text');
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: selected
+                ? BoxDecoration(
+                    border: Border.all(color: TjProTheme.gold, width: 1.5),
+                    borderRadius: BorderRadius.circular(4),
+                  )
+                : null,
+            child: Text(
+              host.text,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+                shadows: [Shadow(color: Colors.black, blurRadius: 6)],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _pipPreviewLayer(Size stage) {
+    final clip = host.clips.isEmpty ? null : host.clips[host.selected];
+    final ctrl = host.controller;
+    // Main content rect (contain fit, centred on the black stage).
+    double mainAspect = stage.aspectRatio;
+    double basePxW = 1280;
+    if (clip != null && clip.isPhoto) {
+      mainAspect = clip.aspectRatio;
+      basePxW = 1920;
+    } else if (ctrl != null && ctrl.value.isInitialized) {
+      mainAspect = ctrl.value.aspectRatio;
+      basePxW = ctrl.value.size.width;
+    }
+    var dispW = stage.width;
+    var dispH = dispW / mainAspect;
+    if (dispH > stage.height) {
+      dispH = stage.height;
+      dispW = dispH * mainAspect;
+    }
+    final dispX = (stage.width - dispW) / 2;
+    final dispY = (stage.height - dispH) / 2;
+    final pipCtrl = host.pipController;
+    final pipReady = pipCtrl != null && pipCtrl.value.isInitialized;
+    final pipPxW = pipReady ? pipCtrl.value.size.width : 1280;
+    final pipAspect = pipReady ? pipCtrl.value.aspectRatio : 16 / 9;
+    final s = host.pipScale.clamp(0.15, 0.5);
+    final pipW = dispW * pipPxW * s / basePxW;
+    final pipH = pipW / pipAspect;
+    final margin = dispW * 24 / basePxW;
+    // Build 3 (Phase 3): with PIP keyframes ON, the inset's pose
+    // comes from the keyframe track at the playhead (the SAME lerp
+    // the export renders, via keyframePoseAt) — the corner preset
+    // and drag offset no longer drive it.
+    final kfPose = host.pipKeyframes
+        ? keyframePoseAt(
+            KeyframeTrack(
+              start: ProKeyframe(
+                timeSec: 0,
+                xNorm: host.pkStartX,
+                yNorm: host.pkStartY,
+                opacity: host.pkStartOpacity,
+              ),
+              end: ProKeyframe(
+                timeSec: 1,
+                xNorm: host.pkEndX,
+                yNorm: host.pkEndY,
+                opacity: host.pkEndOpacity,
+              ),
+            ),
+            host.totalDurationSec > 0
+                ? (host.globalPositionSec / host.totalDurationSec).clamp(0.0, 1.0)
+                : 0.0,
+            host.pkEasing,
+          )
+        : null;
+    final (lx, ty) = kfPose != null
+        ? (dispX + kfPose.xNorm * dispW, dispY + kfPose.yNorm * dispH)
+        : switch (host.pipPosition) {
+            PipPosition.topLeft => (dispX + margin, dispY + margin),
+            PipPosition.topRight => (
+                dispX + dispW - pipW - margin,
+                dispY + margin,
+              ),
+            PipPosition.bottomLeft => (
+                dispX + margin,
+                dispY + dispH - pipH - margin,
+              ),
+            _ => (
+                dispX + dispW - pipW - margin,
+                dispY + dispH - pipH - margin,
+              ),
+          };
+    // Preview mask at a capped resolution (shapes/gradients are
+    // scale-invariant; feather is relative to the short side).
+    if (host.pipMask != 'none' && pipReady) {
+      final mw = pipCtrl.value.size.width.round();
+      final mh = pipCtrl.value.size.height.round();
+      final cap = 480 / math.max(mw, mh);
+      final sw = cap < 1 ? (mw * cap).round() : mw;
+      final sh = cap < 1 ? (mh * cap).round() : mh;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (host.mounted) host.ensurePipMaskImage(sw, sh);
+      });
+    }
+    Widget content = pipReady
+        ? VideoPlayer(pipCtrl)
+        : Container(
+            decoration: BoxDecoration(
+              color: Colors.black54,
+              border: Border.all(color: TjProTheme.gold),
+            ),
+            child: const Center(
+              child: Icon(
+                Icons.picture_in_picture_alt,
+                color: Colors.white70,
+                size: 28,
+              ),
+            ),
+          );
+    if (host.pipMask != 'none' && host.pipMaskImage != null) {
+      final img = host.pipMaskImage!;
+      content = ShaderMask(
+        shaderCallback: (bounds) => ui.ImageShader(
+          img,
+          ui.TileMode.clamp,
+          ui.TileMode.clamp,
+          (Matrix4.diagonal3Values(
+            bounds.width / img.width,
+            bounds.height / img.height,
+            1.0,
+          )).storage,
+        ),
+        blendMode: BlendMode.dstIn,
+        child: content,
+      );
+    }
+    content = Opacity(
+      opacity: kfPose != null
+          ? kfPose.opacity.clamp(0.0, 1.0)
+          : host.pipOpacity.clamp(0.1, 1.0),
+      child: content,
+    );
+    final mode = host.pipBlendMode(host.pipBlend);
+    if (mode != null) {
+      content = BlendLayer(mode: mode, child: content);
+    }
+    // Build 2 (Phase 1): the inset is a stage LAYER — tap selects
+    // it (gold outline) and opens the Elements row, drag moves it
+    // (release snaps to the nearest corner of the contain rect —
+    // the PipPosition model the export consumes), pinch rescales
+    // it (the render clamp 0.15..0.5 above). Build 3: while PIP
+    // keyframes drive the pose, drag/pinch stand down (the track
+    // owns the position).
+    final selected = host.stageLayer == 'pip';
+    return Positioned(
+      left: lx + (kfPose != null ? 0 : host.pipDragOffset.dx),
+      top: ty + (kfPose != null ? 0 : host.pipDragOffset.dy),
+      width: pipW,
+      height: pipH,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          host.update(() => host.stageLayer = 'pip');
+          host.openToolTab('overlay', 'pip');
+        },
+        onScaleStart: (_) => host.pinchPipScale = host.pipScale,
+        onScaleUpdate: (d) {
+          if (host.pipKeyframes) return;
+          host.update(() {
+            if (d.pointerCount >= 2) {
+              host.pipScale = (host.pinchPipScale * d.scale).clamp(0.15, 0.5);
+            }
+            host.pipDragOffset += d.focalPointDelta;
+          });
+        },
+        onScaleEnd: (_) {
+          if (host.pipKeyframes) return;
+          final cxp = lx + host.pipDragOffset.dx + pipW / 2;
+          final cyp = ty + host.pipDragOffset.dy + pipH / 2;
+          final pos = (cxp < dispX + dispW / 2)
+              ? (cyp < dispY + dispH / 2
+                    ? PipPosition.topLeft
+                    : PipPosition.bottomLeft)
+              : (cyp < dispY + dispH / 2
+                    ? PipPosition.topRight
+                    : PipPosition.bottomRight);
+          host.update(() {
+            host.pipPosition = pos;
+            host.pipDragOffset = Offset.zero;
+          });
+        },
+        child: Container(
+          decoration: selected
+              ? BoxDecoration(
+                  border: Border.all(color: TjProTheme.gold, width: 1.5),
+                )
+              : null,
+          child: content,
+        ),
+      ),
+    );
+  }
+}
+
+class BlendLayer extends SingleChildRenderObjectWidget {
+  const BlendLayer({super.key, required this.mode, required super.child});
+
+  final BlendMode mode;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      RenderBlendLayer(mode);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    RenderBlendLayer renderObject,
+  ) {
+    renderObject.mode = mode;
+  }
+}
+
+class RenderBlendLayer extends RenderProxyBox {
+  RenderBlendLayer(this._mode);
+
+  BlendMode _mode;
+
+  set mode(BlendMode value) {
+    if (_mode != value) {
+      _mode = value;
+      markNeedsPaint();
+    }
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    if (child == null) return;
+    if (_mode == BlendMode.srcOver) {
+      super.paint(context, offset);
+      return;
+    }
+    context.canvas.saveLayer(offset & size, Paint()..blendMode = _mode);
+    super.paint(context, offset);
+    context.canvas.restore();
+  }
+}

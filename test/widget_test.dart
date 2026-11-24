@@ -29,12 +29,13 @@ void main() {
     await tester.pumpWidget(const PhotoVideoEditorApp());
 
     expect(find.text('TJ Pro'), findsOneWidget);
-    // v1.5.2 (fix #54): the editors no longer have their own
-    // Home cards — they are the CREATE NEW circles ('Video' /
-    // 'Photo'), which open the project hubs that start the
-    // editors. The old full-name cards were duplicates.
-    expect(find.text('Photo'), findsWidgets);
-    expect(find.text('Video'), findsWidgets);
+    // v1.5.6 (Build 4, user reference home): the editors are
+    // the reference's three big cards — 'VIDEO EDITOR' /
+    // 'PHOTO EDITOR' — which open the project hubs that start
+    // the editors. (v1.5.2's CREATE NEW circles were replaced
+    // by the user's own home design, copied "same to same".)
+    expect(find.text('VIDEO EDITOR'), findsOneWidget);
+    expect(find.text('PHOTO EDITOR'), findsOneWidget);
   });
 
   testWidgets('News Studio circle opens the news projects hub',
@@ -42,22 +43,22 @@ void main() {
     _mockPathProvider();
     await tester.pumpWidget(const PhotoVideoEditorApp());
 
-    expect(find.text('News Studio'), findsWidgets);
-    // The circle's label sits below its tap area — tap the
-    // circle's newspaper icon (the first one; the second is the
-    // bottom-nav tab's icon).
-    final circleIcon = find.byIcon(Icons.newspaper).first;
-    await tester.ensureVisible(circleIcon);
+    expect(find.text('NEWS STUDIO'), findsWidgets);
+    // v1.5.6 (Build 4): the entry is now the reference's gold
+    // NEWS STUDIO big card — tap its mic icon. The destination
+    // is unchanged: the news projects hub.
+    final cardIcon = find.byIcon(Icons.mic).first;
+    await tester.ensureVisible(cardIcon);
     await tester.pump();
-    await tester.tap(circleIcon);
+    await tester.tap(cardIcon);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
     // Navigation landed on the pushed News projects hub (its
     // AppBar + back button) — the hub is where News Maker
-    // projects start from (v1.5.2: the old direct News Studio
-    // card was one of the duplicated Home entries; the bottom
-    // nav's News Studio tab is the studio's one Home entry).
+    // projects start from. (v1.5.6: the reference home's big
+    // NEWS STUDIO card is the entry, wired to the same hub the
+    // v1.5.2 circle opened.)
     expect(find.text('News Projects'), findsOneWidget);
     expect(find.byType(BackButton), findsOneWidget);
   });

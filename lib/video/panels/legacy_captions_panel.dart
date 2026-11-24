@@ -1,0 +1,116 @@
+/// LegacyCaptionsPanel of the Video Editor (Master Plan Phase 4 split).
+///
+/// Was part of the panels extension on the editor State; now a
+/// real widget in its own file. All editor state is reached
+/// through [VideoEditorController] — behaviour unchanged.
+library;
+
+import 'package:flutter/material.dart';
+import '../../services/caption_service.dart';
+import '../video_editor_controller.dart';
+import '../widgets/panel_controls.dart';
+
+/// Legacy 'captions' panel.
+class LegacyCaptionsPanel extends StatelessWidget {
+  final VideoEditorController host;
+  const LegacyCaptionsPanel(this.host, {super.key});
+
+  List<Widget> buildChildren(BuildContext context) {
+        return [
+const Text('Auto Captions (CapCut-style)',
+              style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: iconChoiceRail(host, [
+                  iconChoiceItem(host, 
+                    icon: Icons.translate,
+                    label: 'Urdu',
+                    selected: host.captionLocale == 'ur',
+                    onTap: () => host.update(() => host.captionLocale = 'ur'),
+                  ),
+                  iconChoiceItem(host, 
+                    icon: Icons.abc,
+                    label: 'English',
+                    selected: host.captionLocale == 'en',
+                    onTap: () => host.update(() => host.captionLocale = 'en'),
+                  ),
+                ]),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed:
+                      (host.transcribing || host.busy) ? null : host.generateCaptions,
+                  icon: const Icon(Icons.closed_caption),
+                  label: Text(
+                    host.transcribing ? 'Transcribing…' : 'Generate Auto Captions',
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (host.transcribing) ...[
+            const SizedBox(height: 8),
+            const Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Video ki apni audio se captions ban rahe hain…',
+                  ),
+                ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 8),
+          const Text('Caption style'),
+          const SizedBox(height: 4),
+          iconChoiceRail(host, [
+            for (final e in const [
+              (CaptionStyle.standard, 'Default', Icons.closed_caption),
+              (CaptionStyle.highlight, 'Highlight', Icons.highlight),
+              (CaptionStyle.gold, 'Gold', Icons.star),
+              (CaptionStyle.clean, 'Clean', Icons.format_clear),
+              (CaptionStyle.pop, 'Pop', Icons.bolt),
+              (CaptionStyle.boxed, 'Boxed', Icons.check_box_outline_blank),
+            ])
+              iconChoiceItem(host, 
+                icon: e.$3,
+                label: e.$2,
+                selected: host.captionStyle == e.$1,
+                onTap: () => host.update(() => host.captionStyle = e.$1),
+              ),
+          ]),
+          if (host.captions.isNotEmpty && !host.transcribing) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '${host.captions.length} caption segments ready — export me video par jal jayenge.',
+                  ),
+                ),
+                TextButton(
+                  onPressed: host.editCaptions,
+                  child: const Text('Edit'),
+                ),
+                TextButton(
+                  onPressed: () => host.update(() => host.captions = []),
+                  child: const Text('Clear'),
+                ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 8),
+          const Text(
+            'Note: captions video ki apni audio se on-device banenge (whisper, Urdu/English) — mic, quiet room ya earphones ki koi pabandi nahi. Pehli dafa ~75 MB caption model download hoga (progress ke saath); us ke baad sab kuch phone par hi, offline hota hai.',
+            style: TextStyle(color: Colors.grey),
+          ),
+          const SizedBox(height: 12),
+        ];
+  }
+
+  @override
+  Widget build(BuildContext context) => PanelColumn(children: buildChildren(context));
+}

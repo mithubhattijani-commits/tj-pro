@@ -1,0 +1,114 @@
+/// Transport row of the Video Editor (Master Plan Phase 4 split).
+///
+/// Was `_transportRow` inside the editor State; now a real widget
+/// in its own file. All editor state is reached through
+/// [VideoEditorController] — behaviour unchanged.
+library;
+
+import 'package:flutter/material.dart';
+import '../../theme.dart';
+import '../video_editor_controller.dart';
+
+/// Play/pause, skip, time readout and the undo/redo/fullscreen
+/// buttons under the stage.
+class TransportRow extends StatelessWidget {
+  final VideoEditorController host;
+  const TransportRow(this.host, {super.key});
+
+  /// v1.5.0 transport row — BELOW the preview (v1.4.0 overlaid it on
+  /// the stage, hiding the frame's bottom, #10). Everything reads
+  /// the ONE clock + timeline model: undo / redo, plain play/pause
+  /// (no gold circle), current / total from [_globalPositionSec] /
+  /// [_totalDurationSec], keyframe toggle, fullscreen. Rebuilds on
+  /// every clock tick — the counter RUNS (#30).
+  @override
+  Widget build(BuildContext context) {
+    String fmt(double sec) {
+      final m = sec ~/ 60;
+      final ss = (sec % 60).toStringAsFixed(1).padLeft(4, '0');
+      return '$m:$ss';
+    }
+
+    return AnimatedBuilder(
+      animation: host.clock,
+      builder: (context, _) {
+        final ctrl = host.controller;
+        final ready = ctrl != null && ctrl.value.isInitialized;
+        final playing = host.clock.isPlaying;
+        return Container(
+          height: 46,
+          color: const Color(0xFF121212),
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Row(
+            children: [
+              IconButton(
+                tooltip: 'Undo',
+                onPressed: host.undoStack.isEmpty ? null : host.undo,
+                icon: const Icon(Icons.undo, color: Colors.white, size: 20),
+              ),
+              IconButton(
+                tooltip: 'Redo',
+                onPressed: host.redoStack.isEmpty ? null : host.redo,
+                icon: const Icon(Icons.redo, color: Colors.white, size: 20),
+              ),
+              const Spacer(),
+              IconButton(
+                tooltip: playing ? 'Pause' : 'Play',
+                onPressed: !ready
+                    ? null
+                    : () {
+                        if (playing) {
+                          ctrl.pause();
+                        } else {
+                          ctrl.play();
+                        }
+                      },
+                icon: Icon(
+                  playing ? Icons.pause : Icons.play_arrow,
+                  color: Colors.white,
+                  size: 26,
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Flexible: on narrow screens (or long durations)
+              // the time readout shrinks/ellipsizes instead of
+              // overflowing the transport row (v1.5.2, #67/#69).
+              Flexible(
+                child: Text(
+                  '${fmt(host.globalPositionSec)} / ${fmt(host.totalDurationSec)}',
+                  style: const TextStyle(color: Colors.white, fontSize: 12),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const Spacer(),
+              IconButton(
+                tooltip: 'Keyframes on/off',
+                onPressed: () {
+                  host.update(() => host.proKeyframes = !host.proKeyframes);
+                  host.setStatus(
+                    host.proKeyframes ? 'Keyframes ON.' : 'Keyframes OFF.',
+                  );
+                },
+                icon: Icon(
+                  Icons.diamond,
+                  color: host.proKeyframes ? TjProTheme.gold : Colors.white54,
+                  size: 20,
+                ),
+              ),
+              IconButton(
+                tooltip: 'Fullscreen',
+                onPressed: ready ? host.openFullscreen : null,
+                icon: const Icon(
+                  Icons.fullscreen,
+                  color: Colors.white,
+                  size: 22,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}

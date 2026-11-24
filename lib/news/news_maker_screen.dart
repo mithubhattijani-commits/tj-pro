@@ -39,6 +39,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -47,9 +48,11 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
+import 'package:video_player/video_player.dart';
 
 import '../services/asset_download_service.dart';
 import '../services/coin_service.dart';
+import '../services/ffmpeg_service.dart';
 import '../services/font_registry.dart';
 import '../services/gemini_voice_service.dart';
 import '../services/library_service.dart';
@@ -147,6 +150,18 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   String _saveStatus = '';
   Timer? _saveTimer;
 
+  /// Build 4 (News Studio workspace): project-bar undo/redo —
+  /// JSON snapshots of persisted states (see [_saveNow]).
+  final List<String> _undoStack = [];
+  final List<String> _redoStack = [];
+  String? _lastSnap;
+  bool _restoringHistory = false;
+
+  /// Build 4: probed clip durations + first-frame thumbnails for
+  /// the timeline zone (a visual map only — failures are silent).
+  final Map<String, double> _clipDurations = {};
+  final Map<String, String> _clipThumbs = {};
+
   /// v1.5.0 (#33): the element selected in the Elements panel /
   /// by tapping the preview (a [NewsElement] id).
   String _selectedElement = NewsElement.media;
@@ -174,6 +189,8 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       _tickerLabelController.text = _project!.tickerLabel;
       _reporterNameController.text = _project!.reporterName;
       _loaded = true;
+      _lastSnap = jsonEncode(_project!.toJson());
+      unawaited(_probeClips());
       _refreshVoiceStatus();
       _checkFont();
       _initFontsAndLibrary();
@@ -208,6 +225,8 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       _reporterNameController.text = project.reporterName;
       _loaded = true;
     });
+    _lastSnap = jsonEncode(_project!.toJson());
+    unawaited(_probeClips());
     await _refreshVoiceStatus();
     await _checkFont();
     await _initFontsAndLibrary();
@@ -443,13 +462,17 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   Future<void> _saveNow() async {
     final project = _project;
     if (project == null) return;
-    project.tehreer = _tehreerController.text;
-    project.tickerText = _tickerController.text;
-    project.englishTickerText = _englishTickerController.text;
-    project.tickerLabel = _tickerLabelController.text.trim();
-    project.reporterName = _reporterNameController.text;
-    project.voice = _voice;
-    project.studioVoiceId = _studioVoiceId;
+    _syncTextControllers(project);
+    // Build 4 (News Studio workspace): the persisted state becomes
+    // an undo step (the state it replaced) for the project bar's
+    // undo/redo. Restores also save through here, flagged off.
+    final snap = jsonEncode(project.toJson());
+    if (!_restoringHistory && _lastSnap != null && snap != _lastSnap) {
+      _undoStack.add(_lastSnap!);
+      if (_undoStack.length > 50) _undoStack.removeAt(0);
+      _redoStack.clear();
+    }
+    _lastSnap = snap;
     await NewsProjectStore.save(project);
     if (!mounted) return;
     final now = DateTime.now();
@@ -1133,32 +1156,63 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   @override
   Widget build(BuildContext context) {
     return Theme(
+      // Build 4 (News Studio workspace, approved mockup): deep
+      // navy/charcoal palette, gold as the single accent, thin
+      // sliders with white thumbs, dark switch/chip grammar.
       data: ThemeData.dark().copyWith(
         colorScheme: const ColorScheme.dark(
-          primary: Color(0xFF7C3AED),
-          secondary: Color(0xFF7C3AED),
+          primary: Color(0xFFFFC800),
+          secondary: Color(0xFFFFC800),
+          surface: Color(0xFF12151C),
         ),
-        scaffoldBackgroundColor: const Color(0xFF080810),
-        cardColor: const Color(0xFF181828),
+        scaffoldBackgroundColor: const Color(0xFF0A0D12),
+        cardColor: const Color(0xFF12151C),
+        sliderTheme: const SliderThemeData(
+          trackHeight: 2.5,
+          activeTrackColor: Color(0xFFFFC800),
+          inactiveTrackColor: Color(0x21FFFFFF),
+          thumbColor: Colors.white,
+          thumbShape: RoundSliderThumbShape(enabledThumbRadius: 7),
+          overlayShape: RoundSliderOverlayShape(overlayRadius: 14),
+          valueIndicatorColor: Color(0xFFFFC800),
+          valueIndicatorTextStyle: TextStyle(color: Colors.black),
+        ),
+        switchTheme: SwitchThemeData(
+          thumbColor: WidgetStateProperty.resolveWith(
+            (st) => st.contains(WidgetState.selected)
+                ? const Color(0xFFFFC800)
+                : const Color(0xFF9AA1AB),
+          ),
+          trackColor: WidgetStateProperty.resolveWith(
+            (st) => st.contains(WidgetState.selected)
+                ? const Color(0xFF232833)
+                : const Color(0xFF171B24),
+          ),
+          trackOutlineColor: WidgetStateProperty.resolveWith(
+            (st) => st.contains(WidgetState.selected)
+                ? const Color(0x73FFC800)
+                : const Color(0x1FFFFFFF),
+          ),
+        ),
+        chipTheme: const ChipThemeData(
+          backgroundColor: Color(0xFF171B24),
+          selectedColor: Color(0xFFFFC800),
+          checkmarkColor: Colors.black,
+          labelStyle: TextStyle(color: Color(0xFFC4C9D0), fontSize: 12.5),
+          secondaryLabelStyle:
+              TextStyle(color: Colors.black, fontSize: 12.5),
+          side: BorderSide(color: Color(0x1FFFFFFF)),
+        ),
       ),
       child: Scaffold(
-        appBar: AppBar(
-          title: const Text('News Maker'),
-          backgroundColor: const Color(0xFF080810),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.check),
-              tooltip: 'Project save karein',
-              onPressed: () async {
-                await _saveNow();
-                _showMessage('Project save ho gaya.');
-              },
-            ),
-          ],
+        // The AppBar is replaced by the workspace project bar
+        // (first row of _buildBody): back, project title, undo /
+        // redo, save, preset chip, flat gold Export.
+        body: SafeArea(
+          child: !_loaded || _preset == null || _project == null
+              ? const Center(child: CircularProgressIndicator())
+              : _buildBody(_preset!, _project!),
         ),
-        body: !_loaded || _preset == null || _project == null
-            ? const Center(child: CircularProgressIndicator())
-            : _buildBody(_preset!, _project!),
       ),
     );
   }
@@ -1186,12 +1240,16 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     // 64-wide icon-above-label items in one horizontal line.
     return SizedBox(
       key: const Key('makerToolLine'),
-      height: 84,
+      height: 76,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 6),
         itemCount: _toolDefs.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 4),
+        separatorBuilder: (_, _) => Container(
+          width: 1,
+          margin: const EdgeInsets.symmetric(vertical: 16),
+          color: const Color(0x14FFFFFF),
+        ),
         itemBuilder: (ctx, i) {
           final (id, icon, label) = _toolDefs[i];
           final active = _activeTool == id;
@@ -1206,9 +1264,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               width: 64,
               padding: const EdgeInsets.symmetric(vertical: 8),
               decoration: BoxDecoration(
-                color: active
-                    ? const Color(0xFF2A2118)
-                    : Colors.transparent,
+                color: Colors.transparent,
                 borderRadius: BorderRadius.circular(10),
                 border: Border(
                   bottom: BorderSide(
@@ -1251,21 +1307,32 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     // assertion in debug, invisible tile states in release).
     return Material(
       key: Key('makerPanel-$_activeTool'),
-      color: const Color(0xFF10101C),
+      color: const Color(0xFF12151C),
       child: Container(
-        height: 272,
+        height: MediaQuery.of(context).size.height < 700 ? 212 : 272,
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
         child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
+              const Text(
+                'INSPECTOR',
+                style: TextStyle(
+                  fontSize: 10,
+                  letterSpacing: 2,
+                  color: Color(0xFF8A919C),
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   title,
                   style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFFECEEF1),
                   ),
                 ),
               ),
@@ -1355,6 +1422,721 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     );
   }
 
+
+  // ==========================================================
+  // Build 4 — News Studio workspace (approved mockup): project
+  // bar, stage chips, summary inspector, timeline zone, and the
+  // snapshot undo/redo behind the bar's arrows.
+  // ==========================================================
+
+  /// The one place the five text controllers + voice picks are
+  /// written back into the working project (was inline in
+  /// [_saveNow]; undo/redo need the same sync).
+  void _syncTextControllers(NewsProject project) {
+    project.tehreer = _tehreerController.text;
+    project.tickerText = _tickerController.text;
+    project.englishTickerText = _englishTickerController.text;
+    project.tickerLabel = _tickerLabelController.text.trim();
+    project.reporterName = _reporterNameController.text;
+    project.voice = _voice;
+    project.studioVoiceId = _studioVoiceId;
+  }
+
+  Future<void> _undoProject() async {
+    final project = _project;
+    if (project == null || _undoStack.isEmpty) return;
+    _syncTextControllers(project);
+    _redoStack.add(jsonEncode(project.toJson()));
+    await _restoreProject(_undoStack.removeLast());
+  }
+
+  Future<void> _redoProject() async {
+    final project = _project;
+    if (project == null || _redoStack.isEmpty) return;
+    _syncTextControllers(project);
+    _undoStack.add(jsonEncode(project.toJson()));
+    await _restoreProject(_redoStack.removeLast());
+  }
+
+  /// Restores one snapshot: swaps the working project and re-syncs
+  /// every screen-level mirror (voice picks + text controllers),
+  /// then persists the restored state without touching history.
+  Future<void> _restoreProject(String snap) async {
+    final restored = NewsProject.fromJson(
+      jsonDecode(snap) as Map<String, dynamic>,
+    );
+    _restoringHistory = true;
+    setState(() {
+      _project = restored;
+      _voice = restored.voice;
+      _studioVoiceId = restored.studioVoiceId.isNotEmpty
+          ? restored.studioVoiceId
+          : restored.voice.name;
+      _tehreerController.text = restored.tehreer;
+      _tickerController.text = restored.tickerText;
+      _englishTickerController.text = restored.englishTickerText;
+      _tickerLabelController.text = restored.tickerLabel;
+      _reporterNameController.text = restored.reporterName;
+      _selectedElement = NewsElement.media;
+    });
+    await _refreshVoiceStatus();
+    await _saveNow();
+    _restoringHistory = false;
+    _lastSnap = snap;
+    unawaited(_probeClips());
+  }
+
+  /// Probes clip durations + grabs one first-frame thumbnail per
+  /// clip for the timeline zone. Decoration only: every failure is
+  /// swallowed and the lane falls back to a plain block.
+  Future<void> _probeClips() async {
+    final project = _project;
+    if (project == null) return;
+    var changed = false;
+    for (final path in project.clipPaths) {
+      final ext = p.extension(path).toLowerCase();
+      const photoExts = {'.jpg', '.jpeg', '.png', '.webp'};
+      if (photoExts.contains(ext)) {
+        if (_clipThumbs[path] != path) {
+          _clipThumbs[path] = path;
+          changed = true;
+        }
+        continue;
+      }
+      if (!_clipDurations.containsKey(path)) {
+        try {
+          final c = VideoPlayerController.file(File(path));
+          await c.initialize();
+          final d = c.value.duration.inMilliseconds / 1000.0;
+          await c.dispose();
+          if (d > 0) {
+            _clipDurations[path] = d;
+            changed = true;
+          }
+        } catch (_) {
+          // Not a readable video — the lane uses equal flex.
+        }
+      }
+      if (!_clipThumbs.containsKey(path)) {
+        try {
+          final dir = await getTemporaryDirectory();
+          final td = Directory(p.join(dir.path, 'maker_thumbs'));
+          if (!await td.exists()) await td.create(recursive: true);
+          final out = p.join(
+            td.path,
+            'mt_${path.hashCode.toUnsigned(31).toRadixString(36)}.jpg',
+          );
+          if (await File(out).exists()) {
+            _clipThumbs[path] = out;
+            changed = true;
+          } else {
+            final res = await FfmpegService.run(
+              '-y -ss 0.50 -i ${FfmpegService.q(path)} '
+              '-frames:v 1 -vf scale=128:-1 -q:v 4 '
+              '${FfmpegService.q(out)}',
+            );
+            if (res.ok && await File(out).exists()) {
+              _clipThumbs[path] = out;
+              changed = true;
+            }
+          }
+        } catch (_) {
+          // Thumbnails are decoration — never an error path.
+        }
+      }
+    }
+    if (changed && mounted) setState(() {});
+  }
+
+  String _fmtDur(double sec) {
+    final s = sec.round();
+    return '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}';
+  }
+
+  /// One slim 34px bar icon (fixed size so the bar's width is
+  /// deterministic at 360px — the overflow guard's phone size).
+  Widget _barIcon(
+    IconData icon,
+    double size,
+    Color color,
+    VoidCallback? onTap,
+  ) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: SizedBox(
+        width: 30,
+        height: 34,
+        child: Icon(
+          icon,
+          size: size,
+          color: onTap == null ? const Color(0xFF3A4048) : color,
+        ),
+      ),
+    );
+  }
+
+  /// Slim project bar: back, project title + save status,
+  /// undo/redo (snapshot history), the save check (the old AppBar
+  /// action, unchanged), a preset chip that opens the Template
+  /// panel, and the flat gold Export (opens the Export panel).
+  Widget _projectBar(
+    ChannelPreset preset,
+    NewsProject project,
+    String templateLabel,
+  ) {
+    final title = project.title.trim().isNotEmpty
+        ? project.title
+        : project.tehreer.trim().isNotEmpty
+            ? project.tehreer
+            : preset.name;
+    return Container(
+      height: 56,
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      decoration: const BoxDecoration(
+        color: Color(0xFF0A0D12),
+        border: Border(bottom: BorderSide(color: Color(0x14FFFFFF))),
+      ),
+      child: Row(
+        children: [
+          _barIcon(
+            Icons.arrow_back_ios_new,
+            18,
+            const Color(0xFFD8DCE2),
+            () => Navigator.of(context).maybePop(),
+          ),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFFECEEF1),
+                  ),
+                ),
+                Row(
+                  children: [
+                    const Flexible(
+                      child: Text(
+                        'News Maker',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Color(0xFF5E646F),
+                        ),
+                      ),
+                    ),
+                    if (_saveStatus.isNotEmpty)
+                      Flexible(
+                        child: Text(
+                          ' • $_saveStatus',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Color(0xFF5E646F),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          _barIcon(
+            Icons.undo,
+            20,
+            const Color(0xFFAEB4BD),
+            _undoStack.isEmpty ? null : _undoProject,
+          ),
+          _barIcon(
+            Icons.redo,
+            20,
+            const Color(0xFFAEB4BD),
+            _redoStack.isEmpty ? null : _redoProject,
+          ),
+          _barIcon(
+            Icons.check,
+            20,
+            const Color(0xFFAEB4BD),
+            () async {
+              await _saveNow();
+              _showMessage('Project save ho gaya.');
+            },
+          ),
+          InkWell(
+            onTap: () => setState(() => _activeTool = 'template'),
+            borderRadius: BorderRadius.circular(7),
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 74),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(7),
+                border: Border.all(color: const Color(0x1FFFFFFF)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 6,
+                    height: 6,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFFFC800),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      templateLabel,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFFC9CDD3),
+                      ),
+                    ),
+                  ),
+                  const Icon(
+                    Icons.keyboard_arrow_down,
+                    size: 15,
+                    color: Color(0xFF8A919C),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          InkWell(
+            onTap: () => setState(() => _activeTool = 'export'),
+            borderRadius: BorderRadius.circular(7),
+            child: Container(
+              height: 34,
+              padding: const EdgeInsets.symmetric(horizontal: 9),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFC800),
+                borderRadius: BorderRadius.circular(7),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.upload_outlined, size: 15, color: Colors.black),
+                  SizedBox(width: 5),
+                  Text(
+                    'Export',
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+        ],
+      ),
+    );
+  }
+
+  Widget _stageChip(String label, {bool goldDot = false}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: const Color(0x9E06080A),
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: const Color(0x24FFFFFF)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (goldDot) ...[
+            Container(
+              width: 6,
+              height: 6,
+              decoration: const BoxDecoration(
+                color: Color(0xFFFFC800),
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 6),
+          ],
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFFC9CDD3),
+              letterSpacing: 0.6,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// The inspector zone when no tool is open: the summary — the
+  /// old header label (preset • template • save status) lives
+  /// here now, unchanged.
+  Widget _summaryInspector(
+    ChannelPreset preset,
+    NewsProject project,
+    String templateLabel,
+  ) {
+    return Material(
+      color: const Color(0xFF12151C),
+      child: Container(
+        height: 84,
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Text(
+                  'INSPECTOR',
+                  style: TextStyle(
+                    fontSize: 10,
+                    letterSpacing: 2,
+                    color: Color(0xFF8A919C),
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                SizedBox(width: 10),
+                Text(
+                  'Summary',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFFECEEF1),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '${preset.name} preset • $templateLabel'
+              '${_saveStatus.isEmpty ? '' : ' • $_saveStatus'}',
+              key: const Key('makerHeaderLabel'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFF8A919C),
+                fontSize: 12.5,
+              ),
+            ),
+            const Text(
+              'Tool line se tool chunein — timeline ki lanes bhi '
+              'wahi tool kholti hain.',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: Color(0xFF5E646F), fontSize: 11),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _tlChip(String label, IconData icon, String tool) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: InkWell(
+        onTap: () => setState(() => _activeTool = tool),
+        borderRadius: BorderRadius.circular(6),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+          decoration: BoxDecoration(
+            color: const Color(0x0DFFFFFF),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: const Color(0x1FFFFFFF)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 14, color: const Color(0xFFAEB4BD)),
+              const SizedBox(width: 5),
+              Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 11.5,
+                  color: Color(0xFFC4C9D0),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// The project timeline: a visual map of the SAME project —
+  /// clip blocks flexed by probed durations (tap → Media), the
+  /// voiceover block (tap → Voice), the ticker text block
+  /// (tap → Ticker). Chips open their real panels.
+  Widget _timelineZone(NewsProject project, {bool collapsed = false}) {
+    final compact = MediaQuery.of(context).size.height < 700;
+    var clipsTotal = 0.0;
+    for (final d in _clipDurations.values) {
+      clipsTotal += d;
+    }
+    final totalAll =
+        clipsTotal > 0 ? clipsTotal : (project.voiceoverDurationSec ?? 0);
+    final hasVoice = project.voiceoverPath != null &&
+        project.voiceoverPath!.isNotEmpty;
+    final tickerText = project.tickerText.trim().isNotEmpty
+        ? project.tickerText.trim()
+        : project.englishTickerText.trim();
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFF0E1118),
+        border: Border(top: BorderSide(color: Color(0x14FFFFFF))),
+      ),
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text(
+                'TIMELINE',
+                style: TextStyle(
+                  fontSize: 10.5,
+                  letterSpacing: 1.6,
+                  color: Color(0xFF8A919C),
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '${project.clipPaths.length} clips'
+                '${totalAll > 0 ? ' • ${_fmtDur(totalAll)}' : ''}',
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: Color(0xFF5E646F),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _tlChip('Clip', Icons.add, 'media'),
+                _tlChip('Voice', Icons.mic_none_outlined, 'voice'),
+                _tlChip('Ticker', Icons.short_text, 'ticker'),
+                _tlChip('Ribbons', Icons.view_agenda_outlined, 'ribbons'),
+              ],
+            ),
+          ),
+          // While a tool panel is open the timeline collapses to
+          // its header + chips (the chips still switch tools) so
+          // the preview keeps its room; the lanes return when the
+          // panel closes.
+          if (collapsed) const SizedBox(height: 2),
+          if (!collapsed) ...[
+          if (!compact && totalAll > 0) ...[
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                const Text(
+                  '0:00',
+                  style: TextStyle(
+                      fontSize: 9.5, color: Color(0xFF5E646F)),
+                ),
+                const Spacer(),
+                Text(
+                  _fmtDur(totalAll / 2),
+                  style: const TextStyle(
+                      fontSize: 9.5, color: Color(0xFF5E646F)),
+                ),
+                const Spacer(),
+                Text(
+                  _fmtDur(totalAll),
+                  style: const TextStyle(
+                      fontSize: 9.5, color: Color(0xFF5E646F)),
+                ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 6),
+          _videoLane(project, compact),
+          const SizedBox(height: 4),
+          _laneRow(
+            'Voice',
+            InkWell(
+              onTap: () => setState(() => _activeTool = 'voice'),
+              child: Container(
+                height: 24,
+                alignment: Alignment.centerLeft,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                decoration: BoxDecoration(
+                  color: hasVoice
+                      ? const Color(0x1AFFC800)
+                      : const Color(0x0DFFFFFF),
+                  borderRadius: BorderRadius.circular(5),
+                  border: Border.all(
+                    color: hasVoice
+                        ? const Color(0x40FFC800)
+                        : const Color(0x14FFFFFF),
+                  ),
+                ),
+                child: Text(
+                  hasVoice
+                      ? 'VO • Voiceover'
+                          '${project.voiceoverDurationSec != null ? ' • ${_fmtDur(project.voiceoverDurationSec!)}' : ''}'
+                      : 'Voiceover nahi — Voice tool se banayein',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    fontWeight:
+                        hasVoice ? FontWeight.w600 : FontWeight.normal,
+                    color: hasVoice
+                        ? const Color(0xFFFFC800)
+                        : const Color(0xFF5E646F),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          _laneRow(
+            'Ticker',
+            InkWell(
+              onTap: () => setState(() => _activeTool = 'ticker'),
+              child: Container(
+                height: 24,
+                alignment: Alignment.centerLeft,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                decoration: BoxDecoration(
+                  color: const Color(0x0DFFFFFF),
+                  borderRadius: BorderRadius.circular(5),
+                  border: Border.all(color: const Color(0x14FFFFFF)),
+                ),
+                child: Text(
+                  tickerText.isEmpty ? 'Ticker khaali hai' : tickerText,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    color: tickerText.isEmpty
+                        ? const Color(0xFF5E646F)
+                        : const Color(0xFFC4C9D0),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _laneRow(String label, Widget child) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 52,
+          child: Text(
+            label,
+            style: const TextStyle(
+              fontSize: 10,
+              color: Color(0xFF8A919C),
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        Expanded(child: child),
+      ],
+    );
+  }
+
+  Widget _videoLane(NewsProject project, bool compact) {
+    final h = compact ? 38.0 : 50.0;
+    if (project.clipPaths.isEmpty) {
+      return InkWell(
+        onTap: () => setState(() => _activeTool = 'media'),
+        child: Container(
+          height: h,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            border: Border.all(color: const Color(0x14FFFFFF)),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: const Text(
+            '+ Media se clip add karein',
+            style: TextStyle(fontSize: 11.5, color: Color(0xFF5E646F)),
+          ),
+        ),
+      );
+    }
+    return SizedBox(
+      height: h,
+      child: Row(
+        children: [
+          for (var i = 0; i < project.clipPaths.length; i++) ...[
+            if (i > 0) const SizedBox(width: 4),
+            Expanded(
+              flex: ((_clipDurations[project.clipPaths[i]] ?? 1) * 100)
+                  .round()
+                  .clamp(40, 100000),
+              child: InkWell(
+                onTap: () => setState(() => _activeTool = 'media'),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(5),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      if (_clipThumbs[project.clipPaths[i]] != null)
+                        Image.file(
+                          File(_clipThumbs[project.clipPaths[i]]!),
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, _, _) =>
+                              Container(color: const Color(0xFF171B24)),
+                        )
+                      else
+                        Container(color: const Color(0xFF171B24)),
+                      Positioned(
+                        left: 5,
+                        bottom: 3,
+                        right: 5,
+                        child: Text(
+                          '${p.basename(project.clipPaths[i])}'
+                          '${_clipDurations[project.clipPaths[i]] != null ? ' • ${_fmtDur(_clipDurations[project.clipPaths[i]]!)}' : ''}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 9.5,
+                            color: Color(0xFFD8DCE2),
+                            shadows: [
+                              Shadow(color: Colors.black, blurRadius: 3),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _buildBody(ChannelPreset preset, NewsProject project) {
     final previewPreset = _previewPreset();
     // v1.5.2 (coherence): the label comes from the ONE derivation
@@ -1399,19 +2181,21 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       key: const Key('makerList'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-          child: Text(
-            '${preset.name} preset • $templateLabel'
-            '${_saveStatus.isEmpty ? '' : ' • $_saveStatus'}',
-            key: const Key('makerHeaderLabel'),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: Colors.grey, fontSize: 13),
-          ),
-        ),
+        _projectBar(preset, project, templateLabel),
         Expanded(
-          child: LayoutBuilder(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 2),
+            child: Container(
+              decoration: BoxDecoration(
+                color: const Color(0xFF0E1118),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0x1FFFFFFF)),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: LayoutBuilder(
             builder: (context, constraints) {
               final screenH = MediaQuery.of(context).size.height;
               var previewH = constraints.maxHeight < screenH * 0.60
@@ -1502,17 +2286,42 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                 ),
               );
             },
+                    ),
+                  ),
+                  // Stage chips (display only, gesture-transparent):
+                  // the live-preview dot + the active template.
+                  Positioned(
+                    left: 10,
+                    top: 8,
+                    child: IgnorePointer(
+                      child: _stageChip('PREVIEW', goldDot: true),
+                    ),
+                  ),
+                  Positioned(
+                    left: 10,
+                    bottom: 8,
+                    child: IgnorePointer(
+                      child: _stageChip(templateLabel.toUpperCase()),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
-        // The ONE bottom zone (editors' pattern): the tool line,
-        // or the open tool's panel host — never both, never
-        // anything else under the preview.
+        // Build 4 (News Studio workspace): the tool strip is
+        // always visible; the inspector (the open tool's panel,
+        // or the summary when none is open) sits under it, and
+        // the project timeline under that.
+        Container(
+          decoration: const BoxDecoration(
+            color: Color(0xFF12151C),
+            border: Border(top: BorderSide(color: Color(0x14FFFFFF))),
+          ),
+          child: _toolLine(),
+        ),
         if (_activeTool == null)
-          Container(
-            height: 84,
-            color: const Color(0xFF10101C),
-            child: _toolLine(),
-          )
+          _summaryInspector(preset, project, templateLabel)
         else
           switch (_activeTool) {
             'template' => _templatePanel(preset, project),
@@ -1532,6 +2341,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             'export' => _exportPanel(preset, project),
             _ => const SizedBox.shrink(),
           },
+        _timelineZone(project, collapsed: _activeTool != null),
       ],
     );
   }
@@ -1603,6 +2413,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         onChanged: (next) {
           setState(() => project.clipPaths = next);
           _scheduleSave();
+          unawaited(_probeClips());
         },
       ),
       const SizedBox(height: 16),
@@ -2744,8 +3555,8 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         icon: const Icon(Icons.trending_up_outlined, size: 18),
         label: const Text('SEO →'),
         style: FilledButton.styleFrom(
-          backgroundColor: const Color(0xFF7C3AED),
-          foregroundColor: Colors.white,
+          backgroundColor: const Color(0xFFFFC800),
+          foregroundColor: Colors.black,
         ),
       ),
     ]);

@@ -14,134 +14,41 @@ import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:gal/gal.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 import 'package:video_player/video_player.dart';
 
 import '../app_config.dart';
 import '../theme.dart';
 import '../live/news_template.dart';
-import '../live/live_studio_screen.dart';
-import '../news/breaking_templates.dart';
-import '../news/store_screen.dart';
-import '../news/audio_tools_screen.dart';
-import '../news/caption_translator_screen.dart';
 import '../news/channel_preset.dart';
 import '../news/news_project.dart';
 import '../news/project_handoff.dart';
 import '../services/coin_service.dart';
 import '../services/photo_pipeline.dart';
-import '../services/asset_download_service.dart';
-import '../services/logo_loop_service.dart';
-import '../live/parity_template.dart';
-import '../services/unity_ads_service.dart';
 import '../services/ffmpeg_service.dart';
 import '../services/caption_service.dart';
 import '../services/pro_editor.dart';
 import '../services/fx_pack.dart';
 import '../services/pro_vision.dart';
 import '../services/audio_enhance_service.dart';
-import '../services/pro_service.dart';
-import '../services/reel_export_service.dart';
 import '../services/urdu_caption_service.dart';
 import '../services/video_export_service.dart';
 import 'editor_stage.dart';
+import 'editor_models.dart';
+import 'video_editor_controller.dart';
+import 'editor_export_controller.dart';
+import 'widgets/timeline_bar.dart';
+import 'widgets/tool_rows.dart';
+import 'widgets/transport_row.dart';
 
-part 'video_editor_panels.dart';
+export 'editor_models.dart';
 
-class VideoClip {
-  VideoClip(this.file, this.duration, this.aspectRatio);
-  final File file;
-  final Duration duration;
-  final double aspectRatio; // width / height, from the real video stream
-  double trimStart = 0;
-  double trimEnd = -1; // -1 = full duration
-  double get effectiveEnd =>
-      trimEnd < 0 ? duration.inMilliseconds / 1000 : trimEnd;
-  double get effectiveDuration => effectiveEnd - trimStart;
-
-  // v1.3.0 (§6.1): a still PHOTO can sit on the timeline as a clip.
-  // It is materialised to a real video segment at export
-  // (photoClipCommand); [kenBurns] adds the slow zoom.
-  bool isPhoto = false;
-  bool kenBurns = true;
-  bool kbZoomIn = true;
-
-  // v1.4.0 (clip-selected row): per-clip audio state. [volume] is
-  // the clip's own gain (1.0 = unchanged) and [muted] silences the
-  // clip entirely; both are materialised onto a processed copy of
-  // the clip file at export (see _exportInner), the same pattern
-  // the reverse / silence-remove passes already use.
-  double volume = 1;
-  bool muted = false;
-  // v1.4.0 Unlink audio: the clip's audio, extracted to its own
-  // file; the clip itself is muted and the detached file becomes
-  // the music track (when none is picked) so it stays editable.
-  String? detachedAudioPath;
-
-  /// A full copy of this clip (same file + every editable field) —
-  /// the Duplicate op on the clip-selected row.
-  VideoClip copy() {
-    final c = VideoClip(file, duration, aspectRatio);
-    c.trimStart = trimStart;
-    c.trimEnd = trimEnd;
-    c.isPhoto = isPhoto;
-    c.kenBurns = kenBurns;
-    c.kbZoomIn = kbZoomIn;
-    c.volume = volume;
-    c.muted = muted;
-    c.detachedAudioPath = detachedAudioPath;
-    return c;
-  }
-}
-
-/// v1.5.0 (#5/#29/#30): THE one playback clock for the editor.
-///
-/// v1.4.0 read `controller.value.position` once per build() — with
-/// nothing ever listening, the counter froze and three different
-/// duration readouts drifted apart. This clock attaches to the
-/// selected clip's controller (see _loadPreview) and notifies on
-/// every position/playing change; the transport row, the timeline
-/// playhead and every total derive from it + the ONE timeline
-/// model on the State (clip effective durations summed in order).
-class TimelineClock extends ChangeNotifier {
-  VideoPlayerController? _controller;
-
-  /// The controller currently driving the clock (null for a photo
-  /// clip / no clips).
-  VideoPlayerController? get controller => _controller;
-
-  void attach(VideoPlayerController? controller) {
-    if (_controller == controller) return;
-    _controller?.removeListener(_tick);
-    _controller = controller;
-    _controller?.addListener(_tick);
-    notifyListeners();
-  }
-
-  void _tick() => notifyListeners();
-
-  bool get isInitialized => _controller?.value.isInitialized ?? false;
-
-  bool get isPlaying => _controller?.value.isPlaying ?? false;
-
-  /// Raw position inside the selected clip's FILE (seconds).
-  double get filePositionSec =>
-      (_controller?.value.position.inMilliseconds ?? 0) / 1000.0;
-
-  @override
-  void dispose() {
-    _controller?.removeListener(_tick);
-    _controller = null;
-    super.dispose();
-  }
-}
+import 'video_editor_panels.dart';
 
 class VideoEditorScreen extends StatefulWidget {
   /// Plain editor: opens empty, clips come from the gallery picker.
@@ -172,14 +79,8 @@ class VideoEditorScreen extends StatefulWidget {
   State<VideoEditorScreen> createState() => _VideoEditorScreenState();
 }
 
-/// Phase 0: thrown inside the export pipeline when the user has
-/// cancelled the export; caught by [_VideoEditorScreenState._export]
-/// and turned into the "Export cancel kar diya gaya." status.
-class _ExportCancelled implements Exception {
-  const _ExportCancelled();
-}
-
-class _VideoEditorScreenState extends State<VideoEditorScreen> {
+class _VideoEditorScreenState extends State<VideoEditorScreen>
+    implements VideoEditorController {
   final _picker = ImagePicker();
   final List<VideoClip> _clips = [];
   int _selected = 0;
@@ -286,6 +187,10 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   /// True while the user is dragging the timeline strip — the
   /// clock's auto-scroll must not fight the user's finger.
   bool _tlUserScrolling = false;
+  // Build 4 player fix: true while the editor itself is moving the
+  // timeline (playback follow / zoom) — jumpTo() manufactures
+  // ScrollStart/End notifications that are NOT user scrubs.
+  bool _tlProgrammaticScroll = false;
 
   /// Filmstrip thumbnails per clip file path (generated lazily by
   /// [_ensureThumbs]); a clip with no entry yet renders its first
@@ -912,7 +817,12 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         0.0,
         _tlScroll.position.maxScrollExtent,
       );
-      _tlScroll.jumpTo(target);
+      _tlProgrammaticScroll = true;
+      try {
+        _tlScroll.jumpTo(target);
+      } finally {
+        _tlProgrammaticScroll = false;
+      }
     });
   }
 
@@ -1016,7 +926,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       unawaited(_loadPreview());
     } else {
       // Stationary long press: the original swap-sheet path.
-      _showSwapSheet(i);
+      showSwapSheet(this, i);
     }
   }
 
@@ -1552,7 +1462,12 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       _tlScroll.position.maxScrollExtent,
     );
     if ((target - _tlScroll.offset).abs() > 1) {
-      _tlScroll.jumpTo(target);
+      _tlProgrammaticScroll = true;
+      try {
+        _tlScroll.jumpTo(target);
+      } finally {
+        _tlProgrammaticScroll = false;
+      }
     }
   }
 
@@ -1720,6 +1635,10 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       // Per-clip volume is audible in the preview too (v1.5.0 —
       // the Volume panel's slider now drives the preview gain).
       final clip = _clips[_selected];
+      // Build 4 player fix: present the trimmed first frame
+      // deterministically — some devices keep a black texture
+      // until the first seek lands.
+      await c.seekTo(Duration(milliseconds: (clip.trimStart * 1000).round()));
       await c.setVolume(clip.muted ? 0 : clip.volume);
       if (mounted) setState(() {});
     } catch (e) {
@@ -3073,1521 +2992,11 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   /// [_cancelExport] has run. Placed between the export stages
   /// (OUTSIDE their guarded try blocks) so a cancel stops the
   /// NEXT stage from starting.
-  void _checkExportCancelled() {
-    if (_exportCancelRequested) throw const _ExportCancelled();
-  }
-
-  Future<void> _exportInner() async {
-    try {
-      final dir = await _workDir();
-      final stamp = DateTime.now().millisecondsSinceEpoch;
-      var out = p.join(dir.path, 'pve_export_$stamp.mp4');
-      // v1.4.0: per-clip volume / mute materialisation — every clip
-      // whose own gain is off 1.0 or that is muted is replaced by a
-      // processed copy (video stream copied, audio gained/silenced)
-      // before the main pipeline runs, the same replace-in-place
-      // pattern as the reverse / silence passes below. Guarded per
-      // clip: a failure keeps that clip's original file.
-      for (var i = 0; i < _clips.length; i++) {
-        final c = _clips[i];
-        if (c.isPhoto || (c.volume == 1 && !c.muted)) continue;
-        try {
-          final proc = p.join(dir.path, 'clipvol_${stamp}_$i.mp4');
-          final cmd = c.muted
-              ? '-i ${FfmpegService.q(c.file.path)} -c:v copy -an '
-                    '-y ${FfmpegService.q(proc)}'
-              : '-i ${FfmpegService.q(c.file.path)} -c:v copy '
-                    '-af volume=${c.volume.toStringAsFixed(2)} '
-                    '-c:a aac -b:a 128k -y ${FfmpegService.q(proc)}';
-          final r = await FfmpegService.run(cmd);
-          if (r.ok) {
-            final nc = VideoClip(File(proc), c.duration, c.aspectRatio);
-            nc.trimStart = c.trimStart;
-            nc.trimEnd = c.trimEnd;
-            nc.volume = c.volume;
-            nc.muted = c.muted;
-            nc.detachedAudioPath = c.detachedAudioPath;
-            _clips[i] = nc;
-          }
-        } catch (_) {
-          // Keep the original clip — the export must not fail over
-          // a per-clip gain.
-        }
-      }
-      _checkExportCancelled();
-      if (_clips.isNotEmpty) {
-        final int idx = _selected < _clips.length ? _selected : 0;
-        VideoClip clip = _clips[idx];
-        if (_fxReverse) {
-          final String revOut = p.join(dir.path, 'fx_rev_$stamp.mp4');
-          final FfmpegResult r = await FfmpegService.run(
-            reverseCommand(input: clip.file.path, output: revOut),
-          );
-          if (r.ok) {
-            final VideoClip nc = VideoClip(
-              File(revOut),
-              clip.duration,
-              clip.aspectRatio,
-            );
-            nc.trimStart = clip.trimStart;
-            nc.trimEnd = clip.trimEnd;
-            _clips[idx] = nc;
-          }
-        }
-        if (_fxSilenceRemove) {
-          final String silOut = p.join(dir.path, 'fx_sil_$stamp.mp4');
-          final VideoClip cur = _clips[idx];
-          final FfmpegResult r = await FfmpegService.run(
-            silenceRemoveCommand(input: cur.file.path, output: silOut),
-          );
-          if (r.ok) {
-            _clips[idx] = VideoClip(
-              File(silOut),
-              cur.duration,
-              cur.aspectRatio,
-            );
-          }
-        }
-      }
-      _checkExportCancelled();
-      _fontFile ??= FfmpegService.findFontFile();
-      final hasText = _text.trim().isNotEmpty;
-      if (hasText && _fontFile == null) {
-        _setStatus(
-          'Note: no system font found, exporting without text overlay.',
-        );
-      }
-      final text = hasText ? _text : null;
-
-      // Auto captions: ASS subtitles (proper Urdu shaping) or, on the
-      // fallback retry, timed drawtext (Latin scripts only).
-      String? subsPath;
-      String? capFilter;
-      var useCaptions = _captions.isNotEmpty;
-      if (useCaptions) {
-        final adjusted = _adjustedCaptions();
-        if (adjusted.isEmpty) {
-          useCaptions = false;
-        } else if (_captionDrawtextFallback) {
-          capFilter = CaptionService.buildDrawtextFilters(
-            segments: adjusted,
-            fontFile: _fontFile,
-            fontSize: _clips.first.aspectRatio < 1.0 ? 56 : 40,
-          );
-          if (capFilter == null) {
-            throw Exception(
-              'Captions need the subtitles filter for Urdu text, which '
-              'this build does not support.',
-            );
-          }
-        } else {
-          final assPath = p.join(dir.path, 'captions_$stamp.ass');
-          final portrait = _clips.first.aspectRatio < 1.0;
-          await File(assPath).writeAsString(
-            CaptionService.buildAss(
-              segments: adjusted,
-              portrait: portrait,
-              style: _captionStyle,
-            ),
-          );
-          subsPath = assPath;
-        }
-      }
-
-      // PRO: beat auto-cut (single clip only). Beats were detected on
-      // the source file, so segment boundaries are intersected with
-      // the clip's trim range, then each segment is trimmed with the
-      // existing normalize primitive and concat-joined into one
-      // intermediate clip. The normal pipeline then runs on that
-      // intermediate as a one-clip export. Multi-clip + beat sync =
-      // markers only (no cut).
-      var clips = _clips;
-      // v1.3.0 (§6.1): photo clips are materialised to real video
-      // segments first (Ken Burns zoom or a static hold), so every
-      // later stage sees ordinary video clips.
-      var hadPhoto = false;
-      if (clips.any((c) => c.isPhoto)) {
-        hadPhoto = true;
-        final mat = <VideoClip>[];
-        for (var i = 0; i < clips.length; i++) {
-          final c = clips[i];
-          if (!c.isPhoto) {
-            mat.add(c);
-            continue;
-          }
-          final portraitP = c.aspectRatio < 1.0;
-          final pw = _fxQuality == 2
-              ? (portraitP ? 2160 : 3840)
-              : _fxQuality == 1
-              ? (portraitP ? 1080 : 1920)
-              : (portraitP ? 720 : 1280);
-          final ph = _fxQuality == 2
-              ? (portraitP ? 3840 : 2160)
-              : _fxQuality == 1
-              ? (portraitP ? 1920 : 1080)
-              : (portraitP ? 1280 : 720);
-          final seg = p.join(dir.path, 'photo_${stamp}_$i.mp4');
-          _setStatus('Photo clip ${i + 1} tayyar ho raha hai…');
-          final res = await FfmpegService.run(
-            FfmpegService.photoClipCommand(
-              imagePath: c.file.path,
-              output: seg,
-              width: pw,
-              height: ph,
-              durationSec: c.effectiveDuration,
-              kenBurns: c.kenBurns,
-              zoomIn: c.kbZoomIn,
-            ),
-          );
-          if (!res.ok) {
-            throw Exception('Photo clip ${i + 1} failed. ${res.logs}');
-          }
-          mat.add(VideoClip(File(seg), c.duration, c.aspectRatio));
-        }
-        clips = mat;
-      }
-      if (_beatAutoCut &&
-          _beats.isNotEmpty &&
-          _clips.length == 1 &&
-          !hadPhoto) {
-        final src = _clips.first;
-        final segments = beatSegments(
-          _beats,
-          src.duration.inMilliseconds / 1000,
-        );
-        final portraitCut = src.aspectRatio < 1.0;
-        final cw = portraitCut ? 720 : 1280;
-        final ch = portraitCut ? 1280 : 720;
-        final cutParts = <String>[];
-        var cutTotalMs = 0;
-        for (var i = 0; i < segments.length; i++) {
-          final seg = segments[i];
-          final s = math.min(
-            math.max(seg.start, src.trimStart),
-            src.effectiveEnd,
-          );
-          final e = math.min(
-            math.max(seg.end, src.trimStart),
-            src.effectiveEnd,
-          );
-          if (e - s < 0.2) continue;
-          final part = p.join(dir.path, 'beatcut_${stamp}_$i.mp4');
-          _setStatus('Beat cut ${i + 1}/${segments.length}…');
-          final res = await FfmpegService.run(
-            FfmpegService.normalizeCommand(
-              input: src.file.path,
-              trimStart: s,
-              trimEnd: e,
-              width: cw,
-              height: ch,
-              output: part,
-            ),
-          );
-          if (!res.ok) {
-            throw Exception('Beat cut part ${i + 1} failed. ${res.logs}');
-          }
-          cutParts.add(part);
-          cutTotalMs += ((e - s) * 1000).round();
-        }
-        if (cutParts.isNotEmpty) {
-          final cutList = p.join(dir.path, 'beatcut_$stamp.txt');
-          await File(cutList).writeAsString(
-            cutParts
-                .map((f) => "file '${f.replaceAll("'", "'\\''")}'")
-                .join('\n'),
-          );
-          final cutFile = p.join(dir.path, 'beatcut_$stamp.mp4');
-          final cc = FfmpegService.concatCommand(
-            listFile: cutList,
-            output: cutFile,
-          );
-          _setStatus('Beat cuts jor rahe hain…');
-          final res = await FfmpegService.run(cc);
-          if (!res.ok) throw Exception('Beat cut join failed. ${res.logs}');
-          clips = [
-            VideoClip(
-              File(cutFile),
-              Duration(milliseconds: cutTotalMs),
-              src.aspectRatio,
-            ),
-          ];
-        }
-      }
-
-      // PRO: grading + speed ramp, resolved once for the whole export.
-      // The LUT asset file is resolved here; on failure the export
-      // continues with sliders only (status note, never a failure).
-      String? lutPath;
-      if (_proLut.isNotEmpty) {
-        try {
-          String? asset;
-          for (final e in proLuts) {
-            if ((e['name'] ?? '') == _proLut) asset = e['asset'];
-          }
-          if (asset != null) {
-            final f = await ensureLutFile(asset, dir);
-            lutPath = f.path;
-          }
-        } catch (e) {
-          _setStatus(
-            'Note: LUT load nahi hua, baghair LUT ke export ho raha hai.',
-          );
-        }
-      }
-      final gradeStr = _gradeActive
-          ? gradeFilter(
-              ProGrade(
-                lutName: _proLut,
-                temperature: _proTemperature,
-                tint: _proTint,
-                saturation: _proSaturation,
-                vibrance: _proVibrance,
-                contrast: _proContrast,
-                shadows: _proShadows,
-                highlights: _proHighlights,
-                brightness: _proBrightness,
-                exposure: _proExposure,
-              ),
-              lutFilePath: lutPath,
-            )
-          : '';
-      final rampPreset = _rampPreset();
-      final exportDurSec = clips.fold<double>(
-        0.0,
-        (a, c) => a + c.effectiveDuration,
-      );
-      // v1.3.0 (§6.10): the 'Custom' ramp builds its segments from
-      // the three point speeds (start / middle / end thirds).
-      final customRamp = _proRamp == 'Custom' && exportDurSec > 0;
-      final hasRamp = rampPreset != null || customRamp;
-      final rampSegs = rampPreset != null
-          ? rampSegments(rampPreset, exportDurSec)
-          : customRamp
-          ? <RampSegment>[
-              RampSegment(tStart: 0, tEnd: exportDurSec / 3, speed: _rampStart),
-              RampSegment(
-                tStart: exportDurSec / 3,
-                tEnd: exportDurSec * 2 / 3,
-                speed: _rampMid,
-              ),
-              RampSegment(
-                tStart: exportDurSec * 2 / 3,
-                tEnd: exportDurSec,
-                speed: _rampEnd,
-              ),
-            ]
-          : <RampSegment>[];
-      final List<String> extraParts = <String>[];
-      if (gradeStr.isNotEmpty) extraParts.add(gradeStr);
-      // v1.4.0 Adjust extras (sharpen / clarity / whites / blacks /
-      // hue / fade / vignette / grain / auto) ride the same chain.
-      final adjustExtra = _adjustExtraFilter();
-      if (adjustExtra.isNotEmpty) extraParts.add(adjustExtra);
-      if (hasRamp) extraParts.add(rampSetpts(rampSegs));
-      final String shakeStr = shakeFilter(_fxShake);
-      if (shakeStr.isNotEmpty) extraParts.add(shakeStr);
-      final String? extraVideoFilter = extraParts.isEmpty
-          ? null
-          : extraParts.join(',');
-      // Ramp replaces the fixed speed: the video timing comes from the
-      // ramp setpts, and the audio filter from the ramp (music exports
-      // keep the music track untouched, so the ramp audio filter only
-      // applies when no music is picked).
-      final effectiveSpeed = hasRamp ? 1.0 : _speed;
-      // v1.3.0 (§6.8): auto-duck keeps the music OUT of the main
-      // pass — a post-pass sidechain-ducks it under the clip audio.
-      final duckMusic = _autoDuck && _musicPath != null;
-      final String? mainMusicPath = duckMusic ? null : _musicPath;
-      final String? rampAudio = (hasRamp && mainMusicPath == null)
-          ? rampAudioFilter(rampSegs)
-          : null;
-      final String voiceStr = voiceFxFilter(_fxVoice);
-      final String fadeStr = audioFadeFilter(
-        fadeInSec: _fxFadeIn,
-        fadeOutSec: _fxFadeOut,
-        durationSec: exportDurSec,
-      );
-      String fxAudioFilter = '';
-      if (voiceStr.isNotEmpty) {
-        fxAudioFilter = voiceStr;
-      }
-      if (fadeStr.isNotEmpty) {
-        if (fxAudioFilter.isNotEmpty) {
-          fxAudioFilter = '$fxAudioFilter,$fadeStr';
-        } else {
-          fxAudioFilter = fadeStr;
-        }
-      }
-      String? finalAudioFilter;
-      final bool isComplex = rampAudio != null && rampAudio.contains('[0:a]');
-      if (isComplex) {
-        finalAudioFilter = rampAudio;
-      } else {
-        final List<String> afParts = <String>[];
-        // Mute original audio (CapCut/VN-style): silence the clip's own
-        // audio at export. Ignored when music is picked — music already
-        // replaces the clip audio track.
-        if (_muteOriginal && mainMusicPath == null) {
-          afParts.add('volume=0');
-        }
-        if (effectiveSpeed != 1.0 && mainMusicPath == null) {
-          afParts.add('atempo=$effectiveSpeed');
-        }
-        if (fxAudioFilter.isNotEmpty) {
-          afParts.add(fxAudioFilter);
-        }
-        // Music track gain: with music picked, the output audio stream is
-        // the music track, so volume= here adjusts music only.
-        if (mainMusicPath != null && _volumePoints.isNotEmpty) {
-          // v1.3.0 (§6.9): music volume keyframes — a piecewise
-          // linear gain envelope over the music track.
-          afParts.add(
-            "volume='${FfmpegService.volumeEnvelopeExpression(_volumePoints, _musicVolume)}':eval=frame",
-          );
-        } else if (mainMusicPath != null && _musicVolume != 1.0) {
-          afParts.add('volume=${_musicVolume.toStringAsFixed(2)}');
-        }
-        if (afParts.isNotEmpty) {
-          finalAudioFilter = afParts.join(',');
-        }
-      }
-
-      _checkExportCancelled();
-      double progress = 0;
-      void onProgress(double v) {
-        if ((v - progress).abs() > 0.05) {
-          progress = v;
-          _setStatus('Exporting… ${(v * 100).round()}%');
-        }
-      }
-
-      if (clips.length == 1) {
-        final c = clips.first;
-        final cmd = FfmpegService.singleClipCommand(
-          input: c.file.path,
-          trimStart: c.trimStart,
-          trimEnd: c.effectiveEnd,
-          speed: effectiveSpeed,
-          filterPreset: _filter,
-          // §6.5 blur fill: the main pass keeps the original frame;
-          // a post-pass reframes it over its own blurred copy.
-          aspect: _canvasFill == 'blur' ? 'Original' : _aspect,
-          text: text,
-          fontFile: _fontFile,
-          subtitlesPath: subsPath,
-          captionFilter: capFilter,
-          textAtTop: useCaptions,
-          musicPath: mainMusicPath,
-          extraVideoFilter: extraVideoFilter,
-          audioFilter: finalAudioFilter,
-          exportQuality: _fxQuality,
-          filterIntensity: _filterIntensity,
-          canvasFill: _canvasFill == 'color' ? 'color' : 'none',
-          fillColor: _canvasFillColor,
-          fps: _exportFps,
-          output: out,
-        );
-        final totalMs = ((c.effectiveDuration / effectiveSpeed) * 1000).round();
-        final res = await FfmpegService.run(
-          cmd,
-          expectedMs: totalMs,
-          onProgress: onProgress,
-        );
-        if (!res.ok && hasRamp) {
-          // PRO ramp fallback (contract in pro_editor.dart): a failed
-          // ramp (e.g. a clip with no audio track for the ramp audio
-          // chain) must NOT fail the whole export — retry un-ramped.
-          _setStatus(
-            'Note: speed ramp fail ho gaya, baghair ramp ke save ho raha hai.',
-          );
-          final retryCmd = FfmpegService.singleClipCommand(
-            input: c.file.path,
-            trimStart: c.trimStart,
-            trimEnd: c.effectiveEnd,
-            speed: effectiveSpeed,
-            filterPreset: _filter,
-            aspect: _canvasFill == 'blur' ? 'Original' : _aspect,
-            text: text,
-            fontFile: _fontFile,
-            subtitlesPath: subsPath,
-            captionFilter: capFilter,
-            textAtTop: useCaptions,
-            musicPath: mainMusicPath,
-            extraVideoFilter: gradeStr.isEmpty ? null : gradeStr,
-            audioFilter: null,
-            exportQuality: _fxQuality,
-            filterIntensity: _filterIntensity,
-            canvasFill: _canvasFill == 'color' ? 'color' : 'none',
-            fillColor: _canvasFillColor,
-            fps: _exportFps,
-            output: out,
-          );
-          final retryRes = await FfmpegService.run(
-            retryCmd,
-            expectedMs: totalMs,
-            onProgress: onProgress,
-          );
-          if (!retryRes.ok) {
-            throw Exception('FFmpeg failed (${res.returnCode}). ${res.logs}');
-          }
-        } else if (!res.ok) {
-          throw Exception('FFmpeg failed (${res.returnCode}). ${res.logs}');
-        }
-      } else {
-        // Step 1: normalize every clip (trim + common size/fps/codec).
-        // Orientation comes from the FIRST clip's real aspect ratio.
-        final bool portrait = clips.first.aspectRatio < 1.0;
-        int w;
-        int h;
-        if (_fxQuality == 2) {
-          // 2160p 4K (slow): 2026 baseline export; needs more time on
-          // low-end phones — the dropdown label says so.
-          w = portrait ? 2160 : 3840;
-          h = portrait ? 3840 : 2160;
-        } else if (_fxQuality == 1) {
-          w = portrait ? 1080 : 1920;
-          h = portrait ? 1920 : 1080;
-        } else {
-          w = portrait ? 720 : 1280;
-          h = portrait ? 1280 : 720;
-        }
-        final normFiles = <String>[];
-        final normDurMs = <int>[];
-        for (var i = 0; i < clips.length; i++) {
-          final c = clips[i];
-          final nf = p.join(dir.path, 'norm_${stamp}_$i.mp4');
-          final cmd = FfmpegService.normalizeCommand(
-            input: c.file.path,
-            trimStart: c.trimStart,
-            trimEnd: c.effectiveEnd,
-            width: w,
-            height: h,
-            output: nf,
-            // §6.5: blur fill frames every clip over its own
-            // blurred copy instead of cropping.
-            blurFill: _canvasFill == 'blur',
-            // Build 3: normalize at the chosen export frame rate
-            // so the join + final pass stay at one rate.
-            fps: _exportFps,
-          );
-          _setStatus('Preparing clip ${i + 1}/${clips.length}…');
-          final res = await FfmpegService.run(cmd);
-          if (!res.ok) {
-            throw Exception('Clip ${i + 1} prepare failed. ${res.logs}');
-          }
-          normFiles.add(nf);
-          normDurMs.add((c.effectiveDuration * 1000).round());
-        }
-        // Step 2: join.
-        final merged = p.join(dir.path, 'merged_$stamp.mp4');
-        String? joinCmd;
-        if (_crossfade) {
-          // PRO: the selected transition + duration replace the fixed
-          // fade; the cut-join fallback below is unchanged.
-          joinCmd = proXfadeCommand(
-            inputs: normFiles,
-            durationsMs: normDurMs,
-            transition: ProTransition(
-              name: _proTransition,
-              durationSec: _proTransitionDur,
-            ),
-            hasAudio: true,
-            output: merged,
-          );
-        }
-        if (joinCmd != null) {
-          _setStatus('Applying crossfade…');
-          final res = await FfmpegService.run(joinCmd);
-          if (!res.ok) {
-            // Fall back to a hard cut join rather than failing the export.
-            _setStatus('Crossfade failed, falling back to cut join…');
-            joinCmd = null;
-          }
-        }
-        if (joinCmd == null) {
-          final listFile = p.join(dir.path, 'concat_$stamp.txt');
-          final lines = normFiles
-              .map((f) => "file '${f.replaceAll("'", "'\\''")}'")
-              .join('\n');
-          await File(listFile).writeAsString(lines);
-          final cc = FfmpegService.concatCommand(
-            listFile: listFile,
-            output: merged,
-          );
-          final res = await FfmpegService.run(cc);
-          if (!res.ok) throw Exception('Merge failed. ${res.logs}');
-        }
-        // Step 3: final pass (speed/filter/aspect/text/music).
-        final totalMs = ((normDurMs.reduce((a, b) => a + b) / effectiveSpeed))
-            .round();
-        final fc = FfmpegService.finalPassCommand(
-          input: merged,
-          fps: _exportFps,
-          speed: effectiveSpeed,
-          filterPreset: _filter,
-          // Blur fill already framed the clips in normalize.
-          aspect: _canvasFill == 'blur' ? 'Original' : _aspect,
-          text: text,
-          fontFile: _fontFile,
-          subtitlesPath: subsPath,
-          captionFilter: capFilter,
-          textAtTop: useCaptions,
-          musicPath: mainMusicPath,
-          extraVideoFilter: extraVideoFilter,
-          audioFilter: finalAudioFilter,
-          exportQuality: _fxQuality,
-          filterIntensity: _filterIntensity,
-          canvasFill: _canvasFill == 'color' ? 'color' : 'none',
-          fillColor: _canvasFillColor,
-          output: out,
-        );
-        final res = await FfmpegService.run(
-          fc,
-          expectedMs: totalMs,
-          onProgress: onProgress,
-        );
-        if (!res.ok && hasRamp) {
-          // PRO ramp fallback, same contract as the single-clip branch.
-          _setStatus(
-            'Note: speed ramp fail ho gaya, baghair ramp ke save ho raha hai.',
-          );
-          final retryFc = FfmpegService.finalPassCommand(
-            input: merged,
-            fps: _exportFps,
-            speed: effectiveSpeed,
-            filterPreset: _filter,
-            aspect: _canvasFill == 'blur' ? 'Original' : _aspect,
-            text: text,
-            fontFile: _fontFile,
-            subtitlesPath: subsPath,
-            captionFilter: capFilter,
-            textAtTop: useCaptions,
-            musicPath: mainMusicPath,
-            extraVideoFilter: gradeStr.isEmpty ? null : gradeStr,
-            audioFilter: null,
-            exportQuality: _fxQuality,
-            filterIntensity: _filterIntensity,
-            canvasFill: _canvasFill == 'color' ? 'color' : 'none',
-            fillColor: _canvasFillColor,
-            output: out,
-          );
-          final retryRes = await FfmpegService.run(
-            retryFc,
-            expectedMs: totalMs,
-            onProgress: onProgress,
-          );
-          if (!retryRes.ok) {
-            throw Exception('Final export failed. ${res.logs}');
-          }
-        } else if (!res.ok) {
-          throw Exception('Final export failed. ${res.logs}');
-        }
-      }
-
-      // v1.3.0 (§6.5): blur-fill reframe for the SINGLE-clip path
-      // (the main pass ran with aspect 'Original'). Guarded like
-      // every post-pass.
-      _checkExportCancelled();
-      if (clips.length == 1 && _canvasFill == 'blur' && _aspect != 'Original') {
-        try {
-          final dims = FfmpegService.exportDims(_aspect, _fxQuality);
-          if (dims != null) {
-            _setStatus('Canvas blur fill lag raha hai…');
-            final bfOut = p.join(dir.path, 'pve_export_blurfill_$stamp.mp4');
-            final res = await FfmpegService.run(
-              FfmpegService.blurFillPassCommand(
-                input: out,
-                output: bfOut,
-                width: dims.$1,
-                height: dims.$2,
-              ),
-            );
-            if (res.ok) {
-              out = bfOut;
-            } else {
-              _setStatus(
-                'Note: blur fill fail ho gaya, baghair is ke save ho raha hai.',
-              );
-            }
-          }
-        } catch (e) {
-          _setStatus(
-            'Note: blur fill fail ho gaya ($e), baghair is ke save ho raha hai.',
-          );
-        }
-      }
-
-      // v1.3.0 (§6.8): auto music ducking — the music was kept out
-      // of the main pass; here it is sidechain-ducked under the
-      // clip's own audio (or becomes the track when there is none).
-      _checkExportCancelled();
-      if (duckMusic) {
-        try {
-          _setStatus('Music ducking ho raha hai…');
-          final hasAudio = await ReelExportService.probeHasAudio(File(out));
-          final duckOut = p.join(dir.path, 'pve_export_duck_$stamp.mp4');
-          final res = await FfmpegService.run(
-            FfmpegService.musicDuckCommand(
-              input: out,
-              musicPath: _musicPath!,
-              output: duckOut,
-              hasClipAudio: hasAudio,
-              musicVolume: _musicVolume,
-            ),
-          );
-          if (res.ok) {
-            out = duckOut;
-          } else {
-            _setStatus(
-              'Note: music ducking fail ho gaya, baghair music ke save ho raha hai.',
-            );
-          }
-        } catch (e) {
-          _setStatus(
-            'Note: music ducking fail ho gaya ($e), baghair music ke save ho raha hai.',
-          );
-        }
-      }
-
-      // Timeline handoff (Phase 7): voiceover mix. The project
-      // voiceover (Gemini WAV) is mixed over the clip audio, ducked
-      // so the voice stays on top; when the video has no audio track
-      // the voiceover simply becomes the track. Guarded like the
-      // other post-passes: a failure keeps the unmixed export.
-      _checkExportCancelled();
-      if (_projectVoiceoverPath != null &&
-          await File(_projectVoiceoverPath!).exists()) {
-        try {
-          _setStatus('Voiceover mix ho raha hai…');
-          final hasAudio = await ReelExportService.probeHasAudio(File(out));
-          final mixOut = p.join(dir.path, 'pve_export_voicemix_$stamp.mp4');
-          final res = await FfmpegService.run(
-            FfmpegService.voiceoverMixCommand(
-              input: out,
-              voiceoverPath: _projectVoiceoverPath!,
-              output: mixOut,
-              hasClipAudio: hasAudio,
-            ),
-          );
-          if (res.ok) {
-            out = mixOut;
-          } else {
-            _setStatus(
-              'Note: voiceover mix fail ho gaya, baghair voice ke save ho raha hai.',
-            );
-          }
-        } catch (e) {
-          _setStatus(
-            'Note: voiceover mix fail ho gaya ($e), baghair voice ke save ho raha hai.',
-          );
-        }
-      }
-
-      // PRO post-passes, AFTER the main pipeline and BEFORE the news
-      // template pass. Each is guarded: on failure the previous output
-      // is kept, a status note is written, and the export continues —
-      // a pro pass NEVER fails the whole export.
-      // (a) Stabilization.
-      _checkExportCancelled();
-      if (_proStabilize) {
-        try {
-          final stab = p.join(dir.path, 'pve_export_stab_$stamp.mp4');
-          var lastPct = -1;
-          final res = await runStabilized(
-            input: out,
-            output: stab,
-            workDir: dir,
-            // v1.5.0: the Stabilizer panel's level drives the
-            // vidstab strength (Standard = the old fixed values).
-            shakiness: _stabLevel == 1 ? 3 : (_stabLevel == 3 ? 8 : 5),
-            smoothing: _stabLevel == 1 ? 15 : (_stabLevel == 3 ? 60 : 30),
-            expectedMs: (exportDurSec * 1000).round(),
-            onProgress: (v) {
-              final pct = (v * 100).round();
-              if (pct != lastPct) {
-                lastPct = pct;
-                _setStatus('Stabilizing… $pct% done, ${100 - pct}% remaining');
-              }
-            },
-            onStep: (s) => _setStatus(s),
-          );
-          if (res.ok) {
-            out = stab;
-            _setStatus('Stabilized (${res.engine}).');
-          } else {
-            _setStatus(
-              'Note: stabilization fail ho gaya, baghair is ke save ho raha hai.',
-            );
-          }
-        } catch (e) {
-          _setStatus(
-            'Note: stabilization fail ho gaya ($e), baghair is ke save ho raha hai.',
-          );
-        }
-      }
-      // (a2) v1.3.0 (§6.7): main-clip transform (scale / position /
-      // rotation / opacity over a blurred backdrop).
-      _checkExportCancelled();
-      if (_transformActive) {
-        try {
-          final size = await VideoExportService.probeVideoSize(File(out));
-          if (size != null) {
-            _setStatus('Transform lag raha hai…');
-            final tfOut = p.join(dir.path, 'pve_export_transform_$stamp.mp4');
-            final res = await FfmpegService.run(
-              FfmpegService.transformPassCommand(
-                input: out,
-                output: tfOut,
-                width: size.width,
-                height: size.height,
-                scale: _tfScale,
-                posX: _tfX,
-                posY: _tfY,
-                rotationDeg: _tfRot,
-                opacity: _tfOpacity,
-              ),
-            );
-            if (res.ok) {
-              out = tfOut;
-            } else {
-              _setStatus(
-                'Note: transform fail ho gaya, baghair is ke save ho raha hai.',
-              );
-            }
-          }
-        } catch (e) {
-          _setStatus(
-            'Note: transform fail ho gaya ($e), baghair is ke save ho raha hai.',
-          );
-        }
-      }
-      // (b) Chromakey OR video BG remover — mutually exclusive; if
-      // both are on, the BG remover wins (status note).
-      final useBgRemover = _proBgRemove;
-      _checkExportCancelled();
-      if (useBgRemover && _proChroma) {
-        _setStatus(
-          'Note: BG remover aur chromakey dono on hain — BG remover use ho raha hai.',
-        );
-      }
-      if (useBgRemover) {
-        // v1.4.0: MODNet HQ path FIRST — the exported video's
-        // frames get MODNet mattes (OnnxImageService) composited
-        // over the chosen background. Any failure falls through to
-        // the long-standing ML Kit selfie-segmentation path below,
-        // so Remove BG never regresses.
-        var modnetDone = false;
-        try {
-          _setStatus('Video background (MODNet HQ) hata rahe hain…');
-          var lastPct = -1;
-          final modnetOut = await VideoExportService.modnetRemoveBackground(
-            input: out,
-            backgroundKind: _proBgKind,
-            backgroundColor: _proBgColor,
-            backgroundImagePath: _proBgKind == 'image' ? _proBgImage : null,
-            workDir: dir,
-            onProgress: (v) {
-              final pct = (v * 100).round();
-              if (pct != lastPct) {
-                lastPct = pct;
-                _setStatus(
-                  'MODNet BG remover… $pct% done, ${100 - pct}% remaining',
-                );
-              }
-            },
-            onStep: (s) => _setStatus(s),
-          );
-          out = modnetOut;
-          modnetDone = true;
-          _setStatus('Video background removed (MODNet HQ).');
-        } catch (e) {
-          _setStatus(
-            'Note: MODNet BG fail ($e) — ML Kit wala tareeqa use ho raha hai.',
-          );
-        }
-        if (!modnetDone) {
-          try {
-            _setStatus(
-              'Video background hata rahe hain… (lambi clips par minutes lag sakte hain)',
-            );
-            var lastPct = -1;
-            final bgOut = await removeVideoBackground(
-              input: out,
-              backgroundKind: _proBgKind,
-              backgroundColor: _proBgColor,
-              backgroundImagePath: _proBgKind == 'image' ? _proBgImage : null,
-              workDir: dir,
-              onProgress: (v) {
-                final pct = (v * 100).round();
-                if (pct != lastPct) {
-                  lastPct = pct;
-                  _setStatus(
-                    'Video BG remover… $pct% done, ${100 - pct}% remaining',
-                  );
-                }
-              },
-              onStep: (s) => _setStatus(s),
-            );
-            out = bgOut;
-            _setStatus('Video background removed.');
-          } catch (e) {
-            _setStatus(
-              'Note: video BG remover fail ho gaya ($e), pichli video save ho rahi hai.',
-            );
-          }
-        }
-      } else if (_proChroma) {
-        try {
-          _setStatus('Chromakey laga rahe hain…');
-          final chromaOut = p.join(dir.path, 'pve_export_chroma_$stamp.mp4');
-          final c = ProChroma(
-            color: _proChromaColor,
-            similarity: _proChromaSimilarity,
-            blend: _proChromaBlend,
-            spill: _proChromaSpill,
-            edge: _proChromaEdge,
-            backgroundKind: _proChromaBgKind,
-            backgroundColor: _proChromaBgColor,
-            backgroundImagePath: _proChromaBgKind == 'image'
-                ? _proChromaBgImage
-                : null,
-          );
-          // ONE builder for the chroma graph (shared with the reel
-          // export) — the Template Studio sensitivity + background and
-          // the editor's own chroma controls apply through it.
-          final cmd = chromaPassCommand(input: out, c: c, output: chromaOut);
-          final res = await FfmpegService.run(cmd);
-          if (res.ok) {
-            out = chromaOut;
-          } else {
-            _setStatus(
-              'Note: chromakey fail ho gaya, baghair is ke save ho raha hai.',
-            );
-          }
-        } catch (e) {
-          _setStatus(
-            'Note: chromakey fail ho gaya ($e), baghair is ke save ho raha hai.',
-          );
-        }
-      }
-      // (b2) Build 3 (Phase 3): MAIN-clip mask — the mask model
-      // (shape / feather / invert) applied to the main video
-      // itself, composited over black (the stage backdrop). Runs
-      // after the main picture is final (stabilize / transform /
-      // BG passes) and BEFORE the title + PIP passes, so overlays
-      // stay unmasked — the stage preview's exact layer order.
-      // Guarded like every post-pass.
-      _checkExportCancelled();
-      if (_mainMask != 'none') {
-        try {
-          _setStatus('Main mask lag raha hai…');
-          final size = await VideoExportService.probeVideoSize(File(out));
-          final maskPath = size == null
-              ? null
-              : await _renderMainMaskPng(
-                  dir: dir,
-                  stamp: stamp,
-                  width: size.width,
-                  height: size.height,
-                );
-          if (size != null && maskPath != null) {
-            final mmOut = p.join(dir.path, 'pve_export_mainmask_$stamp.mp4');
-            final res = await FfmpegService.run(
-              mainClipMaskCommand(
-                input: out,
-                maskPng: maskPath,
-                width: size.width,
-                height: size.height,
-                output: mmOut,
-              ),
-            );
-            if (res.ok) {
-              out = mmOut;
-            } else {
-              _setStatus(
-                'Note: main mask fail ho gaya, baghair mask ke save ho raha hai.',
-              );
-            }
-          } else {
-            _setStatus(
-              'Note: main mask ke liye size/PNG nahi mila — baghair mask ke save ho raha hai.',
-            );
-          }
-        } catch (e) {
-          _setStatus(
-            'Note: main mask fail ho gaya ($e), baghair mask ke save ho raha hai.',
-          );
-        }
-      }
-      // (c) ONE combined animated-overlay pass (motion title/sticker +
-      // keyframed overlay + tracked sticker). Skipped entirely when
-      // none of them are set.
-      _checkExportCancelled();
-      if (_proTitle.trim().isNotEmpty ||
-          _proSticker.trim().isNotEmpty ||
-          (_trackPoints.isNotEmpty && _trackSticker.trim().isNotEmpty)) {
-        try {
-          _setStatus('Motion titles laga rahe hain…');
-          final ovOut = p.join(dir.path, 'pve_export_overlay_$stamp.mp4');
-          final cmd = await _buildOverlayCommand(
-            dir: dir,
-            stamp: stamp,
-            input: out,
-            output: ovOut,
-            durationSec: exportDurSec,
-          );
-          if (cmd != null) {
-            final res = await FfmpegService.run(cmd);
-            if (res.ok) {
-              out = ovOut;
-            } else {
-              _setStatus(
-                'Note: motion title pass fail ho gaya, baghair is ke save ho raha hai.',
-              );
-            }
-          }
-        } catch (e) {
-          _setStatus(
-            'Note: motion title pass fail ho gaya ($e), baghair is ke save ho raha hai.',
-          );
-        }
-      }
-
-      // PIP (Phase 7): the inset IS composited for real in the export
-      // ([pipOverlayFilter]) at the preset's position/scale when
-      // opened via timeline handoff. SPLIT SCREEN stays deferred:
-      // it needs a second concurrent video track, but this timeline
-      // is a single sequential clip list — there is no second input
-      // to composite (see the reel export header for the full reason).
-      _checkExportCancelled();
-      if (_fxPip && _fxPipVideo.isNotEmpty) {
-        final String pipOut = p.join(dir.path, 'pve_export_pip_$stamp.mp4');
-        // PIP position/scale: the long-standing defaults, or the
-        // channel preset's settings when opened via timeline handoff
-        // (Phase 7) — the inset is composited for real, never a
-        // preview-only effect.
-        // v1.3.0 (§6.11): opacity + circle mask. Completion fix
-        // (user order 22 Nov 2026): blend modes + the full mask set
-        // (shapes / linear / radial, feather, invert) via the
-        // masked-blend chain in [_pipSnippetAdvanced]. The untouched
-        // default (Normal + no mask + full opacity) still takes the
-        // original stock snippet, byte-for-byte.
-        final bool pipStock =
-            _pipBlend == 'normal' && _pipMask == 'none' && _pipOpacity >= 1;
-        // Build 3 (Phase 3): PIP keyframes take their own graph
-        // (position + opacity lerps, mask composed in). Blend
-        // modes are not part of the keyframed graph in v1 — with
-        // a blend chosen, the static advanced graph below runs
-        // instead and the user is told.
-        final bool pipKeyframed = _pipKeyframes && _pipBlend == 'normal';
-        if (_pipKeyframes && _pipBlend != 'normal') {
-          _setStatus(
-            'Note: PIP keyframes blend mode ke sath nahi chalte — '
-            'blend wala static PIP lag raha hai.',
-          );
-        }
-        String snippet;
-        String? pipMaskPath;
-        if (pipKeyframed) {
-          final baseSize = await VideoExportService.probeVideoSize(File(out));
-          final pipSize = await VideoExportService.probeVideoSize(
-            File(_fxPipVideo),
-          );
-          if (baseSize == null || pipSize == null) {
-            _setStatus(
-              'Note: PIP keyframes ke liye size nahi mila — '
-              'simple PIP lag raha hai.',
-            );
-            snippet = pipOverlayFilter(
-              pipLabel: '[1:v]',
-              position: _pipPosition,
-              pipScale: _pipScale,
-              margin: 24,
-              outLabel: '[vout]',
-            );
-          } else {
-            if (_pipMask != 'none') {
-              pipMaskPath = await _renderPipMaskPng(
-                dir: dir,
-                stamp: stamp,
-                width: pipSize.width,
-                height: pipSize.height,
-              );
-            }
-            // Same box math as _pipSnippetAdvanced (even dims,
-            // clamped to the base).
-            final s = _pipScale.clamp(0.15, 0.5);
-            var pw = ((pipSize.width * s) / 2).floor() * 2;
-            var ph = ((pipSize.height * s) / 2).floor() * 2;
-            if (pw > baseSize.width) pw = baseSize.width - (baseSize.width % 2);
-            if (ph > baseSize.height) {
-              ph = baseSize.height - (baseSize.height % 2);
-            }
-            if (pw < 2) pw = 2;
-            if (ph < 2) ph = 2;
-            snippet = keyframedPipFilter(
-              baseLabel: '[0:v]',
-              pipLabel: '[1:v]',
-              track: KeyframeTrack(
-                start: ProKeyframe(
-                  timeSec: 0,
-                  xNorm: _pkStartX,
-                  yNorm: _pkStartY,
-                  opacity: _pkStartOpacity,
-                ),
-                end: ProKeyframe(
-                  timeSec: exportDurSec,
-                  xNorm: _pkEndX,
-                  yNorm: _pkEndY,
-                  opacity: _pkEndOpacity,
-                ),
-              ),
-              videoW: baseSize.width,
-              videoH: baseSize.height,
-              pipW: pw,
-              pipH: ph,
-              outLabel: '[vout]',
-              easing: _pkEasing,
-              hasMask: pipMaskPath != null,
-            );
-          }
-        } else if (pipStock) {
-          snippet = pipOverlayFilter(
-            pipLabel: '[1:v]',
-            position: _pipPosition,
-            pipScale: _pipScale,
-            margin: 24,
-            outLabel: '[vout]',
-          );
-        } else {
-          final baseSize = await VideoExportService.probeVideoSize(File(out));
-          final pipSize = await VideoExportService.probeVideoSize(
-            File(_fxPipVideo),
-          );
-          if (baseSize == null || pipSize == null) {
-            // Guarded fallback (FX-pass contract): without probed
-            // geometry the advanced graph cannot be built, so the
-            // stock composite runs and the user is told.
-            _setStatus(
-              'Note: PIP blend/mask ke liye size nahi mila — '
-              'simple PIP lag raha hai.',
-            );
-            snippet = pipOverlayFilter(
-              pipLabel: '[1:v]',
-              position: _pipPosition,
-              pipScale: _pipScale,
-              margin: 24,
-              outLabel: '[vout]',
-            );
-          } else {
-            if (_pipMask != 'none') {
-              pipMaskPath = await _renderPipMaskPng(
-                dir: dir,
-                stamp: stamp,
-                width: pipSize.width,
-                height: pipSize.height,
-              );
-            }
-            snippet = _pipSnippetAdvanced(
-              base: baseSize,
-              pip: pipSize,
-              hasMask: pipMaskPath != null,
-            );
-          }
-        }
-        final StringBuffer pb = StringBuffer();
-        pb.write('-y -i ');
-        pb.write(FfmpegService.q(out));
-        pb.write(' -i ');
-        pb.write(FfmpegService.q(_fxPipVideo));
-        if (pipMaskPath != null) {
-          // Build 3 termination fix: the mask PNG goes in as a
-          // SINGLE frame, never looped — the alpha chain's
-          // framesync filters (blend / alphamerge) repeat its last
-          // frame for the whole inset, and a looped input never
-          // reaches EOF, so blend would generate frames forever
-          // (the main-mask render test hung 97 min on exactly
-          // this). See mainClipMaskCommand's header note.
-          pb.write(' -i ');
-          pb.write(FfmpegService.q(pipMaskPath));
-        }
-        pb.write(' -filter_complex "');
-        pb.write(snippet);
-        pb.write('" -map "[vout]" -map 0:a? -c:v libx264 -preset veryfast ');
-        pb.write('-crf 23 -c:a copy -movflags +faststart ');
-        pb.write(FfmpegService.q(pipOut));
-        final FfmpegResult pr = await FfmpegService.run(pb.toString());
-        if (pr.ok) {
-          out = pipOut;
-        }
-      } else if (_fxPip) {
-        // PIP on but no inset video picked: the pass is skipped and
-        // the user is told — never a fake PIP claim.
-        _setStatus(
-          'Note: PIP video nahi chuna — PIP ke baghair save ho raha hai.',
-        );
-      }
-
-      // v2 news template + logo second pass (before gallery save).
-      // The template frame is rendered by the same dart:ui renderer
-      // the live view uses, so Urdu shaping stays correct. If the
-      // pass fails, the clean export is saved instead of failing.
-      //
-      // v1.3.0 (§9): a 'nigraanFinal' HANDOFF project takes the
-      // ANIMATED parity pass instead (both ribbons scroll, rotating
-      // logo + flipping clock capsule — parity_template.dart), with
-      // the Kasheeda font gate: no font, no template (a loud status,
-      // never a fallback-font lookalike). The plain editor's live
-      // design keeps the static pass; its ticker/clock note in the
-      // News panel was updated accordingly.
-      _checkExportCancelled();
-      if (_newsEnabled) {
-        var parityDone = false;
-        if (_projectTemplateKind == 'nigraanFinal' &&
-            _handoffProject != null &&
-            _handoffPreset != null) {
-          final svc = const AssetDownloadService();
-          final fontReady = await svc.ensureKasheedaFontReady(
-            url: AppConfig.kasheedaFontUrl,
-          );
-          if (!fontReady) {
-            _setStatus(
-              'Kasheeda font nahi mila — Final template nahi laga, '
-              'saaf video save ho rahi hai.',
-            );
-          } else {
-            try {
-              _setStatus('Final template (animated) lag raha hai…');
-              final size = await VideoExportService.probeVideoSize(File(out));
-              if (size != null) {
-                final effPreset = effectivePresetFor(
-                  project: _handoffProject!,
-                  preset: _handoffPreset!,
-                );
-                final assets = await renderParityAssets(
-                  preset: effPreset,
-                  dir: dir,
-                  width: size.width,
-                  height: size.height,
-                  now: DateTime.now(),
-                  fontReady: fontReady,
-                );
-                String? movPath;
-                String? framesDir;
-                String? stillPath;
-                final mov = await svc.cachedLogoMov();
-                if (mov != null) {
-                  movPath = mov.path;
-                } else if (_news.logoPath != null &&
-                    await File(_news.logoPath!).exists()) {
-                  // Logo parity (user spec 22 Nov 2026): a user-imported
-                  // logo ROTATES in 3D exactly like the channel logo —
-                  // generate its loop frames the same way the reel
-                  // export does; the still is only a fallback.
-                  try {
-                    final key = logoLoopCacheKey(
-                      logoFile: File(_news.logoPath!),
-                    );
-                    final dirFrames = Directory(
-                      p.join(dir.path, 'logo_loop_$key'),
-                    );
-                    await LogoLoopService.generateFrames(
-                      logoFile: File(_news.logoPath!),
-                      outDir: dirFrames,
-                    );
-                    framesDir = dirFrames.path;
-                  } catch (_) {
-                    stillPath = _news.logoPath;
-                  }
-                }
-                // final3 default logo (demo v4): the user's
-                // green-screen rotating-cube video — only when no
-                // user logo was picked (a picked logo keeps its
-                // generated-frames behaviour). Missing bundle →
-                // null → the existing path (fail soft).
-                String? gsPath;
-                if (effPreset.finalIs3Ribbon &&
-                    framesDir == null &&
-                    stillPath == null) {
-                  final gs = await svc.ensureLogoGsFile();
-                  gsPath = gs?.path;
-                }
-                String? clockFont;
-                final dejaVu = await svc.ensureDejaVuFile();
-                clockFont = dejaVu?.path ?? FfmpegService.findFontFile();
-                final parityOut = p.join(
-                  dir.path,
-                  'pve_export_parity_$stamp.mp4',
-                );
-                final cmd = buildParityTemplateCommand(
-                  input: out,
-                  output: parityOut,
-                  assets: assets,
-                  logoGsPath: gsPath,
-                  logoMovPath: movPath,
-                  logoFramesDir: framesDir,
-                  logoStillPng: stillPath,
-                  clockFontFile: clockFont,
-                  exportStart: DateTime.now(),
-                  videoBitrateKbps: null,
-                );
-                final res = await FfmpegService.run(cmd);
-                if (res.ok) {
-                  out = parityOut;
-                  parityDone = true;
-                } else {
-                  _setStatus(
-                    'Note: animated template fail ho gaya, static '
-                    'template se try ho raha hai.',
-                  );
-                }
-              }
-            } catch (e) {
-              _setStatus(
-                'Note: animated template fail ho gaya ($e), static '
-                'template se try ho raha hai.',
-              );
-            }
-          }
-        }
-        if (!parityDone) {
-          final useNews =
-              _news.breakingHeadline.trim().isNotEmpty ||
-              _news.lowerTitle.trim().isNotEmpty ||
-              _news.lowerSubtitle.trim().isNotEmpty ||
-              _news.tickerText.trim().isNotEmpty;
-          String? templatePng;
-          if (useNews) {
-            _setStatus('News template laga rahe hain…');
-            // Timeline handoff (Phase 7): render the PROJECT's template
-            // kind (nigraanFinal / breaking / classic) from its preset
-            // instead of the live design, with the logo left out of the
-            // PNG (the static logo comes from the overlay pass below,
-            // as before). The plain editor keeps the live render.
-            final tplFile = await renderLiveTemplateImage(
-              template: _news,
-              tickerPx: 0,
-              tickerAtStart: true,
-              now: DateTime.now(),
-              dir: dir,
-              templateKind: _projectTemplateKind ?? 'live',
-              preset: _handoffPreset,
-              breakingTemplate:
-                  _projectTemplateKind == 'breaking' &&
-                      _handoffProject != null &&
-                      _handoffPreset != null
-                  ? BreakingTemplate.fromProject(
-                      _handoffProject!,
-                      _handoffPreset!,
-                    )
-                  : null,
-              includeLogo: _handoffPreset == null,
-              includeIntroMarker: _handoffPreset == null,
-            );
-            templatePng = tplFile.path;
-          }
-          String? logoPath;
-          final pickedLogo = _news.logoPath;
-          if (pickedLogo != null && await File(pickedLogo).exists()) {
-            logoPath = pickedLogo;
-          }
-          final templated = p.join(dir.path, 'pve_export_templated_$stamp.mp4');
-          final overlayCmd = FfmpegService.overlayPassCommand(
-            input: out,
-            templatePngPath: templatePng,
-            logoPath: logoPath,
-            logoPosition: _news.logoPosition.name,
-            output: templated,
-          );
-          if (overlayCmd != null) {
-            final res = await FfmpegService.run(overlayCmd);
-            if (!res.ok) {
-              _setStatus(
-                'Note: news template pass fail ho gaya, saaf video save ho rahi hai.',
-              );
-            } else {
-              out = templated;
-            }
-          }
-        }
-      }
-
-      // v1.3.0 (§6.1): intro / outro attach slots — the picked
-      // videos are normalised to the export's own dims and joined
-      // with the concat demuxer (intro first, outro last). Guarded:
-      // a failed attach keeps the unattached export.
-      if (_introClipPath != null || _outroClipPath != null) {
-        try {
-          final size = await VideoExportService.probeVideoSize(File(out));
-          if (size != null) {
-            final segments = <String>[];
-            Future<String?> attach(String path, String tag) async {
-              final hasAudio = await ReelExportService.probeHasAudio(
-                File(path),
-              );
-              final norm = p.join(dir.path, 'attach_${tag}_$stamp.mp4');
-              final res = await FfmpegService.run(
-                FfmpegService.normalizeWithAudioCommand(
-                  input: path,
-                  trimStart: 0,
-                  trimEnd: 3600,
-                  width: size.width,
-                  height: size.height,
-                  output: norm,
-                  addSilentAudio: !hasAudio,
-                ),
-              );
-              return res.ok ? norm : null;
-            }
-
-            if (_introClipPath != null) {
-              final n = await attach(_introClipPath!, 'intro');
-              if (n != null) segments.add(n);
-            }
-            segments.add(out);
-            if (_outroClipPath != null) {
-              final n = await attach(_outroClipPath!, 'outro');
-              if (n != null) segments.add(n);
-            }
-            if (segments.length > 1) {
-              _setStatus('Intro/outro jor rahe hain…');
-              final listFile = p.join(dir.path, 'attach_$stamp.txt');
-              await File(listFile).writeAsString(
-                segments
-                    .map((f) => "file '${f.replaceAll("'", "'\\''")}'")
-                    .join('\n'),
-              );
-              final joined = p.join(dir.path, 'pve_export_joined_$stamp.mp4');
-              final res = await FfmpegService.run(
-                FfmpegService.concatCommand(listFile: listFile, output: joined),
-              );
-              if (res.ok) {
-                out = joined;
-              } else {
-                _setStatus(
-                  'Note: intro/outro attach fail ho gaya, baghair is ke save ho raha hai.',
-                );
-              }
-            }
-          }
-        } catch (e) {
-          _setStatus(
-            'Note: intro/outro attach fail ho gaya ($e), baghair is ke save ho raha hai.',
-          );
-        }
-      }
-
-      _checkExportCancelled();
-      if (!await Gal.hasAccess()) {
-        if (!await Gal.requestAccess()) {
-          throw Exception('Gallery access was denied.');
-        }
-      }
-      await Gal.putVideo(out);
-      _setStatus('Saved to gallery: ${p.basename(out)}');
-      UnityAdsService.showInterstitialAd();
-      if (mounted) {
-        // Build 3 (Phase 3, PRO-SPEC point 22): the saved video
-        // can be shared straight from the completion snackbar.
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Video saved to gallery.'),
-            duration: const Duration(seconds: 6),
-            action: SnackBarAction(
-              label: 'Share',
-              onPressed: () => unawaited(
-                SharePlus.instance.share(
-                  ShareParams(files: [XFile(out)]),
-                ),
-              ),
-            ),
-          ),
-        );
-      }
-    } catch (e) {
-      rethrow;
-    }
-  }
-
   /// Wrapper around [_exportInner] with one subtitles-fallback retry:
   /// if the ASS subtitles filter is missing from this FFmpeg build, retry
   /// the export with timed drawtext captions (Latin scripts only).
-  Future<void> _export() async {
-    if (_clips.isEmpty) {
-      _setStatus('Add at least one video first.');
-      return;
-    }
-    if (_busy) return;
-    // Export settings live at the export step now (one-build):
-    // the user confirms quality + frame rate here, CapCut-style,
-    // before the render starts. v1.3.0: when the AppBar pill
-    // already set them, the dialog is skipped. Build 3: the
-    // dialog now carries the frame rate too (24/30/60).
-    if (!_qualityPicked) {
-      final ok = await _pickExportSettings();
-      if (ok != true || !mounted) return;
-    }
-    final quality = _fxQuality;
-    // v1.4.0 PRO: 1080p / 4K exports carry the double-ad gate for
-    // free users (two back-to-back interstitials before the render
-    // starts — the ad service's own 120 s interval may suppress
-    // the second when one was just shown). Pro subscribers
-    // (ProService.proActive) skip the gate entirely.
-    if (quality >= 1 && !ProService.instance.proActive) {
-      _setStatus('Ads chal rahe hain — phir export shuru hoga…');
-      await UnityAdsService.showInterstitialAd();
-      await UnityAdsService.showInterstitialAd();
-      if (!mounted) return;
-    }
-    setState(() {
-      _busy = true;
-      _exporting = true;
-      _exportCancelRequested = false;
-      _status = 'Exporting…';
-    });
-    try {
-      // Phase 0 pre-run discipline: no zombie ffmpeg session from
-      // an earlier abandoned run competes with this export.
-      await FfmpegService.prepareForNewRun();
-      _captionDrawtextFallback = false;
-      await _exportInner();
-    } catch (e) {
-      final msg = e.toString().toLowerCase();
-      final subFail =
-          msg.contains('subtitle') ||
-          msg.contains('no such filter') ||
-          msg.contains('libass');
-      if (_exportCancelRequested || e is _ExportCancelled) {
-        // Phase 0: a user cancel is not a failure.
-        _setStatus('Export cancel kar diya gaya.');
-      } else if (_captions.isNotEmpty &&
-          subFail &&
-          !CaptionService.containsArabicInSegments(_captions)) {
-        _setStatus('Subtitles filter failed, retrying with text captions…');
-        _captionDrawtextFallback = true;
-        try {
-          await _exportInner();
-        } catch (e2) {
-          if (_exportCancelRequested || e2 is _ExportCancelled) {
-            _setStatus('Export cancel kar diya gaya.');
-          } else {
-            _setStatus('Export failed: $e2');
-          }
-        }
-      } else {
-        _setStatus('Export failed: $e');
-      }
-    } finally {
-      // Phase 0 sweep: this finally was an UNGUARDED setState —
-      // leaving the screen mid-export made it throw on completion.
-      if (mounted) {
-        setState(() {
-          _busy = false;
-          _exporting = false;
-        });
-      }
-    }
-  }
+  Future<void> _export() =>
+      VideoEditorExportController(this).export();
 
   /// §6.11 PIP advanced graph (completion fix, user order
   /// 22 Nov 2026): blend modes + masks + opacity, built on probed
@@ -4991,130 +3400,6 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   /// coordinates (the export's drawtext spot); PIP composites over
   /// the frame AFTER the transform, exactly like the export; the
   /// grid/safe-zone guides paint on top when enabled.
-  Widget _stageCanvas(
-    VideoClip clip,
-    VideoPlayerController? ctrl,
-    bool ready,
-  ) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final stageSize = constraints.biggest;
-        final mediaAspect = (!clip.isPhoto && ready && ctrl != null)
-            ? ctrl.value.aspectRatio
-            : clip.aspectRatio;
-        final ratio = CanvasGeometry.ratioFor(_aspect, mediaAspect);
-        final frame = CanvasGeometry.frameRect(stageSize, ratio);
-        _stageFrameRect = frame;
-        _stageMediaRect = CanvasGeometry.containRect(frame, mediaAspect);
-        if (frame.width <= 0 || frame.height <= 0) {
-          return const SizedBox.shrink();
-        }
-        final containLocal = _stageMediaRect.shift(-frame.topLeft);
-        return Stack(
-          children: [
-            // ---- The canvas frame ----
-            Positioned.fromRect(
-              rect: frame,
-              child: ClipRect(
-                child: Stack(
-                  children: [
-                    Positioned.fill(
-                      child: ColoredBox(color: _frameBackdropColor()),
-                    ),
-                    // Transformed content (media + text + track
-                    // pin): the export's transform pass scales the
-                    // main pass output — which includes the
-                    // drawtext text — so all of it lives inside
-                    // the Transform.
-                    Positioned.fill(
-                      child: Transform(
-                        alignment: Alignment.center,
-                        transform: _stageTransformMatrix(frame.size),
-                        child: Stack(
-                          children: [
-                            Positioned.fromRect(
-                              rect: containLocal,
-                              child: _stageMediaLayer(
-                                clip,
-                                ctrl,
-                                ready,
-                                containLocal.size,
-                              ),
-                            ),
-                            if (_text.trim().isNotEmpty)
-                              _stageTextLayer(frame.size),
-                          ],
-                        ),
-                      ),
-                    ),
-                    // PIP live preview (§6.11): composited over the
-                    // frame, NOT transformed — the export applies
-                    // its PIP pass after the transform pass.
-                    // Build 3: the layer rebuilds on every clock
-                    // tick so a keyframed inset's pose interpolates
-                    // LIVE with playback/scrubbing.
-                    if (_fxPip && _fxPipVideo.isNotEmpty)
-                      Positioned.fill(
-                        child: AnimatedBuilder(
-                          animation: _clock,
-                          builder: (context, _) => Stack(
-                            children: [_pipPreviewLayer(frame.size)],
-                          ),
-                        ),
-                      ),
-                    // Build 3: the keyframed title/sticker posed
-                    // live at the playhead (preview interpolation —
-                    // the export renders the real PNG with the same
-                    // track; this pill is its stage stand-in).
-                    if (_proKeyframes &&
-                        (_proTitle.trim().isNotEmpty ||
-                            _proSticker.trim().isNotEmpty))
-                      AnimatedBuilder(
-                        animation: _clock,
-                        builder: (context, _) => _kfTitleChip(containLocal),
-                      ),
-                    // Guides: thirds + safe zones over everything.
-                    if (_showGrid)
-                      Positioned.fill(
-                        child: CustomPaint(
-                          painter: const StageGridPainter(),
-                        ),
-                      ),
-                    // The frame's edge, so the canvas is visible as
-                    // an object on the black stage.
-                    Positioned.fill(
-                      child: IgnorePointer(
-                        child: Container(
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.white24),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            // Grid / safe-zone toggle (stage corner).
-            Positioned(
-              top: 2,
-              right: 2,
-              child: IconButton(
-                key: const Key('stageGridToggle'),
-                tooltip: 'Grid / safe zones',
-                icon: Icon(
-                  _showGrid ? Icons.grid_on : Icons.grid_off,
-                  color: _showGrid ? TjProTheme.gold : Colors.white54,
-                  size: 20,
-                ),
-                onPressed: () => setState(() => _showGrid = !_showGrid),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
 
   /// The media itself inside the canvas frame's contain rect:
   /// photo still or video texture, carrying the stage gestures —
@@ -5127,118 +3412,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   /// PNG as the export, so preview and export cannot drift). The
   /// mask image renders at a capped resolution (shapes/gradients
   /// are scale-invariant; feather is relative to the short side).
-  Widget _mainMasked(Widget media, double aspect) {
-    if (_mainMask == 'none') return media;
-    var mw = 480;
-    var mh = (480 / aspect).round();
-    if (mh > 480) {
-      mh = 480;
-      mw = (480 * aspect).round();
-    }
-    if (mw < 2 || mh < 2) return media;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _ensureMainMaskImage(mw, mh);
-    });
-    final img = _mainMaskImage;
-    if (img == null) return media;
-    return ShaderMask(
-      shaderCallback: (bounds) => ui.ImageShader(
-        img,
-        ui.TileMode.clamp,
-        ui.TileMode.clamp,
-        (Matrix4.diagonal3Values(
-          bounds.width / img.width,
-          bounds.height / img.height,
-          1.0,
-        )).storage,
-      ),
-      blendMode: BlendMode.dstIn,
-      child: media,
-    );
-  }
 
-  Widget _stageMediaLayer(
-    VideoClip clip,
-    VideoPlayerController? ctrl,
-    bool ready,
-    Size mediaBox,
-  ) {
-    if (clip.isPhoto) {
-      return GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onScaleStart: _onStageScaleStart,
-        onScaleUpdate: _onStageScaleUpdate,
-        onDoubleTap: _resetStageTransform,
-        child: _mainMasked(
-          ColorFiltered(
-            colorFilter: ColorFilter.matrix(_stageMatrix),
-            child: Image.file(
-              clip.file,
-              fit: BoxFit.contain,
-              width: double.infinity,
-              height: double.infinity,
-            ),
-          ),
-          clip.aspectRatio,
-        ),
-      );
-    }
-    if (!ready || ctrl == null) {
-      return const Center(
-        child: Text(
-          'Preview load ho raha hai…',
-          style: TextStyle(color: Colors.white70),
-        ),
-      );
-    }
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTapDown: (d) => _onPreviewTapDown(d, mediaBox),
-      // §6.2 hold-to-compare: hold the stage to see the RAW frame,
-      // release for the graded one.
-      onLongPressStart: (_) => setState(() => _comparing = true),
-      onLongPressEnd: (_) => setState(() => _comparing = false),
-      onScaleStart: _onStageScaleStart,
-      onScaleUpdate: _onStageScaleUpdate,
-      onDoubleTap: _resetStageTransform,
-      child: Stack(
-        children: [
-          _mainMasked(
-            ColorFiltered(
-              colorFilter: ColorFilter.matrix(_stageMatrix),
-              child: VideoPlayer(ctrl),
-            ),
-            ctrl.value.aspectRatio,
-          ),
-          if (_trackStartX != null)
-            Align(
-              alignment: Alignment(
-                _trackStartX! * 2 - 1,
-                _trackStartY! * 2 - 1,
-              ),
-              child: const Icon(
-                Icons.location_on,
-                color: Colors.redAccent,
-                size: 28,
-              ),
-            ),
-          if (_comparing)
-            const Positioned(
-              top: 10,
-              left: 0,
-              right: 0,
-              child: Center(
-                child: Chip(
-                  label: Text('Original'),
-                  backgroundColor: Colors.black54,
-                  labelStyle: TextStyle(color: Colors.white),
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
 
   /// Build 3 (Phase 3): the keyframed title/sticker as a stage
   /// layer — a dark pill standing in for the export's rendered
@@ -5247,74 +3421,6 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   /// the VIDEO size, and the export anchors the PNG's top-left
   /// the same way). Shown only while keyframes are ON for the
   /// title/sticker, so the non-keyframed preview is untouched.
-  Widget _kfTitleChip(Rect containLocal) {
-    final label = _proTitle.trim().isNotEmpty
-        ? _proTitle.trim()
-        : _proSticker.trim();
-    final total = _totalDurationSec;
-    final f = total > 0
-        ? (_globalPositionSec / total).clamp(0.0, 1.0)
-        : 0.0;
-    final pose = keyframePoseAt(
-      KeyframeTrack(
-        start: ProKeyframe(
-          timeSec: 0,
-          xNorm: _kfStartX,
-          yNorm: _kfStartY,
-          scale: _kfStartScale,
-          opacity: _kfStartOpacity,
-          rotationDeg: _kfStartRotation,
-        ),
-        end: ProKeyframe(
-          timeSec: 1,
-          xNorm: _kfEndX,
-          yNorm: _kfEndY,
-          scale: _kfEndScale,
-          opacity: _kfEndOpacity,
-          rotationDeg: _kfEndRotation,
-        ),
-      ),
-      f,
-      _kfEasing,
-    );
-    return Positioned.fill(
-      child: Stack(
-        children: [
-          Positioned(
-            left: containLocal.left + pose.xNorm * containLocal.width,
-            top: containLocal.top + pose.yNorm * containLocal.height,
-            child: Opacity(
-              opacity: pose.opacity.clamp(0.0, 1.0),
-              child: Transform.rotate(
-                angle: pose.rotationDeg * math.pi / 180,
-                child: Transform.scale(
-                  scale: pose.scale.clamp(0.1, 3.0),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 3,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.black54,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Text(
-                      label,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 15,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
   /// The editor's text overlay as a stage layer (Phase 1): drawn
   /// in frame coordinates at the export's drawtext spot (bottom
@@ -5322,42 +3428,6 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   /// panel below — its property panel. The export position is
   /// fixed by drawtext, so the layer is selectable but not
   /// draggable; the gold outline shows the selection.
-  Widget _stageTextLayer(Size frameSize) {
-    final selected = _stageLayer == 'text';
-    return Positioned(
-      left: 0,
-      right: 0,
-      bottom: frameSize.height * 0.055,
-      child: Center(
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () {
-            setState(() => _stageLayer = 'text');
-            _openToolTab('text', 'text');
-          },
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            decoration: selected
-                ? BoxDecoration(
-                    border: Border.all(color: TjProTheme.gold, width: 1.5),
-                    borderRadius: BorderRadius.circular(4),
-                  )
-                : null,
-            child: Text(
-              _text,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-                shadows: [Shadow(color: Colors.black, blurRadius: 6)],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 
   /// The stage's PIP layer: the inset composited over the main
   /// preview at the export's position/scale fractions, with the
@@ -5369,188 +3439,6 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   /// tapping the inset selects the layer and opens its element
   /// row, dragging moves it (release snaps to the nearest corner
   /// — the [PipPosition] model), pinching rescales it.
-  Widget _pipPreviewLayer(Size stage) {
-    final clip = _clips.isEmpty ? null : _clips[_selected];
-    final ctrl = _controller;
-    // Main content rect (contain fit, centred on the black stage).
-    double mainAspect = stage.aspectRatio;
-    double basePxW = 1280;
-    if (clip != null && clip.isPhoto) {
-      mainAspect = clip.aspectRatio;
-      basePxW = 1920;
-    } else if (ctrl != null && ctrl.value.isInitialized) {
-      mainAspect = ctrl.value.aspectRatio;
-      basePxW = ctrl.value.size.width;
-    }
-    var dispW = stage.width;
-    var dispH = dispW / mainAspect;
-    if (dispH > stage.height) {
-      dispH = stage.height;
-      dispW = dispH * mainAspect;
-    }
-    final dispX = (stage.width - dispW) / 2;
-    final dispY = (stage.height - dispH) / 2;
-    final pipCtrl = _pipController;
-    final pipReady = pipCtrl != null && pipCtrl.value.isInitialized;
-    final pipPxW = pipReady ? pipCtrl.value.size.width : 1280;
-    final pipAspect = pipReady ? pipCtrl.value.aspectRatio : 16 / 9;
-    final s = _pipScale.clamp(0.15, 0.5);
-    final pipW = dispW * pipPxW * s / basePxW;
-    final pipH = pipW / pipAspect;
-    final margin = dispW * 24 / basePxW;
-    // Build 3 (Phase 3): with PIP keyframes ON, the inset's pose
-    // comes from the keyframe track at the playhead (the SAME lerp
-    // the export renders, via keyframePoseAt) — the corner preset
-    // and drag offset no longer drive it.
-    final kfPose = _pipKeyframes
-        ? keyframePoseAt(
-            KeyframeTrack(
-              start: ProKeyframe(
-                timeSec: 0,
-                xNorm: _pkStartX,
-                yNorm: _pkStartY,
-                opacity: _pkStartOpacity,
-              ),
-              end: ProKeyframe(
-                timeSec: 1,
-                xNorm: _pkEndX,
-                yNorm: _pkEndY,
-                opacity: _pkEndOpacity,
-              ),
-            ),
-            _totalDurationSec > 0
-                ? (_globalPositionSec / _totalDurationSec).clamp(0.0, 1.0)
-                : 0.0,
-            _pkEasing,
-          )
-        : null;
-    final (lx, ty) = kfPose != null
-        ? (dispX + kfPose.xNorm * dispW, dispY + kfPose.yNorm * dispH)
-        : switch (_pipPosition) {
-            PipPosition.topLeft => (dispX + margin, dispY + margin),
-            PipPosition.topRight => (
-                dispX + dispW - pipW - margin,
-                dispY + margin,
-              ),
-            PipPosition.bottomLeft => (
-                dispX + margin,
-                dispY + dispH - pipH - margin,
-              ),
-            _ => (
-                dispX + dispW - pipW - margin,
-                dispY + dispH - pipH - margin,
-              ),
-          };
-    // Preview mask at a capped resolution (shapes/gradients are
-    // scale-invariant; feather is relative to the short side).
-    if (_pipMask != 'none' && pipReady) {
-      final mw = pipCtrl.value.size.width.round();
-      final mh = pipCtrl.value.size.height.round();
-      final cap = 480 / math.max(mw, mh);
-      final sw = cap < 1 ? (mw * cap).round() : mw;
-      final sh = cap < 1 ? (mh * cap).round() : mh;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _ensurePipMaskImage(sw, sh);
-      });
-    }
-    Widget content = pipReady
-        ? VideoPlayer(pipCtrl)
-        : Container(
-            decoration: BoxDecoration(
-              color: Colors.black54,
-              border: Border.all(color: TjProTheme.gold),
-            ),
-            child: const Center(
-              child: Icon(
-                Icons.picture_in_picture_alt,
-                color: Colors.white70,
-                size: 28,
-              ),
-            ),
-          );
-    if (_pipMask != 'none' && _pipMaskImage != null) {
-      final img = _pipMaskImage!;
-      content = ShaderMask(
-        shaderCallback: (bounds) => ui.ImageShader(
-          img,
-          ui.TileMode.clamp,
-          ui.TileMode.clamp,
-          (Matrix4.diagonal3Values(
-            bounds.width / img.width,
-            bounds.height / img.height,
-            1.0,
-          )).storage,
-        ),
-        blendMode: BlendMode.dstIn,
-        child: content,
-      );
-    }
-    content = Opacity(
-      opacity: kfPose != null
-          ? kfPose.opacity.clamp(0.0, 1.0)
-          : _pipOpacity.clamp(0.1, 1.0),
-      child: content,
-    );
-    final mode = _pipBlendMode(_pipBlend);
-    if (mode != null) {
-      content = _BlendLayer(mode: mode, child: content);
-    }
-    // Build 2 (Phase 1): the inset is a stage LAYER — tap selects
-    // it (gold outline) and opens the Elements row, drag moves it
-    // (release snaps to the nearest corner of the contain rect —
-    // the PipPosition model the export consumes), pinch rescales
-    // it (the render clamp 0.15..0.5 above). Build 3: while PIP
-    // keyframes drive the pose, drag/pinch stand down (the track
-    // owns the position).
-    final selected = _stageLayer == 'pip';
-    return Positioned(
-      left: lx + (kfPose != null ? 0 : _pipDragOffset.dx),
-      top: ty + (kfPose != null ? 0 : _pipDragOffset.dy),
-      width: pipW,
-      height: pipH,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: () {
-          setState(() => _stageLayer = 'pip');
-          _openToolTab('overlay', 'pip');
-        },
-        onScaleStart: (_) => _pinchPipScale = _pipScale,
-        onScaleUpdate: (d) {
-          if (_pipKeyframes) return;
-          setState(() {
-            if (d.pointerCount >= 2) {
-              _pipScale = (_pinchPipScale * d.scale).clamp(0.15, 0.5);
-            }
-            _pipDragOffset += d.focalPointDelta;
-          });
-        },
-        onScaleEnd: (_) {
-          if (_pipKeyframes) return;
-          final cxp = lx + _pipDragOffset.dx + pipW / 2;
-          final cyp = ty + _pipDragOffset.dy + pipH / 2;
-          final pos = (cxp < dispX + dispW / 2)
-              ? (cyp < dispY + dispH / 2
-                    ? PipPosition.topLeft
-                    : PipPosition.bottomLeft)
-              : (cyp < dispY + dispH / 2
-                    ? PipPosition.topRight
-                    : PipPosition.bottomRight);
-          setState(() {
-            _pipPosition = pos;
-            _pipDragOffset = Offset.zero;
-          });
-        },
-        child: Container(
-          decoration: selected
-              ? BoxDecoration(
-                  border: Border.all(color: TjProTheme.gold, width: 1.5),
-                )
-              : null,
-          child: content,
-        ),
-      ),
-    );
-  }
 
   /// dart:ui blend mode for a PIP blend key ('normal' → null,
   /// meaning plain source-over compositing).
@@ -5581,63 +3469,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     }
   }
 
-  /// One icon+label choice item — the global UI rule (user order
-  /// 22 Nov 2026): every choice inside a tool is an icon above a
-  /// label, in a horizontal swipeable row, never bare text. Mirrors
-  /// the main tool rail's look (violet when selected).
-  Widget _iconChoiceItem({
-    required IconData icon,
-    required String label,
-    required bool selected,
-    required VoidCallback? onTap,
-    Color? iconColor,
-    TextStyle? labelStyle,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 3),
-      child: Opacity(
-        opacity: onTap == null ? 0.4 : 1,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(12),
-          onTap: onTap,
-          child: Container(
-            width: 62,
-            padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 3),
-            decoration: BoxDecoration(
-              color: selected ? TjProTheme.violet : const Color(0xFF232323),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(icon, size: 21, color: iconColor ?? Colors.white),
-                const SizedBox(height: 3),
-                Text(
-                  label,
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style:
-                      labelStyle ??
-                      const TextStyle(color: Colors.white, fontSize: 10),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 
-  /// A horizontal scrollable row of [_iconChoiceItem]s — swipe
-  /// left/right and more options keep appearing; nothing is
-  /// buried in a dropdown or a wrapped stack.
-  Widget _iconChoiceRail(List<Widget> items) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(children: items),
-    );
-  }
 
   /// Captions mapped onto the exported timeline: captions were recorded
   /// against the selected clip, so in a merged export they start after
@@ -5959,431 +3791,11 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     _scheduleChromaPreview();
   }
 
-  /// The InShot tool set (INSHOT-REFERENCE §B, exact order) as
-  /// (id, item) pairs — ONE list behind both the main row and the
-  /// clip row (the clip row filters it), so a tool can never exist
-  /// twice with two behaviours. Instant ops run immediately; the
-  /// rest open their panel. News is appended after Ease (33rd) so
-  /// the News template panel stays reachable — InShot's 32 keep
-  /// their exact order.
-  /// One item of an InShot tool row: icon above a small label,
-  /// 64 wide, in a horizontal swipeable line (mockups V1/V2).
-  Widget _toolRowItem({
-    required IconData icon,
-    required String label,
-    required VoidCallback? onTap,
-    bool danger = false,
-  }) {
-    final color = danger ? const Color(0xFFFF6B5E) : Colors.white;
-    return SizedBox(
-      width: 64,
-      child: InkWell(
-        onTap: onTap,
-        child: Opacity(
-          opacity: onTap == null ? 0.4 : 1,
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, color: color, size: 23),
-              const SizedBox(height: 3),
-              SizedBox(
-                height: 14,
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text(
-                    label,
-                    style: TextStyle(color: color, fontSize: 10.5),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 
-  /// The shell every tool row renders in: dark bar, ONE horizontal
-  /// swipeable line.
-  Widget _toolRowShell(String key, List<Widget> items) {
-    return Container(
-      key: ValueKey<String>(key),
-      color: const Color(0xFF1B1B1B),
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-        children: items,
-      ),
-    );
-  }
 
-  List<(String, Widget)> _toolItems() {
-    final busy = _busy;
-    final hasClip = _clips.isNotEmpty;
-    VoidCallback? clipOp(Future<void> Function() f) =>
-        (busy || !hasClip) ? null : () => unawaited(f());
-    return [
-      (
-        'canvas',
-        _toolRowItem(
-          icon: Icons.aspect_ratio,
-          label: 'Canvas',
-          onTap: () => _openTool('canvas'),
-        ),
-      ),
-      (
-        'audio',
-        _toolRowItem(
-          icon: Icons.music_note,
-          label: 'Audio',
-          onTap: () => _openTool('audio'),
-        ),
-      ),
-      (
-        'sticker',
-        _toolRowItem(
-          icon: Icons.emoji_emotions,
-          label: 'Sticker',
-          onTap: () => _openToolTab('overlay', 'sticker'),
-        ),
-      ),
-      (
-        'text',
-        _toolRowItem(
-          icon: Icons.text_fields,
-          label: 'Text',
-          onTap: () => _openTool('text'),
-        ),
-      ),
-      (
-        'effect',
-        _toolRowItem(
-          icon: Icons.auto_awesome,
-          label: 'Effect',
-          onTap: () => _openTool('effects'),
-        ),
-      ),
-      (
-        'filter',
-        _toolRowItem(
-          icon: Icons.photo_filter,
-          label: 'Filter',
-          onTap: () => _openToolTab('colour', 'filters'),
-        ),
-      ),
-      (
-        'pip',
-        _toolRowItem(
-          icon: Icons.picture_in_picture_alt,
-          label: 'PIP',
-          onTap: () => _openToolTab('overlay', 'pip'),
-        ),
-      ),
-      (
-        'precut',
-        _toolRowItem(
-          icon: Icons.content_cut,
-          label: 'Precut',
-          onTap: () => _openTool('precut'),
-        ),
-      ),
-      (
-        'split',
-        _toolRowItem(
-          icon: Icons.call_split,
-          label: 'Split',
-          onTap: (busy || !hasClip) ? null : _splitSelectedClip,
-        ),
-      ),
-      (
-        'delete',
-        _toolRowItem(
-          icon: Icons.delete_outline,
-          label: 'Delete',
-          danger: true,
-          onTap: clipOp(_deleteSelectedClip),
-        ),
-      ),
-      (
-        'volume',
-        _toolRowItem(
-          icon: Icons.volume_up,
-          label: 'Volume',
-          onTap: () => _openTool('volume'),
-        ),
-      ),
-      (
-        'background',
-        _toolRowItem(
-          icon: Icons.wallpaper,
-          label: 'Background',
-          onTap: () => _openToolTab('canvas', 'background'),
-        ),
-      ),
-      (
-        'speed',
-        _toolRowItem(
-          icon: Icons.speed,
-          label: 'Speed',
-          onTap: () => _openTool('speed'),
-        ),
-      ),
-      (
-        'animation',
-        _toolRowItem(
-          icon: Icons.animation,
-          label: 'Animation',
-          onTap: () => _openToolTab('overlay', 'keyframes'),
-        ),
-      ),
-      (
-        'aicut',
-        _toolRowItem(
-          icon: Icons.content_cut_outlined,
-          label: 'AI Cut',
-          onTap: () => _openTool('aicut'),
-        ),
-      ),
-      (
-        'voiceenhance',
-        _toolRowItem(
-          icon: Icons.record_voice_over,
-          label: 'Voice Enhance',
-          onTap: () => _openTool('voiceenhance'),
-        ),
-      ),
-      (
-        'crop',
-        _toolRowItem(
-          icon: Icons.crop,
-          label: 'Crop',
-          onTap: () => _openToolTab('edit', 'transform'),
-        ),
-      ),
-      (
-        'switch',
-        _toolRowItem(
-          icon: Icons.swap_vert,
-          label: 'Switch',
-          onTap: clipOp(_switchSelectedClipToPip),
-        ),
-      ),
-      (
-        'enhance',
-        _toolRowItem(
-          icon: Icons.high_quality,
-          label: 'Enhance',
-          onTap: () => _openTool('enhance'),
-        ),
-      ),
-      (
-        'stabilizer',
-        _toolRowItem(
-          icon: Icons.videocam,
-          label: 'Stabilizer',
-          onTap: () => _openTool('stabilizer'),
-        ),
-      ),
-      (
-        'cutout',
-        _toolRowItem(
-          icon: Icons.person_remove,
-          label: 'Cutout',
-          onTap: () => _openTool('cutout'),
-        ),
-      ),
-      (
-        'mask',
-        _toolRowItem(
-          icon: Icons.blur_on,
-          label: 'Mask',
-          onTap: () => _openTool('mask'),
-        ),
-      ),
-      (
-        'templates',
-        _toolRowItem(
-          icon: Icons.dashboard_customize,
-          label: 'Templates',
-          // #31: the editor's Templates slot opens OUR Online
-          // Store on its Templates section.
-          onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => const StoreScreen(initialCategory: 'Templates'),
-              ),
-            );
-          },
-        ),
-      ),
-      (
-        'opacity',
-        _toolRowItem(
-          icon: Icons.opacity,
-          label: 'Opacity',
-          onTap: () => _openTool('opacity'),
-        ),
-      ),
-      (
-        'replace',
-        _toolRowItem(
-          icon: Icons.find_replace,
-          label: 'Replace',
-          onTap: clipOp(_replaceSelectedClip),
-        ),
-      ),
-      (
-        'voiceeffect',
-        _toolRowItem(
-          icon: Icons.voice_chat,
-          label: 'Voice Effect',
-          onTap: () => _openToolTab('audio', 'voice'),
-        ),
-      ),
-      (
-        'duplicate',
-        _toolRowItem(
-          icon: Icons.copy,
-          label: 'Duplicate',
-          onTap: (busy || !hasClip) ? null : _duplicateSelectedClip,
-        ),
-      ),
-      (
-        'rotate',
-        _toolRowItem(
-          icon: Icons.rotate_right,
-          label: 'Rotate',
-          onTap: () => _openTool('rotate'),
-        ),
-      ),
-      (
-        'freeze',
-        _toolRowItem(
-          icon: Icons.ac_unit,
-          label: 'Freeze',
-          onTap: clipOp(_freezeFrameInsert),
-        ),
-      ),
-      (
-        'capture',
-        _toolRowItem(
-          icon: Icons.camera_alt_outlined,
-          label: 'Capture',
-          onTap: clipOp(_captureFrameInsert),
-        ),
-      ),
-      (
-        'reverse',
-        _toolRowItem(
-          icon: Icons.history,
-          label: 'Reverse',
-          onTap: clipOp(_reverseSelectedClip),
-        ),
-      ),
-      (
-        'ease',
-        _toolRowItem(
-          icon: Icons.show_chart,
-          label: 'Ease',
-          onTap: () => _openTool('ease'),
-        ),
-      ),
-      (
-        'news',
-        _toolRowItem(
-          icon: Icons.newspaper,
-          label: 'News',
-          onTap: () => _openTool('news'),
-        ),
-      ),
-    ];
-  }
 
-  /// MAIN tool row (mockup V1): the full InShot order.
-  Widget _mainToolRow() {
-    return _toolRowShell('video-rail', _toolItems().map((e) => e.$2).toList());
-  }
 
-  /// CLIP row (mockup V2): the main row minus Canvas / Audio /
-  /// Sticker / Text (InShot's rule), led by a ✓ that exits clip
-  /// mode. Every item is the SAME item as in the main row — the
-  /// v1.4.0 clip row's duplicate mappings (Retouch→Adjust, a second
-  /// Opacity→Transform, Reverse→Speed, Mask→PIP) are gone.
-  Widget _clipToolRow() {
-    const excluded = {'canvas', 'audio', 'sticker', 'text'};
-    return _toolRowShell('video-clip-row', [
-      _toolRowItem(
-        icon: Icons.check_circle,
-        label: 'Done',
-        onTap: () => setState(() => _clipRow = false),
-      ),
-      for (final e in _toolItems())
-        if (!excluded.contains(e.$1)) e.$2,
-    ]);
-  }
 
-  /// ELEMENT row (PIP selected): scoped to the ops that are real
-  /// for our single-inset PIP model — source / edit / delete /
-  /// Switch back to the main track / Mask / Blend / Opacity / Ease.
-  /// (InShot's fuller element row also trims/speeds the element;
-  /// our PIP has no trim/speed model — PARTIAL, see the report.)
-  Widget _elementToolRow() {
-    return _toolRowShell('video-element-row', [
-      _toolRowItem(
-        icon: Icons.check_circle,
-        label: 'Done',
-        onTap: () => setState(() => _elementRow = false),
-      ),
-      _toolRowItem(
-        icon: Icons.picture_in_picture_alt,
-        label: 'PIP',
-        onTap: () => _openToolTab('overlay', 'pip'),
-      ),
-      _toolRowItem(
-        icon: Icons.edit,
-        label: 'Edit',
-        onTap: () => _openToolTab('overlay', 'pip'),
-      ),
-      _toolRowItem(
-        icon: Icons.delete_outline,
-        label: 'Delete',
-        danger: true,
-        onTap: _busy
-            ? null
-            : () => setState(() {
-                _fxPip = false;
-                _fxPipVideo = '';
-                _elementRow = false;
-              }),
-      ),
-      _toolRowItem(
-        icon: Icons.swap_vert,
-        label: 'Switch',
-        onTap: _busy ? null : () => unawaited(_switchPipToMainTrack()),
-      ),
-      _toolRowItem(
-        icon: Icons.blur_on,
-        label: 'Mask',
-        onTap: () => _openTool('mask'),
-      ),
-      _toolRowItem(
-        icon: Icons.layers,
-        label: 'Blend',
-        onTap: () => _openToolTab('overlay', 'pip'),
-      ),
-      _toolRowItem(
-        icon: Icons.opacity,
-        label: 'Opacity',
-        onTap: () => _openTool('opacity'),
-      ),
-      _toolRowItem(
-        icon: Icons.show_chart,
-        label: 'Ease',
-        onTap: () => _openTool('ease'),
-      ),
-    ]);
-  }
 
   /// Display name for a tool key (used in the panel header).
   String _toolDisplayName(String key) {
@@ -6414,43 +3826,6 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     return names[key] ?? key;
   }
 
-  /// Header for the open tool panel: ✗ Cancel + tool name + ✓
-  /// Apply — ONE pattern for every panel (Build 3 audit, PRO-SPEC
-  /// points 4 + 19). Panel edits apply LIVE to the preview while
-  /// the panel is open; ✓ keeps them and closes, ✗ rolls back
-  /// everything the panel's controls changed since it opened (the
-  /// [_panelBase] snapshot) and closes. v1.5.0 (#11): the confirm
-  /// is a ✓ ICON everywhere.
-  Widget _toolPanelHeader(String toolKey) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        children: [
-          IconButton(
-            tooltip: 'Cancel — panel ki changes wapas',
-            onPressed: _cancelPanel,
-            icon: const Icon(Icons.close, color: Colors.white),
-          ),
-          Expanded(
-            child: Text(
-              _toolDisplayName(toolKey),
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
-              ),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          IconButton(
-            tooltip: 'Apply',
-            onPressed: () => _openTool(null),
-            icon: const Icon(Icons.check, color: TjProTheme.gold),
-          ),
-        ],
-      ),
-    );
-  }
 
   /// v1.5.0 top bar (mockups V1/V2 — NO AppBar): back arrow, help
   /// (the tool index lives inside it), quality as plain text, and
@@ -6502,101 +3877,6 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     );
   }
 
-  /// v1.5.0 transport row — BELOW the preview (v1.4.0 overlaid it on
-  /// the stage, hiding the frame's bottom, #10). Everything reads
-  /// the ONE clock + timeline model: undo / redo, plain play/pause
-  /// (no gold circle), current / total from [_globalPositionSec] /
-  /// [_totalDurationSec], keyframe toggle, fullscreen. Rebuilds on
-  /// every clock tick — the counter RUNS (#30).
-  Widget _transportRow() {
-    String fmt(double sec) {
-      final m = sec ~/ 60;
-      final ss = (sec % 60).toStringAsFixed(1).padLeft(4, '0');
-      return '$m:$ss';
-    }
-
-    return AnimatedBuilder(
-      animation: _clock,
-      builder: (context, _) {
-        final ctrl = _controller;
-        final ready = ctrl != null && ctrl.value.isInitialized;
-        final playing = _clock.isPlaying;
-        return Container(
-          height: 46,
-          color: const Color(0xFF121212),
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          child: Row(
-            children: [
-              IconButton(
-                tooltip: 'Undo',
-                onPressed: _undoStack.isEmpty ? null : _undo,
-                icon: const Icon(Icons.undo, color: Colors.white, size: 20),
-              ),
-              IconButton(
-                tooltip: 'Redo',
-                onPressed: _redoStack.isEmpty ? null : _redo,
-                icon: const Icon(Icons.redo, color: Colors.white, size: 20),
-              ),
-              const Spacer(),
-              IconButton(
-                tooltip: playing ? 'Pause' : 'Play',
-                onPressed: !ready
-                    ? null
-                    : () {
-                        if (playing) {
-                          ctrl.pause();
-                        } else {
-                          ctrl.play();
-                        }
-                      },
-                icon: Icon(
-                  playing ? Icons.pause : Icons.play_arrow,
-                  color: Colors.white,
-                  size: 26,
-                ),
-              ),
-              const SizedBox(width: 8),
-              // Flexible: on narrow screens (or long durations)
-              // the time readout shrinks/ellipsizes instead of
-              // overflowing the transport row (v1.5.2, #67/#69).
-              Flexible(
-                child: Text(
-                  '${fmt(_globalPositionSec)} / ${fmt(_totalDurationSec)}',
-                  style: const TextStyle(color: Colors.white, fontSize: 12),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              const Spacer(),
-              IconButton(
-                tooltip: 'Keyframes on/off',
-                onPressed: () {
-                  setState(() => _proKeyframes = !_proKeyframes);
-                  _setStatus(
-                    _proKeyframes ? 'Keyframes ON.' : 'Keyframes OFF.',
-                  );
-                },
-                icon: Icon(
-                  Icons.diamond,
-                  color: _proKeyframes ? TjProTheme.gold : Colors.white54,
-                  size: 20,
-                ),
-              ),
-              IconButton(
-                tooltip: 'Fullscreen',
-                onPressed: ready ? _openFullscreen : null,
-                icon: const Icon(
-                  Icons.fullscreen,
-                  color: Colors.white,
-                  size: 22,
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -6737,7 +4017,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
                                         ),
                                       ),
                                     )
-                                  : _stageCanvas(clip, ctrl, ready),
+                                  : StageCanvas(host: this, clip: clip, ctrl: ctrl, ready: ready),
                             ),
                             // Transient status chip (§3) — overlays the
                             // stage, auto-hides; never a permanent line.
@@ -6780,9 +4060,9 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
               ),
             ),
             // ---- TRANSPORT (below the stage, #10) ----
-            _transportRow(),
+            TransportRow(this),
             // ---- TIMELINE (directly under the transport) ----
-            _timelineBar(),
+            TimelineBar(this),
             // ---- TOOL ZONE: row ⇄ the one open panel ----
             // v1.5.2 (#69): NO AnimatedSwitcher here anymore —
             // its cross-fade kept the outgoing panel alive while
@@ -6806,12 +4086,12 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            _toolPanelHeader(_activeTool!),
-                            _panelTabRow(),
+                            ToolPanelHeader(this, _activeTool!),
+                            PanelTabRow(this),
                             Expanded(
                               child: ListView(
                                 padding: const EdgeInsets.only(top: 4),
-                                children: _toolPanelChildren(),
+                                children: toolPanelChildren(this, context),
                               ),
                             ),
                           ],
@@ -6819,16 +4099,883 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
                       ),
                     )
                   : _elementRow && _fxPip
-                  ? _elementToolRow()
+                  ? ElementToolRow(this)
                   : _clipRow && _clips.isNotEmpty
-                  ? _clipToolRow()
-                  : _mainToolRow(),
+                  ? ClipToolRow(this)
+                  : MainToolRow(this),
             ),
           ],
         ),
       ),
     );
   }
+
+  /// Pipeline checkpoint: throws [ExportCancelled] when
+  /// [_cancelExport] has run. Placed between the export stages
+  /// (OUTSIDE their guarded try blocks) so a cancel stops the
+  /// NEXT stage from starting.
+  void _checkExportCancelled() {
+    if (_exportCancelRequested) throw const ExportCancelled();
+  }
+
+  // ── Phase 4: VideoEditorController forwards ──────────────────
+  // Thin forwards: each public member below delegates to the
+  // private member of the same name, so the split-out widgets
+  // (panels / timeline / tool rows / stage / export) can reach
+  // the editor state through the contract with no behaviour
+  // change.
+  @override
+  void update(VoidCallback fn) => setState(fn);
+
+  @override
+  void cancelPanel() => _cancelPanel();
+
+  @override
+  Future<void> openFullscreen() => _openFullscreen();
+
+  @override
+  Future<void> redo() => _redo();
+
+  @override
+  List<String> get redoStack => _redoStack;
+
+  @override
+  Future<void> seekToGlobalSec(double sec) => _seekToGlobalSec(sec);
+
+  @override
+  Future<void> switchSelectedClipToPip() => _switchSelectedClipToPip();
+
+  @override
+  String toolDisplayName(String key) => _toolDisplayName(key);
+
+  @override
+  Future<void> undo() => _undo();
+
+  @override
+  List<String> get undoStack => _undoStack;
+
+  @override
+  String? get activeTool => _activeTool;
+  @override
+  set activeTool(String? value) => _activeTool = value;
+  @override
+  Future<void> addClip() => _addClip();
+  @override
+  Future<void> addPhotoClip() => _addPhotoClip();
+  @override
+  bool get adjAuto => _adjAuto;
+  @override
+  set adjAuto(bool value) => _adjAuto = value;
+  @override
+  double get adjBlacks => _adjBlacks;
+  @override
+  set adjBlacks(double value) => _adjBlacks = value;
+  @override
+  double get adjBrilliance => _adjBrilliance;
+  @override
+  set adjBrilliance(double value) => _adjBrilliance = value;
+  @override
+  double get adjClarity => _adjClarity;
+  @override
+  set adjClarity(double value) => _adjClarity = value;
+  @override
+  double get adjFade => _adjFade;
+  @override
+  set adjFade(double value) => _adjFade = value;
+  @override
+  double get adjGrain => _adjGrain;
+  @override
+  set adjGrain(double value) => _adjGrain = value;
+  @override
+  double get adjHue => _adjHue;
+  @override
+  set adjHue(double value) => _adjHue = value;
+  @override
+  double get adjSharpen => _adjSharpen;
+  @override
+  set adjSharpen(double value) => _adjSharpen = value;
+  @override
+  double get adjVignette => _adjVignette;
+  @override
+  set adjVignette(double value) => _adjVignette = value;
+  @override
+  double get adjWhites => _adjWhites;
+  @override
+  set adjWhites(double value) => _adjWhites = value;
+  @override
+  String adjustExtraFilter() => _adjustExtraFilter();
+  @override
+  List<CaptionSegment> adjustedCaptions() => _adjustedCaptions();
+  @override
+  bool get aicutBusy => _aicutBusy;
+  @override
+  set aicutBusy(bool value) => _aicutBusy = value;
+  @override
+  double get aicutMinSilenceSec => _aicutMinSilenceSec;
+  @override
+  set aicutMinSilenceSec(double value) => _aicutMinSilenceSec = value;
+  @override
+  List<(double, double)> get aicutRanges => _aicutRanges;
+  @override
+  set aicutRanges(List<(double, double)> value) => _aicutRanges = value;
+  @override
+  double get aicutThresholdDb => _aicutThresholdDb;
+  @override
+  set aicutThresholdDb(double value) => _aicutThresholdDb = value;
+  @override
+  Future<void> applyBackdropAsset(String asset) => _applyBackdropAsset(asset);
+  @override
+  void applyNewsAnchorPreset() => _applyNewsAnchorPreset();
+  @override
+  void applyPreviewSpeed([double? rate]) => _applyPreviewSpeed(rate);
+  @override
+  Future<void> applySlowMoAi() => _applySlowMoAi();
+  @override
+  String get aspect => _aspect;
+  @override
+  set aspect(String value) => _aspect = value;
+  @override
+  bool get autoDuck => _autoDuck;
+  @override
+  set autoDuck(bool value) => _autoDuck = value;
+  @override
+  bool get beatAutoCut => _beatAutoCut;
+  @override
+  set beatAutoCut(bool value) => _beatAutoCut = value;
+  @override
+  List<double> get beats => _beats;
+  @override
+  set beats(List<double> value) => _beats = value;
+  @override
+  Future<String?> buildOverlayCommand({ required Directory dir, required int stamp, required String input, required String output, required double durationSec, }) => _buildOverlayCommand(dir: dir, stamp: stamp, input: input, output: output, durationSec: durationSec);
+  @override
+  bool get busy => _busy;
+  @override
+  set busy(bool value) => _busy = value;
+  @override
+  String get canvasFill => _canvasFill;
+  @override
+  set canvasFill(String value) => _canvasFill = value;
+  @override
+  String get canvasFillColor => _canvasFillColor;
+  @override
+  set canvasFillColor(String value) => _canvasFillColor = value;
+  @override
+  bool get captionDrawtextFallback => _captionDrawtextFallback;
+  @override
+  set captionDrawtextFallback(bool value) => _captionDrawtextFallback = value;
+  @override
+  String get captionLocale => _captionLocale;
+  @override
+  set captionLocale(String value) => _captionLocale = value;
+  @override
+  CaptionStyle get captionStyle => _captionStyle;
+  @override
+  set captionStyle(CaptionStyle value) => _captionStyle = value;
+  @override
+  List<CaptionSegment> get captions => _captions;
+  @override
+  set captions(List<CaptionSegment> value) => _captions = value;
+  @override
+  Future<void> captureFrameInsert() => _captureFrameInsert();
+  @override
+  void checkExportCancelled() => _checkExportCancelled();
+  @override
+  bool get chromaPreviewBusy => _chromaPreviewBusy;
+  @override
+  set chromaPreviewBusy(bool value) => _chromaPreviewBusy = value;
+  @override
+  String? get chromaPreviewPath => _chromaPreviewPath;
+  @override
+  set chromaPreviewPath(String? value) => _chromaPreviewPath = value;
+  @override
+  bool get clipRow => _clipRow;
+  @override
+  set clipRow(bool value) => _clipRow = value;
+  @override
+  double clipStartSec(int index) => _clipStartSec(index);
+  @override
+  List<VideoClip> get clips => _clips;
+  @override
+  TimelineClock get clock => _clock;
+  @override
+  bool get comparing => _comparing;
+  @override
+  set comparing(bool value) => _comparing = value;
+  @override
+  VideoPlayerController? get controller => _controller;
+  @override
+  set controller(VideoPlayerController? value) => _controller = value;
+  @override
+  bool get crossfade => _crossfade;
+  @override
+  set crossfade(bool value) => _crossfade = value;
+  @override
+  double get cutEnd => _cutEnd;
+  @override
+  set cutEnd(double value) => _cutEnd = value;
+  @override
+  double get cutStart => _cutStart;
+  @override
+  set cutStart(double value) => _cutStart = value;
+  @override
+  String get cutoutMode => _cutoutMode;
+  @override
+  set cutoutMode(String value) => _cutoutMode = value;
+  @override
+  Future<void> deleteSelectedClip() => _deleteSelectedClip();
+  @override
+  Future<void> runBeatDetection() => _detectBeats();
+  @override
+  bool get detectingBeats => _detectingBeats;
+  @override
+  set detectingBeats(bool value) => _detectingBeats = value;
+  @override
+  void duplicateSelectedClip() => _duplicateSelectedClip();
+  @override
+  Future<void> editCaptions() => _editCaptions();
+  @override
+  List<double> get effectiveDurations => _effectiveDurations;
+  @override
+  bool get elementRow => _elementRow;
+  @override
+  set elementRow(bool value) => _elementRow = value;
+  @override
+  Future<void> enhanceSelectedClipAudio({required bool voice}) => _enhanceSelectedClipAudio(voice: voice);
+  @override
+  Future<void> enhanceSelectedClipHd() => _enhanceSelectedClipHd();
+  @override
+  void ensureMainMaskImage(int width, int height) => _ensureMainMaskImage(width, height);
+  @override
+  Future<void> ensureMusicWave(String musicPath) => _ensureMusicWave(musicPath);
+  @override
+  void ensurePipMaskImage(int width, int height) => _ensurePipMaskImage(width, height);
+  @override
+  void ensurePipPreview() => _ensurePipPreview();
+  @override
+  bool get exportCancelRequested => _exportCancelRequested;
+  @override
+  set exportCancelRequested(bool value) => _exportCancelRequested = value;
+  @override
+  int get exportFps => _exportFps;
+  @override
+  set exportFps(int value) => _exportFps = value;
+  @override
+  bool get exporting => _exporting;
+  @override
+  set exporting(bool value) => _exporting = value;
+  @override
+  Future<void> extractClipAudio() => _extractClipAudio();
+  @override
+  Future<void> eyedropperPick() => _eyedropperPick();
+  @override
+  String get filter => _filter;
+  @override
+  set filter(String value) => _filter = value;
+  @override
+  double get filterIntensity => _filterIntensity;
+  @override
+  set filterIntensity(double value) => _filterIntensity = value;
+  @override
+  String? get fontFile => _fontFile;
+  @override
+  set fontFile(String? value) => _fontFile = value;
+  @override
+  Color frameBackdropColor() => _frameBackdropColor();
+  @override
+  Future<void> freezeFrameInsert() => _freezeFrameInsert();
+  @override
+  double get fxFadeIn => _fxFadeIn;
+  @override
+  set fxFadeIn(double value) => _fxFadeIn = value;
+  @override
+  double get fxFadeOut => _fxFadeOut;
+  @override
+  set fxFadeOut(double value) => _fxFadeOut = value;
+  @override
+  bool get fxPip => _fxPip;
+  @override
+  set fxPip(bool value) => _fxPip = value;
+  @override
+  String get fxPipVideo => _fxPipVideo;
+  @override
+  set fxPipVideo(String value) => _fxPipVideo = value;
+  @override
+  int get fxQuality => _fxQuality;
+  @override
+  set fxQuality(int value) => _fxQuality = value;
+  @override
+  bool get fxReverse => _fxReverse;
+  @override
+  ShakeFx get fxShake => _fxShake;
+  @override
+  set fxShake(ShakeFx value) => _fxShake = value;
+  @override
+  bool get fxSilenceRemove => _fxSilenceRemove;
+  @override
+  set fxSilenceRemove(bool value) => _fxSilenceRemove = value;
+  @override
+  VoiceFx get fxVoice => _fxVoice;
+  @override
+  set fxVoice(VoiceFx value) => _fxVoice = value;
+  @override
+  Future<void> generateCaptions() => _generateCaptions();
+  @override
+  Future<void> generateUrduCaptions() => _generateUrduCaptions();
+  @override
+  double get globalPositionSec => _globalPositionSec;
+  @override
+  bool get gradeActive => _gradeActive;
+  @override
+  String get gradeSlider => _gradeSlider;
+  @override
+  set gradeSlider(String value) => _gradeSlider = value;
+  @override
+  ChannelPreset? get handoffPreset => _handoffPreset;
+  @override
+  set handoffPreset(ChannelPreset? value) => _handoffPreset = value;
+  @override
+  NewsProject? get handoffProject => _handoffProject;
+  @override
+  set handoffProject(NewsProject? value) => _handoffProject = value;
+  @override
+  String? get introClipPath => _introClipPath;
+  @override
+  set introClipPath(String? value) => _introClipPath = value;
+  @override
+  KeyframeEasing get kfEasing => _kfEasing;
+  @override
+  set kfEasing(KeyframeEasing value) => _kfEasing = value;
+  @override
+  double get kfEndOpacity => _kfEndOpacity;
+  @override
+  set kfEndOpacity(double value) => _kfEndOpacity = value;
+  @override
+  double get kfEndRotation => _kfEndRotation;
+  @override
+  set kfEndRotation(double value) => _kfEndRotation = value;
+  @override
+  double get kfEndScale => _kfEndScale;
+  @override
+  set kfEndScale(double value) => _kfEndScale = value;
+  @override
+  double get kfEndX => _kfEndX;
+  @override
+  set kfEndX(double value) => _kfEndX = value;
+  @override
+  double get kfEndY => _kfEndY;
+  @override
+  set kfEndY(double value) => _kfEndY = value;
+  @override
+  int get kfPage => _kfPage;
+  @override
+  set kfPage(int value) => _kfPage = value;
+  @override
+  double get kfStartOpacity => _kfStartOpacity;
+  @override
+  set kfStartOpacity(double value) => _kfStartOpacity = value;
+  @override
+  double get kfStartRotation => _kfStartRotation;
+  @override
+  set kfStartRotation(double value) => _kfStartRotation = value;
+  @override
+  double get kfStartScale => _kfStartScale;
+  @override
+  set kfStartScale(double value) => _kfStartScale = value;
+  @override
+  double get kfStartX => _kfStartX;
+  @override
+  set kfStartX(double value) => _kfStartX = value;
+  @override
+  double get kfStartY => _kfStartY;
+  @override
+  set kfStartY(double value) => _kfStartY = value;
+  @override
+  Set<String> get laneHidden => _laneHidden;
+  @override
+  Future<void> loadPreview() => _loadPreview();
+  @override
+  String get mainMask => _mainMask;
+  @override
+  set mainMask(String value) => _mainMask = value;
+  @override
+  double get mainMaskFeather => _mainMaskFeather;
+  @override
+  set mainMaskFeather(double value) => _mainMaskFeather = value;
+  @override
+  ui.Image? get mainMaskImage => _mainMaskImage;
+  @override
+  set mainMaskImage(ui.Image? value) => _mainMaskImage = value;
+  @override
+  bool get mainMaskInvert => _mainMaskInvert;
+  @override
+  set mainMaskInvert(bool value) => _mainMaskInvert = value;
+  @override
+  bool get mainTrackLocked => _mainTrackLocked;
+  @override
+  set mainTrackLocked(bool value) => _mainTrackLocked = value;
+  @override
+  String? get musicPath => _musicPath;
+  @override
+  set musicPath(String? value) => _musicPath = value;
+  @override
+  double get musicVolume => _musicVolume;
+  @override
+  set musicVolume(double value) => _musicVolume = value;
+  @override
+  Map<String, String> get musicWaveCache => _musicWaveCache;
+  @override
+  bool get muteOriginal => _muteOriginal;
+  @override
+  set muteOriginal(bool value) => _muteOriginal = value;
+  @override
+  NewsTemplate get news => _news;
+  @override
+  set news(NewsTemplate value) => _news = value;
+  @override
+  bool get newsEnabled => _newsEnabled;
+  @override
+  set newsEnabled(bool value) => _newsEnabled = value;
+  @override
+  Future<void> onBgRemoverChanged(bool v) => _onBgRemoverChanged(v);
+  @override
+  void onClipDragEnd(int i) => _onClipDragEnd(i);
+  @override
+  void onClipDragMove(LongPressMoveUpdateDetails d) => _onClipDragMove(d);
+  @override
+  void onClipDragStart(int i) => _onClipDragStart(i);
+  @override
+  void onPreviewTapDown(TapDownDetails d, Size mediaBox) => _onPreviewTapDown(d, mediaBox);
+  @override
+  void onStageScaleStart(ScaleStartDetails d) => _onStageScaleStart(d);
+  @override
+  void onStageScaleUpdate(ScaleUpdateDetails d) => _onStageScaleUpdate(d);
+  @override
+  void openTool(String? key) => _openTool(key);
+  @override
+  void openToolTab(String key, String tab) => _openToolTab(key, tab);
+  @override
+  String? get outroClipPath => _outroClipPath;
+  @override
+  set outroClipPath(String? value) => _outroClipPath = value;
+  @override
+  String? get panelTab => _panelTab;
+  @override
+  set panelTab(String? value) => _panelTab = value;
+  @override
+  Future<bool?> pickExportSettings() => _pickExportSettings();
+  @override
+  Future<void> pickMusic() => _pickMusic();
+  @override
+  Future<void> pickProImage(ValueChanged<String> onPicked) => _pickProImage(onPicked);
+  @override
+  ImagePicker get picker => _picker;
+  @override
+  double get pinchPipScale => _pinchPipScale;
+  @override
+  set pinchPipScale(double value) => _pinchPipScale = value;
+  @override
+  String get pipBlend => _pipBlend;
+  @override
+  set pipBlend(String value) => _pipBlend = value;
+  @override
+  BlendMode? pipBlendMode(String key) => _pipBlendMode(key);
+  @override
+  VideoPlayerController? get pipController => _pipController;
+  @override
+  set pipController(VideoPlayerController? value) => _pipController = value;
+  @override
+  Offset get pipDragOffset => _pipDragOffset;
+  @override
+  set pipDragOffset(Offset value) => _pipDragOffset = value;
+  @override
+  bool get pipKeyframes => _pipKeyframes;
+  @override
+  set pipKeyframes(bool value) => _pipKeyframes = value;
+  @override
+  String get pipMask => _pipMask;
+  @override
+  set pipMask(String value) => _pipMask = value;
+  @override
+  double get pipMaskFeather => _pipMaskFeather;
+  @override
+  set pipMaskFeather(double value) => _pipMaskFeather = value;
+  @override
+  ui.Image? get pipMaskImage => _pipMaskImage;
+  @override
+  set pipMaskImage(ui.Image? value) => _pipMaskImage = value;
+  @override
+  bool get pipMaskInvert => _pipMaskInvert;
+  @override
+  set pipMaskInvert(bool value) => _pipMaskInvert = value;
+  @override
+  double get pipOpacity => _pipOpacity;
+  @override
+  set pipOpacity(double value) => _pipOpacity = value;
+  @override
+  PipPosition get pipPosition => _pipPosition;
+  @override
+  set pipPosition(PipPosition value) => _pipPosition = value;
+  @override
+  double get pipScale => _pipScale;
+  @override
+  set pipScale(double value) => _pipScale = value;
+  @override
+  String pipSnippetAdvanced({ required VideoSize base, required VideoSize pip, required bool hasMask, }) => _pipSnippetAdvanced(base: base, pip: pip, hasMask: hasMask);
+  @override
+  KeyframeEasing get pkEasing => _pkEasing;
+  @override
+  set pkEasing(KeyframeEasing value) => _pkEasing = value;
+  @override
+  double get pkEndOpacity => _pkEndOpacity;
+  @override
+  set pkEndOpacity(double value) => _pkEndOpacity = value;
+  @override
+  double get pkEndX => _pkEndX;
+  @override
+  set pkEndX(double value) => _pkEndX = value;
+  @override
+  double get pkEndY => _pkEndY;
+  @override
+  set pkEndY(double value) => _pkEndY = value;
+  @override
+  int get pkPage => _pkPage;
+  @override
+  set pkPage(int value) => _pkPage = value;
+  @override
+  double get pkStartOpacity => _pkStartOpacity;
+  @override
+  set pkStartOpacity(double value) => _pkStartOpacity = value;
+  @override
+  double get pkStartX => _pkStartX;
+  @override
+  set pkStartX(double value) => _pkStartX = value;
+  @override
+  double get pkStartY => _pkStartY;
+  @override
+  set pkStartY(double value) => _pkStartY = value;
+  @override
+  String get proBgColor => _proBgColor;
+  @override
+  set proBgColor(String value) => _proBgColor = value;
+  @override
+  String? get proBgImage => _proBgImage;
+  @override
+  set proBgImage(String? value) => _proBgImage = value;
+  @override
+  String get proBgKind => _proBgKind;
+  @override
+  set proBgKind(String value) => _proBgKind = value;
+  @override
+  bool get proBgRemove => _proBgRemove;
+  @override
+  set proBgRemove(bool value) => _proBgRemove = value;
+  @override
+  double get proBrightness => _proBrightness;
+  @override
+  set proBrightness(double value) => _proBrightness = value;
+  @override
+  bool get proChroma => _proChroma;
+  @override
+  set proChroma(bool value) => _proChroma = value;
+  @override
+  String get proChromaBgColor => _proChromaBgColor;
+  @override
+  set proChromaBgColor(String value) => _proChromaBgColor = value;
+  @override
+  String? get proChromaBgImage => _proChromaBgImage;
+  @override
+  set proChromaBgImage(String? value) => _proChromaBgImage = value;
+  @override
+  String get proChromaBgKind => _proChromaBgKind;
+  @override
+  set proChromaBgKind(String value) => _proChromaBgKind = value;
+  @override
+  double get proChromaBlend => _proChromaBlend;
+  @override
+  set proChromaBlend(double value) => _proChromaBlend = value;
+  @override
+  String get proChromaColor => _proChromaColor;
+  @override
+  set proChromaColor(String value) => _proChromaColor = value;
+  @override
+  double get proChromaEdge => _proChromaEdge;
+  @override
+  set proChromaEdge(double value) => _proChromaEdge = value;
+  @override
+  double get proChromaSimilarity => _proChromaSimilarity;
+  @override
+  set proChromaSimilarity(double value) => _proChromaSimilarity = value;
+  @override
+  double get proChromaSpill => _proChromaSpill;
+  @override
+  set proChromaSpill(double value) => _proChromaSpill = value;
+  @override
+  double get proContrast => _proContrast;
+  @override
+  set proContrast(double value) => _proContrast = value;
+  @override
+  double get proExposure => _proExposure;
+  @override
+  set proExposure(double value) => _proExposure = value;
+  @override
+  double get proHighlights => _proHighlights;
+  @override
+  set proHighlights(double value) => _proHighlights = value;
+  @override
+  bool get proKeyframes => _proKeyframes;
+  @override
+  set proKeyframes(bool value) => _proKeyframes = value;
+  @override
+  String get proLut => _proLut;
+  @override
+  set proLut(String value) => _proLut = value;
+  @override
+  String get proRamp => _proRamp;
+  @override
+  set proRamp(String value) => _proRamp = value;
+  @override
+  double get proSaturation => _proSaturation;
+  @override
+  set proSaturation(double value) => _proSaturation = value;
+  @override
+  double get proShadows => _proShadows;
+  @override
+  set proShadows(double value) => _proShadows = value;
+  @override
+  bool get proStabilize => _proStabilize;
+  @override
+  set proStabilize(bool value) => _proStabilize = value;
+  @override
+  String get proSticker => _proSticker;
+  @override
+  set proSticker(String value) => _proSticker = value;
+  @override
+  String get proStickerPreset => _proStickerPreset;
+  @override
+  set proStickerPreset(String value) => _proStickerPreset = value;
+  @override
+  double get proTemperature => _proTemperature;
+  @override
+  set proTemperature(double value) => _proTemperature = value;
+  @override
+  double get proTint => _proTint;
+  @override
+  set proTint(double value) => _proTint = value;
+  @override
+  String get proTitle => _proTitle;
+  @override
+  set proTitle(String value) => _proTitle = value;
+  @override
+  String get proTitlePosition => _proTitlePosition;
+  @override
+  set proTitlePosition(String value) => _proTitlePosition = value;
+  @override
+  String get proTitlePreset => _proTitlePreset;
+  @override
+  set proTitlePreset(String value) => _proTitlePreset = value;
+  @override
+  String get proTransition => _proTransition;
+  @override
+  set proTransition(String value) => _proTransition = value;
+  @override
+  double get proTransitionDur => _proTransitionDur;
+  @override
+  set proTransitionDur(double value) => _proTransitionDur = value;
+  @override
+  double get proVibrance => _proVibrance;
+  @override
+  set proVibrance(double value) => _proVibrance = value;
+  @override
+  String? get projectTemplateKind => _projectTemplateKind;
+  @override
+  set projectTemplateKind(String? value) => _projectTemplateKind = value;
+  @override
+  String? get projectVoiceoverPath => _projectVoiceoverPath;
+  @override
+  set projectVoiceoverPath(String? value) => _projectVoiceoverPath = value;
+  @override
+  void pushHistory() => _pushHistory();
+  @override
+  bool get qualityPicked => _qualityPicked;
+  @override
+  set qualityPicked(bool value) => _qualityPicked = value;
+  @override
+  double get rampEnd => _rampEnd;
+  @override
+  set rampEnd(double value) => _rampEnd = value;
+  @override
+  double get rampMid => _rampMid;
+  @override
+  set rampMid(double value) => _rampMid = value;
+  @override
+  RampPreset? rampPreset() => _rampPreset();
+  @override
+  double get rampStart => _rampStart;
+  @override
+  set rampStart(double value) => _rampStart = value;
+  @override
+  Future<void> refreshChromaPreview() => _refreshChromaPreview();
+  @override
+  Future<String?> renderMainMaskPng({ required Directory dir, required int stamp, required int width, required int height, }) => _renderMainMaskPng(dir: dir, stamp: stamp, width: width, height: height);
+  @override
+  Future<String?> renderPipMaskPng({ required Directory dir, required int stamp, required int width, required int height, }) => _renderPipMaskPng(dir: dir, stamp: stamp, width: width, height: height);
+  @override
+  Future<void> replaceSelectedClip() => _replaceSelectedClip();
+  @override
+  void resetGrade() => _resetGrade();
+  @override
+  void resetStageTransform() => _resetStageTransform();
+  @override
+  Future<void> reverseSelectedClip() => _reverseSelectedClip();
+  @override
+  Future<void> rotateSelectedClip({required bool flip}) => _rotateSelectedClip(flip: flip);
+  @override
+  Future<void> saveFrameSnapshot() => _saveFrameSnapshot();
+  @override
+  void scheduleChromaPreview() => _scheduleChromaPreview();
+  @override
+  void scheduleScrubSeek() => _scheduleScrubSeek();
+  @override
+  int get selected => _selected;
+  @override
+  set selected(int value) => _selected = value;
+  @override
+  void setStatus(String s) => _setStatus(s);
+  @override
+  bool get showGrid => _showGrid;
+  @override
+  set showGrid(bool value) => _showGrid = value;
+  @override
+  Future<void> showWaveform() => _showWaveform();
+  @override
+  bool get snapOn => _snapOn;
+  @override
+  set snapOn(bool value) => _snapOn = value;
+  @override
+  double get speed => _speed;
+  @override
+  set speed(double value) => _speed = value;
+  @override
+  void splitSelectedClip() => _splitSelectedClip();
+  @override
+  int get stabLevel => _stabLevel;
+  @override
+  set stabLevel(int value) => _stabLevel = value;
+  @override
+  Rect get stageFrameRect => _stageFrameRect;
+  @override
+  set stageFrameRect(Rect value) => _stageFrameRect = value;
+  @override
+  String? get stageLayer => _stageLayer;
+  @override
+  set stageLayer(String? value) => _stageLayer = value;
+  @override
+  List<double> get stageMatrix => _stageMatrix;
+  @override
+  Rect get stageMediaRect => _stageMediaRect;
+  @override
+  set stageMediaRect(Rect value) => _stageMediaRect = value;
+  @override
+  Matrix4 stageTransformMatrix(Size frameSize) => _stageTransformMatrix(frameSize);
+  @override
+  String get status => _status;
+  @override
+  set status(String value) => _status = value;
+  @override
+  Future<void> switchPipToMainTrack() => _switchPipToMainTrack();
+  @override
+  String get text => _text;
+  @override
+  set text(String value) => _text = value;
+  @override
+  double get tfOpacity => _tfOpacity;
+  @override
+  set tfOpacity(double value) => _tfOpacity = value;
+  @override
+  double get tfRot => _tfRot;
+  @override
+  set tfRot(double value) => _tfRot = value;
+  @override
+  double get tfScale => _tfScale;
+  @override
+  set tfScale(double value) => _tfScale = value;
+  @override
+  double get tfX => _tfX;
+  @override
+  set tfX(double value) => _tfX = value;
+  @override
+  double get tfY => _tfY;
+  @override
+  set tfY(double value) => _tfY = value;
+  @override
+  Map<String, List<String>> get thumbCache => _thumbCache;
+  @override
+  String thumbKey(VideoClip clip) => _thumbKey(clip);
+  @override
+  double get tlPxPerSec => _tlPxPerSec;
+  @override
+  set tlPxPerSec(double value) => _tlPxPerSec = value;
+  @override
+  ScrollController get tlScroll => _tlScroll;
+  @override
+  bool get tlUserScrolling => _tlUserScrolling;
+  @override
+  bool get tlProgrammaticScroll => _tlProgrammaticScroll;
+  @override
+  set tlProgrammaticScroll(bool v) => _tlProgrammaticScroll = v;
+  @override
+  set tlUserScrolling(bool value) => _tlUserScrolling = value;
+  @override
+  void tlZoomBy(double factor) => _tlZoomBy(factor);
+  @override
+  double get totalDurationSec => _totalDurationSec;
+  @override
+  Future<void> runObjectTracking() => _trackObject();
+  @override
+  List<TrackPoint> get trackPoints => _trackPoints;
+  @override
+  set trackPoints(List<TrackPoint> value) => _trackPoints = value;
+  @override
+  double? get trackStartX => _trackStartX;
+  @override
+  set trackStartX(double? value) => _trackStartX = value;
+  @override
+  double? get trackStartY => _trackStartY;
+  @override
+  set trackStartY(double? value) => _trackStartY = value;
+  @override
+  String get trackSticker => _trackSticker;
+  @override
+  set trackSticker(String value) => _trackSticker = value;
+  @override
+  bool get tracking => _tracking;
+  @override
+  set tracking(bool value) => _tracking = value;
+  @override
+  bool get transcribing => _transcribing;
+  @override
+  set transcribing(bool value) => _transcribing = value;
+  @override
+  bool get transformActive => _transformActive;
+  @override
+  bool get trimSnapped => _trimSnapped;
+  @override
+  set trimSnapped(bool value) => _trimSnapped = value;
+  @override
+  Future<void> unlinkSelectedClipAudio() => _unlinkSelectedClipAudio();
+  @override
+  List<(double, double)> get volumePoints => _volumePoints;
+  @override
+  bool get waveformBusy => _waveformBusy;
+  @override
+  set waveformBusy(bool value) => _waveformBusy = value;
+  @override
+  String? get waveformPath => _waveformPath;
+  @override
+  set waveformPath(String? value) => _waveformPath = value;
+  @override
+  Future<Directory> workDir() => _workDir();
 }
 
 /// Composites its child against everything painted beneath it in
@@ -6839,89 +4986,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
 /// opaque inset pixels the result is the same blend equation;
 /// at feathered/transparent edges both interpolate towards the
 /// untouched base.
-class _BlendLayer extends SingleChildRenderObjectWidget {
-  const _BlendLayer({required this.mode, required super.child});
 
-  final BlendMode mode;
 
-  @override
-  RenderObject createRenderObject(BuildContext context) =>
-      _RenderBlendLayer(mode);
-
-  @override
-  void updateRenderObject(
-    BuildContext context,
-    _RenderBlendLayer renderObject,
-  ) {
-    renderObject.mode = mode;
-  }
-}
-
-class _RenderBlendLayer extends RenderProxyBox {
-  _RenderBlendLayer(this._mode);
-
-  BlendMode _mode;
-
-  set mode(BlendMode value) {
-    if (_mode != value) {
-      _mode = value;
-      markNeedsPaint();
-    }
-  }
-
-  @override
-  void paint(PaintingContext context, Offset offset) {
-    if (child == null) return;
-    if (_mode == BlendMode.srcOver) {
-      super.paint(context, offset);
-      return;
-    }
-    context.canvas.saveLayer(offset & size, Paint()..blendMode = _mode);
-    super.paint(context, offset);
-    context.canvas.restore();
-  }
-}
-
-/// Label + value slider row for the Pro tools panel.
-class _ProSlider extends StatelessWidget {
-  const _ProSlider({
-    required this.label,
-    required this.value,
-    required this.min,
-    required this.max,
-    required this.onChanged,
-    this.divisions,
-    this.digits = 2,
-  });
-
-  final String label;
-  final double value;
-  final double min;
-  final double max;
-  final ValueChanged<double> onChanged;
-  final int? divisions;
-  final int digits;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [Text(label), Text(value.toStringAsFixed(digits))],
-        ),
-        Slider(
-          value: value.clamp(min, max),
-          min: min,
-          max: max,
-          divisions: divisions,
-          onChanged: onChanged,
-        ),
-      ],
-    );
-  }
-}
 
 /// One step of the combined animated-overlay pass: the rendered PNG,
 /// whether keyframes replace its preset animation, and the motion

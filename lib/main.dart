@@ -92,7 +92,9 @@ class PhotoVideoEditorApp extends StatelessWidget {
       scaffoldMessengerKey: CrashGuard.messengerKey,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
-            seedColor: TjProTheme.gold, brightness: Brightness.dark),
+          seedColor: TjProTheme.gold,
+          brightness: Brightness.dark,
+        ),
       ),
       home: const HomeScreen(),
     );
@@ -121,6 +123,10 @@ class _HomeScreenState extends State<HomeScreen> {
   /// re-route.
   int _tabIndex = 0;
 
+  /// Build 4 (Home reference): hero carousel state.
+  final PageController _heroController = PageController();
+  int _heroPage = 0;
+
   @override
   void initState() {
     super.initState();
@@ -136,6 +142,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     remoteConfigService.notifier.removeListener(_onRemoteConfigChanged);
+    _heroController.dispose();
     super.dispose();
   }
 
@@ -222,17 +229,12 @@ class _HomeScreenState extends State<HomeScreen> {
   void _openHub(String kind) {
     Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (_) => ProjectsHubScreen(kind: kind),
-      ),
+      MaterialPageRoute(builder: (_) => ProjectsHubScreen(kind: kind)),
     );
   }
 
   void _open(Widget screen) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => screen),
-    );
+    Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
   }
 
   /// Account row tap (v1.5.0 grouped MORE): signed-in → sign-out
@@ -270,60 +272,24 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(kToolbarHeight),
-        child: ValueListenableBuilder<RemoteConfig>(
-          valueListenable: remoteConfigService.notifier,
-          builder: (
-            BuildContext context,
-            RemoteConfig cfg,
-            Widget? child,
-          ) {
-            final String title = cfg.displayName.isNotEmpty
-                ? cfg.displayName
-                : AppConfig.appName;
-            return AppBar(
-              title: Text(title),
-              actions: [
-                // Pro: gold CROWN opens the Pro screen (v1.5.0,
-                // #13 — the old workspace_premium rosette read as a
-                // medal, not a crown; _CrownIcon draws a real one).
-                IconButton(
-                  icon: const _CrownIcon(size: 26),
-                  tooltip: 'TJ Pro — Go Pro',
-                  onPressed: () => _open(const ProScreen()),
-                ),
-                // v1.5.2 (fix #54, app-wide duplicate sweep): the
-                // Coins pill is GONE from the AppBar — it was a
-                // second Coins entry point next to the Watch Ads
-                // card below (which now carries the live balance
-                // itself). ONE entry point per action.
-                // Account (its ONE Home entry — it lived only in
-                // the deleted MORE list).
-                IconButton(
-                  icon: const Icon(Icons.person_outline),
-                  tooltip: 'Account',
-                  onPressed: _accountTap,
-                ),
-              ],
-            );
-          },
-        ),
-      ),
-      // Update progress bar (v1.2.0): zero-height while idle, so the
-      // layout below is unchanged until a background update download
-      // is actually running; visible on both tabs.
+      // Build 4 (Home, user reference "same to same"): the AppBar
+      // is replaced by the reference header (logo + TJ Pro /
+      // Creative Studio + Premium pill + avatar), visible on all
+      // tabs like the AppBar was.
       body: Column(
         children: [
+          ValueListenableBuilder<RemoteConfig>(
+            valueListenable: remoteConfigService.notifier,
+            builder: (context, cfg, _) => _homeHeader(cfg),
+          ),
           const UpdateProgressBar(),
           Expanded(
             child: _tabIndex == 1 && AppConfig.newsStudioEnabled
                 ? const NewsStudioScreen()
+                : _tabIndex == 2 && AppConfig.newsStudioEnabled
+                ? const CoinsScreen()
                 : Container(
                     decoration: const BoxDecoration(
-                      // v1.5.0 (#1/H1): dark news-studio backdrop
-                      // (the old cream→pink gradient was the last
-                      // non-studio surface on Home).
                       gradient: LinearGradient(
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
@@ -334,589 +300,786 @@ class _HomeScreenState extends State<HomeScreen> {
                         ],
                       ),
                     ),
-                    child: ListView(
-                      padding: const EdgeInsets.all(20),
-                      children: [
-                        // Header block (S1): remote logo (when set,
-                        // with error-fallback to nothing), the Nigraan
-                        // TV presents line, the site pill, the LIVE
-                        // NEWS STUDIO line, the bundled heading and the
-                        // Remote Config announcement bar (only when
-                        // enabled with non-empty text). The remote
-                        // display name stays in the AppBar title.
-                        ValueListenableBuilder<RemoteConfig>(
-                          valueListenable: remoteConfigService.notifier,
-                          builder: (
-                            BuildContext context,
-                            RemoteConfig cfg,
-                            Widget? child,
-                          ) {
-                            return Column(
-                              children: <Widget>[
-                                if (cfg.logoUrl.isNotEmpty)
-                                  Padding(
-                                    padding:
-                                        const EdgeInsets.only(bottom: 12),
-                                    child: Image.network(
-                                      cfg.logoUrl,
-                                      height: 48,
-                                      errorBuilder: (
-                                        BuildContext context,
-                                        Object error,
-                                        StackTrace? stackTrace,
-                                      ) =>
-                                          const SizedBox.shrink(),
-                                    ),
+                    // Eager column in a scroll view (not a lazy
+                    // ListView): every section exists in the tree
+                    // immediately, like the pre-redesign home whose
+                    // cards were all in the first viewport.
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.fromLTRB(14, 10, 14, 20),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          // Remote announcement (config-driven,
+                          // only when enabled with text).
+                          ValueListenableBuilder<RemoteConfig>(
+                            valueListenable: remoteConfigService.notifier,
+                            builder: (context, cfg, _) {
+                              if (!cfg.announcement.show) {
+                                return const SizedBox.shrink();
+                              }
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 12),
+                                child: _AnnouncementBar(
+                                  text: cfg.announcement.text,
+                                ),
+                              );
+                            },
+                          ),
+                          _heroCarousel(),
+                          const SizedBox(height: 14),
+                          // Three big cards -> the existing
+                          // Projects hubs (the editors' entries).
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (AppConfig.videoEditorEnabled)
+                                Expanded(
+                                  child: _bigCard(
+                                    icon: Icons.play_circle_fill,
+                                    title: 'VIDEO EDITOR',
+                                    subtitle: 'Edit Like a Pro',
+                                    colors: const [
+                                      Color(0xFF8E24AA),
+                                      Color(0xFF4A148C),
+                                    ],
+                                    pillColor: const Color(0xFFAB47BC),
+                                    onTap: () => _openHub('video'),
                                   ),
-                                const Text(
-                                  'NIGRAAN TV PRESENTS',
+                                ),
+                              if (AppConfig.videoEditorEnabled &&
+                                  AppConfig.photoEditorEnabled)
+                                const SizedBox(width: 10),
+                              if (AppConfig.photoEditorEnabled)
+                                Expanded(
+                                  child: _bigCard(
+                                    icon: Icons.image,
+                                    title: 'PHOTO EDITOR',
+                                    subtitle: 'Enhance Your Photos',
+                                    colors: const [
+                                      Color(0xFF1565C0),
+                                      Color(0xFF0D47A1),
+                                    ],
+                                    pillColor: const Color(0xFF1E88E5),
+                                    onTap: () => _openHub('photo'),
+                                  ),
+                                ),
+                              if ((AppConfig.videoEditorEnabled ||
+                                      AppConfig.photoEditorEnabled) &&
+                                  AppConfig.newsStudioEnabled)
+                                const SizedBox(width: 10),
+                              if (AppConfig.newsStudioEnabled)
+                                Expanded(
+                                  child: _bigCard(
+                                    icon: Icons.mic,
+                                    title: 'NEWS STUDIO',
+                                    subtitle: 'Create & Broadcast',
+                                    colors: const [
+                                      Color(0xFFF9A825),
+                                      Color(0xFFE65100),
+                                    ],
+                                    pillColor: const Color(0xFFFFB300),
+                                    onTap: () => _openHub('news'),
+                                  ),
+                                ),
+                            ],
+                          ),
+                          if (AppConfig.liveStudioEnabled) ...[
+                            const SizedBox(height: 14),
+                            _liveBanner(),
+                          ],
+                          const SizedBox(height: 18),
+                          // WHAT'S NEW (reference): header + View
+                          // All -> Store; four cards.
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.chevron_right,
+                                color: Color(0xFFF5C542),
+                                size: 20,
+                              ),
+                              const Expanded(
+                                child: Text(
+                                  "What's New",
                                   style: TextStyle(
-                                    fontSize: 13,
+                                    fontSize: 16,
                                     fontWeight: FontWeight.bold,
-                                    letterSpacing: 3,
-                                    color: Color(0xFFF5C542),
-                                  ),
-                                ),
-                                const SizedBox(height: 10),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 16, vertical: 7),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFF232C4E),
-                                    borderRadius: BorderRadius.circular(20),
-                                  ),
-                                  child: const Text(
-                                    'nigraantv.xyz',
-                                    style: TextStyle(
-                                      color: Color(0xFFFFE0B2),
-                                      fontWeight: FontWeight.w600,
-                                      letterSpacing: 1,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(height: 10),
-                                const Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: <Widget>[
-                                    Icon(
-                                      Icons.circle,
-                                      size: 9,
-                                      color: Color(0xFFD32F2F),
-                                    ),
-                                    SizedBox(width: 6),
-                                    Text(
-                                      'LIVE NEWS STUDIO',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.bold,
-                                        letterSpacing: 2,
-                                        color: Color(0xFFFF8A80),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
-                                const Text(
-                                  AppConfig.homeHeading,
-                                  style: TextStyle(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w600,
                                     color: Colors.white,
                                   ),
                                 ),
-                                if (cfg.announcement.show)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 12),
-                                    child: _AnnouncementBar(
-                                        text: cfg.announcement.text),
-                                  ),
-                              ],
-                            );
-                          },
-                        ),
-                        const SizedBox(height: 20),
-                        // CREATE NEW (S1): three big circular gradient
-                        // buttons; each opens that kind's Projects hub
-                        // (projects list + start-from flow), NOT the
-                        // editor directly. Direct editor entries stay
-                        // reachable in the More section below.
-                        Container(
-                          padding: const EdgeInsets.all(20),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(24),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: <Widget>[
-                              const Text(
-                                'CREATE NEW',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
-                                  letterSpacing: 1.5,
-                                  color: Colors.grey,
-                                ),
                               ),
-                              const SizedBox(height: 16),
-                              Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: <Widget>[
-                                  if (AppConfig.videoEditorEnabled)
-                                    Expanded(
-                                      child: _CreateCircleButton(
-                                        icon: Icons.play_arrow,
-                                        label: 'Video',
-                                        colors: const [
-                                          Color(0xFFF43F5E),
-                                          Color(0xFFE11D48),
-                                        ],
-                                        onTap: () => _openHub('video'),
+                              TextButton(
+                                onPressed: () => _open(const StoreScreen()),
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      'View All',
+                                      style: TextStyle(
+                                        color: Color(0xFFF5C542),
+                                        fontWeight: FontWeight.bold,
                                       ),
                                     ),
-                                  if (AppConfig.photoEditorEnabled)
-                                    Expanded(
-                                      child: _CreateCircleButton(
-                                        icon: Icons.image,
-                                        label: 'Photo',
-                                        colors: const [
-                                          Color(0xFFFF8A50),
-                                          Color(0xFFF4511E),
-                                        ],
-                                        onTap: () => _openHub('photo'),
-                                      ),
-                                    ),
-                                  if (AppConfig.newsStudioEnabled)
-                                    Expanded(
-                                      child: _CreateCircleButton(
-                                        icon: Icons.newspaper,
-                                        label: 'News Studio',
-                                        colors: const [
-                                          Color(0xFFFFB300),
-                                          Color(0xFFFF8F00),
-                                        ],
-                                        onTap: () => _openHub('news'),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        // Live Streaming card (S1) -> existing Live
-                        // Studio screen.
-                        if (AppConfig.liveStudioEnabled)
-                          Container(
-                            decoration: BoxDecoration(
-                              gradient: const LinearGradient(
-                                colors: [
-                                  Color(0xFFE53935),
-                                  Color(0xFFB71C1C),
-                                ],
-                                begin: Alignment.centerLeft,
-                                end: Alignment.centerRight,
-                              ),
-                              borderRadius: BorderRadius.circular(18),
-                            ),
-                            child: InkWell(
-                              onTap: () =>
-                                  _open(const LiveStudioScreen()),
-                              borderRadius: BorderRadius.circular(18),
-                              child: Padding(
-                                padding: const EdgeInsets.all(16),
-                                child: Row(
-                                  children: <Widget>[
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 10, vertical: 5),
-                                      decoration: BoxDecoration(
-                                        border: Border.all(
-                                            color: Colors.white70),
-                                        borderRadius:
-                                            BorderRadius.circular(20),
-                                      ),
-                                      child: const Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: <Widget>[
-                                          Icon(Icons.circle,
-                                              size: 8,
-                                              color: Colors.white),
-                                          SizedBox(width: 5),
-                                          Text(
-                                            'LIVE',
-                                            style: TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 11,
-                                              fontWeight: FontWeight.bold,
-                                              letterSpacing: 1,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    const Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: <Widget>[
-                                          Text(
-                                            'Live Streaming',
-                                            style: TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 18,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-                                          SizedBox(height: 2),
-                                          Text(
-                                            'Facebook · YouTube par live jayein',
-                                            style: TextStyle(
-                                              color: Colors.white70,
-                                              fontSize: 12,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    Container(
-                                      width: 44,
-                                      height: 44,
-                                      decoration: BoxDecoration(
-                                        color: Colors.white
-                                            .withValues(alpha: 0.18),
-                                        shape: BoxShape.circle,
-                                      ),
-                                      child: const Icon(Icons.sensors,
-                                          color: Colors.white),
+                                    Icon(
+                                      Icons.arrow_forward,
+                                      size: 15,
+                                      color: Color(0xFFF5C542),
                                     ),
                                   ],
                                 ),
                               ),
-                            ),
-                          ),
-                        const SizedBox(height: 16),
-                        // Two half cards (S1): Watch Ads / Earn Coins
-                        // (same Coins screen the old UI opened) and
-                        // Invite / Share & Earn. v1.5.2 (fix #55):
-                        // the Watch Ads card carries the LIVE coin
-                        // balance in its subtitle — the earning
-                        // entry point and the balance in one glance.
-                        Row(
-                          children: <Widget>[
-                            Expanded(
-                              child: ValueListenableBuilder<int>(
-                                valueListenable:
-                                    CoinService.instance.balance,
-                                builder: (context, balance, _) =>
-                                    _HalfCard(
-                                  icon: Icons.monetization_on,
-                                  iconColor: const Color(0xFFF59E0B),
-                                  title: 'Watch Ads',
-                                  subtitle:
-                                      'Earn Coins • Balance: $balance',
-                                  onTap: () =>
-                                      _open(const CoinsScreen()),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: _HalfCard(
-                                icon: Icons.group_add,
-                                iconColor: const Color(0xFF22C55E),
-                                title: 'Invite',
-                                subtitle: 'Share & Earn',
-                                onTap: () =>
-                                    _open(const ShareEarnScreen()),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        // v1.5.2 (fix #54): the second half-card row
-                        // re-homes the two MORE-list destinations
-                        // that had no top entry — Check for updates
-                        // and About — each exactly once.
-                        Row(
-                          children: <Widget>[
-                            Expanded(
-                              child: _HalfCard(
-                                icon: Icons.system_update,
-                                iconColor: const Color(0xFF38BDF8),
-                                title: 'Updates',
-                                subtitle: 'Check for updates',
-                                onTap: () => UpdateService.checkManually(
-                                    context),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: _HalfCard(
-                                icon: Icons.info_outline,
-                                iconColor: const Color(0xFFA78BFA),
-                                title: 'About',
-                                subtitle: 'TJ Pro • Nigraan TV',
-                                onTap: _showAbout,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 24),
-                        // WHAT'S NEW strip (S1): header + Store link,
-                        // then three image cards into existing
-                        // destinations.
-                        Row(
-                          children: <Widget>[
-                            const Expanded(
-                              child: Text(
-                                "WHAT'S NEW",
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.bold,
-                                  letterSpacing: 1.5,
-                                  color: Color(0xFFF5C542),
-                                ),
-                              ),
-                            ),
-                            TextButton(
-                              onPressed: () =>
-                                  _open(const StoreScreen()),
-                              child: const Text(
-                                'Store >',
-                                style: TextStyle(
-                                  color: Color(0xFFF5C542),
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        SizedBox(
-                          height: 170,
-                          child: ListView(
-                            scrollDirection: Axis.horizontal,
-                            children: <Widget>[
-                              _WhatsNewCard(
-                                asset: 'assets/backgrounds/newsroom.jpg',
-                                label: 'News Templates',
-                                onTap: () => _open(
-                                    const TemplatesLibraryScreen()),
-                              ),
-                              const SizedBox(width: 12),
-                              _WhatsNewCard(
-                                asset: 'assets/backgrounds/studio_desk.jpg',
-                                label: 'Music & Voice',
-                                onTap: () =>
-                                    _open(const TtsStudioScreen()),
-                              ),
-                              // v1.5.2 (fix #54): the 'Effects
-                              // Packs' card is REMOVED — it opened
-                              // the Store, which the 'Store >' link
-                              // above already opens (one entry).
                             ],
                           ),
-                        ),
-                        const SizedBox(height: 16),
-                        // Remote Config sponsored ad card: shown only
-                        // when the config enables it. The image hides
-                        // gracefully on load failure; the tap opens
-                        // the action URL in the external browser.
-                        ValueListenableBuilder<RemoteConfig>(
-                          valueListenable: remoteConfigService.notifier,
-                          builder: (
-                            BuildContext context,
-                            RemoteConfig cfg,
-                            Widget? child,
-                          ) {
-                            if (!cfg.sponsoredAd.show) {
-                              return const SizedBox.shrink();
-                            }
-                            return Column(
-                              children: <Widget>[
-                                _SponsoredAdCard(ad: cfg.sponsoredAd),
-                                const SizedBox(height: 16),
+                          const SizedBox(height: 8),
+                          SizedBox(
+                            height: 148,
+                            child: ListView(
+                              scrollDirection: Axis.horizontal,
+                              children: [
+                                _whatsNewTile(
+                                  asset: 'assets/backgrounds/newsroom.jpg',
+                                  title: 'News Templates',
+                                  subtitle: 'Professional Layouts',
+                                  onTap: () =>
+                                      _open(const TemplatesLibraryScreen()),
+                                ),
+                                const SizedBox(width: 10),
+                                _whatsNewTile(
+                                  asset: 'assets/backgrounds/studio_desk.jpg',
+                                  title: 'Music & Voice',
+                                  subtitle: 'Create & Edit Audio',
+                                  onTap: () => _open(const TtsStudioScreen()),
+                                ),
+                                const SizedBox(width: 10),
+                                _whatsNewTile(
+                                  icon: Icons.auto_awesome,
+                                  iconColors: const [
+                                    Color(0xFF3949AB),
+                                    Color(0xFF00ACC1),
+                                  ],
+                                  title: 'New Features',
+                                  subtitle: 'Explore More',
+                                  onTap: () =>
+                                      UpdateService.checkManually(context),
+                                ),
+                                const SizedBox(width: 10),
+                                _whatsNewTile(
+                                  icon: Icons.photo_library,
+                                  iconColors: const [
+                                    Color(0xFF6A1B9A),
+                                    Color(0xFFAD1457),
+                                  ],
+                                  title: 'Gallery',
+                                  subtitle: 'Premium Collection',
+                                  onTap: () => _open(const StoreScreen()),
+                                ),
                               ],
-                            );
-                          },
-                        ),
-                        // v1.5.2 (fix #54 — the user's explicit
-                        // order): the ENTIRE bottom MORE list is
-                        // DELETED. Every row in it duplicated a top
-                        // entry (Invite, Coins, Pro, the editors,
-                        // Live Studio, News Studio, the Store) or
-                        // has been re-homed exactly once above:
-                        // Account -> the AppBar person icon,
-                        // Updates + About -> the second half-card
-                        // row, Support -> the HelpWhatsAppRow at
-                        // the bottom of this screen. The editors
-                        // live behind the CREATE NEW hubs, News
-                        // Studio behind its bottom-nav tab, the
-                        // Store behind 'Store >', Pro behind the
-                        // AppBar crown.
-                        const SizedBox(height: 16),
-                        const Text(
-                          'Works offline. No account, no uploads — '
-                          'everything is processed on your phone. '
-                          'Basic editing is free; Premium AI tools unlock '
-                          'with coins — earn coins by watching ads in the '
-                          'Coins section.',
-                          style: TextStyle(color: Colors.white70),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 12),
-                        const AdvertisingBanner(),
-                        const SizedBox(height: 16),
-                        const Center(child: BannerAdWidget()),
-                        const SizedBox(height: 16),
-                        // "For Help" row (Phase 10): WhatsApp support
-                        // at the very end of home, number from remote
-                        // config.
-                        const HelpWhatsAppRow(),
-                      ],
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          const AdvertisingBanner(),
+                          const SizedBox(height: 14),
+                          // Four small buttons (reference): the
+                          // same four destinations the half cards
+                          // carried — Watch Ads (with the live
+                          // balance), Invite, Updates, About.
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: ValueListenableBuilder<int>(
+                                  valueListenable: CoinService.instance.balance,
+                                  builder: (context, balance, _) =>
+                                      _smallButton(
+                                        icon: Icons.card_giftcard,
+                                        tint: const Color(0xFFE91E63),
+                                        title: 'Watch Ads',
+                                        subtitle:
+                                            'Earn Coins • Balance: $balance',
+                                        onTap: () => _open(const CoinsScreen()),
+                                      ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: _smallButton(
+                                  icon: Icons.group,
+                                  tint: const Color(0xFF00BFA5),
+                                  title: 'Invite',
+                                  subtitle: 'Share & Earn',
+                                  onTap: () => _open(const ShareEarnScreen()),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: _smallButton(
+                                  icon: Icons.refresh,
+                                  tint: const Color(0xFF2979FF),
+                                  title: 'Updates',
+                                  subtitle: 'Check for Updates',
+                                  onTap: () =>
+                                      UpdateService.checkManually(context),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: _smallButton(
+                                  icon: Icons.info,
+                                  tint: const Color(0xFF7C4DFF),
+                                  title: 'About',
+                                  subtitle: 'TJ Pro & Nigraan TV',
+                                  onTap: _showAbout,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 18),
+                          const Text(
+                            'Works offline. No account, no uploads — '
+                            'everything is processed on your phone. '
+                            'Basic editing is free; Premium AI tools unlock '
+                            'with coins — earn coins by watching ads in the '
+                            'Coins section.',
+                            style: TextStyle(color: Colors.white70),
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 14),
+                          // Remote Config sponsored ad card (only
+                          // when the config enables it).
+                          ValueListenableBuilder<RemoteConfig>(
+                            valueListenable: remoteConfigService.notifier,
+                            builder: (context, cfg, _) {
+                              if (!cfg.sponsoredAd.show) {
+                                return const SizedBox.shrink();
+                              }
+                              return Column(
+                                children: [
+                                  _SponsoredAdCard(ad: cfg.sponsoredAd),
+                                  const SizedBox(height: 14),
+                                ],
+                              );
+                            },
+                          ),
+                          const Center(child: BannerAdWidget()),
+                          const SizedBox(height: 16),
+                          const HelpWhatsAppRow(),
+                        ],
+                      ),
                     ),
                   ),
           ),
         ],
       ),
-      // Bottom nav: Home + News Studio (Phase 2). Hidden entirely when
-      // the News Studio switch is off — then Home is the only screen.
+      // Bottom nav (reference): Home | News Studio | Earn.
       bottomNavigationBar: AppConfig.newsStudioEnabled
           ? BottomNavigationBar(
               currentIndex: _tabIndex,
               onTap: (index) => setState(() => _tabIndex = index),
+              backgroundColor: const Color(0xFF0B1026),
+              selectedItemColor: const Color(0xFFF5C542),
+              unselectedItemColor: Colors.white60,
               items: const [
-                BottomNavigationBarItem(
-                  icon: Icon(Icons.home),
-                  label: 'Home',
-                ),
+                BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
                 BottomNavigationBarItem(
                   icon: Icon(Icons.newspaper),
                   label: 'News Studio',
+                ),
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.monetization_on),
+                  label: 'Earn',
                 ),
               ],
             )
           : null,
     );
   }
-}
 
-/// One big circular gradient button in the CREATE NEW card (S1).
-class _CreateCircleButton extends StatelessWidget {
-  const _CreateCircleButton({
-    required this.icon,
-    required this.label,
-    required this.colors,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final List<Color> colors;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: <Widget>[
-        InkWell(
-          onTap: onTap,
-          customBorder: const CircleBorder(),
-          child: Container(
-            width: 84,
-            height: 84,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: LinearGradient(
-                colors: colors,
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
+  /// Reference header: TJ Pro play badge (or the remote logo when
+  /// one is set), name + taglines, the gold Premium pill (the Pro
+  /// screen — the old AppBar crown's destination), and the avatar
+  /// (the Account flow — the old AppBar person icon).
+  Widget _homeHeader(RemoteConfig cfg) {
+    final String title = cfg.displayName.isNotEmpty
+        ? cfg.displayName
+        : AppConfig.appName;
+    return Container(
+      padding: EdgeInsets.fromLTRB(
+        14,
+        MediaQuery.of(context).padding.top + 8,
+        14,
+        10,
+      ),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFF0B1026), Color(0xFF101736)],
+        ),
+      ),
+      child: Row(
+        children: [
+          if (cfg.logoUrl.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(right: 10),
+              child: Image.network(
+                cfg.logoUrl,
+                height: 42,
+                errorBuilder: (context, error, stackTrace) =>
+                    const _PlayBadge(),
               ),
-              boxShadow: <BoxShadow>[
-                BoxShadow(
-                  color: colors.last.withValues(alpha: 0.4),
-                  blurRadius: 12,
-                  offset: const Offset(0, 6),
+            )
+          else
+            const Padding(
+              padding: EdgeInsets.only(right: 10),
+              child: _PlayBadge(),
+            ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 19,
+                    fontWeight: FontWeight.w900,
+                    color: Colors.white,
+                    height: 1.05,
+                  ),
+                ),
+                const Text(
+                  'Creative Studio',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFFF5C542),
+                    height: 1.1,
+                  ),
+                ),
+                const Text(
+                  'Create • Edit • Earn',
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    color: Colors.white60,
+                    height: 1.1,
+                  ),
                 ),
               ],
             ),
-            child: Icon(icon, color: Colors.white, size: 38),
           ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          label,
-          style: const TextStyle(
-            color: Color(0xFF212121),
-            fontWeight: FontWeight.bold,
-            fontSize: 14,
+          InkWell(
+            onTap: () => _open(const ProScreen()),
+            borderRadius: BorderRadius.circular(20),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF3A2A00), Color(0xFF241A00)],
+                ),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: const Color(0xFFF5C542)),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _CrownIcon(size: 16),
+                  SizedBox(width: 5),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Premium',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFFF5C542),
+                          height: 1.0,
+                        ),
+                      ),
+                      Text(
+                        'Member',
+                        style: TextStyle(
+                          fontSize: 9.5,
+                          color: Color(0xFFF5C542),
+                          height: 1.0,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
           ),
-          textAlign: TextAlign.center,
-        ),
-      ],
+          const SizedBox(width: 10),
+          InkWell(
+            onTap: _accountTap,
+            borderRadius: BorderRadius.circular(20),
+            child: Stack(
+              children: [
+                const CircleAvatar(
+                  radius: 17,
+                  backgroundColor: Color(0xFF232C4E),
+                  child: Icon(Icons.person, size: 19, color: Colors.white70),
+                ),
+                Positioned(
+                  right: 0,
+                  bottom: 0,
+                  child: Container(
+                    width: 9,
+                    height: 9,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF4CAF50),
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: const Color(0xFF0B1026),
+                        width: 1.5,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
-}
 
-/// One of the two white half cards under the Live card (S1).
-class _HalfCard extends StatelessWidget {
-  const _HalfCard({
-    required this.icon,
-    required this.iconColor,
-    required this.title,
-    required this.subtitle,
-    required this.onTap,
-  });
+  /// Hero carousel: slide 1 = the News Studio banner (Watch Live
+  /// -> Live Studio); slide 2 (when a banner is booked/enabled) =
+  /// the remote ADMIN house-ad banner with its existing behaviour
+  /// (contain fit, never cropped; tap opens its link when set).
+  Widget _heroCarousel() {
+    return ValueListenableBuilder<RemoteConfig>(
+      valueListenable: remoteConfigService.notifier,
+      builder: (context, cfg, _) {
+        final showAdmin =
+            cfg.advertisingBannerEnabled &&
+            cfg.advertisingBannerImageUrl.isNotEmpty;
+        final slides = <Widget>[
+          _newsHeroSlide(),
+          if (showAdmin) _adminHeroSlide(cfg),
+        ];
+        return Column(
+          children: [
+            SizedBox(
+              height: 178,
+              child: PageView(
+                controller: _heroController,
+                onPageChanged: (i) => setState(() => _heroPage = i),
+                children: slides,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                for (var i = 0; i < slides.length; i++)
+                  GestureDetector(
+                    onTap: () => _heroController.animateToPage(
+                      i,
+                      duration: const Duration(milliseconds: 300),
+                      curve: Curves.easeOut,
+                    ),
+                    child: Container(
+                      width: i == _heroPage ? 16 : 7,
+                      height: 7,
+                      margin: const EdgeInsets.symmetric(horizontal: 3),
+                      decoration: BoxDecoration(
+                        color: i == _heroPage
+                            ? const Color(0xFFF5C542)
+                            : Colors.white24,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        );
+      },
+    );
+  }
 
-  final IconData icon;
-  final Color iconColor;
-  final String title;
-  final String subtitle;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
+  Widget _newsHeroSlide() {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
         borderRadius: BorderRadius.circular(16),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF0D1B4C), Color(0xFF123A7A), Color(0xFF0A1030)],
+        ),
+        border: Border.all(color: const Color(0x33F5C542)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => _open(const LiveStudioScreen()),
+        child: Stack(
+          children: [
+            Positioned(
+              right: -30,
+              top: -30,
+              child: Container(
+                width: 150,
+                height: 150,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.10),
+                    width: 14,
+                  ),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 52,
+                        height: 52,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: const Color(0xFF0A1030),
+                          border: Border.all(
+                            color: const Color(0xFFF5C542),
+                            width: 1.6,
+                          ),
+                        ),
+                        child: const Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              'نگران',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                                height: 1.0,
+                              ),
+                            ),
+                            Text(
+                              'TV',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w900,
+                                color: Color(0xFFE53935),
+                                height: 1.0,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Spacer(),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 9,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFD32F2F),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.circle, size: 7, color: Colors.white),
+                            SizedBox(width: 5),
+                            Text(
+                              'LIVE',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 1,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const Spacer(),
+                  const Text(
+                    'GLOBAL & PAKISTAN',
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1.6,
+                      color: Color(0xFFF5C542),
+                    ),
+                  ),
+                  const Text(
+                    'NEWS STUDIO',
+                    style: TextStyle(
+                      fontSize: 25,
+                      fontWeight: FontWeight.w900,
+                      color: Colors.white,
+                      height: 1.05,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFD32F2F),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.play_circle_fill,
+                          size: 15,
+                          color: Colors.white,
+                        ),
+                        SizedBox(width: 6),
+                        Text(
+                          'Watch Live',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        SizedBox(width: 4),
+                        Icon(Icons.double_arrow, size: 13, color: Colors.white),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// The admin house-ad banner as a carousel slide — the SAME
+  /// rendering as the Advertise page: BoxFit.contain on a neutral
+  /// letterbox, NEVER cropped; tap opens the banner link when one
+  /// is set (no link = no handler, as before).
+  Widget _adminHeroSlide(RemoteConfig cfg) {
+    final url = cfg.advertisingBannerImageUrl;
+    final link = cfg.advertisingBannerLinkUrl.trim();
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.black12,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: GestureDetector(
+        onTap: link.isEmpty
+            ? null
+            : () async {
+                final uri = Uri.parse(link);
+                if (await canLaunchUrl(uri)) {
+                  await launchUrl(uri, mode: LaunchMode.externalApplication);
+                }
+              },
+        child: url.startsWith('assets/')
+            ? Image.asset(
+                url,
+                fit: BoxFit.contain,
+                errorBuilder: (context, error, stackTrace) =>
+                    const SizedBox.shrink(),
+              )
+            : Image.network(
+                url,
+                fit: BoxFit.contain,
+                errorBuilder: (context, error, stackTrace) =>
+                    const SizedBox.shrink(),
+              ),
+      ),
+    );
+  }
+
+  /// One of the three big editor cards (reference): glossy
+  /// gradient, big icon, title, tagline, gold-toned Open pill.
+  Widget _bigCard({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required List<Color> colors,
+    required Color pillColor,
+    required VoidCallback onTap,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: colors,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
       ),
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(16),
         child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Row(
-            children: <Widget>[
+          padding: const EdgeInsets.fromLTRB(10, 14, 10, 12),
+          child: Column(
+            children: [
               Container(
-                width: 42,
-                height: 42,
+                width: 46,
+                height: 46,
                 decoration: BoxDecoration(
-                  color: iconColor,
-                  shape: BoxShape.circle,
+                  color: Colors.white.withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(13),
                 ),
-                child: Icon(icon, color: Colors.white, size: 22),
+                child: Icon(icon, color: Colors.white, size: 27),
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
+              const SizedBox(height: 10),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w900,
+                  height: 1.1,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                subtitle,
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Colors.white70, fontSize: 10.5),
+              ),
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 13,
+                  vertical: 5,
+                ),
+                decoration: BoxDecoration(
+                  color: pillColor,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
                     Text(
-                      title,
-                      style: const TextStyle(
-                        color: Color(0xFF212121),
+                      'Open',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
                         fontWeight: FontWeight.bold,
-                        fontSize: 15,
                       ),
                     ),
-                    Text(
-                      subtitle,
-                      style:
-                          const TextStyle(color: Colors.grey, fontSize: 12),
-                    ),
+                    SizedBox(width: 4),
+                    Icon(Icons.arrow_forward, size: 13, color: Colors.white),
                   ],
                 ),
               ),
@@ -926,53 +1089,300 @@ class _HalfCard extends StatelessWidget {
       ),
     );
   }
-}
 
-/// One image card in the WHAT'S NEW strip (S1).
-class _WhatsNewCard extends StatelessWidget {
-  const _WhatsNewCard({
-    required this.asset,
-    required this.label,
-    required this.onTap,
-  });
-
-  final String asset;
-  final String label;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(16),
-      child: SizedBox(
-        width: 150,
-        height: 170,
-        child: InkWell(
-          onTap: onTap,
-          child: Stack(
-            fit: StackFit.expand,
-            children: <Widget>[
-              Image.asset(asset, fit: BoxFit.cover),
-              const DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.center,
-                    end: Alignment.bottomCenter,
-                    colors: [Colors.transparent, Colors.black54],
-                  ),
+  /// Live Streaming banner (reference): LIVE badge, title,
+  /// Join Now pill, Facebook/YouTube Live chips — everything goes
+  /// to the existing Live Studio.
+  Widget _liveBanner() {
+    void openLive() => _open(const LiveStudioScreen());
+    return Container(
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+          colors: [Color(0xFF1A237E), Color(0xFF6A1B9A), Color(0xFFAD1457)],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+      ),
+      child: InkWell(
+        onTap: openLive,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFD32F2F),
+                        borderRadius: BorderRadius.circular(5),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.circle, size: 7, color: Colors.white),
+                          SizedBox(width: 5),
+                          Text(
+                            'LIVE',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 1,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 7),
+                    const Text.rich(
+                      TextSpan(
+                        children: [
+                          TextSpan(text: 'Live '),
+                          TextSpan(
+                            text: 'Streaming',
+                            style: TextStyle(color: Color(0xFFF5C542)),
+                          ),
+                        ],
+                      ),
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 19,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const Text(
+                      'Facebook • YouTube par live dekhain',
+                      style: TextStyle(color: Colors.white70, fontSize: 11.5),
+                    ),
+                    const SizedBox(height: 9),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFD32F2F),
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.sensors, size: 14, color: Colors.white),
+                          SizedBox(width: 6),
+                          Text(
+                            'Join Now',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          SizedBox(width: 4),
+                          Icon(
+                            Icons.arrow_forward,
+                            size: 13,
+                            color: Colors.white,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              Positioned(
-                left: 10,
-                right: 10,
-                bottom: 10,
-                child: Text(
-                  label,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
+              const SizedBox(width: 10),
+              Column(
+                children: [
+                  Container(
+                    width: 52,
+                    height: 52,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.14),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.mic, color: Colors.white, size: 28),
                   ),
+                  const SizedBox(height: 10),
+                  _liveChip(Icons.facebook, 'Facebook Live', openLive),
+                  const SizedBox(height: 6),
+                  _liveChip(Icons.smart_display, 'YouTube Live', openLive),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _liveChip(IconData icon, String label, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(9),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.35),
+          borderRadius: BorderRadius.circular(9),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.16)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: Colors.white),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: const TextStyle(color: Colors.white, fontSize: 10.5),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// One What's New tile: image (or gradient + icon) top, title,
+  /// subtitle, chevron — the reference card shape.
+  Widget _whatsNewTile({
+    String? asset,
+    IconData? icon,
+    List<Color>? iconColors,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return Container(
+      width: 128,
+      decoration: BoxDecoration(
+        color: const Color(0xFF141B31),
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              height: 82,
+              width: double.infinity,
+              child: asset != null
+                  ? Image.asset(asset, fit: BoxFit.cover)
+                  : Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: iconColors!,
+                        ),
+                      ),
+                      child: Icon(
+                        icon,
+                        color: Colors.white.withValues(alpha: 0.9),
+                        size: 36,
+                      ),
+                    ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(9, 7, 4, 0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Text(
+                          subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white54,
+                            fontSize: 10,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(
+                    Icons.chevron_right,
+                    size: 16,
+                    color: Colors.white38,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// One of the four small buttons under the Advertising banner
+  /// (reference): tinted dark tile, icon, title, subtitle.
+  Widget _smallButton({
+    required IconData icon,
+    required Color tint,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [tint.withValues(alpha: 0.34), tint.withValues(alpha: 0.13)],
+        ),
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(color: tint.withValues(alpha: 0.45)),
+      ),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(13),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+          child: Column(
+            children: [
+              Icon(icon, color: tint, size: 23),
+              const SizedBox(height: 6),
+              Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              Text(
+                subtitle,
+                maxLines: 2,
+                textAlign: TextAlign.center,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white60,
+                  fontSize: 9,
+                  height: 1.15,
                 ),
               ),
             ],
@@ -983,13 +1393,29 @@ class _WhatsNewCard extends StatelessWidget {
   }
 }
 
-/// In-app advertising banner (Jaani, 2 Nov 2026): placed in the About
-/// section on the home screen. Tapping opens a WhatsApp chat with
-/// Nigraan TV for ad bookings. Number/link come from AppConfig
-/// (supportWhatsAppNumber / supportWhatsAppLink) — never hardcoded.
-/// NOTE (user order 20 Nov 2026): the paid-banner flow lives on a
-/// DEDICATED "Advertise" page (later phase) — this About-section card
-/// is the existing house banner, not the two home slots (superseded).
+/// The TJ Pro play badge from the reference header: a glossy
+/// gradient squircle with a white play triangle.
+class _PlayBadge extends StatelessWidget {
+  const _PlayBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 42,
+      height: 42,
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFFFF7043), Color(0xFFD81B60), Color(0xFF3949AB)],
+        ),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: const Icon(Icons.play_arrow, color: Colors.white, size: 26),
+    );
+  }
+}
+
 class AdvertisingBanner extends StatelessWidget {
   const AdvertisingBanner({super.key});
 
@@ -1000,40 +1426,45 @@ class AdvertisingBanner extends StatelessWidget {
     }
   }
 
+  // Build 4 (Home reference): the "For Advertising" banner in
+  // the reference's shape — dark blue/gold, megaphone, WhatsApp
+  // number (from AppConfig, as before), gold Chat Now pill. The
+  // tap is the same WhatsApp flow as before. (The bundled house
+  // banner image itself now lives in the hero carousel's admin
+  // slide.)
   @override
   Widget build(BuildContext context) {
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      elevation: 3,
-      shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16)),
+    return Container(
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF0D2137), Color(0xFF14324F), Color(0xFF7A5A00)],
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0x55F5C542)),
+      ),
       child: InkWell(
         onTap: _openWhatsApp,
-        child: Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              colors: [
-                Color(0xFF0F2027),
-                Color(0xFF203A43),
-                Color(0xFF2C5364),
-              ],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-          ),
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
           padding: const EdgeInsets.all(12),
           child: Row(
             children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Image.asset(
-                  'assets/jaani_ad_banner.jpg',
-                  width: 84,
-                  height: 112,
-                  fit: BoxFit.cover,
+              Container(
+                width: 44,
+                height: 44,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFF5C542),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.campaign,
+                  color: Colors.black87,
+                  size: 24,
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 11),
               const Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1043,32 +1474,55 @@ class AdvertisingBanner extends StatelessWidget {
                       'For Advertising',
                       style: TextStyle(
                         color: Color(0xFFFFD76A),
-                        fontSize: 19,
+                        fontSize: 16.5,
                         fontWeight: FontWeight.w900,
                       ),
                     ),
-                    SizedBox(height: 6),
+                    SizedBox(height: 3),
                     Text(
                       'Contact Us on WhatsApp:',
-                      style:
-                          TextStyle(color: Colors.white70, fontSize: 13),
+                      style: TextStyle(color: Colors.white70, fontSize: 11.5),
                     ),
                     SizedBox(height: 2),
                     Row(
                       children: [
-                        Icon(Icons.chat,
-                            color: Color(0xFF25D366), size: 18),
-                        SizedBox(width: 6),
+                        Icon(Icons.chat, color: Color(0xFF25D366), size: 15),
+                        SizedBox(width: 5),
                         Text(
                           AppConfig.supportWhatsAppNumber,
                           style: TextStyle(
                             color: Colors.white,
-                            fontSize: 17,
+                            fontSize: 14.5,
                             fontWeight: FontWeight.w800,
                           ),
                         ),
                       ],
                     ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 7,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF5C542),
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Chat Now',
+                      style: TextStyle(
+                        color: Colors.black,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    SizedBox(width: 4),
+                    Icon(Icons.arrow_forward, size: 13, color: Colors.black),
                   ],
                 ),
               ),
@@ -1149,15 +1603,13 @@ class _SponsoredAdCard extends StatelessWidget {
                   BuildContext context,
                   Object error,
                   StackTrace? stackTrace,
-                ) =>
-                    const SizedBox.shrink(),
+                ) => const SizedBox.shrink(),
               ),
             Padding(
               padding: const EdgeInsets.all(12),
               child: Row(
                 children: <Widget>[
-                  const Icon(Icons.campaign_outlined,
-                      color: TjProTheme.gold),
+                  const Icon(Icons.campaign_outlined, color: TjProTheme.gold),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -1232,7 +1684,6 @@ Future<void> _confirmSignOutFlow(
   }
 }
 
-
 /// A real crown glyph (v1.5.0, #13) — Material has no crown icon,
 /// and Icons.workspace_premium reads as a medal/rosette. Three
 /// points + band + jewels, drawn in gold.
@@ -1283,6 +1734,5 @@ class _CrownPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_CrownPainter oldDelegate) =>
-      oldDelegate.color != color;
+  bool shouldRepaint(_CrownPainter oldDelegate) => oldDelegate.color != color;
 }
