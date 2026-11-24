@@ -45,12 +45,17 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:gal/gal.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import 'package:video_player/video_player.dart';
 
+import '../app_config.dart';
+import '../live/news_template.dart';
 import '../services/asset_download_service.dart';
+import '../services/project_recovery.dart';
+import '../services/remote_config_service.dart';
 import '../services/coin_service.dart';
 import '../services/ffmpeg_service.dart';
 import '../services/font_registry.dart';
@@ -60,8 +65,11 @@ import '../services/pro_service.dart';
 import '../services/tts_processing.dart';
 import '../services/tts_studio_service.dart';
 import '../services/user_font_service.dart';
+import 'advertise_screen.dart';
+import 'ai_news_maker_screen.dart';
 import 'breaking_templates.dart';
 import 'caption_studio_screen.dart';
+import 'channel_branding_screen.dart';
 import 'channel_preset.dart';
 import 'karaoke_sync.dart';
 import 'news_analysis.dart';
@@ -69,7 +77,6 @@ import 'element_override.dart';
 import 'news_project.dart';
 import 'seo_screen.dart';
 import 'store_screen.dart';
-import 'template_studio_screen.dart';
 import 'widgets/breaking_preview.dart';
 import 'widgets/clip_picker.dart';
 import 'widgets/font_picker.dart';
@@ -110,6 +117,36 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   /// label and the Reporter panel's name field.
   final _tickerLabelController = TextEditingController();
   final _reporterNameController = TextEditingController();
+
+  /// Build 5 (v1.5.7): the retired Template & Studio screen's
+  /// preset-level fields, absorbed into the Template panel (lower
+  /// third / category / interview plate) and the Ribbons panel
+  /// (the three preset ribbon texts) — their controllers, synced
+  /// from the working preset by [_syncStudioControllers].
+  final _ltTitleController = TextEditingController();
+  final _ltSubtitleController = TextEditingController();
+  final _categoryController = TextEditingController();
+  final _interviewNameController = TextEditingController();
+  final _interviewDesigController = TextEditingController();
+  final _presetTopTextController = TextEditingController();
+  final _presetUrduTextController = TextEditingController();
+  final _presetEnglishTextController = TextEditingController();
+
+  /// Build 5: every channel preset (the Template panel's preset
+  /// selector — switching persists the selection, exactly like
+  /// the retired screen's store calls did).
+  List<ChannelPreset> _allPresets = const [];
+
+  /// Build 5: Kasheeda font section state (Template panel) — the
+  /// status line + whether a manual Download may be offered. The
+  /// Maker's [_fontReady] above stays the render flag.
+  bool _fontUrlAvailable = false;
+  String _fontStatus = 'Checking…';
+
+  /// Build 5: template frame (poster) export in flight (Export
+  /// panel — the retired screen's bottom button, renamed to what
+  /// it is and moved to the one export door).
+  bool _frameExporting = false;
 
   /// v1.5.1 (News Studio step, NS2): the open tool of the tool
   /// line (null = the summary card shows).
@@ -188,6 +225,8 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       _englishTickerController.text = _project!.englishTickerText;
       _tickerLabelController.text = _project!.tickerLabel;
       _reporterNameController.text = _project!.reporterName;
+      _allPresets = [_preset!];
+      _syncStudioControllers();
       _loaded = true;
       _lastSnap = jsonEncode(_project!.toJson());
       unawaited(_probeClips());
@@ -200,54 +239,173 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   }
 
   Future<void> _load() async {
-    final presets = await ChannelPresetStore.loadAll();
-    final selectedId = await ChannelPresetStore.loadSelectedId();
-    final preset = selectedId == null
-        ? presets.first
-        : presets.firstWhere(
-            (p) => p.id == selectedId,
-            orElse: () => presets.first,
-          );
-    final project = await NewsProjectStore.loadLatest() ??
-        NewsProject.create(presetId: preset.id);
-    if (!mounted) return;
-    setState(() {
-      _preset = preset;
-      _project = project;
-      _voice = project.voice;
-      _studioVoiceId = project.studioVoiceId.isNotEmpty
-          ? project.studioVoiceId
-          : project.voice.name;
-      _tehreerController.text = project.tehreer;
-      _tickerController.text = project.tickerText;
-      _englishTickerController.text = project.englishTickerText;
-      _tickerLabelController.text = project.tickerLabel;
-      _reporterNameController.text = project.reporterName;
-      _loaded = true;
-    });
-    _lastSnap = jsonEncode(_project!.toJson());
-    unawaited(_probeClips());
-    await _refreshVoiceStatus();
-    await _checkFont();
-    await _initFontsAndLibrary();
+    // Build 5 (v1.5.7, error-banner fix): fail-soft — a store or
+    // quota failure here used to escape as an unhandled async
+    // error (one of the CrashGuard banner sources on the user's
+    // phone). Any failure lands on the factory preset + a fresh
+    // project instead of an endless spinner or a banner.
+    try {
+      final presets = await ChannelPresetStore.loadAll();
+      final selectedId = await ChannelPresetStore.loadSelectedId();
+      final preset = selectedId == null
+          ? presets.first
+          : presets.firstWhere(
+              (p) => p.id == selectedId,
+              orElse: () => presets.first,
+            );
+      final project = await NewsProjectStore.loadLatest() ??
+          NewsProject.create(presetId: preset.id);
+      if (!mounted) return;
+      setState(() {
+        _preset = preset;
+        _allPresets = presets;
+        _project = project;
+        _voice = project.voice;
+        _studioVoiceId = project.studioVoiceId.isNotEmpty
+            ? project.studioVoiceId
+            : project.voice.name;
+        _tehreerController.text = project.tehreer;
+        _tickerController.text = project.tickerText;
+        _englishTickerController.text = project.englishTickerText;
+        _tickerLabelController.text = project.tickerLabel;
+        _reporterNameController.text = project.reporterName;
+        _syncStudioControllers();
+        _loaded = true;
+      });
+      _lastSnap = jsonEncode(_project!.toJson());
+      unawaited(_probeClips());
+      await _refreshVoiceStatus();
+      await _checkFont();
+      await _initFontsAndLibrary();
+    } catch (_) {
+      if (!mounted || _loaded) return;
+      final preset = ChannelPreset.nigraanTv();
+      final project = NewsProject.create(presetId: preset.id);
+      setState(() {
+        _preset = preset;
+        _allPresets = [preset];
+        _project = project;
+        _voice = project.voice;
+        _studioVoiceId = project.voice.name;
+        _syncStudioControllers();
+        _loaded = true;
+      });
+      _lastSnap = jsonEncode(project.toJson());
+    }
   }
 
   Future<void> _refreshVoiceStatus() async {
-    final remaining = await GeminiVoiceService().remainingToday();
-    if (!mounted) return;
-    setState(() => _voiceRemaining = remaining);
+    // Build 5 (v1.5.7, error-banner fix): fail-soft — the quota
+    // read touches storage/platform channels and is called from
+    // initState and every undo/redo restore; a failure must never
+    // escape as an unhandled async error. The Voice panel simply
+    // shows no remaining-count line when the read failed.
+    try {
+      final remaining = await GeminiVoiceService().remainingToday();
+      if (!mounted) return;
+      setState(() => _voiceRemaining = remaining);
+    } catch (_) {
+      // Quota display is decoration — never an error path.
+    }
   }
 
   Future<void> _checkFont() async {
+    // Build 5 (v1.5.7): the retired Template & Studio screen's
+    // Kasheeda logic, absorbed whole — cached file → load it;
+    // no cache but an effective download URL → download + load
+    // it here; no URL → the honest fallback status. Fail-soft
+    // throughout (the old Maker version silently did only the
+    // cached branch; the status line + Download button in the
+    // Template panel read [_fontStatus] / [_fontUrlAvailable]).
     try {
       final cached = await const AssetDownloadService()
           .cachedFile(AssetDownloadService.kasheedaFileName);
       if (cached != null) {
         await AssetDownloadService.loadKasheedaFontFromFile(cached);
         if (!mounted) return;
-        setState(() => _fontReady = true);
+        setState(() {
+          _fontReady = true;
+          _fontStatus = 'Urdu font (Kasheeda): ready';
+        });
+        return;
       }
-    } catch (_) {}
+      final url = await _effectiveKasheedaFontUrl();
+      if (!mounted) return;
+      if (url.isEmpty) {
+        setState(() {
+          _fontUrlAvailable = false;
+          _fontStatus = 'Urdu font (Kasheeda): abhi available nahi '
+              '— fallback font use ho raha hai';
+        });
+        return;
+      }
+      setState(() {
+        _fontUrlAvailable = true;
+        _fontStatus = 'Urdu font (Kasheeda): downloading…';
+      });
+      try {
+        await const AssetDownloadService().loadKasheedaFont(url: url);
+        if (!mounted) return;
+        setState(() {
+          _fontReady = true;
+          _fontStatus = 'Urdu font (Kasheeda): ready';
+        });
+      } catch (_) {
+        if (!mounted) return;
+        setState(() {
+          _fontStatus = 'Urdu font (Kasheeda): download fail — '
+              'fallback font use ho raha hai';
+        });
+      }
+    } catch (_) {
+      // Font state is fail-soft — the preview uses the fallback.
+    }
+  }
+
+  /// The EFFECTIVE Kasheeda download URL (ported from the retired
+  /// Template & Studio screen): the remote-config value when
+  /// non-empty, else the compile-time [AppConfig] fallback (empty
+  /// by design — the real URL is hosted). Fail-soft.
+  Future<String> _effectiveKasheedaFontUrl() async {
+    try {
+      await RemoteConfigService.instance.init();
+    } catch (_) {
+      // Fail-soft: keep whatever config is already resolved.
+    }
+    final remoteUrl =
+        RemoteConfigService.instance.config.kasheedaFontUrl.trim();
+    if (remoteUrl.isNotEmpty) return remoteUrl;
+    return AppConfig.kasheedaFontUrl.trim();
+  }
+
+  /// Manual Kasheeda download/retry (the Template panel's
+  /// Download button — the retired screen's control, same logic).
+  Future<void> _downloadKasheedaFont() async {
+    final url = await _effectiveKasheedaFontUrl();
+    if (!mounted) return;
+    if (url.isEmpty) {
+      setState(() {
+        _fontUrlAvailable = false;
+        _fontStatus = 'Urdu font (Kasheeda): abhi available nahi '
+            '— fallback font use ho raha hai';
+      });
+      return;
+    }
+    setState(() {
+      _fontUrlAvailable = true;
+      _fontStatus = 'Urdu font (Kasheeda): downloading…';
+    });
+    try {
+      await const AssetDownloadService().loadKasheedaFont(url: url);
+      if (!mounted) return;
+      setState(() {
+        _fontReady = true;
+        _fontStatus = 'Urdu font (Kasheeda): ready';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _fontStatus = 'Urdu font download fail: $e');
+    }
   }
 
   @override
@@ -259,7 +417,32 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     _englishTickerController.dispose();
     _tickerLabelController.dispose();
     _reporterNameController.dispose();
+    _ltTitleController.dispose();
+    _ltSubtitleController.dispose();
+    _categoryController.dispose();
+    _interviewNameController.dispose();
+    _interviewDesigController.dispose();
+    _presetTopTextController.dispose();
+    _presetUrduTextController.dispose();
+    _presetEnglishTextController.dispose();
     super.dispose();
+  }
+
+  /// Build 5 (v1.5.7): writes the working preset's Template &
+  /// Studio fields into their controllers (the panels edit the
+  /// preset through these). Called on every preset (re)load and
+  /// switch — the panels never read a stale copy.
+  void _syncStudioControllers() {
+    final preset = _preset;
+    if (preset == null) return;
+    _ltTitleController.text = preset.lowerThirdTitle;
+    _ltSubtitleController.text = preset.lowerThirdSubtitle;
+    _categoryController.text = preset.categoryLabel;
+    _interviewNameController.text = preset.interviewName;
+    _interviewDesigController.text = preset.interviewDesignation;
+    _presetTopTextController.text = preset.topRibbon.text;
+    _presetUrduTextController.text = preset.urduRibbon.text;
+    _presetEnglishTextController.text = preset.englishRibbon.text;
   }
 
   /// v1.4.0 audio trio: the ONE place every audio source lands —
@@ -1002,7 +1185,25 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             orElse: () => presets.first,
           );
     if (!mounted) return;
-    setState(() => _preset = preset);
+    setState(() {
+      _preset = preset;
+      _allPresets = presets;
+      _syncStudioControllers();
+    });
+  }
+
+  /// Build 5 (v1.5.7): the Template panel's preset selector —
+  /// switching the channel preset persists the selection via the
+  /// store (the retired Template & Studio / Branding screens'
+  /// behaviour) and re-syncs every preset-level panel field.
+  Future<void> _switchPreset(ChannelPreset next) async {
+    if (_preset?.id == next.id) return;
+    await ChannelPresetStore.saveAll(_allPresets, selectedId: next.id);
+    if (!mounted) return;
+    setState(() {
+      _preset = next;
+      _syncStudioControllers();
+    });
   }
 
   /// v1.5.2 (coherence, fixes #57/#62b/#63b): THE one place a
@@ -1079,15 +1280,10 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         setState(() {});
         _scheduleSave();
       case RibbonPick.studio:
-        // The Maker's ONE Template & Studio entry lives in the
-        // Template panel; the rail hides this card here — the
-        // branch stays for completeness.
-        await Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => const TemplateStudioScreen(),
-          ),
-        );
-        await _reloadPreset();
+        // Build 5 (v1.5.7): Template & Studio is retired — its
+        // controls live in the Template panel now, so the rail's
+        // Studio card (hidden in this panel) lands there.
+        setState(() => _activeTool = 'template');
       case RibbonPick.store:
         await Navigator.of(context).push(
           MaterialPageRoute(
@@ -1592,7 +1788,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             : preset.name;
     return Container(
       height: 56,
-      padding: const EdgeInsets.symmetric(horizontal: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 2),
       decoration: const BoxDecoration(
         color: Color(0xFF0A0D12),
         border: Border(bottom: BorderSide(color: Color(0x14FFFFFF))),
@@ -1675,7 +1871,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             onTap: () => setState(() => _activeTool = 'template'),
             borderRadius: BorderRadius.circular(7),
             child: Container(
-              constraints: const BoxConstraints(maxWidth: 74),
+              constraints: const BoxConstraints(maxWidth: 56),
               padding:
                   const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
               decoration: BoxDecoration(
@@ -1714,7 +1910,48 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               ),
             ),
           ),
-          const SizedBox(width: 6),
+          const SizedBox(width: 2),
+          // Build 5 (v1.5.7): the workspace menu — the retired
+          // News Studio hub's unique destinations live here now
+          // (project chooser, AI News Maker, Channel Branding,
+          // Advertise), inside the workspace's own project bar.
+          // The tight 34px box keeps the bar inside a 360px phone
+          // at large text scales (the default menu button is
+          // 48px and overflowed the bar — see BUILD5 report).
+          SizedBox(
+            width: 34,
+            height: 34,
+            child: PopupMenuButton<String>(
+              key: const Key('makerMoreMenu'),
+              icon: const Icon(
+                Icons.more_vert,
+                size: 20,
+                color: Color(0xFFAEB4BD),
+              ),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(maxWidth: 260),
+              color: const Color(0xFF171B24),
+              onSelected: _onMakerMenu,
+              itemBuilder: (ctx) => const [
+                PopupMenuItem(
+                  value: 'projects',
+                  child: Text('Projects — kholein / naya / delete'),
+                ),
+                PopupMenuItem(
+                  value: 'ai',
+                  child: Text('AI News Maker (One Click)'),
+                ),
+                PopupMenuItem(
+                  value: 'branding',
+                  child: Text('Channel Branding'),
+                ),
+                PopupMenuItem(
+                  value: 'advertise',
+                  child: Text('Advertise'),
+                ),
+              ],
+            ),
+          ),
           InkWell(
             onTap: () => setState(() => _activeTool = 'export'),
             borderRadius: BorderRadius.circular(7),
@@ -1742,10 +1979,195 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               ),
             ),
           ),
-          const SizedBox(width: 4),
+          const SizedBox(width: 2),
         ],
       ),
     );
+  }
+
+  /// Build 5 (v1.5.7): the project-bar menu's actions — the
+  /// retired hub's unique destinations, one tap each from inside
+  /// the workspace.
+  void _onMakerMenu(String action) {
+    switch (action) {
+      case 'projects':
+        unawaited(_showProjectChooser());
+      case 'ai':
+        unawaited(_openStudioDestination(const AiNewsMakerScreen()));
+      case 'branding':
+        unawaited(
+          _openStudioDestination(
+            ChannelBrandingScreen(initialPreset: _preset),
+          ),
+        );
+      case 'advertise':
+        unawaited(_openStudioDestination(const AdvertiseScreen()));
+    }
+  }
+
+  /// Pushes a studio destination and re-syncs on return (the
+  /// destination may have changed the preset or the project —
+  /// the same reload the retired hub did after every push). The
+  /// pre-push save is fire-and-forget: the Maker's autosave has
+  /// already persisted every edit, and navigation must never
+  /// wait on storage.
+  Future<void> _openStudioDestination(Widget screen) async {
+    unawaited(_saveNow());
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => screen),
+    );
+    await _reloadPreset();
+    final current = _project;
+    if (current == null || !mounted) return;
+    final reloaded = await NewsProjectStore.load(current.id);
+    if (reloaded != null && mounted) {
+      setState(() => _project = reloaded);
+    }
+  }
+
+  /// Build 5 (v1.5.7): the workspace's own project chooser — the
+  /// retired hub's Recent projects list + draft handling, folded
+  /// into the project bar (project selection happens INSIDE the
+  /// workspace screen, not on a separate hub). The Maker already
+  /// auto-loads the latest project on entry, so the old recovery
+  /// card's Resume is automatic; its Discard is the delete here.
+  Future<void> _showProjectChooser() async {
+    final all = await NewsProjectStore.loadAll();
+    if (!mounted) return;
+    final sorted = List<NewsProject>.from(all)
+      ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF12151C),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ListTile(
+              key: const Key('chooserNewProject'),
+              leading: const Icon(
+                Icons.add_circle_outline,
+                color: Color(0xFFFFC800),
+              ),
+              title: const Text('Naya project'),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                unawaited(_newProject());
+              },
+            ),
+            const Divider(height: 1),
+            if (sorted.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text(
+                  'Abhi koi project nahi.',
+                  style: TextStyle(color: Colors.grey),
+                ),
+              )
+            else
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  children: [
+                    for (final p in sorted)
+                      ListTile(
+                        key: Key('chooserProject-${p.id}'),
+                        leading: Icon(
+                          p.id == _project?.id
+                              ? Icons.radio_button_checked
+                              : Icons.folder_open_outlined,
+                          size: 20,
+                          color: p.id == _project?.id
+                              ? const Color(0xFFFFC800)
+                              : const Color(0xFFAEB4BD),
+                        ),
+                        title: Text(
+                          p.title.trim().isNotEmpty
+                              ? p.title
+                              : p.tehreer.trim().isNotEmpty
+                                  ? p.tehreer
+                                  : 'Untitled project',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(
+                          '${p.clipPaths.length} clip(s) • '
+                          '${p.updatedAt.day}/${p.updatedAt.month} '
+                          '${p.updatedAt.hour.toString().padLeft(2, '0')}:'
+                          '${p.updatedAt.minute.toString().padLeft(2, '0')}'
+                          '${isRecoverableDraft(p) ? ' • Draft' : ''}',
+                        ),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.delete_outline, size: 19),
+                          onPressed: () {
+                            Navigator.of(ctx).pop();
+                            unawaited(_deleteProject(p));
+                          },
+                        ),
+                        onTap: () {
+                          Navigator.of(ctx).pop();
+                          unawaited(_openProject(p));
+                        },
+                      ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Opens [project] in the workspace (the chooser's tap): swaps
+  /// the working project and re-syncs every mirror (voice picks,
+  /// text controllers, history) — the same sync [_load] does.
+  Future<void> _openProject(NewsProject project) async {
+    await _saveNow();
+    if (!mounted) return;
+    setState(() {
+      _project = project;
+      _voice = project.voice;
+      _studioVoiceId = project.studioVoiceId.isNotEmpty
+          ? project.studioVoiceId
+          : project.voice.name;
+      _tehreerController.text = project.tehreer;
+      _tickerController.text = project.tickerText;
+      _englishTickerController.text = project.englishTickerText;
+      _tickerLabelController.text = project.tickerLabel;
+      _reporterNameController.text = project.reporterName;
+      _selectedElement = NewsElement.media;
+      _undoStack.clear();
+      _redoStack.clear();
+    });
+    _lastSnap = jsonEncode(project.toJson());
+    unawaited(_probeClips());
+    await _refreshVoiceStatus();
+  }
+
+  Future<void> _newProject() async {
+    final preset = _preset;
+    if (preset == null) return;
+    final project = NewsProject.create(presetId: preset.id);
+    await NewsProjectStore.save(project);
+    await _openProject(project);
+  }
+
+  /// Deletes a project (the chooser's discard). Deleting the
+  /// open project falls back to the latest remaining one, or a
+  /// fresh project when none is left.
+  Future<void> _deleteProject(NewsProject project) async {
+    await NewsProjectStore.delete(project.id);
+    if (!mounted) return;
+    if (_project?.id != project.id) return;
+    final latest = await NewsProjectStore.loadLatest();
+    if (!mounted) return;
+    if (latest != null) {
+      await _openProject(latest);
+    } else {
+      await _newProject();
+    }
   }
 
   Widget _stageChip(String label, {bool goldDot = false}) {
@@ -1795,9 +2217,16 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     return Material(
       color: const Color(0xFF12151C),
       child: Container(
-        height: 84,
+        // Build 5 (v1.5.7, error-banner fix): NO fixed height —
+        // the old fixed 84px box overflowed by ~11px at textScale
+        // 1.3 (the user's phone), and that RenderFlex overflow
+        // refiring on every layout was the repeating CrashGuard
+        // banner in the v1.5.6 screenshots. The column now sizes
+        // to its content; the preview's Expanded absorbs the
+        // difference.
         padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Row(
@@ -2352,8 +2781,19 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   /// coherence path [_applyTemplatePick] (kind + variant
   /// together). The Store / Library cards in the rail are the
   /// only navigation — the old separate 'Templates — Store /
-  /// Library' button duplicated them and is gone. Template &
-  /// Studio keeps its ONE entry here.
+  /// Library' button duplicated them and is gone.
+  ///
+  /// Build 5 (v1.5.7): the retired Template & Studio SCREEN's
+  /// unique controls are absorbed BELOW the rail, in this same
+  /// panel — channel preset selection, the Kasheeda font state +
+  /// download, lower third, breaking banner, category, interview
+  /// plate, PIP, chroma key and the intro/outro switches. Every
+  /// one writes the working PRESET and persists it immediately
+  /// (the Logo panel's rotate switch pattern), so the preview —
+  /// which renders from the preset — updates live. The full
+  /// preset ribbon editors live in the Ribbons panel (the one
+  /// ribbon home); preset create/delete lives in the Templates
+  /// Library (the rail's Library card).
   Widget _templatePanel(ChannelPreset preset, NewsProject project) {
     return _panelShell('Template', [
       templateDesignRail(
@@ -2383,23 +2823,402 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           ),
         ),
       ],
-      const SizedBox(height: 12),
-      OutlinedButton.icon(
-        key: const Key('templateStudioButton'),
-        onPressed: () async {
-          await _saveNow();
-          if (!mounted) return;
-          await Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => const TemplateStudioScreen(),
-            ),
-          );
-          await _reloadPreset();
-        },
-        icon: const Icon(Icons.tune_outlined, size: 18),
-        label: const Text('Template & Studio →'),
-      ),
+      const SizedBox(height: 16),
+      _studioPresetSection(preset),
+      const SizedBox(height: 16),
+      _studioFontSection(),
+      const SizedBox(height: 16),
+      _studioLowerThirdSection(preset),
+      const SizedBox(height: 16),
+      _studioCategorySection(preset),
+      const SizedBox(height: 16),
+      _studioInterviewSection(preset),
+      const SizedBox(height: 16),
+      _studioPipSection(preset),
+      const SizedBox(height: 16),
+      _studioChromaSection(preset),
+      const SizedBox(height: 16),
+      _studioIntroOutroSection(preset),
     ]);
+  }
+
+  /// One preset mutation from the absorbed Studio sections:
+  /// apply + repaint + persist (fire-and-forget, fail-soft store).
+  void _updatePreset(void Function() change) {
+    final preset = _preset;
+    if (preset == null) return;
+    setState(change);
+    unawaited(persistPresetChange(preset));
+  }
+
+  Widget _studioSectionTitle(String title) {
+    return Text(
+      title,
+      style: const TextStyle(fontWeight: FontWeight.bold),
+    );
+  }
+
+  /// Channel preset selection (preset management): one chip per
+  /// stored preset; the working preset is the selected one.
+  Widget _studioPresetSection(ChannelPreset preset) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _studioSectionTitle('Channel preset'),
+        const SizedBox(height: 6),
+        if (_allPresets.length <= 1)
+          Text(
+            '${preset.name} preset',
+            style: const TextStyle(color: Colors.grey, fontSize: 12.5),
+          )
+        else
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (final p in _allPresets) ...[
+                  ChoiceChip(
+                    key: Key('makerPreset-${p.id}'),
+                    label: Text(p.name),
+                    selected: p.id == preset.id,
+                    onSelected: (_) => unawaited(_switchPreset(p)),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+              ],
+            ),
+          ),
+        const SizedBox(height: 4),
+        const Text(
+          'Naya preset banana ya delete karna: upar Templates '
+          'Library card se.',
+          style: TextStyle(color: Colors.grey, fontSize: 12),
+        ),
+      ],
+    );
+  }
+
+  /// Kasheeda font state + manual download (the retired screen's
+  /// font row, same status strings).
+  Widget _studioFontSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _studioSectionTitle('Urdu font'),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                _fontStatus,
+                key: const Key('kasheedaStatus'),
+                style: const TextStyle(color: Colors.grey, fontSize: 12.5),
+              ),
+            ),
+            if (_fontUrlAvailable && !_fontReady) ...[
+              const SizedBox(width: 8),
+              OutlinedButton(
+                key: const Key('kasheedaDownloadButton'),
+                onPressed: () => unawaited(_downloadKasheedaFont()),
+                child: const Text('Download'),
+              ),
+            ],
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// Lower third + breaking banner (preset-level, as in the
+  /// retired screen).
+  Widget _studioLowerThirdSection(ChannelPreset preset) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(child: _studioSectionTitle('Lower third')),
+            Switch(
+              key: const Key('studioLowerThirdSwitch'),
+              value: preset.showLowerThird,
+              onChanged: (v) =>
+                  _updatePreset(() => preset.showLowerThird = v),
+            ),
+          ],
+        ),
+        TextField(
+          key: const Key('studioLowerTitleField'),
+          controller: _ltTitleController,
+          decoration: const InputDecoration(
+            labelText: 'Title (naam / ohda)',
+            border: OutlineInputBorder(),
+          ),
+          onChanged: (v) => _updatePreset(() => preset.lowerThirdTitle = v),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          key: const Key('studioLowerSubtitleField'),
+          controller: _ltSubtitleController,
+          decoration: const InputDecoration(
+            labelText: 'Subtitle (sheher / tafseel)',
+            border: OutlineInputBorder(),
+          ),
+          onChanged: (v) =>
+              _updatePreset(() => preset.lowerThirdSubtitle = v),
+        ),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            Expanded(child: _studioSectionTitle('Breaking banner')),
+            Switch(
+              key: const Key('studioBreakingBannerSwitch'),
+              value: preset.showBreakingBanner,
+              onChanged: (v) =>
+                  _updatePreset(() => preset.showBreakingBanner = v),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// Category label (preset-level).
+  Widget _studioCategorySection(ChannelPreset preset) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _studioSectionTitle('Category'),
+        const SizedBox(height: 6),
+        TextField(
+          key: const Key('studioCategoryField'),
+          controller: _categoryController,
+          decoration: const InputDecoration(
+            hintText: 'POLITICS',
+            border: OutlineInputBorder(),
+          ),
+          onChanged: (v) => _updatePreset(() => preset.categoryLabel = v),
+        ),
+      ],
+    );
+  }
+
+  /// Interview name plate (preset-level).
+  Widget _studioInterviewSection(ChannelPreset preset) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(child: _studioSectionTitle('Interview plate')),
+            Switch(
+              key: const Key('studioInterviewSwitch'),
+              value: preset.showInterviewPlate,
+              onChanged: (v) =>
+                  _updatePreset(() => preset.showInterviewPlate = v),
+            ),
+          ],
+        ),
+        TextField(
+          key: const Key('studioInterviewNameField'),
+          controller: _interviewNameController,
+          decoration: const InputDecoration(
+            labelText: 'Mehman ka naam',
+            border: OutlineInputBorder(),
+          ),
+          onChanged: (v) => _updatePreset(() => preset.interviewName = v),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          key: const Key('studioInterviewDesigField'),
+          controller: _interviewDesigController,
+          decoration: const InputDecoration(
+            labelText: 'Ohda (designation)',
+            border: OutlineInputBorder(),
+          ),
+          onChanged: (v) =>
+              _updatePreset(() => preset.interviewDesignation = v),
+        ),
+      ],
+    );
+  }
+
+  /// PIP (preset-level): enable, position, scale.
+  Widget _studioPipSection(ChannelPreset preset) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: _studioSectionTitle('Picture in Picture (PIP)'),
+            ),
+            Switch(
+              key: const Key('studioPipSwitch'),
+              value: preset.pipEnabled,
+              onChanged: (v) => _updatePreset(() => preset.pipEnabled = v),
+            ),
+          ],
+        ),
+        if (preset.pipEnabled) ...[
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (final id in ChannelPreset.pipPositionIds) ...[
+                  ChoiceChip(
+                    key: Key('studioPipPos-$id'),
+                    label: Text(
+                      ChannelPreset.pipPositionLabels[id] ?? id,
+                    ),
+                    selected: preset.pipPosition == id,
+                    onSelected: (_) =>
+                        _updatePreset(() => preset.pipPosition = id),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              const Text('Size'),
+              Expanded(
+                child: Slider(
+                  key: const Key('studioPipScaleSlider'),
+                  value: preset.pipScale,
+                  min: 0.15,
+                  max: 0.5,
+                  onChanged: (v) =>
+                      _updatePreset(() => preset.pipScale = v),
+                ),
+              ),
+              Text('${(preset.pipScale * 100).toInt()}%'),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// Chroma key (preset-level): enable, background kind (the
+  /// gallery kind picks an image), sensitivity.
+  Widget _studioChromaSection(ChannelPreset preset) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(child: _studioSectionTitle('Chroma Key')),
+            Switch(
+              key: const Key('studioChromaSwitch'),
+              value: preset.chromaEnabled,
+              onChanged: (v) =>
+                  _updatePreset(() => preset.chromaEnabled = v),
+            ),
+          ],
+        ),
+        const Text(
+          'Green screen hata ke background badlein',
+          style: TextStyle(color: Colors.grey, fontSize: 12),
+        ),
+        if (preset.chromaEnabled) ...[
+          const SizedBox(height: 8),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (final kind in ChromaBackgroundKind.values) ...[
+                  ChoiceChip(
+                    key: Key('studioChromaBg-${kind.id}'),
+                    label: Text(kind.label),
+                    selected: preset.chromaBackground == kind,
+                    onSelected: (_) =>
+                        unawaited(_pickChromaBackground(kind)),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+              ],
+            ),
+          ),
+          if (preset.chromaBackground == ChromaBackgroundKind.gallery &&
+              preset.chromaBackgroundPath != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                'Picked: ${preset.chromaBackgroundPath!.split('/').last}',
+                style: const TextStyle(color: Colors.grey, fontSize: 12),
+              ),
+            ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              const Text('Sensitivity'),
+              Expanded(
+                child: Slider(
+                  key: const Key('studioChromaSensitivitySlider'),
+                  value: preset.chromaSensitivity,
+                  min: 0.05,
+                  max: 1.0,
+                  onChanged: (v) =>
+                      _updatePreset(() => preset.chromaSensitivity = v),
+                ),
+              ),
+              Text(preset.chromaSensitivity.toStringAsFixed(2)),
+            ],
+          ),
+          const Text(
+            'Visual chroma effect reel export mein lagta hai — '
+            'chroma key wala export 50 coins ka hota hai '
+            '(resolution ke ilawa).',
+            style: TextStyle(color: Colors.grey, fontSize: 12),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Future<void> _pickChromaBackground(ChromaBackgroundKind kind) async {
+    final preset = _preset;
+    if (preset == null) return;
+    if (kind == ChromaBackgroundKind.gallery) {
+      final picked = await FilePicker.pickFiles(type: FileType.image);
+      if (picked.isEmpty || picked.first.path == null) return;
+      _updatePreset(() {
+        preset.chromaBackground = kind;
+        preset.chromaBackgroundPath = picked.first.path;
+      });
+    } else {
+      _updatePreset(() {
+        preset.chromaBackground = kind;
+        preset.chromaBackgroundPath = null;
+      });
+    }
+  }
+
+  /// Intro / Outro defaults (preset-level) — their ONE home
+  /// (Channel Branding's duplicate switches are gone, Build 5).
+  Widget _studioIntroOutroSection(ChannelPreset preset) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _studioSectionTitle('Intro / Outro'),
+        SwitchListTile(
+          key: const Key('studioIntroSwitch'),
+          title: const Text('Intro (10s)'),
+          value: preset.showIntro,
+          onChanged: (v) => _updatePreset(() => preset.showIntro = v),
+          contentPadding: EdgeInsets.zero,
+        ),
+        SwitchListTile(
+          key: const Key('studioOutroSwitch'),
+          title: const Text('Outro (3s end card)'),
+          value: preset.showOutro,
+          onChanged: (v) => _updatePreset(() => preset.showOutro = v),
+          contentPadding: EdgeInsets.zero,
+        ),
+      ],
+    );
   }
 
   /// Media panel: the clip list (the quick-row Add Video sheet
@@ -2505,8 +3324,9 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   /// both tickers share: side label (chip), scroll direction,
   /// font and Text Style. (Speed is NOT here: the parity export
   /// renders its fixed design speed and the preset ribbons'
-  /// speed lives in Template & Studio — a project-level speed
-  /// slider would promise what the export does not do.)
+  /// speed lives in the Ribbons panel's preset editors — a
+  /// project-level speed slider would promise what the export
+  /// does not do.)
   Widget _tickerPanel(NewsProject project) {
     return _panelShell('Ticker', [
       const Text(
@@ -2691,8 +3511,8 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       // inline — the old sheet-opening button duplicated this
       // rail and is gone. Design picks go through the coherence
       // path (kind + variant together). The Studio card is
-      // hidden here: Template & Studio's ONE Maker entry lives
-      // in the Template panel.
+      // hidden here: the Studio card's destination (the Template
+      // panel) is one tap away in the tool line.
       ribbonDesignRail(
         currentKind: project.templateKind,
         currentIsFinal3: preset.finalIs3Ribbon,
@@ -2716,7 +3536,220 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             _elementOv(project, id).copyWith(scale: v),
           ),
         ),
+      // Build 5 (v1.5.7): the retired Template & Studio screen's
+      // FULL preset ribbon editors — the ONE ribbon home (audit
+      // D4): text, colour, speed, direction, size and the on/off
+      // switch for each of the three channel ribbons, writing the
+      // PRESET (new projects inherit them). The project's own
+      // ticker texts stay in the Ticker panel — project values,
+      // a different thing, each in its single home.
+      const SizedBox(height: 16),
+      _studioSectionTitle('Channel ribbons (preset)'),
+      const SizedBox(height: 4),
+      const Text(
+        'Channel ke default ribbons — naye projects inhi se '
+        'bante hain.',
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      const SizedBox(height: 8),
+      _presetRibbonEditor(
+        keyId: 'top',
+        title: 'Top ribbon',
+        kindLabel: 'Current story',
+        ribbon: preset.topRibbon,
+        controller: _presetTopTextController,
+      ),
+      _presetRibbonEditor(
+        keyId: 'urdu',
+        title: 'Middle ribbon (Urdu)',
+        kindLabel: 'National news (Urdu)',
+        ribbon: preset.urduRibbon,
+        controller: _presetUrduTextController,
+      ),
+      _presetRibbonEditor(
+        keyId: 'english',
+        title: 'Bottom ribbon (English)',
+        kindLabel: 'International (English)',
+        ribbon: preset.englishRibbon,
+        controller: _presetEnglishTextController,
+      ),
     ]);
+  }
+
+  /// The house ribbon swatches (the retired screen's set).
+  static const _ribbonSwatches = <int>[
+    0xFF01B0FF,
+    0xFFD50000,
+    0xFF3D5AFE,
+    0xFFEF0017,
+    0xFF1E88E5,
+    0xFF00C853,
+    0xFFFFC107,
+    0xFFFFFFFF,
+    0xFF000000,
+  ];
+
+  /// ONE preset ribbon's full editor (Build 5 absorption of the
+  /// retired screen's ribbon card, minus its collapse header —
+  /// the panel itself scrolls): on/off, text, colour swatches,
+  /// speed, direction, font size. Every change writes the preset
+  /// and persists it.
+  Widget _presetRibbonEditor({
+    required String keyId,
+    required String title,
+    required String kindLabel,
+    required RibbonConfig ribbon,
+    required TextEditingController controller,
+  }) {
+    final hex = '#${ribbon.color.toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 14,
+                height: 14,
+                decoration: BoxDecoration(
+                  color: Color(ribbon.color),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '$title • $kindLabel',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              Switch(
+                key: Key('ribbonEnabled-$keyId'),
+                value: ribbon.enabled,
+                onChanged: (v) => _updatePreset(() => ribbon.enabled = v),
+              ),
+            ],
+          ),
+          TextField(
+            key: Key('ribbonText-$keyId'),
+            controller: controller,
+            decoration: const InputDecoration(
+              labelText: 'Text',
+              border: OutlineInputBorder(),
+            ),
+            onChanged: (v) => _updatePreset(() => ribbon.text = v),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const Text('Color'),
+              const SizedBox(width: 10),
+              Text(hex, style: const TextStyle(color: Colors.grey)),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _ribbonSwatches.map((c) {
+              final selected = ribbon.color == c;
+              return InkWell(
+                key: Key('swatch-$keyId-$c'),
+                onTap: () => _updatePreset(() => ribbon.color = c),
+                borderRadius: BorderRadius.circular(20),
+                child: Container(
+                  width: 30,
+                  height: 30,
+                  decoration: BoxDecoration(
+                    color: Color(c),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: selected ? Colors.white : Colors.white24,
+                      width: selected ? 3 : 1,
+                    ),
+                  ),
+                  child: selected
+                      ? const Icon(Icons.check, size: 15, color: Colors.white)
+                      : null,
+                ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const Text('Speed'),
+              Expanded(
+                child: Slider(
+                  key: Key('ribbonSpeed-$keyId'),
+                  value: ribbon.speed,
+                  min: 0.25,
+                  max: 2.5,
+                  divisions: 45,
+                  onChanged: (v) => _updatePreset(() => ribbon.speed = v),
+                ),
+              ),
+              Text('${ribbon.speed.toStringAsFixed(1)}×'),
+            ],
+          ),
+          Row(
+            children: [
+              const Text('Direction'),
+              const SizedBox(width: 10),
+              Expanded(
+                child: SegmentedButton<RibbonDirection>(
+                  segments: const [
+                    ButtonSegment(
+                      value: RibbonDirection.rtl,
+                      label: Text('RTL'),
+                      icon: Icon(Icons.arrow_back, size: 16),
+                    ),
+                    ButtonSegment(
+                      value: RibbonDirection.ltr,
+                      label: Text('LTR'),
+                      icon: Icon(Icons.arrow_forward, size: 16),
+                    ),
+                  ],
+                  selected: {ribbon.direction},
+                  onSelectionChanged: (selected) =>
+                      _updatePreset(() => ribbon.direction = selected.first),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              const Text('Size'),
+              const SizedBox(width: 8),
+              IconButton(
+                key: Key('sizeDown-$keyId'),
+                icon: const Icon(Icons.remove, size: 18),
+                onPressed: () => _updatePreset(
+                  () => ribbon.fontSize =
+                      (ribbon.fontSize - 1).clamp(10, 40).toDouble(),
+                ),
+              ),
+              Text(
+                ribbon.fontSize.toInt().toString(),
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              IconButton(
+                key: Key('sizeUp-$keyId'),
+                icon: const Icon(Icons.add, size: 18),
+                onPressed: () => _updatePreset(
+                  () => ribbon.fontSize =
+                      (ribbon.fontSize + 1).clamp(10, 40).toDouble(),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 
   /// Logo panel (#47; v1.5.2 fix #68a): the REPLACE action is
@@ -3549,6 +4582,31 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       const SizedBox(height: 16),
       ReelExportCard(project: project, preset: preset),
       const SizedBox(height: 12),
+      // Build 5 (v1.5.7): the retired Template & Studio screen's
+      // bottom button, renamed to what it is (a template FRAME /
+      // poster export, not the reel) and moved to the one export
+      // door (audit D3/D6).
+      SizedBox(
+        width: double.infinity,
+        child: OutlinedButton.icon(
+          key: const Key('templateFrameExportButton'),
+          onPressed: _frameExporting
+              ? null
+              : () => unawaited(_exportTemplateFrame()),
+          icon: _frameExporting
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.image_outlined, size: 18),
+          label: const FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text('Template frame (poster) save karein'),
+          ),
+        ),
+      ),
+      const SizedBox(height: 12),
       FilledButton.icon(
         key: const Key('seoButton'),
         onPressed: _openSeo,
@@ -3560,6 +4618,46 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         ),
       ),
     ]);
+  }
+
+  /// Template frame (poster) export (Build 5 absorption of the
+  /// retired screen's export): renders the current template
+  /// (final, breaking or classic) as a 720×1280 PNG frame from
+  /// the working preset and saves it to the gallery.
+  Future<void> _exportTemplateFrame() async {
+    final preset = _preset;
+    if (preset == null || _frameExporting) return;
+    setState(() => _frameExporting = true);
+    try {
+      await _saveNow();
+      final dir = await getApplicationDocumentsDirectory();
+      final kind = preset.templateKind;
+      final file = await renderLiveTemplateImage(
+        template: NewsTemplate(),
+        tickerPx: 0,
+        now: DateTime.now(),
+        dir: dir,
+        templateKind: kind == kTemplateBreaking
+            ? 'breaking'
+            : kind == kTemplateClassic
+                ? 'classic'
+                : 'final',
+        preset: preset,
+        breakingTemplate: kind == kTemplateBreaking
+            ? BreakingTemplate.fromPreset(preset)
+            : null,
+        tickerAtStart: true,
+        includeLogo: true,
+        fontReady: _fontReady,
+        includeIntroMarker: true,
+      );
+      await Gal.putImage(file.path);
+      _showMessage('Template frame gallery mein save ho gaya.');
+    } catch (e) {
+      _showMessage('Template frame save nahi hua: $e');
+    } finally {
+      if (mounted) setState(() => _frameExporting = false);
+    }
   }
 
   /// v1.5.1 (#51/#52): registers the user's uploaded fonts in

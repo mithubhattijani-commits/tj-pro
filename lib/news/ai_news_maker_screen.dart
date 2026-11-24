@@ -18,7 +18,7 @@
 ///       phase — the code comment on the step says so honestly.
 ///   7.  Graphics — template apply (nigraanFinal / breaking variant).
 ///   8.  Branding — preset logo/colours applied (from the channel
-///       preset; edit in Template & Studio).
+///       preset; edit in the News Maker's Template panel).
 ///   9.  Ticker — paste-to-run text (same contract as Phase 3).
 ///   10. Breaking — toggle → breaking template.
 ///   11. Timeline — project assembly (same project JSON as News Maker)
@@ -60,8 +60,9 @@ import 'channel_preset.dart';
 import 'karaoke_sync.dart';
 import 'news_analysis.dart';
 import 'news_maker_screen.dart';
+// Build 5 (v1.5.7): the template_studio_screen import is gone —
+// that screen is retired (see brandingEditButton below).
 import 'news_project.dart';
-import 'template_studio_screen.dart';
 import 'widgets/breaking_preview.dart';
 import 'widgets/clip_picker.dart';
 import 'widgets/studio_pickers.dart';
@@ -1136,14 +1137,20 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
               onPressed: () async {
                 await _saveNow();
                 if (!mounted) return;
+                // Build 5 (v1.5.7): Template & Studio is retired —
+                // its controls live in the News Maker's Template
+                // panel, so the edit opens the workspace.
                 await Navigator.of(context).push(
                   MaterialPageRoute(
-                    builder: (_) => const TemplateStudioScreen(),
+                    builder: (_) => NewsMakerScreen(
+                      initialPreset: _preset,
+                      initialProject: _project,
+                    ),
                   ),
                 );
                 await _reloadPreset();
               },
-              child: const Text('Template & Studio mein badlein'),
+              child: const Text('News Maker ke Template panel mein badlein'),
             ),
           ],
         );

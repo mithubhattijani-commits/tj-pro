@@ -290,14 +290,10 @@ class ToolRows {
           onTap: () => host.openTool('ease'),
         ),
       ),
-      (
-        'news',
-        _toolRowItem(
-          icon: Icons.newspaper,
-          label: 'News',
-          onTap: () => host.openTool('news'),
-        ),
-      ),
+      // Build 5 (v1.5.7, user ruling): NO News tool here — news
+      // ka kaam SIRF News Studio mein hota hai. The Video Editor's
+      // news template/text/logo panels are removed; their whole
+      // capability lives in the News Maker workspace.
     ];
   }
 
@@ -305,9 +301,7 @@ class ToolRows {
   /// (id, item) pairs — ONE list behind both the main row and the
   /// clip row (the clip row filters it), so a tool can never exist
   /// twice with two behaviours. Instant ops run immediately; the
-  /// rest open their panel. News is appended after Ease (33rd) so
-  /// the News template panel stays reachable — InShot's 32 keep
-  /// their exact order.
+  /// rest open their panel. InShot's 32 keep their exact order.
   /// One item of an InShot tool row: icon above a small label,
   /// 64 wide, in a horizontal swipeable line (mockups V1/V2).
   Widget _toolRowItem({

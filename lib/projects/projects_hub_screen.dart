@@ -17,8 +17,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
-import '../live/live_studio_screen.dart';
-import '../news/news_studio_screen.dart';
+import '../news/news_maker_screen.dart';
 import '../photo/photo_editor_screen.dart';
 import '../video/video_editor_screen.dart';
 import 'project_store.dart';
@@ -74,11 +73,14 @@ class _ProjectsHubScreenState extends State<ProjectsHubScreen> {
   /// project carries a media path, it is handed to the editors that
   /// accept one (v1.4.0): the photo editor loads it as the editing
   /// photo and the video editor loads it as the first timeline clip.
-  /// News Studio has no media parameter and opens as before.
+  /// News opens the workspace directly (Build 5, v1.5.7: the old
+  /// News Studio hub screen is retired; the Maker workspace is the
+  /// one News Studio home, and its project chooser is in its
+  /// project bar).
   Widget _editor({String? mediaPath}) {
     return switch (widget.kind) {
       'photo' => PhotoEditorScreen(initialImagePath: mediaPath),
-      'news' => const NewsStudioScreen(),
+      'news' => const NewsMakerScreen(),
       _ => VideoEditorScreen(initialVideoPath: mediaPath),
     };
   }
@@ -397,26 +399,9 @@ class _ProjectsHubScreenState extends State<ProjectsHubScreen> {
                 ),
               ),
             ),
-          if (widget.kind == 'news') ...<Widget>[
-            const SizedBox(height: 8),
-            Card(
-              child: ListTile(
-                leading: const Icon(Icons.live_tv),
-                title: const Text('Live Studio'),
-                subtitle:
-                    const Text('Facebook + YouTube par ek saath live'),
-                trailing: const Icon(Icons.arrow_forward_ios, size: 18),
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute<void>(
-                      builder: (_) => const LiveStudioScreen(),
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
+          // Build 5 (v1.5.7): the news hub's Live Studio card is
+          // REMOVED — Live Studio's only door is Home's Live
+          // Streaming banner (Join Now), per the user's ruling.
         ],
       ),
     );

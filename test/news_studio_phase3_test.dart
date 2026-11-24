@@ -1,58 +1,16 @@
 // Phase 3 unit + widget tests: the Nigraan final 3-ribbon template
 // renderer (ribbon-toggle reflow, content-kind defaults, ticker text
 // handling, includeLogo split), the chroma preset fields, the rotating
-// logo swing, and a widget smoke test for the Template & Studio
-// screen (paste ticker -> preview updates).
+// logo swing. (The Template & Studio widget smoke tests left
+// with that screen in Build 5 — see the note at the file's end.)
 
 import 'dart:io';
 
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:tj_pro/live/news_template.dart';
 import 'package:tj_pro/news/channel_preset.dart';
-import 'package:tj_pro/news/template_studio_screen.dart';
 import 'package:tj_pro/news/widgets/rotating_logo.dart';
-
-/// Clipboard mock: the test binding has no handler for the
-/// 'flutter/platform' clipboard methods, so an unmocked
-/// Clipboard.setData/getData would hang the test forever.
-String? _clipboardText;
-
-void _mockClipboard() {
-  TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-      .setMockMethodCallHandler(
-    SystemChannels.platform,
-    (MethodCall call) async {
-      switch (call.method) {
-        case 'Clipboard.setData':
-          final args = call.arguments as Map<dynamic, dynamic>?;
-          _clipboardText = args?['text'] as String?;
-          return null;
-        case 'Clipboard.getData':
-          final text = _clipboardText;
-          return text == null ? null : <String, dynamic>{'text': text};
-      }
-      return null;
-    },
-  );
-}
-
-/// Points path_provider at a plain path so the Template & Studio
-/// screen's stores load (fail-soft to defaults) in tests.
-void _mockPathProvider() {
-  TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-      .setMockMethodCallHandler(
-    const MethodChannel('plugins.flutter.io/path_provider'),
-    (MethodCall call) async {
-      if (call.method == 'getApplicationDocumentsDirectory') {
-        return '/tmp/tj_pro_phase3_test';
-      }
-      return null;
-    },
-  );
-}
 
 bool _isPng(List<int> bytes) =>
     bytes.length > 4 &&
@@ -376,141 +334,9 @@ void main() {
     });
   });
 
-  group('TemplateStudioScreen widget smoke test', () {
-    /// The screen's ListView Scrollable (vertical). TextFields each
-    /// build their own horizontal "editable" Scrollable, so a plain
-    /// find.byType(Scrollable) is ambiguous.
-    Finder listScrollable() => find.byWidgetPredicate(
-          (w) => w is Scrollable && w.axisDirection == AxisDirection.down,
-        );
-
-    /// Pumps the screen with an injected preset (the store load is
-    /// real file I/O, which the testWidgets fake-async zone cannot
-    /// advance — the screen's [initialPreset] seam skips it; the
-    /// store-load path itself is covered by the ChannelPresetStore
-    /// unit tests). No pumpAndSettle: the scrolling ticker +
-    /// rotating logo animations never settle by design.
-    Future<void> pumpStudio(WidgetTester tester) async {
-      _mockPathProvider();
-      _mockClipboard();
-      await tester.pumpWidget(
-        MaterialApp(
-          home: TemplateStudioScreen(
-            initialPreset: ChannelPreset.nigraanTv(),
-          ),
-        ),
-      );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
-    }
-
-    testWidgets('paste ticker -> preview strip updates immediately',
-        (tester) async {
-      await pumpStudio(tester);
-
-      expect(find.text('Template & Studio'), findsOneWidget);
-      expect(find.text('Final 3-Ribbon'), findsOneWidget);
-      // The ticker field sits below the fold in the test viewport —
-      // ListView builds lazily, so scroll it into view first.
-      await tester.scrollUntilVisible(
-        find.byKey(const Key('tickerField')),
-        200,
-        scrollable: listScrollable(),
-      );
-      await tester.pump();
-      expect(
-        find.byKey(const Key('tickerField')),
-        findsOneWidget,
-      );
-
-      // Typing in the ticker field updates the live strip at once.
-      await tester.enterText(
-        find.byKey(const Key('tickerField')),
-        'تازہ خبر',
-      );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
-      // Focusing the field animates the list so the field is on
-      // screen — let that scroll finish before tapping, or the tap
-      // lands while the button is still moving and misses.
-      await tester.pump(const Duration(milliseconds: 500));
-      await tester.pump(const Duration(milliseconds: 500));
-      expect(
-        find.descendant(
-          of: find.byKey(const Key('tickerStripPreview')),
-          matching: find.text('تازہ خبر'),
-        ),
-        findsOneWidget,
-      );
-
-      // Paste button fills the field from the clipboard and the
-      // preview follows.
-      await Clipboard.setData(
-        const ClipboardData(text: 'پیسٹ شدہ خبر'),
-      );
-      await tester.tap(find.byKey(const Key('pasteButton')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
-      expect(
-        find.descendant(
-          of: find.byKey(const Key('tickerStripPreview')),
-          matching: find.text('پیسٹ شدہ خبر'),
-        ),
-        findsOneWidget,
-      );
-    });
-
-    testWidgets('ribbon toggle hides its preview ribbon',
-        (tester) async {
-      await pumpStudio(tester);
-
-      expect(
-        find.byKey(const Key('preview-middle-ribbon')),
-        findsOneWidget,
-      );
-      await tester.scrollUntilVisible(
-        find.byKey(const Key('ribbonHeader-middle')),
-        200,
-        scrollable: listScrollable(),
-      );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 500));
-      final middleSwitch = find.descendant(
-        of: find.byKey(const Key('ribbonHeader-middle')),
-        matching: find.byType(Switch),
-      );
-      await tester.tap(middleSwitch);
-      await tester.pump();
-      expect(
-        find.byKey(const Key('preview-middle-ribbon')),
-        findsNothing,
-      );
-    });
-
-    testWidgets('tapping a ribbon header opens its settings panel',
-        (tester) async {
-      await pumpStudio(tester);
-
-      // Top panel is expanded by default; middle is collapsed.
-      await tester.scrollUntilVisible(
-        find.byKey(const Key('ribbonHeader-top')),
-        200,
-        scrollable: listScrollable(),
-      );
-      await tester.pump();
-      expect(find.byKey(const Key('ribbonText-top')), findsOneWidget);
-      expect(find.byKey(const Key('ribbonText-middle')), findsNothing);
-      await tester.scrollUntilVisible(
-        find.byKey(const Key('ribbonHeader-middle')),
-        200,
-        scrollable: listScrollable(),
-      );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 500));
-      final middleHeader = find.byKey(const Key('ribbonHeader-middle'));
-      await tester.tap(middleHeader);
-      await tester.pump();
-      expect(find.byKey(const Key('ribbonText-middle')), findsOneWidget);
-    });
-  });
+  // Build 5 (v1.5.7): the TemplateStudioScreen widget group was
+  // removed with the screen itself (approved removal — the screen
+  // is retired; its controls live in the News Maker's Template +
+  // Ribbons panels, covered by test/build5_regressions_test.dart
+  // and test/panel_overflow_test.dart).
 }

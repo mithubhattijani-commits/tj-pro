@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Deep blue sampled from the user's TJ Pro icon artwork
+         (its interior field colour) — the adaptive-icon background
+         and the splash window background. -->
+    <color name="ic_launcher_background">#021059</color>
+</resources>

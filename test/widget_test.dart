@@ -4,6 +4,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:tj_pro/main.dart';
 
@@ -22,6 +23,49 @@ void _mockPathProvider() {
       return null;
     },
   );
+  SharedPreferences.setMockInitialValues({});
+  // The workspace's voice recorder creates its platform object
+  // on init; unmocked it surfaces as a MissingPluginException
+  // once real async time passes.
+  TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+      .setMockMethodCallHandler(
+    const MethodChannel('com.llfbandit.record/messages'),
+    (MethodCall call) async => null,
+  );
+  // The Home banner ad is a platform view; in tests its async
+  // create call would otherwise surface as a MissingPluginException
+  // once real async time passes (runAsync below). A stub view id
+  // satisfies the framework (on a phone the ad SDK renders it).
+  TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+      .setMockMethodCallHandler(
+    const MethodChannel('flutter/platform_views'),
+    (MethodCall call) async {
+      if (call.method == 'create') return 1;
+      return null;
+    },
+  );
+}
+
+/// The workspace's production load path reads the stores with
+/// real dart:io, which only completes when the widget tree is
+/// created and driven inside runAsync (the pattern proven in
+/// build5_regressions_test.dart). [act] runs inside that real-
+/// time window (pump the app, tap the entry), then real time is
+/// given for the load to finish before asserting back in the
+/// fake-async zone.
+Future<void> _openWorkspaceInRealTime(
+  WidgetTester tester,
+  Future<void> Function() act,
+) async {
+  await tester.runAsync(() async {
+    await tester.pumpWidget(const PhotoVideoEditorApp());
+    await tester.pump();
+    await act();
+    await Future<void>.delayed(const Duration(milliseconds: 1200));
+    await tester.pump();
+  });
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 100));
 }
 
 void main() {
@@ -38,28 +82,62 @@ void main() {
     expect(find.text('PHOTO EDITOR'), findsOneWidget);
   });
 
-  testWidgets('News Studio circle opens the news projects hub',
+  testWidgets('News Studio card opens the workspace directly',
       (tester) async {
+    _mockPathProvider();
+    // Build 5 (v1.5.7, user ruling): the gold NEWS STUDIO card
+    // opens the News Maker WORKSPACE directly — the old route
+    // through the news projects hub / News Studio hub is retired.
+    // (The mic icon also appears in the Live Streaming banner —
+    // the card's is the first in the tree.)
+    await _openWorkspaceInRealTime(tester, () async {
+      expect(find.text('NEWS STUDIO'), findsWidgets);
+      final cardIcon = find.byIcon(Icons.mic).first;
+      await tester.ensureVisible(cardIcon);
+      await tester.pump();
+      await tester.tap(cardIcon);
+      await tester.pump();
+    });
+
+    expect(find.byKey(const Key('makerToolLine')), findsOneWidget);
+    expect(find.text('News Projects'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('bottom News Studio tab opens the same workspace',
+      (tester) async {
+    _mockPathProvider();
+    await _openWorkspaceInRealTime(tester, () async {
+      await tester.tap(find.text('News Studio').last);
+      await tester.pump();
+    });
+    expect(find.byKey(const Key('makerToolLine')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('hero is the Nigraan banner image; Join Now is the '
+      'Live door', (tester) async {
     _mockPathProvider();
     await tester.pumpWidget(const PhotoVideoEditorApp());
 
-    expect(find.text('NEWS STUDIO'), findsWidgets);
-    // v1.5.6 (Build 4): the entry is now the reference's gold
-    // NEWS STUDIO big card — tap its mic icon. The destination
-    // is unchanged: the news projects hub.
-    final cardIcon = find.byIcon(Icons.mic).first;
-    await tester.ensureVisible(cardIcon);
-    await tester.pump();
-    await tester.tap(cardIcon);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
-
-    // Navigation landed on the pushed News projects hub (its
-    // AppBar + back button) — the hub is where News Maker
-    // projects start from. (v1.5.6: the reference home's big
-    // NEWS STUDIO card is the entry, wired to the same hub the
-    // v1.5.2 circle opened.)
-    expect(find.text('News Projects'), findsOneWidget);
-    expect(find.byType(BackButton), findsOneWidget);
+    // Build 5 (v1.5.7): slide 1 is the user's banner artwork as
+    // an image asset (not a drawn slide, no Watch Live pill).
+    final hero = find.byKey(const Key('homeHeroBanner'));
+    expect(hero, findsOneWidget);
+    final image = tester.widget<Image>(
+      find.descendant(of: hero, matching: find.byType(Image)),
+    );
+    expect(
+      (image.image as AssetImage).assetName,
+      'assets/hero_nigraan_banner.jpg',
+    );
+    expect(find.text('Watch Live'), findsNothing);
+    // Live Studio's single Home door.
+    expect(find.byKey(const Key('homeJoinNowButton')), findsOneWidget);
+    // The Watch Ads small button is present (its tap runs the
+    // rewarded ad itself — not exercised here: the ad stack has
+    // no test implementation).
+    expect(find.text('Watch Ads'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }

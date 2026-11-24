@@ -30,7 +30,7 @@ import 'services/unity_ads_service.dart';
 import 'services/update_service.dart';
 
 import 'live/live_studio_screen.dart';
-import 'news/news_studio_screen.dart';
+import 'news/news_maker_screen.dart';
 import 'widgets/banner_ad_widget.dart';
 import 'widgets/help_whatsapp_button.dart';
 import 'widgets/update_ui.dart';
@@ -117,11 +117,18 @@ class _HomeScreenState extends State<HomeScreen> {
   /// config refresh.
   int _forceUpdateCheckedMin = -1;
 
-  /// Bottom-nav tab: 0 = Home, 1 = News Studio. The News Studio tab
-  /// and the News Studio entries both open [NewsStudioScreen] — one
-  /// entry point, so Phase 3/6 only extend that screen, never
-  /// re-route.
+  /// Bottom-nav tab: 0 = Home, 1 = News Studio, 2 = Earn. Build 5
+  /// (v1.5.7): the News Studio tab AND the Home NEWS STUDIO card
+  /// both open the News Maker WORKSPACE directly — the old News
+  /// Studio hub screen is retired, so there is exactly one News
+  /// Studio home and it is the workspace itself.
   int _tabIndex = 0;
+
+  /// Build 5 (v1.5.7): Home's Watch Ads button runs the rewarded
+  /// ad itself (decision: it must not merely open the Coins
+  /// screen) — this flag is its in-flight guard, mirroring the
+  /// Coins screen's own.
+  bool _homeAdBusy = false;
 
   /// Build 4 (Home reference): hero carousel state.
   final PageController _heroController = PageController();
@@ -248,6 +255,61 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  /// Build 5 (v1.5.7, user ruling): Home's Watch Ads button
+  /// performs the rewarded-ad action itself — the Coins screen's
+  /// own flow ([CoinService.watchRewardedAd]) with the outcome
+  /// reported here. It is NOT a door to the Coins screen; Coins
+  /// ka ghar is the bottom Earn tab only.
+  Future<void> _watchAdFromHome() async {
+    if (_homeAdBusy) return;
+    setState(() => _homeAdBusy = true);
+    final result = await CoinService.instance.watchRewardedAd();
+    if (!mounted) return;
+    setState(() => _homeAdBusy = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          result.ok
+              ? '+${result.coins} coins earned!'
+              : (result.error ??
+                  'Could not earn coins. Please try again.'),
+        ),
+      ),
+    );
+  }
+
+  /// Build 5 (v1.5.7): the What's New "New Features" tile — a
+  /// genuine what's-new list for this release (it previously
+  /// duplicated the Updates small button's update check).
+  void _showWhatsNew() {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("What's New — v1.5.7"),
+        content: const Text(
+          '• Naya TJ Pro icon aur Nigraan TV splash screen\n'
+          '• News Studio ab seedha professional workspace khulta '
+          'hai — saare tools aik hi screen par, koi hub nahi\n'
+          '• Template & Studio ke saare tools (PIP, Chroma, '
+          'Interview plate, Category, Intro/Outro) ab News Maker '
+          'ke Template panel mein hain\n'
+          '• Home ka bara banner Nigraan TV ka apna banner hai — '
+          'tap karne par nigraantv.xyz khulti hai\n'
+          '• Live Studio ka aik hi darwaza: Live Streaming banner '
+          'ka Join Now\n'
+          '• "Kuch ghalat ho gaya" banner bar bar aane ka masla '
+          'theek kar diya gaya',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// About tap: the old About card's text, as a dialog (the
   /// card itself was part of the de-grouped MORE list).
   void _showAbout() {
@@ -285,7 +347,7 @@ class _HomeScreenState extends State<HomeScreen> {
           const UpdateProgressBar(),
           Expanded(
             child: _tabIndex == 1 && AppConfig.newsStudioEnabled
-                ? const NewsStudioScreen()
+                ? const NewsMakerScreen()
                 : _tabIndex == 2 && AppConfig.newsStudioEnabled
                 ? const CoinsScreen()
                 : Container(
@@ -378,7 +440,10 @@ class _HomeScreenState extends State<HomeScreen> {
                                       Color(0xFFE65100),
                                     ],
                                     pillColor: const Color(0xFFFFB300),
-                                    onTap: () => _openHub('news'),
+                                    // Build 5 (v1.5.7): straight
+                                    // into the workspace — no hub.
+                                    onTap: () =>
+                                        _open(const NewsMakerScreen()),
                                   ),
                                 ),
                             ],
@@ -458,8 +523,11 @@ class _HomeScreenState extends State<HomeScreen> {
                                   ],
                                   title: 'New Features',
                                   subtitle: 'Explore More',
-                                  onTap: () =>
-                                      UpdateService.checkManually(context),
+                                  // Build 5 (v1.5.7): a genuine
+                                  // what's-new tile — it no longer
+                                  // duplicates the Updates button's
+                                  // update check (audit A14).
+                                  onTap: _showWhatsNew,
                                 ),
                                 const SizedBox(width: 10),
                                 _whatsNewTile(
@@ -470,7 +538,15 @@ class _HomeScreenState extends State<HomeScreen> {
                                   ],
                                   title: 'Gallery',
                                   subtitle: 'Premium Collection',
-                                  onTap: () => _open(const StoreScreen()),
+                                  // Build 5 (v1.5.7): the Store's
+                                  // Backgrounds gallery — "View
+                                  // All" above is the one all-store
+                                  // door (audit A15).
+                                  onTap: () => _open(
+                                    const StoreScreen(
+                                      initialCategory: 'Backgrounds',
+                                    ),
+                                  ),
                                 ),
                               ],
                             ),
@@ -493,9 +569,19 @@ class _HomeScreenState extends State<HomeScreen> {
                                         icon: Icons.card_giftcard,
                                         tint: const Color(0xFFE91E63),
                                         title: 'Watch Ads',
-                                        subtitle:
-                                            'Earn Coins • Balance: $balance',
-                                        onTap: () => _open(const CoinsScreen()),
+                                        subtitle: _homeAdBusy
+                                            ? 'Loading ad…'
+                                            : 'Earn Coins • Balance: $balance',
+                                        // Build 5 (v1.5.7, user
+                                        // ruling): the button RUNS
+                                        // the rewarded ad itself —
+                                        // Coins ka ghar is only the
+                                        // bottom Earn tab now.
+                                        onTap: _homeAdBusy
+                                            ? null
+                                            : () => unawaited(
+                                                  _watchAdFromHome(),
+                                                ),
                                       ),
                                 ),
                               ),
@@ -745,10 +831,12 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// Hero carousel: slide 1 = the News Studio banner (Watch Live
-  /// -> Live Studio); slide 2 (when a banner is booked/enabled) =
-  /// the remote ADMIN house-ad banner with its existing behaviour
-  /// (contain fit, never cropped; tap opens its link when set).
+  /// Hero carousel: slide 1 = the user's own Nigraan TV banner
+  /// IMAGE (Build 5, v1.5.7 — his artwork, not a drawn design;
+  /// tap opens the Nigraan TV website); slide 2 (when a banner
+  /// is booked/enabled) = the remote ADMIN house-ad banner with
+  /// its existing behaviour (contain fit, never cropped; tap
+  /// opens its link when set).
   Widget _heroCarousel() {
     return ValueListenableBuilder<RemoteConfig>(
       valueListenable: remoteConfigService.notifier,
@@ -801,166 +889,39 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// Slide 1 (Build 5, v1.5.7, user ruling): the user's OWN
+  /// Nigraan TV banner as an IMAGE — the artwork cropped from his
+  /// home reference, shown cover-fit exactly as sent. It is a
+  /// banner, not a button: no drawn replacement, no Watch Live
+  /// pill of our own (the artwork carries its own). The tap opens
+  /// his website, nigraantv.xyz — Live Studio's Home door is the
+  /// Live Streaming banner's Join Now, nowhere else.
   Widget _newsHeroSlide() {
     return Container(
+      key: const Key('homeHeroBanner'),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF0D1B4C), Color(0xFF123A7A), Color(0xFF0A1030)],
-        ),
         border: Border.all(color: const Color(0x33F5C542)),
       ),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: () => _open(const LiveStudioScreen()),
-        child: Stack(
-          children: [
-            Positioned(
-              right: -30,
-              top: -30,
-              child: Container(
-                width: 150,
-                height: 150,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.10),
-                    width: 14,
-                  ),
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        width: 52,
-                        height: 52,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: const Color(0xFF0A1030),
-                          border: Border.all(
-                            color: const Color(0xFFF5C542),
-                            width: 1.6,
-                          ),
-                        ),
-                        child: const Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(
-                              'نگران',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
-                                height: 1.0,
-                              ),
-                            ),
-                            Text(
-                              'TV',
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w900,
-                                color: Color(0xFFE53935),
-                                height: 1.0,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const Spacer(),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 9,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFD32F2F),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.circle, size: 7, color: Colors.white),
-                            SizedBox(width: 5),
-                            Text(
-                              'LIVE',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                                letterSpacing: 1,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const Spacer(),
-                  const Text(
-                    'GLOBAL & PAKISTAN',
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 1.6,
-                      color: Color(0xFFF5C542),
-                    ),
-                  ),
-                  const Text(
-                    'NEWS STUDIO',
-                    style: TextStyle(
-                      fontSize: 25,
-                      fontWeight: FontWeight.w900,
-                      color: Colors.white,
-                      height: 1.05,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFD32F2F),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.play_circle_fill,
-                          size: 15,
-                          color: Colors.white,
-                        ),
-                        SizedBox(width: 6),
-                        Text(
-                          'Watch Live',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        SizedBox(width: 4),
-                        Icon(Icons.double_arrow, size: 13, color: Colors.white),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+        onTap: _openWebsite,
+        child: Image.asset(
+          'assets/hero_nigraan_banner.jpg',
+          fit: BoxFit.cover,
+          width: double.infinity,
+          height: double.infinity,
         ),
       ),
     );
+  }
+
+  /// The hero banner's tap: nigraantv.xyz in the browser.
+  Future<void> _openWebsite() async {
+    final Uri uri = Uri.parse('https://nigraantv.xyz');
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
   }
 
   /// The admin house-ad banner as a carousel slide — the SAME
@@ -1091,8 +1052,11 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   /// Live Streaming banner (reference): LIVE badge, title,
-  /// Join Now pill, Facebook/YouTube Live chips — everything goes
-  /// to the existing Live Studio.
+  /// Join Now pill, Facebook/YouTube Live chips. Build 5
+  /// (v1.5.7, user ruling): Join Now is Live Studio's ONLY door
+  /// on Home — the banner body and the platform chips are
+  /// display-only now (they were three extra copies of the same
+  /// door on one card).
   Widget _liveBanner() {
     void openLive() => _open(const LiveStudioScreen());
     return Container(
@@ -1105,12 +1069,9 @@ class _HomeScreenState extends State<HomeScreen> {
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
       ),
-      child: InkWell(
-        onTap: openLive,
-        borderRadius: BorderRadius.circular(16),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Row(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
             children: [
               Expanded(
                 child: Column(
@@ -1164,35 +1125,40 @@ class _HomeScreenState extends State<HomeScreen> {
                       style: TextStyle(color: Colors.white70, fontSize: 11.5),
                     ),
                     const SizedBox(height: 9),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFD32F2F),
-                        borderRadius: BorderRadius.circular(18),
-                      ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.sensors, size: 14, color: Colors.white),
-                          SizedBox(width: 6),
-                          Text(
-                            'Join Now',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 12.5,
-                              fontWeight: FontWeight.bold,
+                    InkWell(
+                      key: const Key('homeJoinNowButton'),
+                      onTap: openLive,
+                      borderRadius: BorderRadius.circular(18),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFD32F2F),
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.sensors, size: 14, color: Colors.white),
+                            SizedBox(width: 6),
+                            Text(
+                              'Join Now',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
-                          ),
-                          SizedBox(width: 4),
-                          Icon(
-                            Icons.arrow_forward,
-                            size: 13,
-                            color: Colors.white,
-                          ),
-                        ],
+                            SizedBox(width: 4),
+                            Icon(
+                              Icons.arrow_forward,
+                              size: 13,
+                              color: Colors.white,
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ],
@@ -1211,23 +1177,21 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: const Icon(Icons.mic, color: Colors.white, size: 28),
                   ),
                   const SizedBox(height: 10),
-                  _liveChip(Icons.facebook, 'Facebook Live', openLive),
+                  _liveChip(Icons.facebook, 'Facebook Live'),
                   const SizedBox(height: 6),
-                  _liveChip(Icons.smart_display, 'YouTube Live', openLive),
+                  _liveChip(Icons.smart_display, 'YouTube Live'),
                 ],
               ),
             ],
           ),
         ),
-      ),
     );
   }
 
-  Widget _liveChip(IconData icon, String label, VoidCallback onTap) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(9),
-      child: Container(
+  /// One platform chip on the Live Streaming banner — display
+  /// only since Build 5 (Join Now is the banner's single door).
+  Widget _liveChip(IconData icon, String label) {
+    return Container(
         padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
         decoration: BoxDecoration(
           color: Colors.black.withValues(alpha: 0.35),
@@ -1245,7 +1209,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ],
         ),
-      ),
     );
   }
 
@@ -1343,7 +1306,9 @@ class _HomeScreenState extends State<HomeScreen> {
     required Color tint,
     required String title,
     required String subtitle,
-    required VoidCallback onTap,
+    // Nullable since Build 5: the Watch Ads button disables
+    // itself while its ad is in flight.
+    required VoidCallback? onTap,
   }) {
     return Container(
       decoration: BoxDecoration(

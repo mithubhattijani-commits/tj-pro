@@ -1,7 +1,7 @@
 name: tj_pro
 description: "TJ Pro — free offline photo and video editor for Android."
 publish_to: 'none'
-version: 1.5.6+20
+version: 1.5.7+21
 
 environment:
   sdk: ^3.13.7
@@ -72,6 +72,29 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  # Build 5 follow-up (v1.5.7): generates the native splash resources
+  # below (dev-only tool — nothing of it ships in the app).
+  flutter_native_splash: ^2.4.8
+
+# Build 5 follow-up (v1.5.7): the splash screen IS the user's own
+# Nigraan TV poster (assets/splash_poster.png — generation source
+# only; it is NOT listed under flutter.assets, so it is not bundled).
+# Android <=11: the poster fills the launch window (gravity fill)
+# over the poster's deep blue (#040F30, its dark-blue median).
+# Android 12+: the system splash shows the poster as the splash
+# image on the same deep blue. Regenerate after changing the poster:
+#   flutter pub run flutter_native_splash:create
+flutter_native_splash:
+  color: "#040F30"
+  image: assets/splash_poster.png
+  android_gravity: fill
+  fullscreen: true
+  android: true
+  ios: false
+  web: false
+  android_12:
+    image: assets/splash_poster.png
+    color: "#040F30"
 
 flutter:
   uses-material-design: true
@@ -82,6 +105,10 @@ flutter:
     - assets/luts/golden.cube
     - assets/luts/cool_night.cube
     - assets/jaani_ad_banner.jpg
+    # Build 5 (v1.5.7): the Home hero — the user's own Nigraan TV
+    # banner artwork, cropped from his home reference image; the
+    # hero shows THIS image (never a drawn replacement).
+    - assets/hero_nigraan_banner.jpg
     # News Studio (v1) assets — BUNDLED ONLY IF SMALL (user order
     # 20 Nov 2026: keep the app as small as possible).
     # - Chroma-key backgrounds (~318 KB total, 1280x960): bundled.

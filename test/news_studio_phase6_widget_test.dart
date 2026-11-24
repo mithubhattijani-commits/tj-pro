@@ -20,7 +20,6 @@ import 'package:tj_pro/news/breaking_templates.dart';
 import 'package:tj_pro/news/channel_preset.dart';
 import 'package:tj_pro/news/news_maker_screen.dart';
 import 'package:tj_pro/news/news_project.dart';
-import 'package:tj_pro/news/template_studio_screen.dart';
 import 'package:tj_pro/news/templates_library_screen.dart';
 import 'package:tj_pro/news/widgets/breaking_preview.dart';
 
@@ -351,52 +350,11 @@ void main() {
     });
   });
 
-  group('Template & Studio renders breaking + classic', () {
-    testWidgets('breaking preset shows the breaking preview + variants',
-        (tester) async {
-      await tester.pumpWidget(
-        MaterialApp(
-          home: TemplateStudioScreen(
-            initialPreset: ChannelPreset.nigraanTv()
-              ..templateKind = 'breaking'
-              ..breakingVariant = 'latestNews',
-          ),
-        ),
-      );
-      await _pumpFrames(tester);
-      expect(
-        find.byKey(const Key('templateStudioBreakingPreview')),
-        findsOneWidget,
-      );
-      // Variant chips sit below the preview — scroll to them first.
-      await _scrollTo(
-        tester,
-        const Key('templateStudioList'),
-        find.byKey(const Key('breakingVariant-latestNews')),
-      );
-      expect(
-        find.byKey(const Key('breakingVariant-latestNews')),
-        findsOneWidget,
-      );
-      expect(find.text('Templates Library →'), findsOneWidget);
-    });
-
-    testWidgets('classic preset shows the classic preview', (tester) async {
-      await tester.pumpWidget(
-        MaterialApp(
-          home: TemplateStudioScreen(
-            initialPreset: ChannelPreset.nigraanTv()
-              ..templateKind = 'classic',
-          ),
-        ),
-      );
-      await _pumpFrames(tester);
-      expect(
-        find.byKey(const Key('templateStudioClassicPreview')),
-        findsOneWidget,
-      );
-    });
-  });
+  // Build 5 (v1.5.7): the 'Template & Studio renders breaking +
+  // classic' group was removed with the retired screen (approved
+  // removal). The Maker stage renders the same breaking/classic
+  // previews by project kind — covered in
+  // test/build5_regressions_test.dart.
 
   group('News Maker template choice persists per project', () {
     testWidgets('breaking choice updates the project + preview',

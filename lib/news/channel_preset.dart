@@ -91,6 +91,13 @@ enum RibbonDirection {
 const String kFinalVariant3 = 'final3';
 const String kFinalVariantClassic2 = 'classic2';
 
+/// The three template-kind ids a preset/project can carry
+/// (Build 5: moved here from the retired Template & Studio
+/// screen, which used to define them).
+const String kTemplateFinal = 'nigraanFinal';
+const String kTemplateBreaking = 'breaking';
+const String kTemplateClassic = 'classic';
+
 /// Factory ribbon colours (the values a preset carried when the
 /// user had never customised them, up to v1.5.0). Kept as the
 /// classic2 design colours and as the migration keys for fix #40:

@@ -1,12 +1,18 @@
 /// Channel Branding screen (Phase 8, master prompt §9).
 ///
-/// The dedicated branding section: channel name, logo replace,
-/// brand colour, ribbon colours, social handles, watermark
-/// (toggle / position / size) and intro/outro defaults — for the
-/// selected channel preset. Every control is REAL: edits go into a
-/// working copy, "Save branding" persists it via
-/// [ChannelPresetStore], and the live preview at the top renders
-/// from the working copy, so a change is visible before saving.
+/// The dedicated branding section: channel name, brand colour,
+/// ribbon colours, social handles and watermark (toggle /
+/// position / size) — for the selected channel preset. Every
+/// control is REAL: edits go into a working copy, "Save branding"
+/// persists it via [ChannelPresetStore], and the live preview at
+/// the top renders from the working copy, so a change is visible
+/// before saving.
+///
+/// Build 5 (v1.5.7, duplicate audit D5): the Logo replace and
+/// Intro/Outro controls that used to sit here are GONE — each
+/// lives in exactly one home now: Logo in the News Maker's Logo
+/// panel, Intro/Outro in its Template panel. This screen keeps
+/// channel identity only (name, colours, handles, watermark).
 ///
 /// AUTO-APPLY: new projects render from their channel preset, so a
 /// saved branding change is what the next project's preview, template
@@ -20,7 +26,6 @@ library;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 
 import 'breaking_templates.dart';
 import 'channel_preset.dart';
@@ -63,7 +68,6 @@ class _ChannelBrandingScreenState extends State<ChannelBrandingScreen> {
   ChannelPreset? _working;
   bool _loaded = false;
 
-  final _picker = ImagePicker();
   final _nameController = TextEditingController();
   final _facebookController = TextEditingController();
   final _youtubeController = TextEditingController();
@@ -168,12 +172,6 @@ class _ChannelBrandingScreenState extends State<ChannelBrandingScreen> {
     });
   }
 
-  Future<void> _pickLogo() async {
-    final picked = await _picker.pickImage(source: ImageSource.gallery);
-    if (picked == null) return;
-    setState(() => _working?.logoPath = picked.path);
-  }
-
   @override
   Widget build(BuildContext context) {
     return Theme(
@@ -252,40 +250,6 @@ class _ChannelBrandingScreenState extends State<ChannelBrandingScreen> {
             border: OutlineInputBorder(),
           ),
           onChanged: (v) => setState(() => working.name = v),
-        ),
-        const SizedBox(height: 20),
-        const Text(
-          'Logo',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                working.logoPath == null
-                    ? 'Logo: default (3D rotate on)'
-                    : 'Logo: ${working.logoPath!.split('/').last} (3D rotate on)',
-                style: const TextStyle(color: Colors.grey),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            const SizedBox(width: 8),
-            OutlinedButton(
-              key: const Key('brandingLogoButton'),
-              onPressed: _pickLogo,
-              child: const Text('Logo badlein'),
-            ),
-            if (working.logoPath != null) ...[
-              const SizedBox(width: 8),
-              OutlinedButton(
-                key: const Key('brandingLogoClearButton'),
-                onPressed: () => setState(() => working.logoPath = null),
-                child: const Text('Default'),
-              ),
-            ],
-          ],
         ),
         const SizedBox(height: 20),
         const Text(
@@ -459,25 +423,6 @@ class _ChannelBrandingScreenState extends State<ChannelBrandingScreen> {
             ],
           ),
         ],
-        const SizedBox(height: 20),
-        const Text(
-          'Intro / Outro defaults',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-        ),
-        SwitchListTile(
-          key: const Key('brandingIntroSwitch'),
-          title: const Text('Intro (10s)'),
-          value: working.showIntro,
-          onChanged: (v) => setState(() => working.showIntro = v),
-          contentPadding: EdgeInsets.zero,
-        ),
-        SwitchListTile(
-          key: const Key('brandingOutroSwitch'),
-          title: const Text('Outro (3s end card)'),
-          value: working.showOutro,
-          onChanged: (v) => setState(() => working.showOutro = v),
-          contentPadding: EdgeInsets.zero,
-        ),
         const SizedBox(height: 16),
         SizedBox(
           width: double.infinity,

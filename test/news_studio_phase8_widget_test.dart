@@ -23,7 +23,6 @@ import 'package:tj_pro/news/category_templates.dart';
 import 'package:tj_pro/news/channel_branding_screen.dart';
 import 'package:tj_pro/news/channel_preset.dart';
 import 'package:tj_pro/news/news_project.dart';
-import 'package:tj_pro/news/template_studio_screen.dart';
 import 'package:tj_pro/news/templates_library_screen.dart';
 import 'package:tj_pro/news/widgets/nigraan_final_preview.dart';
 
@@ -425,30 +424,9 @@ void main() {
     });
   });
 
-  group('Channel Branding is reachable from Template & Studio', () {
-    testWidgets('branding button opens the branding screen',
-        (tester) async {
-      await tester.pumpWidget(
-        MaterialApp(
-          home: TemplateStudioScreen(
-            initialPreset: ChannelPreset.nigraanTv(),
-          ),
-        ),
-      );
-      await _pumpFrames(tester);
-      await _scrollTo(
-        tester,
-        const Key('templateStudioList'),
-        find.byKey(const Key('channelBrandingButton')),
-      );
-      await tester.tap(find.byKey(const Key('channelBrandingButton')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pump(const Duration(milliseconds: 100));
-      expect(find.text('Channel Branding'), findsWidgets);
-      expect(find.byKey(const Key('brandingNameField')), findsOneWidget);
-    });
-  });
+  // Build 5 (v1.5.7): 'Channel Branding is reachable from
+  // Template & Studio' was removed with the retired screen
+  // (approved removal). Branding is now reached from the News
+  // Maker project-bar menu — covered in
+  // test/build5_regressions_test.dart.
 }

@@ -134,6 +134,78 @@ void main() {
         await _openMakerTool(tester, id);
       }
     });
+
+    // Build 5 (v1.5.7, error-banner fix): the v1.5.6 phone bug —
+    // a repeating RenderFlex overflow in THIS workspace fired the
+    // CrashGuard banner on a loop. The old guard only covered an
+    // EMPTY project at textScale 1.0. This case uses a REAL
+    // project (tehreer + both tickers + a photo clip + voiceover
+    // duration) at textScale 1.3 on two phone sizes, and walks
+    // the Summary state (no tool open — the state the user's
+    // screenshots showed the banner in) plus every tool panel,
+    // Media and Export included.
+    Future<void> realProjectAt(WidgetTester tester, Size size) async {
+      final project = NewsProject.create()
+        ..tehreer = 'اسلام آباد: وزیراعظم نے نئے صوبوں کے قیام پر '
+            'کابینہ اجلاس طلب کر لیا، تمام جماعتوں سے مشاورت جاری ہے۔'
+        ..tickerText = 'تازہ ترین: ملک بھر میں موسم خشک، کراچی میں '
+            'گرمی کی شدت برقرار'
+        ..englishTickerText =
+            'Pakistan weather update: dry conditions across the '
+            'country, Karachi heat persists'
+        ..tickerLabel = 'BREAKING NEWS'
+        ..reporterName = 'Jaani Bhatti'
+        ..clipPaths = ['/tmp/tj_pro_overflow/pixel.png']
+        ..voiceoverDurationSec = 42.0;
+
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(
+              textScaler: const TextScaler.linear(1.3),
+            ),
+            child: child!,
+          ),
+          home: NewsMakerScreen(
+            initialPreset: ChannelPreset.nigraanTv(),
+            initialProject: project,
+          ),
+        ),
+      );
+      await _frames(tester);
+      _expectNoRenderError(
+        tester,
+        'News Maker Summary at $size textScale 1.3',
+      );
+      for (final id in tools) {
+        await _openMakerTool(tester, id);
+      }
+      // Close back to the Summary state and re-check it.
+      final done = find.byKey(const Key('makerPanelDone'));
+      if (done.evaluate().isNotEmpty) {
+        await tester.tap(done);
+        await _frames(tester);
+      }
+      _expectNoRenderError(
+        tester,
+        'News Maker Summary (return) at $size textScale 1.3',
+      );
+    }
+
+    testWidgets(
+        'real project at textScale 1.3 renders without overflow '
+        '(360x640)', (tester) async {
+      await realProjectAt(tester, const Size(360, 640));
+    });
+
+    testWidgets(
+        'real project at textScale 1.3 renders without overflow '
+        '(390x844)', (tester) async {
+      await realProjectAt(tester, const Size(390, 844));
+    });
   });
 
   group('Photo Editor — every panel at 360x640', () {
@@ -249,7 +321,9 @@ void main() {
       'Opacity',
       'Rotate',
       'Ease',
-      'News',
+      // Build 5 (v1.5.7, user decision 1): the 'News' tool was
+      // removed from the Video Editor — news work lives only in
+      // News Studio — so it is no longer in this sweep.
     ];
 
     testWidgets('tool panels render without overflow (no clips)',

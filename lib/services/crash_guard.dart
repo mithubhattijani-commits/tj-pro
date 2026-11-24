@@ -37,6 +37,51 @@ class CrashGuard {
 
   static bool _installed = false;
 
+  // --- Build 5 (v1.5.7): snackbar dedupe + throttle --------------
+  // v1.5.6 on the user's phone: ONE repeating error (a layout
+  // overflow refiring on every frame in the News Maker workspace)
+  // queued a 4-second banner per occurrence, so the "Kuch ghalat
+  // ho gaya" banner marched across every screen he opened for
+  // minutes. report() now (a) suppresses the SAME error signature
+  // inside a short window, (b) enforces a minimum gap between
+  // banners, and (c) REPLACES the visible banner instead of
+  // queueing another one behind it. Logging + [lastError] are
+  // NEVER throttled — only the user-facing banner is.
+
+  /// Same-signature suppression window.
+  static const Duration dedupeWindow = Duration(seconds: 10);
+
+  /// Minimum gap between two user-facing banners.
+  static const Duration snackbarMinGap = Duration(seconds: 4);
+
+  static final Map<String, DateTime> _signatureSeenAt =
+      <String, DateTime>{};
+  static DateTime? _lastSnackbarAt;
+
+  /// How many banners the throttle has suppressed (diagnostics +
+  /// tests — the errors themselves were still logged).
+  static int suppressedBanners = 0;
+
+  /// Clock seam for tests (production uses [DateTime.now]).
+  static DateTime Function() nowFn = DateTime.now;
+
+  /// Test seam: clears the dedupe/throttle state.
+  static void resetThrottleForTest() {
+    _signatureSeenAt.clear();
+    _lastSnackbarAt = null;
+    suppressedBanners = 0;
+    nowFn = DateTime.now;
+  }
+
+  /// The dedupe signature of one report: source + runtime type +
+  /// the message head (long stack-derived messages are cut so the
+  /// same repeating error maps to one signature).
+  static String signatureFor(Object error, String source) {
+    final message = error.toString();
+    final head = message.length > 120 ? message.substring(0, 120) : message;
+    return '$source|${error.runtimeType}|$head';
+  }
+
   /// Install the framework + platform error handlers and the safe
   /// error widget. Idempotent; call once from `main()` after the
   /// binding exists and before `runApp`.
@@ -76,21 +121,40 @@ class CrashGuard {
     debugPrintStack(stackTrace: stack, label: '[TJPro][$source]');
     lastError.value = message;
     final messenger = messengerKey.currentState;
-    if (messenger != null) {
-      try {
-        messenger.showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Kuch ghalat ho gaya — app chalti rahegi, dobara '
-              'koshish karke dekhein.',
-            ),
-            duration: Duration(seconds: 4),
+    if (messenger == null) return;
+    // Dedupe + throttle (see the Build 5 note above): a repeating
+    // error is logged every time but banners at most once per
+    // signature per window, never back-to-back, never queued.
+    final now = nowFn();
+    final signature = signatureFor(error, source);
+    final seenAt = _signatureSeenAt[signature];
+    if (seenAt != null && now.difference(seenAt) < dedupeWindow) {
+      suppressedBanners++;
+      return;
+    }
+    final lastShown = _lastSnackbarAt;
+    if (lastShown != null && now.difference(lastShown) < snackbarMinGap) {
+      suppressedBanners++;
+      return;
+    }
+    _signatureSeenAt[signature] = now;
+    _lastSnackbarAt = now;
+    try {
+      // Replace, never queue: a stale queued banner marching
+      // across later screens was the v1.5.6 symptom.
+      messenger.clearSnackBars();
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Kuch ghalat ho gaya — app chalti rahegi, dobara '
+            'koshish karke dekhein.',
           ),
-        );
-      } catch (_) {
-        // The messenger itself is gone (app shutting down) — the
-        // log above is the record; reporting must never throw.
-      }
+          duration: Duration(seconds: 4),
+        ),
+      );
+    } catch (_) {
+      // The messenger itself is gone (app shutting down) — the
+      // log above is the record; reporting must never throw.
     }
   }
 

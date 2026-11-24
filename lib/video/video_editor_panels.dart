@@ -28,11 +28,6 @@ import 'panels/legacy_filters_panel.dart';
 import 'panels/legacy_filters_row_panel.dart';
 import 'panels/legacy_grading_one_panel.dart';
 import 'panels/legacy_grading_panel.dart';
-import 'panels/legacy_live_panel.dart';
-import 'panels/legacy_news_logo_panel.dart';
-import 'panels/legacy_news_panel.dart';
-import 'panels/legacy_news_template_panel.dart';
-import 'panels/legacy_news_text_panel.dart';
 import 'panels/legacy_overlays_panel.dart';
 import 'panels/legacy_speed_panel.dart';
 import 'panels/legacy_stabilization_panel.dart';
@@ -120,12 +115,8 @@ import '../news/caption_translator_screen.dart';
           ('keyframes', 'Keyframes'),
           ('pip', 'PIP'),
         ];
-      case 'news':
-        return const [
-          ('template', 'Template'),
-          ('text', 'Text'),
-          ('logo', 'Logo'),
-        ];
+      // Build 5 (v1.5.7): no 'news' tool — the Video Editor's
+      // news panels are removed (news work lives in News Studio).
       default:
         return const [];
     }
@@ -191,12 +182,6 @@ import '../news/caption_translator_screen.dart';
         return Icons.picture_in_picture_alt;
       case ('overlay', 'background'):
         return Icons.wallpaper;
-      case ('news', 'template'):
-        return Icons.newspaper;
-      case ('news', 'text'):
-        return Icons.text_fields;
-      case ('news', 'logo'):
-        return Icons.image;
       default:
         return Icons.circle_outlined;
     }
@@ -394,15 +379,6 @@ class PanelTabRow extends StatelessWidget {
         return [EasePanel(host)];
       case 'transitions':
         return [TransitionsPanel(host)];
-      case 'news':
-        switch (currentTab(host)) {
-          case 'text':
-            return legacyPanelChildren(host, context, 'newsText');
-          case 'logo':
-            return legacyPanelChildren(host, context, 'newsLogo');
-          default:
-            return legacyPanelChildren(host, context, 'newsTemplate');
-        }
       default:
         return legacyPanelChildren(host, context, 'text');
     }
@@ -429,8 +405,10 @@ List<Widget> legacyPanelChildren(VideoEditorController host, BuildContext contex
       return LegacyTransitionsPanel(host).buildChildren(context);
     case 'overlays':
       return LegacyOverlaysPanel(host).buildChildren(context);
-    case 'news':
-      return LegacyNewsPanel(host).buildChildren(context);
+    // Build 5 (v1.5.7): the 'news' / 'newsTemplate' / 'newsText' /
+    // 'newsLogo' / 'live' legacy panels are DELETED with the News
+    // tool (user ruling: news work only in News Studio). Unknown
+    // keys land on the text panel, like the old default.
     case 'captions':
       return LegacyCaptionsPanel(host).buildChildren(context);
     case 'stabilization':
@@ -443,18 +421,10 @@ List<Widget> legacyPanelChildren(VideoEditorController host, BuildContext contex
       return LegacyBeatsPanel(host).buildChildren(context);
     case 'grading':
       return LegacyGradingPanel(host).buildChildren(context);
-    case 'live':
-      return LegacyLivePanel(host).buildChildren(context);
     case 'filtersRow':
       return LegacyFiltersRowPanel(host).buildChildren(context);
     case 'gradingOne':
       return LegacyGradingOnePanel(host).buildChildren(context);
-    case 'newsTemplate':
-      return LegacyNewsTemplatePanel(host).buildChildren(context);
-    case 'newsText':
-      return LegacyNewsTextPanel(host).buildChildren(context);
-    case 'newsLogo':
-      return LegacyNewsLogoPanel(host).buildChildren(context);
     case 'text':
     default:
       return LegacyTextPanel(host).buildChildren(context);

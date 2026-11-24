@@ -8,15 +8,16 @@
 /// Ribbons: the built-in design variants (Final colours, Classic
 /// colours — applied by resetting the preset's ribbon colours to
 /// the factory values the design resolver keys off), the deep
-/// editor (Template & Studio), and the Online Store's Ribbons
-/// category (Drive items appear there automatically).
+/// editor (the News Maker's Template panel — Build 5 absorbed
+/// the retired Template & Studio screen into it), and the Online
+/// Store's Ribbons category (Drive items appear there
+/// automatically).
 library;
 
 import 'package:flutter/material.dart';
 
 import '../channel_preset.dart';
 import '../store_screen.dart';
-import '../template_studio_screen.dart';
 import '../templates_library_screen.dart';
 
 /// What the user picked in the Templates sheet.
@@ -390,8 +391,8 @@ Future<RibbonPick?> showRibbonsPicker(
 /// design resolver keys off the factory colour values, so a design
 /// pick = factory colours + the design variant. A user's custom
 /// colours are replaced ONLY by this explicit design pick (the
-/// colour pickers in Template & Studio remain the way to customise
-/// afterwards).
+/// colour pickers in the Maker's Ribbons panel remain the way to
+/// customise afterwards).
 void applyRibbonDesign(ChannelPreset preset, {required bool final3}) {
   preset.finalVariant = final3 ? kFinalVariant3 : kFinalVariantClassic2;
   preset.topRibbon = preset.topRibbon.copyWith(color: kFactoryTopRibbonColor);
@@ -420,10 +421,14 @@ Future<bool> handleRibbonPick(
       await persistPreset();
       return true;
     case RibbonPick.studio:
-      await Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const TemplateStudioScreen()),
-      );
-      return true;
+      // Build 5 (v1.5.7): the deep ribbon editor is the News
+      // Maker's Template/Ribbons panels now — there is no
+      // separate screen to push. The Maker's own rail handler
+      // (_applyRibbonDesignPick) switches panels internally;
+      // this sheet path has no Maker to switch, so the pick is
+      // a no-op here (the sheet's only caller, the retired News
+      // Studio hub, is gone).
+      return false;
     case RibbonPick.store:
       await Navigator.of(context).push(
         MaterialPageRoute(
