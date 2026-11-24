@@ -645,25 +645,35 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   Future<void> _saveNow() async {
     final project = _project;
     if (project == null) return;
-    _syncTextControllers(project);
-    // Build 4 (News Studio workspace): the persisted state becomes
-    // an undo step (the state it replaced) for the project bar's
-    // undo/redo. Restores also save through here, flagged off.
-    final snap = jsonEncode(project.toJson());
-    if (!_restoringHistory && _lastSnap != null && snap != _lastSnap) {
-      _undoStack.add(_lastSnap!);
-      if (_undoStack.length > 50) _undoStack.removeAt(0);
-      _redoStack.clear();
+    // Build 6 (v1.5.8, error-banner audit): autosave fires from a
+    // bare Timer (500 ms after every edit) and via unawaited()
+    // menu calls, so a store failure here escaped as an unhandled
+    // async error — a banner while simply editing. Fail-soft: a
+    // failed autosave just leaves the previous "Saved" stamp; the
+    // next edit retries.
+    try {
+      _syncTextControllers(project);
+      // Build 4 (News Studio workspace): the persisted state becomes
+      // an undo step (the state it replaced) for the project bar's
+      // undo/redo. Restores also save through here, flagged off.
+      final snap = jsonEncode(project.toJson());
+      if (!_restoringHistory && _lastSnap != null && snap != _lastSnap) {
+        _undoStack.add(_lastSnap!);
+        if (_undoStack.length > 50) _undoStack.removeAt(0);
+        _redoStack.clear();
+      }
+      _lastSnap = snap;
+      await NewsProjectStore.save(project);
+      if (!mounted) return;
+      final now = DateTime.now();
+      setState(
+        () => _saveStatus =
+            'Saved • ${now.hour.toString().padLeft(2, '0')}:'
+            '${now.minute.toString().padLeft(2, '0')}',
+      );
+    } catch (_) {
+      // Autosave is background bookkeeping — never an error path.
     }
-    _lastSnap = snap;
-    await NewsProjectStore.save(project);
-    if (!mounted) return;
-    final now = DateTime.now();
-    setState(
-      () => _saveStatus =
-          'Saved • ${now.hour.toString().padLeft(2, '0')}:'
-          '${now.minute.toString().padLeft(2, '0')}',
-    );
   }
 
   /// v1.5.0 (#33): writes one element's override and autosaves.
@@ -4677,18 +4687,29 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       _warmFont(project.tickerFontId);
       _warmFont(project.reporterFontId);
     }
-    final styles =
-        await LibraryService.instance.listItems(LibraryConfig.textStyles);
-    final transitions =
-        await LibraryService.instance.listItems(LibraryConfig.transitions);
-    final effects =
-        await LibraryService.instance.listItems(LibraryConfig.effects);
-    if (!mounted) return;
-    setState(() {
-      _textStyles = styles;
-      _transitions = transitions;
-      _effects = effects;
-    });
+    // Build 6 (v1.5.8, error-banner audit): the Library listings
+    // read the Drive-backed store folders and can fail on a real
+    // device (no cache yet, I/O error). This method is called
+    // bare from initState, so an escape here became an unhandled
+    // async error — a CrashGuard banner source. Fail-soft: the
+    // pickers simply stay empty, like the font branch above.
+    try {
+      final styles =
+          await LibraryService.instance.listItems(LibraryConfig.textStyles);
+      final transitions =
+          await LibraryService.instance.listItems(LibraryConfig.transitions);
+      final effects =
+          await LibraryService.instance.listItems(LibraryConfig.effects);
+      if (!mounted) return;
+      setState(() {
+        _textStyles = styles;
+        _transitions = transitions;
+        _effects = effects;
+      });
+    } catch (_) {
+      // Library listings only feed the pickers — never an error
+      // path.
+    }
   }
 
   /// Triggers a google_fonts family load for [id] (its apply()

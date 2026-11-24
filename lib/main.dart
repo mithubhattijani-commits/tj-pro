@@ -4,6 +4,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import 'package:url_launcher/url_launcher.dart';
@@ -79,6 +80,92 @@ Future<void> main() async {
   );
 }
 
+/// Build 6 (v1.5.8) — in-app splash gate.
+///
+/// On the user's Android 12+ phone the system splash showed the
+/// poster SMALL and centred: the Android 12+ splash API only
+/// allows an icon-sized image, so full-bleed is impossible at OS
+/// level (the native splash config is unchanged — it still
+/// covers the cold-start frames). The user's intent is delivered
+/// one layer up instead: this gate is the app's first screen and
+/// shows the SAME poster full-screen (BoxFit.cover over the
+/// poster's own deep blue, #040F30 — the same colour the native
+/// splash uses, so the hand-off is seamless). It stays for
+/// [minShow] — or until the first frame is ready, whichever is
+/// LATER — and is hard-capped at [maxShow] so the app can never
+/// sit on the poster. It then swaps itself for Home in place
+/// (no route is pushed, so Back never returns here). No buttons,
+/// no tap needed, no extra branding text.
+class SplashGate extends StatefulWidget {
+  const SplashGate({super.key});
+
+  /// How long the poster stays at minimum.
+  static const Duration minShow = Duration(milliseconds: 1800);
+
+  /// Absolute cap — the poster never outlives this.
+  static const Duration maxShow = Duration(milliseconds: 2500);
+
+  @override
+  State<SplashGate> createState() => _SplashGateState();
+}
+
+class _SplashGateState extends State<SplashGate> {
+  bool _showHome = false;
+  bool _frameReady = false;
+  bool _minElapsed = false;
+  Timer? _minTimer;
+  Timer? _capTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _frameReady = true;
+      _maybeSwap();
+    });
+    _minTimer = Timer(SplashGate.minShow, () {
+      _minElapsed = true;
+      _maybeSwap();
+    });
+    _capTimer = Timer(SplashGate.maxShow, _swap);
+  }
+
+  /// Swap when BOTH the minimum time has passed AND the first
+  /// frame is ready (whichever finishes later); the cap timer
+  /// calls [_swap] directly at [SplashGate.maxShow].
+  void _maybeSwap() {
+    if (_frameReady && _minElapsed) _swap();
+  }
+
+  void _swap() {
+    if (!mounted || _showHome) return;
+    _minTimer?.cancel();
+    _capTimer?.cancel();
+    setState(() => _showHome = true);
+  }
+
+  @override
+  void dispose() {
+    _minTimer?.cancel();
+    _capTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_showHome) return const HomeScreen();
+    return const Scaffold(
+      backgroundColor: Color(0xFF040F30),
+      body: SizedBox.expand(
+        child: Image(
+          image: AssetImage('assets/splash_poster.png'),
+          fit: BoxFit.cover,
+        ),
+      ),
+    );
+  }
+}
+
 class PhotoVideoEditorApp extends StatelessWidget {
   const PhotoVideoEditorApp({super.key});
 
@@ -96,7 +183,9 @@ class PhotoVideoEditorApp extends StatelessWidget {
           brightness: Brightness.dark,
         ),
       ),
-      home: const HomeScreen(),
+      // Build 6 (v1.5.8): the app opens on the in-app splash
+      // gate (full-screen poster), which swaps itself for Home.
+      home: const SplashGate(),
     );
   }
 }
@@ -173,11 +262,20 @@ class _HomeScreenState extends State<HomeScreen> {
     // available but is NOT also called, or the user gets two dialogs.
     // When the force-update kill-switch is armed, the non-dismissible
     // force dialog handles the update instead of the normal prompt.
-    if (!_forceUpdateArmed()) {
-      final UpdateInfo? update = await UpdateService.fetchUpdate();
-      if (update != null && mounted) {
-        showUpdatePopupOnce(context, update);
+    // Build 6 (v1.5.8, error-banner audit): this flow runs
+    // unawaited from a post-frame callback. fetchUpdate() is
+    // fail-soft inside, but the popup call sat outside any
+    // guard — a popup-time failure became an unhandled async
+    // error on the Home screen. Fail-soft end to end.
+    try {
+      if (!_forceUpdateArmed()) {
+        final UpdateInfo? update = await UpdateService.fetchUpdate();
+        if (update != null && mounted) {
+          showUpdatePopupOnce(context, update);
+        }
       }
+    } catch (_) {
+      // The update prompt is a nicety — never an error path.
     }
   }
 
@@ -317,9 +415,62 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('About'),
-        content: const Text(
-          'TJ Pro by Nigraan TV — photo & video editor that works '
-          'fully offline on your phone. No account, no uploads.',
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'TJ Pro by Nigraan TV — photo & video editor that works '
+                'fully offline on your phone. No account, no uploads.',
+              ),
+              const SizedBox(height: 16),
+              // Build 6 (v1.5.8): persistent diagnostics — the
+              // last error CrashGuard recorded (message + first
+              // stack lines + timestamp), read back from
+              // SharedPreferences so a phone-only failure can be
+              // inspected instead of guessed at. Read-only; the
+              // Copy button puts it on the clipboard.
+              const Text(
+                'Diagnostics — aakhri khata',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 6),
+              FutureBuilder<String?>(
+                future: CrashGuard.loadStoredDiagnostic(),
+                builder: (context, snap) {
+                  if (snap.connectionState != ConnectionState.done) {
+                    return const Text('Load ho raha hai…');
+                  }
+                  final text = snap.data;
+                  if (text == null || text.isEmpty) {
+                    return const Text(
+                      'Abhi tak koi khata record nahi hui.',
+                    );
+                  }
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SelectableText(
+                        text,
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: () => Clipboard.setData(
+                            ClipboardData(text: text),
+                          ),
+                          icon: const Icon(Icons.copy, size: 14),
+                          label: const Text('Copy'),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(

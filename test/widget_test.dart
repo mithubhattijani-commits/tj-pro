@@ -60,6 +60,11 @@ Future<void> _openWorkspaceInRealTime(
   await tester.runAsync(() async {
     await tester.pumpWidget(const PhotoVideoEditorApp());
     await tester.pump();
+    // Build 6 (v1.5.8): the app now opens on the in-app splash
+    // gate (1.8 s of REAL time here) — wait it out before acting
+    // on Home.
+    await Future<void>.delayed(const Duration(milliseconds: 2000));
+    await tester.pump();
     await act();
     await Future<void>.delayed(const Duration(milliseconds: 1200));
     await tester.pump();
@@ -71,6 +76,9 @@ Future<void> _openWorkspaceInRealTime(
 void main() {
   testWidgets('Home shows TJ Pro with both editors', (tester) async {
     await tester.pumpWidget(const PhotoVideoEditorApp());
+    // Build 6 (v1.5.8): past the in-app splash gate (1.8 s).
+    await tester.pump(const Duration(milliseconds: 1900));
+    await tester.pump();
 
     expect(find.text('TJ Pro'), findsOneWidget);
     // v1.5.6 (Build 4, user reference home): the editors are
@@ -119,6 +127,9 @@ void main() {
       'Live door', (tester) async {
     _mockPathProvider();
     await tester.pumpWidget(const PhotoVideoEditorApp());
+    // Build 6 (v1.5.8): past the in-app splash gate (1.8 s).
+    await tester.pump(const Duration(milliseconds: 1900));
+    await tester.pump();
 
     // Build 5 (v1.5.7): slide 1 is the user's banner artwork as
     // an image asset (not a drawn slide, no Watch Live pill).

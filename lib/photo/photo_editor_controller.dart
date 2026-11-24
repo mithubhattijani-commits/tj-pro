@@ -1,0 +1,280 @@
+/// Photo Editor controller contract (Master Plan Phase 7).
+///
+/// The Photo Editor's panels, text zone, layer widgets and stage
+/// used to live inside `_PhotoEditorScreenState`, reading and
+/// writing its private members. Phase 7 splits those into real
+/// widgets in their own files (the Video Editor Phase 4 pattern);
+/// this contract is the ONE channel they use to reach the
+/// editor's state. Every member is a thin forward to the State's
+/// existing private field/method — same objects, same setState
+/// timing, same everything. Behaviour is unchanged by construction.
+library;
+
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:flutter/material.dart';
+
+import '../services/caption_styles.dart';
+import '../services/photo_pipeline.dart';
+import 'photo_models.dart';
+
+/// The surface of the Photo Editor State that the split-out
+/// widgets use. Implemented by `_PhotoEditorScreenState`; every
+/// member forwards to the State's private member of the same
+/// (underscored) name.
+abstract class PhotoEditorController {
+  /// The editor screen's own build context (the exact object the
+  /// pre-split code used for dialogs, sheets and lookups).
+  BuildContext get context;
+
+  /// Whether the editor State is still mounted.
+  bool get mounted;
+
+  /// `setState` under a split-friendly name: runs [fn] and
+  /// rebuilds, exactly like the State's own setState calls did.
+  void update(VoidCallback fn);
+
+  int get activeLayer;
+  set activeLayer(int value);
+  int get activeOverlay;
+  set activeOverlay(int value);
+  String? get activePhotoTool;
+  set activePhotoTool(String? value);
+  Future<void> addPipOverlay();
+  void addSticker(String glyph);
+  void addTextLayer();
+  String get adjSel;
+  set adjSel(String value);
+  Future<void> aiEnhanceHd();
+  Future<void> applyArtisticStyle(String packId, String label);
+  Future<void> applyCanvas();
+  Future<void> applyDoodle();
+  Future<void> applyEffect();
+  Future<void> applyEraser();
+  Future<void> applyExpand();
+  Future<void> applyFrame();
+  Future<void> applyHSL();
+  Future<void> applyMakeup();
+  Future<void> applyOutline();
+  Future<void> applyRemove();
+  Future<void> applyStraighten();
+  void applyStudioStyle(StudioCaptionStyle s, {bool label = false});
+  void applyTextTemplate(String key);
+  Future<void> autoEnhance();
+  Future<void> beautify();
+  Future<void> blurBackground();
+  double get brightness;
+  set brightness(double value);
+  double get brushSize;
+  set brushSize(double value);
+  bool get busy;
+  set busy(bool value);
+  (String, int, int) get canvasRatio;
+  set canvasRatio((String, int, int) value);
+  double get canvasZoom;
+  set canvasZoom(double value);
+  void closePanel();
+  Future<void> colorFix();
+  String get colourTab;
+  set colourTab(String value);
+  bool get comparing;
+  set comparing(bool value);
+  double get contrast;
+  set contrast(double value);
+  Future<void> crop();
+  String get cropPreset;
+  set cropPreset(String value);
+  StrokePath? get currentStroke;
+  set currentStroke(StrokePath? value);
+  String get curveChannel;
+  set curveChannel(String value);
+  Map<String, List<Offset>> get curvePoints;
+  void deleteActiveLayer();
+  Future<void> denoise();
+  double get denoiseAmount;
+  set denoiseAmount(double value);
+  Color get doodleColor;
+  set doodleColor(Color value);
+  void duplicateActiveLayer();
+  String? get effectSel;
+  set effectSel(String? value);
+  double get effectValue;
+  set effectValue(double value);
+  Future<void> enlarge();
+  String get expandFill;
+  set expandFill(String value);
+  (String, int, int) get expandRatio;
+  set expandRatio((String, int, int) value);
+  double get exposure;
+  set exposure(double value);
+  double get fade;
+  set fade(double value);
+  PhotoFilter get filter;
+  set filter(PhotoFilter value);
+  String get filterCategory;
+  set filterCategory(String value);
+  double get filterIntensity;
+  set filterIntensity(double value);
+  Map<PhotoFilter, Uint8List> get filterThumbs;
+  set filterThumbs(Map<PhotoFilter, Uint8List> value);
+  Future<void> flattenOnColor();
+  Future<void> flipHorizontal();
+  Future<void> flipVertical();
+  Color get frameColor;
+  set frameColor(Color value);
+  double get frameWidthPct;
+  set frameWidthPct(double value);
+  double get glowBlur;
+  set glowBlur(double value);
+  double get grain;
+  set grain(double value);
+  double get handleStartAngle;
+  set handleStartAngle(double value);
+  double get handleStartDist;
+  set handleStartDist(double value);
+  double get handleStartRot;
+  set handleStartRot(double value);
+  double get handleStartSize;
+  set handleStartSize(double value);
+  bool get hasTransparency;
+  set hasTransparency(bool value);
+  double get highlights;
+  set highlights(double value);
+  Future<void> hqCutout();
+  List<List<double>> get hslAdjustments;
+  set hslAdjustments(List<List<double>> value);
+  int get hslSelectedColor;
+  set hslSelectedColor(int value);
+  double get hueShift;
+  set hueShift(double value);
+  int get imgHeight;
+  set imgHeight(int value);
+  int get imgWidth;
+  set imgWidth(int value);
+  List<TextLayerData> get layers;
+  Future<void> lightFix();
+  void loadLayer(int index);
+  Map<String, Uint8List> get lutThumbs;
+  set lutThumbs(Map<String, Uint8List> value);
+  Color get makeupColor;
+  set makeupColor(Color value);
+  double get makeupIntensity;
+  set makeupIntensity(double value);
+  String get makeupMode;
+  set makeupMode(String value);
+  bool get maskErase;
+  set maskErase(bool value);
+  List<double> get matrix;
+  void openTool(String key);
+  File? get originalFile;
+  set originalFile(File? value);
+  Color get outlineColor;
+  set outlineColor(Color value);
+  double get outlineWidth;
+  set outlineWidth(double value);
+  List<OverlayData> get overlays;
+  void paintEnd();
+  String? get paintMode;
+  set paintMode(String? value);
+  void paintStart(Offset local, Size size);
+  void paintUpdate(Offset local, Size size);
+  Future<void> portraitBokeh();
+  Uint8List? get previewBytes;
+  set previewBytes(Uint8List? value);
+  String? get previewKey;
+  set previewKey(String? value);
+  GlobalKey get previewKey2;
+  Future<void> quickRatioCrop(String label, int rx, int ry);
+  Future<void> removeBackground();
+  Future<void> replaceBackgroundColor();
+  Future<void> replaceBackgroundImage();
+  Color get replaceBgColor;
+  set replaceBgColor(Color value);
+  void resetHSL();
+  Future<void> rotate(int quarterTurns);
+  double get saturation;
+  set saturation(double value);
+  void saveActiveLayer();
+  void schedulePixelPreview();
+  String get selectedLut;
+  set selectedLut(String value);
+  double get shadowBlur;
+  set shadowBlur(double value);
+  double get shadowDx;
+  set shadowDx(double value);
+  double get shadowDy;
+  set shadowDy(double value);
+  double get shadowOpacity;
+  set shadowOpacity(double value);
+  double get shadows;
+  set shadows(double value);
+  Future<void> sharpen();
+  double get sharpenAmount;
+  set sharpenAmount(double value);
+  double get sharpenDetail;
+  set sharpenDetail(double value);
+  double get straighten;
+  set straighten(double value);
+  List<StrokePath> get strokes;
+  String get styleTab;
+  set styleTab(String value);
+  double get temperature;
+  set temperature(double value);
+  String get text;
+  set text(String value);
+  TextAlign get textAlign;
+  set textAlign(TextAlign value);
+  bool get textBg;
+  set textBg(bool value);
+  Color get textBgColor;
+  set textBgColor(Color value);
+  bool get textBold;
+  set textBold(bool value);
+  double get textBoxWidth;
+  set textBoxWidth(double value);
+  Color get textColor;
+  set textColor(Color value);
+  TextEditingController get textCtrl;
+  FocusNode get textFocus;
+  String get textFont;
+  set textFont(String value);
+  bool get textGlow;
+  set textGlow(bool value);
+  Color get textGlowColor;
+  set textGlowColor(Color value);
+  bool get textItalic;
+  set textItalic(bool value);
+  double get textLetterSpacing;
+  set textLetterSpacing(double value);
+  double get textLineSpacing;
+  set textLineSpacing(double value);
+  Offset get textOffset;
+  set textOffset(Offset value);
+  double get textOpacity;
+  set textOpacity(double value);
+  bool get textOutline;
+  set textOutline(bool value);
+  Color get textOutlineColor;
+  set textOutlineColor(Color value);
+  double get textOutlineWidth;
+  set textOutlineWidth(double value);
+  double get textRotation;
+  set textRotation(double value);
+  bool get textShadow;
+  set textShadow(bool value);
+  Color get textShadowColor;
+  set textShadowColor(Color value);
+  double get textSize;
+  set textSize(double value);
+  String get textTab;
+  set textTab(String value);
+  double get tint;
+  set tint(double value);
+  double get vibrance;
+  set vibrance(double value);
+  double get vignette;
+  set vignette(double value);
+  File? get workingFile;
+  set workingFile(File? value);
+}

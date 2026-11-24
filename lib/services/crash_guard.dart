@@ -18,9 +18,11 @@
 ///   [errorWidgetBuilder] instead of the red error screen.
 library;
 
+import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class CrashGuard {
   CrashGuard._();
@@ -73,6 +75,104 @@ class CrashGuard {
     nowFn = DateTime.now;
   }
 
+  // --- Build 6 (v1.5.8): persistent diagnostics ----------------
+  // The v1.5.7 banner still fired on the user's phone but the
+  // exact exception existed only on his device (there is no
+  // crash backend), so the cause stayed a guess. From this build
+  // the funnel also PERSISTS the last error — message head, the
+  // first stack lines and a timestamp — to SharedPreferences,
+  // and the About dialog shows it ("Diagnostics — aakhri
+  // khata"), so the next occurrence names itself. Recording is
+  // NEVER throttled (only the banner is) and NEVER throws.
+
+  /// SharedPreferences key holding the last diagnostic text.
+  static const String diagnosticsPrefsKey = 'tjpro_last_error_v1';
+
+  /// How many stack lines the stored diagnostic keeps.
+  static const int diagnosticsStackLines = 8;
+
+  /// Hard cap on the stored text, so a pathological error can
+  /// never bloat the preferences file.
+  static const int diagnosticsMaxChars = 2000;
+
+  /// The most recent diagnostic text recorded by THIS session
+  /// (the About dialog reads [loadStoredDiagnostic] for the
+  /// persisted copy; this notifier is the in-memory mirror).
+  static final ValueNotifier<String?> lastDiagnostic =
+      ValueNotifier<String?>(null);
+
+  /// Storage seam for tests; production leaves this null and the
+  /// SharedPreferences writer below is used.
+  static Future<void> Function(String text)? diagnosticsWriter;
+
+  /// Formats one diagnostic record: timestamp + source, the
+  /// error message, then the first [diagnosticsStackLines] stack
+  /// lines — capped at [diagnosticsMaxChars].
+  static String formatDiagnostic(
+    Object error,
+    StackTrace stack,
+    String source,
+    DateTime when,
+  ) {
+    final buffer = StringBuffer()
+      ..writeln('[${when.toIso8601String()}] source: $source')
+      ..writeln(error.toString());
+    final stackLines = stack.toString().split('\n');
+    var written = 0;
+    for (final line in stackLines) {
+      if (written >= diagnosticsStackLines) break;
+      if (line.trim().isEmpty) continue;
+      buffer.writeln(line);
+      written++;
+    }
+    var text = buffer.toString().trimRight();
+    if (text.length > diagnosticsMaxChars) {
+      text = text.substring(0, diagnosticsMaxChars);
+    }
+    return text;
+  }
+
+  /// Records [error] as the persistent diagnostic. Fire-and-
+  /// forget by design: diagnostics must never become an error
+  /// path of their own.
+  static void _recordDiagnostic(
+    Object error,
+    StackTrace stack,
+    String source,
+  ) {
+    try {
+      final text = formatDiagnostic(error, stack, source, nowFn());
+      lastDiagnostic.value = text;
+      final writer = diagnosticsWriter;
+      if (writer != null) {
+        unawaited(writer(text).catchError((Object _) {}));
+        return;
+      }
+      unawaited(() async {
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString(diagnosticsPrefsKey, text);
+        } catch (_) {
+          // Storage unavailable — the in-memory copy above and
+          // the debug log remain the record.
+        }
+      }());
+    } catch (_) {
+      // Reporting must never throw (see report()).
+    }
+  }
+
+  /// The persisted diagnostic from a previous (or this) session,
+  /// or null when no error has ever been recorded.
+  static Future<String?> loadStoredDiagnostic() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString(diagnosticsPrefsKey);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// The dedupe signature of one report: source + runtime type +
   /// the message head (long stack-derived messages are cut so the
   /// same repeating error maps to one signature).
@@ -120,6 +220,9 @@ class CrashGuard {
     debugPrint('[TJPro][$source] $message');
     debugPrintStack(stackTrace: stack, label: '[TJPro][$source]');
     lastError.value = message;
+    // Build 6: persist the diagnostic BEFORE the banner throttle
+    // below — recording is never throttled, only the banner is.
+    _recordDiagnostic(error, stack, source);
     final messenger = messengerKey.currentState;
     if (messenger == null) return;
     // Dedupe + throttle (see the Build 5 note above): a repeating
