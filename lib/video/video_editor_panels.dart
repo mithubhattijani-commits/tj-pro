@@ -703,14 +703,42 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
 
   /// Speed › Curve: the Custom-ramp point editors (the preset rail
   /// itself lives in Standard, where the legacy body puts it).
+  /// The ramp preset rail — the SAME choices the Standard tab
+  /// offers (Build 3: the Curve tab carries its own copy of the
+  /// rail so a preset can be picked without leaving the tab; both
+  /// rails write the one [_proRamp] state).
+  List<Widget> _rampPresetRail() {
+    return [
+      const Text('Ramp preset'),
+      const SizedBox(height: 4),
+      _iconChoiceRail([
+        for (final e in const [
+          ('None', Icons.block),
+          ('slowMiddle', Icons.compress),
+          ('slowStart', Icons.trending_down),
+          ('slowEnd', Icons.trending_up),
+          ('pulse', Icons.show_chart),
+          ('Custom', Icons.tune),
+        ])
+          _iconChoiceItem(
+            icon: e.$2,
+            label: e.$1,
+            selected: _proRamp == e.$1,
+            onTap: () => setState(() => _proRamp = e.$1),
+          ),
+      ]),
+      const SizedBox(height: 4),
+    ];
+  }
+
   List<Widget> _speedCurveChildren() {
     if (_proRamp != 'Custom') {
       return [
         _sectionTitle('Speed curve'),
+        ..._rampPresetRail(),
         const Text(
-          'Curve editor ke liye pehle ramp preset "Custom" chunein '
-          '(Standard tab mein) — phir 3 points ki speed yahan set '
-          'hoti hai.',
+          'Curve editor ke liye ramp preset "Custom" chunein — '
+          'phir 3 points ki speed yahan set hoti hai.',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
         const SizedBox(height: 8),
@@ -728,7 +756,11 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
         const Divider(height: 32),
       ];
     }
-    return _customRampWidgets();
+    return [
+      _sectionTitle('Speed curve'),
+      ..._rampPresetRail(),
+      ..._customRampWidgets(),
+    ];
   }
 
   /// Voice Enhance panel: the enhance-voice op (AudioEnhanceService
@@ -870,12 +902,68 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
   /// active; otherwise a pointer to add one (our mask model is the
   /// PIP mask — main clips have no mask track).
   List<Widget> _maskPanelChildren() {
-    if (!_fxPip) {
-      return [
-        _sectionTitle('Mask'),
+    return [
+      // Build 3 (Phase 3): the mask now applies to the MAIN clip
+      // too — same shape set, feather slider and invert toggle as
+      // the PIP mask, driven by the same mask-PNG renderer.
+      _sectionTitle('Mask — main clip'),
+      const Text('Mask shape'),
+      const SizedBox(height: 4),
+      _iconChoiceRail([
+        for (final e in const [
+          ('none', 'None', Icons.block),
+          ('circle', 'Circle', Icons.circle_outlined),
+          ('rect', 'Rectangle', Icons.crop_square),
+          ('roundrect', 'Rounded', Icons.rounded_corner),
+          ('heart', 'Heart', Icons.favorite),
+          ('star', 'Star', Icons.star),
+          ('linear', 'Linear', Icons.gradient),
+          ('radial', 'Radial', Icons.radio_button_checked),
+        ])
+          _iconChoiceItem(
+            icon: e.$3,
+            label: e.$2,
+            selected: _mainMask == e.$1,
+            onTap: () => setState(() => _mainMask = e.$1),
+          ),
+      ]),
+      if (_mainMask != 'none') ...[
+        _ProSlider(
+          label: 'Mask feather (kinara soft)',
+          value: _mainMaskFeather,
+          min: 0,
+          max: 1,
+          divisions: 20,
+          onChanged: (v) => setState(() => _mainMaskFeather = v),
+        ),
+        Row(
+          children: [
+            const Text('Mask invert'),
+            const SizedBox(width: 10),
+            _iconChoiceItem(
+              icon: Icons.invert_colors,
+              label: 'Invert',
+              selected: _mainMaskInvert,
+              onTap: () =>
+                  setState(() => _mainMaskInvert = !_mainMaskInvert),
+            ),
+          ],
+        ),
         const Text(
-          'Mask PIP element par lagta hai. Pehle PIP add karein — '
-          'phir yahan us ki mask shape / feather / invert milega.',
+          'Mask main video par lagta hai — mask se bahar ka hissa '
+          'kala (stage ka rang) ho jata hai. Title aur PIP is ke '
+          'upar rehte hain. Preview mein live dikhta hai.',
+          style: TextStyle(color: Colors.grey, fontSize: 12),
+        ),
+      ],
+      const Divider(height: 32),
+      // The long-standing PIP mask section, unchanged.
+      if (!_fxPip) ...[
+        _sectionTitle('Mask — PIP element'),
+        const Text(
+          'Mask PIP element par bhi lagta hai. Pehle PIP add '
+          'karein — phir yahan us ki mask shape / feather / invert '
+          'milega.',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
         const SizedBox(height: 8),
@@ -888,9 +976,9 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
           ),
         ),
         const Divider(height: 32),
-      ];
-    }
-    return _pipMaskChildren();
+      ] else
+        ..._pipMaskChildren(),
+    ];
   }
 
   /// Opacity panel: PIP element → its opacity + blend (the PIP
@@ -1314,8 +1402,25 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
   }
 
   /// Edit › Speed extras for the Custom ramp (§6.10): three point
-  /// speeds + the curve graph.
+  /// speeds + the curve graph. Build 3 (Phase 3): the graph's
+  /// points are DRAGGABLE — drag a plateau up/down to set its
+  /// speed (the sliders stay, bound to the same values) — and
+  /// every change drives the preview's playback rate to the
+  /// point being edited, so the speed is felt live.
   List<Widget> _customRampWidgets() {
+    void setPoint(int third, double v) {
+      setState(() {
+        if (third == 0) {
+          _rampStart = v;
+        } else if (third == 1) {
+          _rampMid = v;
+        } else {
+          _rampEnd = v;
+        }
+      });
+      _applyPreviewSpeed(v);
+    }
+
     return [
       _sectionTitle('Custom ramp — 3 points'),
       _ProSlider(
@@ -1324,7 +1429,7 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
         min: 0.25,
         max: 2,
         divisions: 35,
-        onChanged: (v) => setState(() => _rampStart = v),
+        onChanged: (v) => setPoint(0, v),
       ),
       _ProSlider(
         label: 'Middle speed',
@@ -1332,7 +1437,7 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
         min: 0.25,
         max: 2,
         divisions: 35,
-        onChanged: (v) => setState(() => _rampMid = v),
+        onChanged: (v) => setPoint(1, v),
       ),
       _ProSlider(
         label: 'End speed',
@@ -1340,23 +1445,40 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
         min: 0.25,
         max: 2,
         divisions: 35,
-        onChanged: (v) => setState(() => _rampEnd = v),
+        onChanged: (v) => setPoint(2, v),
       ),
       Container(
-        height: 64,
+        height: 72,
         margin: const EdgeInsets.symmetric(vertical: 4),
         decoration: BoxDecoration(
           color: const Color(0xFF1B1B1B),
           borderRadius: BorderRadius.circular(8),
         ),
-        child: CustomPaint(
-          painter: _RampCurvePainter(_rampStart, _rampMid, _rampEnd),
-          child: const SizedBox.expand(),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final size = constraints.biggest;
+            void drag(Offset pos) {
+              final third = SpeedRampMath.thirdForX(pos.dx, size.width);
+              setPoint(third, SpeedRampMath.speedForY(pos.dy, size.height));
+            }
+
+            return GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onPanStart: (d) => drag(d.localPosition),
+              onPanUpdate: (d) => drag(d.localPosition),
+              child: CustomPaint(
+                painter: _RampCurvePainter(_rampStart, _rampMid, _rampEnd),
+                child: const SizedBox.expand(),
+              ),
+            );
+          },
         ),
       ),
       const Text(
         'Curve: pehla third Start speed, darmiyan Middle, aakhri '
-        'third End speed par chalega.',
+        'third End speed par chalega. Graph par point ko ungli se '
+        'upar/neeche kheench kar bhi speed set hoti hai — preview '
+        'usi speed par chalta hai.',
         style: TextStyle(color: Colors.grey, fontSize: 12),
       ),
       const Divider(height: 32),
@@ -1490,6 +1612,131 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
         const SizedBox(height: 8),
       ],
       if (_kfPage == 0) ...startSliders else ...endSliders,
+      ..._pipKeyframeWidgets(),
+    ];
+  }
+
+  /// Build 3 (Phase 3): the PIP layer's keyframes — a second
+  /// two-keyframe track (position + opacity, the v1 scope for
+  /// video layers) edited beside the title/sticker track in the
+  /// Animation panel, with its own Start/End page ([_pkPage]) and
+  /// easing ([_pkEasing]). The export runs [keyframedPipFilter];
+  /// the stage preview interpolates with [keyframePoseAt] — the
+  /// same lerp on both sides.
+  List<Widget> _pipKeyframeWidgets() {
+    if (!_fxPip) {
+      return [
+        const Divider(height: 32),
+        _sectionTitle('PIP keyframes'),
+        const Text(
+          'PIP keyframes ke liye pehle PIP add karein — phir inset '
+          'ki position / opacity yahan start se end tak animate '
+          'hogi.',
+          style: TextStyle(color: Colors.grey, fontSize: 12),
+        ),
+      ];
+    }
+    return [
+      const Divider(height: 32),
+      _sectionTitle('PIP keyframes'),
+      SwitchListTile(
+        title: const Text('PIP keyframes (position + opacity)'),
+        subtitle: const Text(
+          'Inset start pose se end pose tak move / fade hoga — '
+          'poori video ki lambai par.',
+        ),
+        value: _pipKeyframes,
+        onChanged: (v) => setState(() => _pipKeyframes = v),
+      ),
+      if (_pipKeyframes) ...[
+        const Text(
+          'Motion easing',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 6),
+        _iconChoiceRail([
+          for (final e in KeyframeEasing.values)
+            _iconChoiceItem(
+              icon: switch (e) {
+                KeyframeEasing.linear => Icons.trending_flat,
+                KeyframeEasing.easeIn => Icons.trending_up,
+                KeyframeEasing.easeOut => Icons.trending_down,
+                KeyframeEasing.easeInOut => Icons.show_chart,
+              },
+              label: keyframeEasingLabel(e).split(' (').first,
+              selected: _pkEasing == e,
+              onTap: () => setState(() => _pkEasing = e),
+            ),
+        ]),
+        const SizedBox(height: 4),
+        SegmentedButton<int>(
+          segments: const [
+            ButtonSegment(value: 0, label: Text('Start keyframe')),
+            ButtonSegment(value: 1, label: Text('End keyframe')),
+          ],
+          selected: {_pkPage},
+          onSelectionChanged: (v) => setState(() => _pkPage = v.first),
+        ),
+        const SizedBox(height: 8),
+        if (_pkPage == 0) ...[
+          _ProSlider(
+            label: 'Start X',
+            value: _pkStartX,
+            min: 0,
+            max: 1,
+            divisions: 20,
+            onChanged: (v) => setState(() => _pkStartX = v),
+          ),
+          _ProSlider(
+            label: 'Start Y',
+            value: _pkStartY,
+            min: 0,
+            max: 1,
+            divisions: 20,
+            onChanged: (v) => setState(() => _pkStartY = v),
+          ),
+          _ProSlider(
+            label: 'Start opacity',
+            value: _pkStartOpacity,
+            min: 0,
+            max: 1,
+            divisions: 20,
+            onChanged: (v) => setState(() => _pkStartOpacity = v),
+          ),
+        ] else ...[
+          _ProSlider(
+            label: 'End X',
+            value: _pkEndX,
+            min: 0,
+            max: 1,
+            divisions: 20,
+            onChanged: (v) => setState(() => _pkEndX = v),
+          ),
+          _ProSlider(
+            label: 'End Y',
+            value: _pkEndY,
+            min: 0,
+            max: 1,
+            divisions: 20,
+            onChanged: (v) => setState(() => _pkEndY = v),
+          ),
+          _ProSlider(
+            label: 'End opacity',
+            value: _pkEndOpacity,
+            min: 0,
+            max: 1,
+            divisions: 20,
+            onChanged: (v) => setState(() => _pkEndOpacity = v),
+          ),
+        ],
+        const Text(
+          'Keyframes on hon to static PIP opacity ki jagah track '
+          'ki opacity lagti hai. Blend mode ke sath keyframes nahi '
+          'chalte — static PIP lagega. Timeline ki Keyframes lane '
+          'mein ◆ points dikhte hain.',
+          style: TextStyle(color: Colors.grey, fontSize: 12),
+        ),
+      ],
     ];
   }
 
@@ -2103,6 +2350,70 @@ extension _VideoEditorPanels on _VideoEditorScreenState {
             ),
           ),
           ),
+          // Build 3 (Phase 3): the Keyframes lane — ◆ points at
+          // each active track's keyframe times (gold = title /
+          // sticker track, cyan = PIP track; both tracks span the
+          // whole timeline in v1, so the points sit at the two
+          // ends, top row = title, bottom row = PIP). Shown only
+          // while a keyframe track is on; tapping opens the
+          // Animation panel.
+          if ((_proKeyframes &&
+                  (_proTitle.trim().isNotEmpty ||
+                      _proSticker.trim().isNotEmpty)) ||
+              (_pipKeyframes && _fxPip)) ...[
+            const SizedBox(height: 4),
+            _laneRow(
+              laneKey: 'keyframes',
+              icon: Icons.animation,
+              label: 'Keys',
+              child: InkWell(
+                onTap: () => _openToolTab('overlay', 'keyframes'),
+                child: Container(
+                  height: 22,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF222222),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: LayoutBuilder(
+                    builder: (context, c) {
+                      Widget diamond(double frac, double top, Color color) =>
+                          Positioned(
+                            left: (frac * c.maxWidth).clamp(
+                              0.0,
+                              c.maxWidth - 10,
+                            ),
+                            top: top,
+                            child: Transform.rotate(
+                              angle: 0.7853981633974483,
+                              child: Container(
+                                width: 9,
+                                height: 9,
+                                color: color,
+                              ),
+                            ),
+                          );
+                      final titleTrack = _proKeyframes &&
+                          (_proTitle.trim().isNotEmpty ||
+                              _proSticker.trim().isNotEmpty);
+                      final pipTrack = _pipKeyframes && _fxPip;
+                      return Stack(
+                        children: [
+                          if (titleTrack) ...[
+                            diamond(0, 2, TjProTheme.gold),
+                            diamond(1, 2, TjProTheme.gold),
+                          ],
+                          if (pipTrack) ...[
+                            diamond(0, 11, Colors.cyanAccent),
+                            diamond(1, 11, Colors.cyanAccent),
+                          ],
+                        ],
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 4),
           // Times row — current centred, total right, both from
           // the ONE clock/model (#5).
@@ -3197,7 +3508,12 @@ TextField(
                 icon: e.$2,
                 label: '${e.$1}x',
                 selected: _speed == e.$1,
-                onTap: () => setState(() => _speed = e.$1),
+                // Build 3: the preview plays at the picked speed
+                // immediately (live preview, point 19).
+                onTap: () {
+                  setState(() => _speed = e.$1);
+                  _applyPreviewSpeed(e.$1);
+                },
               ),
           ]),
 // Speed ramp.
@@ -4806,7 +5122,10 @@ const Text('Auto Captions (CapCut-style)',
 }
 
 /// §6.10 — the custom speed-ramp curve: three plateaus (start /
-/// middle / end thirds) drawn as a step graph.
+/// middle / end thirds) drawn as a step graph. Build 3: each
+/// plateau carries a drag HANDLE at its centre (the geometry is
+/// [SpeedRampMath], shared with the panel's drag handler, so the
+/// point under the finger is the point that moves).
 class _RampCurvePainter extends CustomPainter {
   const _RampCurvePainter(this.start, this.mid, this.end);
 
@@ -4824,8 +5143,7 @@ class _RampCurvePainter extends CustomPainter {
       Offset(size.width, size.height - 4),
       axis,
     );
-    double y(double speed) =>
-        size.height - 4 - (speed.clamp(0.25, 2) / 2) * (size.height - 10);
+    double y(double speed) => SpeedRampMath.yForSpeed(speed, size.height);
     final path = Path()
       ..moveTo(0, y(start))
       ..lineTo(size.width / 3, y(start))
@@ -4840,6 +5158,21 @@ class _RampCurvePainter extends CustomPainter {
         ..strokeWidth = 2
         ..style = PaintingStyle.stroke,
     );
+    // Drag handles: one per plateau, at its centre.
+    final speeds = [start, mid, end];
+    for (var i = 0; i < 3; i++) {
+      final c = Offset(SpeedRampMath.centreX(i, size.width), y(speeds[i]));
+      canvas.drawCircle(c, 7, Paint()..color = TjProTheme.gold);
+      canvas.drawCircle(
+        c,
+        7,
+        Paint()
+          ..color = Colors.black54
+          ..strokeWidth = 1.5
+          ..style = PaintingStyle.stroke,
+      );
+      canvas.drawCircle(c, 2.5, Paint()..color = Colors.black87);
+    }
   }
 
   @override

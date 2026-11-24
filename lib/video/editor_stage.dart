@@ -286,3 +286,46 @@ class StageGridPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
+
+/// Build 3 (Phase 3): the Custom speed-ramp graph's geometry — ONE
+/// mapping shared by the curve painter (which draws the three
+/// plateaus + drag handles) and the panel's drag handler (which
+/// turns a finger position back into a point speed), so the point
+/// the user grabs is exactly the point that moves. The ramp model
+/// is three plateaus (start / middle / end thirds) with speeds in
+/// [minSpeed]..[maxSpeed] — the same range the point sliders use.
+class SpeedRampMath {
+  SpeedRampMath._();
+
+  static const double minSpeed = 0.25;
+  static const double maxSpeed = 2.0;
+
+  /// The graph's plot area: a 4 px baseline inset at the bottom
+  /// and 6 px of headroom at the top (the painter's long-standing
+  /// margins).
+  static double yForSpeed(double speed, double height) {
+    final s = speed.clamp(minSpeed, maxSpeed);
+    return height - 4 - (s / maxSpeed) * (height - 10);
+  }
+
+  /// Inverse of [yForSpeed]: the speed a drag at vertical position
+  /// [y] (in a graph of [height]) sets, clamped to the point range.
+  static double speedForY(double y, double height) {
+    if (height <= 10) return 1.0;
+    final v = (height - 4 - y) / (height - 10) * maxSpeed;
+    return v.clamp(minSpeed, maxSpeed);
+  }
+
+  /// Which plateau a horizontal position falls in: 0 = start
+  /// third, 1 = middle third, 2 = end third.
+  static int thirdForX(double x, double width) {
+    if (width <= 0) return 0;
+    final t = (x / width * 3).floor();
+    return t.clamp(0, 2);
+  }
+
+  /// The horizontal centre of plateau [third] — where its drag
+  /// handle is drawn.
+  static double centreX(int third, double width) =>
+      width * (third + 0.5) / 3;
+}

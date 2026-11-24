@@ -331,6 +331,11 @@ class FfmpegService {
     double filterIntensity = 1,
     String canvasFill = 'none',
     String fillColor = 'black',
+    // Build 3 (Phase 3): the export frame rate (24/30/60). Null —
+    // every pre-Build-3 caller — leaves the graph byte-identical
+    // (the source rate flows through); a value appends `fps=<n>`
+    // just before the final format conversion.
+    int? fps,
   }) {
     final parts = <String>[];
     if (speed != 1.0) parts.add('setpts=PTS/$speed');
@@ -361,6 +366,7 @@ class FfmpegService {
     if (extraVideoFilter != null && extraVideoFilter.isNotEmpty) {
       parts.add(extraVideoFilter);
     }
+    if (fps != null) parts.add('fps=$fps');
     parts.add('format=yuv420p');
     return parts.join(',');
   }
@@ -388,6 +394,8 @@ class FfmpegService {
     double filterIntensity = 1,
     String canvasFill = 'none',
     String fillColor = 'black',
+    // Build 3: see [finalFilterGraph]'s fps.
+    int? fps,
   }) {
     final graph = finalFilterGraph(
       speed: speed,
@@ -403,6 +411,7 @@ class FfmpegService {
       filterIntensity: filterIntensity,
       canvasFill: canvasFill,
       fillColor: fillColor,
+      fps: fps,
     );
     final buf = StringBuffer();
     buf.write('-y -ss $trimStart -to $trimEnd -i ${q(input)} ');
@@ -673,6 +682,8 @@ class FfmpegService {
     double filterIntensity = 1,
     String canvasFill = 'none',
     String fillColor = 'black',
+    // Build 3: see [finalFilterGraph]'s fps.
+    int? fps,
   }) {
     final graph = finalFilterGraph(
       speed: speed,
@@ -688,6 +699,7 @@ class FfmpegService {
       filterIntensity: filterIntensity,
       canvasFill: canvasFill,
       fillColor: fillColor,
+      fps: fps,
     );
     final buf = StringBuffer();
     buf.write('-y -i ${q(input)} ');

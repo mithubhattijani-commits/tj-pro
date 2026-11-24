@@ -19,7 +19,9 @@
 ///    still PNG fed without `-loop 1` has only one frame, so its `t`
 ///    never advances: callers MUST feed image overlays looped
 ///    (e.g. `-loop 1 -framerate 30 -i png`) or the keyframe/title
-///    animations will render frozen at their start pose.
+///    animations will render frozen at their start pose. (Mask PNGs
+///    are the opposite case: they MUST be single-frame — see
+///    [mainClipMaskCommand]'s termination note.)
 /// 4. The existing pipeline normalizes clips to 30 fps
 ///    (FfmpegService.normalizeCommand). The `fps=30` baked into the
 ///    zoompan chains below assumes that; feeding a different frame
@@ -47,11 +49,14 @@
 ///      [rampAudioFilter]).
 ///    - Chromakey input layout is fixed (see [chromaFilterComplex]).
 ///
+/// VERIFIED (Build 3, system FFmpeg 8.1.2 render tests):
+///    - `geq` time variable `T` and `clip()` parse fine, but the
+///      alpha plane accessor must be `alpha(X,Y)` — the shorter
+///      `a(X,Y)` form is rejected ("Unknown function") and fails
+///      the whole filter graph. Both keyframe builders use
+///      `alpha(X,Y)`.
 /// UNVERIFIED SYNTAX (no FFmpeg on this VM to test against; the parent
 /// MUST run these once on a real device before shipping):
-///    - `geq` time variable `T` and the `a(X,Y)` plane accessor.
-///      Fallback if the build rejects `T`: replace `T` with `N/30`
-///      (frame number over the normalized 30 fps).
 ///    - `zoompan` zoom values below 1.0 (scale < 1). The zoom option
 ///      is a string expression with no documented lower clamp in the
 ///      filter code, but older docs describe the range as 1-10; a
@@ -508,9 +513,12 @@ String _lerp(String tVar, double t0, double dur, double a, double b,
 /// DEVIATION, DOCUMENTED: opacity uses `geq`, NOT `fade`. `fade`
 /// with alpha can only ramp 0 <-> 1; it cannot express an arbitrary
 /// startOpacity -> endOpacity lerp, so `geq` multiplies the overlay's
-/// own alpha plane by the lerped opacity. If the geq `T` variable or
-/// the `a(X,Y)` accessor is rejected by the device's FFmpeg build,
-/// replace `T` with `N/30` (frame number over the normalized 30 fps).
+/// own alpha plane by the lerped opacity.
+/// VERIFIED (Build 3 render tests, system FFmpeg 8.1.2): the geq
+/// alpha accessor is `alpha(X,Y)` — the shorter `a(X,Y)` form is
+/// REJECTED ("Unknown function") and would fail the whole pass;
+/// the `T` variable and `clip()` parse fine. Both keyframe
+/// builders use `alpha(X,Y)`.
 /// Position uses the overlay filter's `t` (base-stream time); scale
 /// uses zoompan's `time` and rotation/opacity use their own stream's
 /// `t`/`T`, so the overlay stream must be timestamp-aligned with the
@@ -559,10 +567,155 @@ String keyframeOverlayFilter({
     "rotate=a='$rotLerp':ow='iw':oh='ih':fillcolor=none[ovr];",
   );
   buf.write(
-    '[ovr]geq=r=\'r(X,Y)\':g=\'g(X,Y)\':b=\'b(X,Y)\':a=\'a(X,Y)*($opLerp)\'[ovf];',
+    '[ovr]geq=r=\'r(X,Y)\':g=\'g(X,Y)\':b=\'b(X,Y)\':a=\'alpha(X,Y)*($opLerp)\'[ovf];',
   );
-  buf.write("$baseLabel[ovf]overlay=x='$xExpr':y='$yExpr'$outLabel");
+  // shortest=1 is load-bearing: the overlay image is fed with
+  // `-loop 1` (infinite), and overlay's framesync repeats the base's
+  // last frame forever once the base ends — without it this pass NEVER
+  // terminates (proven in the Build 3 render tests: 2,228 frames for a
+  // 180-frame clip before the test timeout killed it; fixed graph
+  // finishes in seconds at exactly the base duration).
+  buf.write(
+    "$baseLabel[ovf]overlay=x='$xExpr':y='$yExpr':shortest=1$outLabel",
+  );
   return buf.toString();
+}
+
+/// Build 3 (Phase 3): the Dart-side mirror of the keyframe lerp the
+/// FFmpeg expressions compute — same window, same easing shapes, in
+/// plain doubles. The editor's stage uses it to interpolate a
+/// keyframed layer's pose at the playhead, so the preview shows the
+/// SAME motion the export renders (position / scale / opacity /
+/// rotation all included). [tSec] is measured on the track's own
+/// time base ([KeyframeTrack.start.timeSec]..[end.timeSec]).
+ProKeyframe keyframePoseAt(
+  KeyframeTrack track,
+  double tSec,
+  KeyframeEasing easing,
+) {
+  final s = track.start;
+  final e = track.end;
+  final dur = e.timeSec - s.timeSec;
+  var f = dur <= 0 ? 1.0 : (tSec - s.timeSec) / dur;
+  f = f.clamp(0.0, 1.0);
+  final g = switch (easing) {
+    KeyframeEasing.linear => f,
+    KeyframeEasing.easeIn => f * f,
+    KeyframeEasing.easeOut => 1 - (1 - f) * (1 - f),
+    KeyframeEasing.easeInOut => f * f * (3 - 2 * f),
+  };
+  double lerp(double a, double b) => a + (b - a) * g;
+  return ProKeyframe(
+    timeSec: tSec,
+    xNorm: lerp(s.xNorm, e.xNorm),
+    yNorm: lerp(s.yNorm, e.yNorm),
+    scale: lerp(s.scale, e.scale),
+    opacity: lerp(s.opacity, e.opacity),
+    rotationDeg: lerp(s.rotationDeg, e.rotationDeg),
+  );
+}
+
+/// Build 3 (Phase 3): keyframed PIP snippet — the PIP video inset
+/// ([pipLabel], already the SECOND input) animated between the
+/// track's two poses over the base ([baseLabel], the FIRST input).
+/// Position + opacity keyframes only (the v1 scope for video
+/// layers); the inset box size stays [pipW]x[pipH] (from the PIP
+/// scale setting), exactly like [keyframeOverlayFilter] keeps its
+/// box. When [hasMask] is true a THIRD input (the mask PNG, looped)
+/// multiplies the inset's alpha first — the same alpha chain the
+/// editor's advanced PIP graph uses (alphaextract → multiply with
+/// the mask's gray → alphamerge), so mask + feather + invert compose
+/// with the keyframes. The opacity lerp itself is the geq multiply
+/// from [keyframeOverlayFilter], applied while the stream is still
+/// RGBA. Blend modes are NOT part of this graph: the caller falls
+/// back to the static advanced graph when a blend is chosen.
+String keyframedPipFilter({
+  required String baseLabel,
+  required String pipLabel,
+  required KeyframeTrack track,
+  required int videoW,
+  required int videoH,
+  required int pipW,
+  required int pipH,
+  required String outLabel,
+  KeyframeEasing easing = KeyframeEasing.linear,
+  bool hasMask = false,
+  String maskLabel = '[2:v]',
+}) {
+  final s = track.start;
+  final e = track.end;
+  final t0 = s.timeSec;
+  final dur = e.timeSec - s.timeSec;
+
+  // Position lerp (overlay filter, time variable 't').
+  final xExpr = '(${_lerp('t', t0, dur, s.xNorm, e.xNorm, easing)})*$videoW';
+  final yExpr = '(${_lerp('t', t0, dur, s.yNorm, e.yNorm, easing)})*$videoH';
+
+  // Opacity lerp (geq, time variable 'T') — same construction as
+  // keyframeOverlayFilter.
+  final opLerp = _lerp('T', t0, dur, s.opacity, e.opacity, easing);
+
+  final buf = StringBuffer();
+  buf.write(
+    '$pipLabel scale=$pipW:$pipH,format=rgba,'
+    "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*($opLerp)'[pvG];",
+  );
+  buf.write('[pvG]split=2[pv1][pv2];');
+  buf.write('[pv2]alphaextract[pa0];');
+  if (hasMask) {
+    buf.write('$maskLabel scale=$pipW:$pipH,format=gray[mg];');
+    buf.write('[pa0][mg]blend=all_mode=multiply[pa];');
+  } else {
+    buf.write('[pa0]null[pa];');
+  }
+  buf.write('[pv1][pa]alphamerge[pipA];');
+  buf.write("$baseLabel[pipA]overlay=x='$xExpr':y='$yExpr'$outLabel");
+  return buf.toString();
+}
+
+/// Build 3 (Phase 3): main-clip mask pass — the generated mask PNG
+/// (white = visible, transparent = masked out; feather/invert are
+/// already baked into the PNG by the editor's mask renderer, the
+/// SAME renderer the PIP mask uses) is multiplied into the main
+/// video's alpha and the result composited over black, the stage's
+/// backdrop colour. Full command (input 0 = the video, input 1 =
+/// the mask PNG).
+///
+/// TERMINATION (Build 3 render-test fix): the mask image is fed as
+/// a SINGLE frame, never `-loop 1`. The framesync filters in the
+/// chain (blend / alphamerge) repeat an ended stream's last frame,
+/// so the one mask frame covers the whole video and the chain ends
+/// when the video ends. A looped mask input never reaches EOF, and
+/// blend then pairs it with the video alpha's repeated last frame
+/// FOREVER — the first render test generated 1,022,101 frames in
+/// 97 minutes before being killed. (Overlay is exempt from this:
+/// it ends with its main input, which is why the title/sticker
+/// passes may loop their PNGs.)
+String mainClipMaskCommand({
+  required String input,
+  required String maskPng,
+  required int width,
+  required int height,
+  required String output,
+}) {
+  final graph = '[0:v]format=yuva420p,split=2[fgc][fga];'
+      '[fgc]null[fg];'
+      '[fga]alphaextract[aa];'
+      '[1:v]scale=$width:$height,format=gray[mg];'
+      '[aa][mg]blend=all_mode=multiply[ma];'
+      '[fg][ma]alphamerge[m];'
+      // The colour source must run at the pipeline's 30 fps: it is
+      // the overlay's MAIN input, so the composited stream takes
+      // its rate — at the source's 25 fps default the masked pass
+      // silently re-timed a 30 fps clip to 25 fps (render test:
+      // 100 frames instead of 120 over 4 s).
+      'color=c=black:s=${width}x$height:r=30[bg];'
+      '[bg][m]overlay=0:0:shortest=1,format=yuv420p[vout]';
+  return '-y -i ${FfmpegService.q(input)} '
+      '-i ${FfmpegService.q(maskPng)} '
+      '-filter_complex "$graph" -map "[vout]" -map 0:a? '
+      '-c:v libx264 -preset veryfast -crf 23 -c:a copy '
+      '-movflags +faststart ${FfmpegService.q(output)}';
 }
 
 // ---------------------------------------------------------------------------
@@ -780,7 +933,7 @@ String animatedTitleFilter({
       }
       buf.write(
         '$overlayLabel format=rgba[ov];'
-        "$baseLabel[ov]overlay=x='$xExpr':y='$yExpr':enable='$enable'$outLabel",
+        "$baseLabel[ov]overlay=x='$xExpr':y='$yExpr':enable='$enable':shortest=1$outLabel",
       );
     case 'zoomPop':
       final zoomExpr =
@@ -788,14 +941,14 @@ String animatedTitleFilter({
       buf.write(
         '$overlayLabel format=rgba,'
         "zoompan=z='$zoomExpr':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${overlayW}x$overlayH:fps=30[ov];"
-        "$baseLabel[ov]overlay=$fx:$fy:enable='$enable'$outLabel",
+        "$baseLabel[ov]overlay=$fx:$fy:enable='$enable':shortest=1$outLabel",
       );
     case 'fadeIn':
     default:
       buf.write(
         '$overlayLabel format=rgba,'
         'fade=t=in:st=${_num(start)}:duration=0.5:alpha=1[ov];'
-        "$baseLabel[ov]overlay=$fx:$fy:enable='$enable'$outLabel",
+        "$baseLabel[ov]overlay=$fx:$fy:enable='$enable':shortest=1$outLabel",
       );
   }
   return buf.toString();
@@ -1202,18 +1355,32 @@ List<RampSegment> rampSegments(
 ///
 /// Mapping: output time = (sum over completed segments of
 /// segDur/speed) + (T - segStart)/speed for the segment containing
-/// input time T. Built as nested `if(lt(PTS,...),...)` expressions on
-/// PTS (setpts evaluates PTS in seconds, as in the existing
-/// `setpts=PTS/speed` usage). The expression is single-quoted because
-/// it contains commas, which would otherwise split the filter chain.
-/// For an empty segment list this returns the identity `setpts=PTS`.
+/// input time T. Built as nested `if(lt(...),...)` expressions. The
+/// expression is single-quoted because it contains commas, which
+/// would otherwise split the filter chain. For an empty segment
+/// list this returns the identity `setpts=PTS`.
 /// NOTE: the result is continuous at segment boundaries by
 /// construction (each segment's offset is the previous segments'
 /// stretched durations), so there is no jump or freeze at joins.
+///
+/// UNITS (verified by render test, Build 3): setpts hands the
+/// expression PTS in INPUT TIMEBASE units, not seconds — the
+/// segment boundaries/offsets here are seconds, so the expression
+/// reads the input time as (PTS*TB) and converts the result back
+/// with /TB. The earlier form compared raw PTS against second
+/// constants: every frame fell into the last branch and a
+/// 0.5/1/2 ramp over 6 s rendered 3.07 s instead of 7 s. (The
+/// plain `setpts=PTS/speed` usage elsewhere is a pure ratio and
+/// is unit-independent — which is how the wrong assumption
+/// survived.) The audio side ([rampAudioFilter]) uses atrim
+/// windows, which ARE in seconds, and was never affected.
 String rampSetpts(List<RampSegment> segs) {
   if (segs.isEmpty) return 'setpts=PTS';
   // Build from the last segment backwards: the last segment's plain
-  // expression is the innermost else-branch.
+  // expression is the innermost else-branch. `t` is the input time
+  // in SECONDS ((PTS*TB)); the whole result is converted back to
+  // timebase units by the /TB wrapper at the end.
+  const t = '(PTS*TB)';
   var expr = '';
   var offset = 0.0;
   // Precompute each segment's stretched offset (start time in the
@@ -1226,14 +1393,14 @@ String rampSetpts(List<RampSegment> segs) {
   for (var i = segs.length - 1; i >= 0; i--) {
     final s = segs[i];
     final here =
-        '(${_num(offsets[i])}+(PTS-${_num(s.tStart)})/${_num(s.speed)})';
+        '(${_num(offsets[i])}+($t-${_num(s.tStart)})/${_num(s.speed)})';
     if (i == segs.length - 1) {
       expr = here;
     } else {
-      expr = "if(lt(PTS,${_num(s.tEnd)}),$here,$expr)";
+      expr = "if(lt($t,${_num(s.tEnd)}),$here,$expr)";
     }
   }
-  return "setpts='$expr'";
+  return "setpts='($expr)/TB'";
 }
 
 /// Audio filter_complex snippet (no trailing ';') that keeps audio

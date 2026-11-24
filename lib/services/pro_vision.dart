@@ -596,8 +596,12 @@ class ProVisionService {
     final base = bare(baseLabel);
     final ov = bare(overlayLabel);
     final out = bare(outLabel);
+    // shortest=1 on every overlay below: the tracked overlay image is
+    // fed with `-loop 1` (infinite) and overlay's framesync would
+    // otherwise repeat the base's last frame forever (Build 3 render
+    // tests proved the unbounded pass never terminates).
     String centred() =>
-        '[$base][$ov]overlay=x=(W-w)/2:y=(H-h)/2[$out]';
+        '[$base][$ov]overlay=x=(W-w)/2:y=(H-h)/2:shortest=1[$out]';
     if (track.isEmpty) return centred();
     if (track.length == 1) {
       final x = _clampPos(
@@ -609,7 +613,7 @@ class ProVisionService {
         videoH - overlayH,
       );
       return '[$base][$ov]overlay='
-          "x='${_num(x)}':y='${_num(y)}'[$out]";
+          "x='${_num(x)}':y='${_num(y)}':shortest=1[$out]";
     }
     // Pixel centres for each track point.
     final xs = track
@@ -644,7 +648,7 @@ class ProVisionService {
     final xExpr = 'min(max(${lerpExpr(xs)},0),${_num(maxX)})';
     final yExpr = 'min(max(${lerpExpr(ys)},0),${_num(maxY)})';
     return '[$base][$ov]overlay='
-        "x='$xExpr':y='$yExpr'[$out]";
+        "x='$xExpr':y='$yExpr':shortest=1[$out]";
   }
 
   // -------------------------------------------------------------------------

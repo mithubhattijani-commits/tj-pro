@@ -21,6 +21,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:video_player/video_player.dart';
 
 import '../app_config.dart';
@@ -523,6 +524,41 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   String _pipMask = 'none';
   double _pipMaskFeather = 0;
   bool _pipMaskInvert = false;
+
+  /// Build 3 (Phase 3): PIP keyframes — a second two-keyframe
+  /// track (position + opacity only, the v1 scope for video
+  /// layers) animated by [keyframedPipFilter] in the export and by
+  /// [keyframePoseAt] in the stage preview. X/Y are the inset's
+  /// TOP-LEFT corner as fractions of the base size (the
+  /// [ProKeyframe] convention); the track spans the whole export,
+  /// like the title/sticker track. Defaults: bottom-right area →
+  /// top-left area, fully opaque throughout.
+  bool _pipKeyframes = false;
+  double _pkStartX = 0.7;
+  double _pkStartY = 0.7;
+  double _pkStartOpacity = 1;
+  double _pkEndX = 0.05;
+  double _pkEndY = 0.05;
+  double _pkEndOpacity = 1;
+  KeyframeEasing _pkEasing = KeyframeEasing.linear;
+  int _pkPage = 0;
+
+  /// Build 3 (Phase 3): MAIN-clip mask — the PIP mask model
+  /// (shape / feather / invert, one dart:ui mask PNG for preview +
+  /// export) applied to the main video itself. The stage previews
+  /// it as a dstIn ShaderMask over the media layer; the export runs
+  /// [mainClipMaskCommand] before the overlay/PIP passes.
+  String _mainMask = 'none';
+  double _mainMaskFeather = 0;
+  bool _mainMaskInvert = false;
+  ui.Image? _mainMaskImage;
+  String _mainMaskImageKey = '';
+  bool _mainMaskImageBusy = false;
+
+  /// Build 3 (Phase 3): the export frame rate (24/30/60). Threaded
+  /// into the main render graph + the normalize step; the post
+  /// passes re-encode from that stream, so the rate holds.
+  int _exportFps = 30;
   // PIP live preview: a muted looping controller for the inset, so
   // blend/mask/opacity are visible on the stage before export.
   VideoPlayerController? _pipController;
@@ -1857,9 +1893,276 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     _setStatus('Redo ho gaya.');
   }
 
+  /// Build 3 (Phase 3) — the panel-session snapshot behind the
+  /// uniform Cancel/Apply pattern: when a tool panel OPENS, the
+  /// settings its controls edit are captured; the header's ✗
+  /// (Cancel) restores them and closes, the ✓ (Apply) just closes
+  /// (panel edits apply live to the preview, PRO-SPEC point 19).
+  /// One-tap ACTIONS inside panels (rotate/flip renders, AI cuts,
+  /// file picks) are not settings and are never rolled back — the
+  /// same rule every editor follows.
+  Map<String, Object?>? _panelBase;
+
+  Map<String, Object?> _panelSnapshot() => {
+        'speed': _speed,
+        'filter': _filter,
+        'filterIntensity': _filterIntensity,
+        'aspect': _aspect,
+        'crossfade': _crossfade,
+        'text': _text,
+        'musicVolume': _musicVolume,
+        'autoDuck': _autoDuck,
+        'tfScale': _tfScale,
+        'tfX': _tfX,
+        'tfY': _tfY,
+        'tfRot': _tfRot,
+        'tfOpacity': _tfOpacity,
+        'canvasFill': _canvasFill,
+        'canvasFillColor': _canvasFillColor,
+        'adjBrilliance': _adjBrilliance,
+        'adjSharpen': _adjSharpen,
+        'adjClarity': _adjClarity,
+        'adjWhites': _adjWhites,
+        'adjBlacks': _adjBlacks,
+        'adjHue': _adjHue,
+        'adjFade': _adjFade,
+        'adjVignette': _adjVignette,
+        'adjGrain': _adjGrain,
+        'adjAuto': _adjAuto,
+        'rampStart': _rampStart,
+        'rampMid': _rampMid,
+        'rampEnd': _rampEnd,
+        'proRamp': _proRamp,
+        'pipOpacity': _pipOpacity,
+        'pipBlend': _pipBlend,
+        'pipMask': _pipMask,
+        'pipMaskFeather': _pipMaskFeather,
+        'pipMaskInvert': _pipMaskInvert,
+        'pipPosition': _pipPosition.index,
+        'pipScale': _pipScale,
+        'pipKeyframes': _pipKeyframes,
+        'pkStartX': _pkStartX,
+        'pkStartY': _pkStartY,
+        'pkStartOpacity': _pkStartOpacity,
+        'pkEndX': _pkEndX,
+        'pkEndY': _pkEndY,
+        'pkEndOpacity': _pkEndOpacity,
+        'pkEasing': _pkEasing.index,
+        'mainMask': _mainMask,
+        'mainMaskFeather': _mainMaskFeather,
+        'mainMaskInvert': _mainMaskInvert,
+        'exportFps': _exportFps,
+        'proTitle': _proTitle,
+        'proTitlePreset': _proTitlePreset,
+        'proTitlePosition': _proTitlePosition,
+        'proSticker': _proSticker,
+        'proStickerPreset': _proStickerPreset,
+        'proLut': _proLut,
+        'proTemperature': _proTemperature,
+        'proTint': _proTint,
+        'proSaturation': _proSaturation,
+        'proVibrance': _proVibrance,
+        'proContrast': _proContrast,
+        'proShadows': _proShadows,
+        'proHighlights': _proHighlights,
+        'proBrightness': _proBrightness,
+        'proExposure': _proExposure,
+        'proKeyframes': _proKeyframes,
+        'kfEasing': _kfEasing.index,
+        'kfStartX': _kfStartX,
+        'kfStartY': _kfStartY,
+        'kfStartScale': _kfStartScale,
+        'kfStartOpacity': _kfStartOpacity,
+        'kfStartRotation': _kfStartRotation,
+        'kfEndX': _kfEndX,
+        'kfEndY': _kfEndY,
+        'kfEndScale': _kfEndScale,
+        'kfEndOpacity': _kfEndOpacity,
+        'kfEndRotation': _kfEndRotation,
+        'proStabilize': _proStabilize,
+        'stabLevel': _stabLevel,
+        'proTransition': _proTransition,
+        'proTransitionDur': _proTransitionDur,
+        'proChroma': _proChroma,
+        'proChromaColor': _proChromaColor,
+        'proChromaSimilarity': _proChromaSimilarity,
+        'proChromaBlend': _proChromaBlend,
+        'proChromaBgKind': _proChromaBgKind,
+        'proChromaBgColor': _proChromaBgColor,
+        'proChromaBgImage': _proChromaBgImage,
+        'proChromaSpill': _proChromaSpill,
+        'proChromaEdge': _proChromaEdge,
+        'proBgRemove': _proBgRemove,
+        'proBgKind': _proBgKind,
+        'proBgColor': _proBgColor,
+        'proBgImage': _proBgImage,
+        'trackSticker': _trackSticker,
+        'fxVoice': _fxVoice.index,
+        'fxFadeIn': _fxFadeIn,
+        'fxFadeOut': _fxFadeOut,
+        'muteOriginal': _muteOriginal,
+        'fxSilenceRemove': _fxSilenceRemove,
+        'fxPip': _fxPip,
+        'fxShake': _fxShake.index,
+        'fxQuality': _fxQuality,
+        'aicutThresholdDb': _aicutThresholdDb,
+        'aicutMinSilenceSec': _aicutMinSilenceSec,
+        'newsEnabled': _newsEnabled,
+      };
+
+  void _restorePanelSnapshot(Map<String, Object?> m) {
+    double d(String k) => (m[k] as num?)?.toDouble() ?? 0;
+    setState(() {
+      _speed = d('speed');
+      _filter = m['filter'] as String? ?? 'Normal';
+      _filterIntensity = d('filterIntensity');
+      _aspect = m['aspect'] as String? ?? 'Original';
+      _crossfade = m['crossfade'] as bool? ?? false;
+      _text = m['text'] as String? ?? '';
+      _musicVolume = d('musicVolume');
+      _autoDuck = m['autoDuck'] as bool? ?? false;
+      _tfScale = d('tfScale');
+      _tfX = d('tfX');
+      _tfY = d('tfY');
+      _tfRot = d('tfRot');
+      _tfOpacity = d('tfOpacity');
+      _canvasFill = m['canvasFill'] as String? ?? 'none';
+      _canvasFillColor = m['canvasFillColor'] as String? ?? 'black';
+      _adjBrilliance = d('adjBrilliance');
+      _adjSharpen = d('adjSharpen');
+      _adjClarity = d('adjClarity');
+      _adjWhites = d('adjWhites');
+      _adjBlacks = d('adjBlacks');
+      _adjHue = d('adjHue');
+      _adjFade = d('adjFade');
+      _adjVignette = d('adjVignette');
+      _adjGrain = d('adjGrain');
+      _adjAuto = m['adjAuto'] as bool? ?? false;
+      _rampStart = d('rampStart');
+      _rampMid = d('rampMid');
+      _rampEnd = d('rampEnd');
+      _proRamp = m['proRamp'] as String? ?? 'None';
+      _pipOpacity = d('pipOpacity');
+      _pipBlend = m['pipBlend'] as String? ?? 'normal';
+      _pipMask = m['pipMask'] as String? ?? 'none';
+      _pipMaskFeather = d('pipMaskFeather');
+      _pipMaskInvert = m['pipMaskInvert'] as bool? ?? false;
+      _pipPosition =
+          PipPosition.values[(m['pipPosition'] as num?)?.toInt() ?? 3];
+      _pipScale = d('pipScale');
+      _pipKeyframes = m['pipKeyframes'] as bool? ?? false;
+      _pkStartX = d('pkStartX');
+      _pkStartY = d('pkStartY');
+      _pkStartOpacity = d('pkStartOpacity');
+      _pkEndX = d('pkEndX');
+      _pkEndY = d('pkEndY');
+      _pkEndOpacity = d('pkEndOpacity');
+      _pkEasing =
+          KeyframeEasing.values[(m['pkEasing'] as num?)?.toInt() ?? 0];
+      _mainMask = m['mainMask'] as String? ?? 'none';
+      _mainMaskFeather = d('mainMaskFeather');
+      _mainMaskInvert = m['mainMaskInvert'] as bool? ?? false;
+      _exportFps = (m['exportFps'] as num?)?.toInt() ?? 30;
+      _proTitle = m['proTitle'] as String? ?? '';
+      _proTitlePreset = m['proTitlePreset'] as String? ?? 'fadeIn';
+      _proTitlePosition = m['proTitlePosition'] as String? ?? 'bottomCenter';
+      _proSticker = m['proSticker'] as String? ?? '';
+      _proStickerPreset = m['proStickerPreset'] as String? ?? 'fadeIn';
+      _proLut = m['proLut'] as String? ?? '';
+      _proTemperature = d('proTemperature');
+      _proTint = d('proTint');
+      _proSaturation = d('proSaturation');
+      _proVibrance = d('proVibrance');
+      _proContrast = d('proContrast');
+      _proShadows = d('proShadows');
+      _proHighlights = d('proHighlights');
+      _proBrightness = d('proBrightness');
+      _proExposure = d('proExposure');
+      _proKeyframes = m['proKeyframes'] as bool? ?? false;
+      _kfEasing =
+          KeyframeEasing.values[(m['kfEasing'] as num?)?.toInt() ?? 0];
+      _kfStartX = d('kfStartX');
+      _kfStartY = d('kfStartY');
+      _kfStartScale = d('kfStartScale');
+      _kfStartOpacity = d('kfStartOpacity');
+      _kfStartRotation = d('kfStartRotation');
+      _kfEndX = d('kfEndX');
+      _kfEndY = d('kfEndY');
+      _kfEndScale = d('kfEndScale');
+      _kfEndOpacity = d('kfEndOpacity');
+      _kfEndRotation = d('kfEndRotation');
+      _proStabilize = m['proStabilize'] as bool? ?? false;
+      _stabLevel = (m['stabLevel'] as num?)?.toInt() ?? 0;
+      _proTransition = m['proTransition'] as String? ?? 'fade';
+      _proTransitionDur = d('proTransitionDur');
+      _proChroma = m['proChroma'] as bool? ?? false;
+      _proChromaColor = m['proChromaColor'] as String? ?? 'green';
+      _proChromaSimilarity = d('proChromaSimilarity');
+      _proChromaBlend = d('proChromaBlend');
+      _proChromaBgKind = m['proChromaBgKind'] as String? ?? 'color';
+      _proChromaBgColor = m['proChromaBgColor'] as String? ?? '#00FF00';
+      _proChromaBgImage = m['proChromaBgImage'] as String?;
+      _proChromaSpill = d('proChromaSpill');
+      _proChromaEdge = d('proChromaEdge');
+      _proBgRemove = m['proBgRemove'] as bool? ?? false;
+      _proBgKind = m['proBgKind'] as String? ?? 'color';
+      _proBgColor = m['proBgColor'] as String? ?? '#00FF00';
+      _proBgImage = m['proBgImage'] as String?;
+      _trackSticker = m['trackSticker'] as String? ?? '';
+      _fxVoice = VoiceFx.values[(m['fxVoice'] as num?)?.toInt() ?? 0];
+      _fxFadeIn = d('fxFadeIn');
+      _fxFadeOut = d('fxFadeOut');
+      _muteOriginal = m['muteOriginal'] as bool? ?? false;
+      _fxSilenceRemove = m['fxSilenceRemove'] as bool? ?? false;
+      _fxPip = m['fxPip'] as bool? ?? false;
+      _fxShake = ShakeFx.values[(m['fxShake'] as num?)?.toInt() ?? 0];
+      _fxQuality = (m['fxQuality'] as num?)?.toInt() ?? 0;
+      _aicutThresholdDb = d('aicutThresholdDb');
+      _aicutMinSilenceSec = d('aicutMinSilenceSec');
+      _newsEnabled = m['newsEnabled'] as bool? ?? false;
+    });
+    // Mask preview images are keyed on the mask fields, so a
+    // restored value re-renders itself on the next stage build.
+    _mainMaskImageKey = '';
+    _pipMaskImageKey = '';
+  }
+
+  /// The header ✗: close the open panel and roll back everything
+  /// its controls changed since it opened.
+  void _cancelPanel() {
+    final base = _panelBase;
+    _panelBase = null;
+    if (base != null) _restorePanelSnapshot(base);
+    _openTool(null);
+    _setStatus('Panel changes cancel ho gaye.');
+  }
+
+  /// Build 3: keep the preview's playback rate honest — while the
+  /// Speed panel is open the preview plays at the speed being
+  /// edited (the fixed speed, or the ramp point under the finger);
+  /// every other panel plays at 1.0× so no other tool's preview is
+  /// distorted by a leftover rate.
+  void _applyPreviewSpeed([double? rate]) {
+    final ctrl = _controller;
+    if (ctrl == null || !ctrl.value.isInitialized) return;
+    final r = (rate ?? (_proRamp == 'None' ? _speed : _rampMid))
+        .clamp(0.25, 2.0);
+    unawaited(ctrl.setPlaybackSpeed(r));
+  }
+
+  void _resetPreviewSpeed() {
+    final ctrl = _controller;
+    if (ctrl == null || !ctrl.value.isInitialized) return;
+    unawaited(ctrl.setPlaybackSpeed(1.0));
+  }
+
   /// Opens a tool panel (or closes it when [key] is null); the
   /// panel always starts on its first sub-tab (§3).
   void _openTool(String? key) {
+    if (key != null && key != _activeTool) {
+      _panelBase = _panelSnapshot();
+    }
+    if (key != 'speed') _resetPreviewSpeed();
     setState(() {
       _activeTool = key;
       _panelTab = null;
@@ -1871,6 +2174,10 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   /// Stickers, Aspect ratio, Background) and every clip-row item
   /// land on the exact panel that implements them.
   void _openToolTab(String key, String tab) {
+    if (key != _activeTool) {
+      _panelBase = _panelSnapshot();
+    }
+    if (key != 'speed') _resetPreviewSpeed();
     setState(() {
       _activeTool = key;
       _panelTab = tab;
@@ -2277,34 +2584,87 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     );
   }
 
-  /// AppBar quality pill (§3): pick the export quality ahead of
-  /// time; [_export] then skips its dialog.
-  Future<void> _pickExportQuality() async {
-    final quality = await showDialog<int>(
+  /// Export settings dialog (AppBar pill §3 + the export flow):
+  /// quality AND frame rate in one place (Build 3, Phase 3 —
+  /// PRO-SPEC point 20). Picking ahead of time via the pill makes
+  /// [_export] skip the dialog, exactly as the quality-only pill
+  /// did. Returns true when the user confirmed (Done), false/null
+  /// when cancelled — [_export] then aborts, as before.
+  Future<bool?> _pickExportSettings() async {
+    var q = _fxQuality;
+    var fps = _exportFps;
+    final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => SimpleDialog(
-        title: const Text('Export quality'),
-        children: [
-          for (final entry in const [
-            (0, '720p HD (fast)'),
-            (1, '1080p Full HD'),
-            (2, '2160p 4K (slow)'),
-          ])
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(ctx, entry.$1),
-              child: Text(entry.$2),
-            ),
+      builder: (ctx) => AlertDialog(
+        title: const Text('Export settings'),
+        content: StatefulBuilder(
+          builder: (ctx, setLocal) => Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Quality',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              for (final entry in const [
+                (0, '720p HD (fast)'),
+                (1, '1080p Full HD'),
+                (2, '2160p 4K (slow)'),
+              ])
+                ListTile(
+                  dense: true,
+                  leading: Icon(
+                    q == entry.$1
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_unchecked,
+                    color: q == entry.$1 ? TjProTheme.gold : null,
+                  ),
+                  title: Text(entry.$2),
+                  onTap: () => setLocal(() => q = entry.$1),
+                ),
+              const SizedBox(height: 8),
+              const Text(
+                'Frame rate',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              for (final f in const [24, 30, 60])
+                ListTile(
+                  dense: true,
+                  leading: Icon(
+                    fps == f
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_unchecked,
+                    color: fps == f ? TjProTheme.gold : null,
+                  ),
+                  title: Text('$f fps'),
+                  onTap: () => setLocal(() => fps = f),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Done'),
+          ),
         ],
       ),
     );
-    if (quality == null) return;
+    if (ok != true) return ok;
+    if (!mounted) return false;
     setState(() {
-      _fxQuality = quality;
+      _fxQuality = q;
+      _exportFps = fps;
       _qualityPicked = true;
     });
     _setStatus(
-      'Export quality: ${const ['720p', '1080p', '4K'][quality]} set ho gayi.',
+      'Export: ${const ['720p', '1080p', '4K'][q]} · $fps fps set ho gaya.',
     );
+    return true;
   }
 
   String get _qualityLabel =>
@@ -3124,6 +3484,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           filterIntensity: _filterIntensity,
           canvasFill: _canvasFill == 'color' ? 'color' : 'none',
           fillColor: _canvasFillColor,
+          fps: _exportFps,
           output: out,
         );
         final totalMs = ((c.effectiveDuration / effectiveSpeed) * 1000).round();
@@ -3158,6 +3519,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
             filterIntensity: _filterIntensity,
             canvasFill: _canvasFill == 'color' ? 'color' : 'none',
             fillColor: _canvasFillColor,
+            fps: _exportFps,
             output: out,
           );
           final retryRes = await FfmpegService.run(
@@ -3204,6 +3566,9 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
             // §6.5: blur fill frames every clip over its own
             // blurred copy instead of cropping.
             blurFill: _canvasFill == 'blur',
+            // Build 3: normalize at the chosen export frame rate
+            // so the join + final pass stay at one rate.
+            fps: _exportFps,
           );
           _setStatus('Preparing clip ${i + 1}/${clips.length}…');
           final res = await FfmpegService.run(cmd);
@@ -3257,6 +3622,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
             .round();
         final fc = FfmpegService.finalPassCommand(
           input: merged,
+          fps: _exportFps,
           speed: effectiveSpeed,
           filterPreset: _filter,
           // Blur fill already framed the clips in normalize.
@@ -3287,6 +3653,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           );
           final retryFc = FfmpegService.finalPassCommand(
             input: merged,
+            fps: _exportFps,
             speed: effectiveSpeed,
             filterPreset: _filter,
             aspect: _canvasFill == 'blur' ? 'Original' : _aspect,
@@ -3603,6 +3970,55 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           );
         }
       }
+      // (b2) Build 3 (Phase 3): MAIN-clip mask — the mask model
+      // (shape / feather / invert) applied to the main video
+      // itself, composited over black (the stage backdrop). Runs
+      // after the main picture is final (stabilize / transform /
+      // BG passes) and BEFORE the title + PIP passes, so overlays
+      // stay unmasked — the stage preview's exact layer order.
+      // Guarded like every post-pass.
+      _checkExportCancelled();
+      if (_mainMask != 'none') {
+        try {
+          _setStatus('Main mask lag raha hai…');
+          final size = await VideoExportService.probeVideoSize(File(out));
+          final maskPath = size == null
+              ? null
+              : await _renderMainMaskPng(
+                  dir: dir,
+                  stamp: stamp,
+                  width: size.width,
+                  height: size.height,
+                );
+          if (size != null && maskPath != null) {
+            final mmOut = p.join(dir.path, 'pve_export_mainmask_$stamp.mp4');
+            final res = await FfmpegService.run(
+              mainClipMaskCommand(
+                input: out,
+                maskPng: maskPath,
+                width: size.width,
+                height: size.height,
+                output: mmOut,
+              ),
+            );
+            if (res.ok) {
+              out = mmOut;
+            } else {
+              _setStatus(
+                'Note: main mask fail ho gaya, baghair mask ke save ho raha hai.',
+              );
+            }
+          } else {
+            _setStatus(
+              'Note: main mask ke liye size/PNG nahi mila — baghair mask ke save ho raha hai.',
+            );
+          }
+        } catch (e) {
+          _setStatus(
+            'Note: main mask fail ho gaya ($e), baghair mask ke save ho raha hai.',
+          );
+        }
+      }
       // (c) ONE combined animated-overlay pass (motion title/sticker +
       // keyframed overlay + tracked sticker). Skipped entirely when
       // none of them are set.
@@ -3658,9 +4074,84 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         // original stock snippet, byte-for-byte.
         final bool pipStock =
             _pipBlend == 'normal' && _pipMask == 'none' && _pipOpacity >= 1;
+        // Build 3 (Phase 3): PIP keyframes take their own graph
+        // (position + opacity lerps, mask composed in). Blend
+        // modes are not part of the keyframed graph in v1 — with
+        // a blend chosen, the static advanced graph below runs
+        // instead and the user is told.
+        final bool pipKeyframed = _pipKeyframes && _pipBlend == 'normal';
+        if (_pipKeyframes && _pipBlend != 'normal') {
+          _setStatus(
+            'Note: PIP keyframes blend mode ke sath nahi chalte — '
+            'blend wala static PIP lag raha hai.',
+          );
+        }
         String snippet;
         String? pipMaskPath;
-        if (pipStock) {
+        if (pipKeyframed) {
+          final baseSize = await VideoExportService.probeVideoSize(File(out));
+          final pipSize = await VideoExportService.probeVideoSize(
+            File(_fxPipVideo),
+          );
+          if (baseSize == null || pipSize == null) {
+            _setStatus(
+              'Note: PIP keyframes ke liye size nahi mila — '
+              'simple PIP lag raha hai.',
+            );
+            snippet = pipOverlayFilter(
+              pipLabel: '[1:v]',
+              position: _pipPosition,
+              pipScale: _pipScale,
+              margin: 24,
+              outLabel: '[vout]',
+            );
+          } else {
+            if (_pipMask != 'none') {
+              pipMaskPath = await _renderPipMaskPng(
+                dir: dir,
+                stamp: stamp,
+                width: pipSize.width,
+                height: pipSize.height,
+              );
+            }
+            // Same box math as _pipSnippetAdvanced (even dims,
+            // clamped to the base).
+            final s = _pipScale.clamp(0.15, 0.5);
+            var pw = ((pipSize.width * s) / 2).floor() * 2;
+            var ph = ((pipSize.height * s) / 2).floor() * 2;
+            if (pw > baseSize.width) pw = baseSize.width - (baseSize.width % 2);
+            if (ph > baseSize.height) {
+              ph = baseSize.height - (baseSize.height % 2);
+            }
+            if (pw < 2) pw = 2;
+            if (ph < 2) ph = 2;
+            snippet = keyframedPipFilter(
+              baseLabel: '[0:v]',
+              pipLabel: '[1:v]',
+              track: KeyframeTrack(
+                start: ProKeyframe(
+                  timeSec: 0,
+                  xNorm: _pkStartX,
+                  yNorm: _pkStartY,
+                  opacity: _pkStartOpacity,
+                ),
+                end: ProKeyframe(
+                  timeSec: exportDurSec,
+                  xNorm: _pkEndX,
+                  yNorm: _pkEndY,
+                  opacity: _pkEndOpacity,
+                ),
+              ),
+              videoW: baseSize.width,
+              videoH: baseSize.height,
+              pipW: pw,
+              pipH: ph,
+              outLabel: '[vout]',
+              easing: _pkEasing,
+              hasMask: pipMaskPath != null,
+            );
+          }
+        } else if (pipStock) {
           snippet = pipOverlayFilter(
             pipLabel: '[1:v]',
             position: _pipPosition,
@@ -3710,7 +4201,14 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         pb.write(' -i ');
         pb.write(FfmpegService.q(_fxPipVideo));
         if (pipMaskPath != null) {
-          pb.write(' -loop 1 -i ');
+          // Build 3 termination fix: the mask PNG goes in as a
+          // SINGLE frame, never looped — the alpha chain's
+          // framesync filters (blend / alphamerge) repeat its last
+          // frame for the whole inset, and a looped input never
+          // reaches EOF, so blend would generate frames forever
+          // (the main-mask render test hung 97 min on exactly
+          // this). See mainClipMaskCommand's header note.
+          pb.write(' -i ');
           pb.write(FfmpegService.q(pipMaskPath));
         }
         pb.write(' -filter_complex "');
@@ -3989,8 +4487,21 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       _setStatus('Saved to gallery: ${p.basename(out)}');
       UnityAdsService.showInterstitialAd();
       if (mounted) {
+        // Build 3 (Phase 3, PRO-SPEC point 22): the saved video
+        // can be shared straight from the completion snackbar.
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Video saved to gallery.')),
+          SnackBar(
+            content: const Text('Video saved to gallery.'),
+            duration: const Duration(seconds: 6),
+            action: SnackBarAction(
+              label: 'Share',
+              onPressed: () => unawaited(
+                SharePlus.instance.share(
+                  ShareParams(files: [XFile(out)]),
+                ),
+              ),
+            ),
+          ),
         );
       }
     } catch (e) {
@@ -4007,31 +4518,16 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       return;
     }
     if (_busy) return;
-    // Export quality lives at the export step now (one-build): it
-    // used to hide inside the old Filters panel; the user confirms
-    // it here, CapCut-style, before the render starts. v1.3.0: when
-    // the AppBar quality pill already set it, the dialog is skipped.
-    final quality = _qualityPicked
-        ? _fxQuality
-        : await showDialog<int>(
-            context: context,
-            builder: (ctx) => SimpleDialog(
-              title: const Text('Export quality'),
-              children: [
-                for (final entry in const [
-                  (0, '720p HD (fast)'),
-                  (1, '1080p Full HD'),
-                  (2, '2160p 4K (slow)'),
-                ])
-                  SimpleDialogOption(
-                    onPressed: () => Navigator.pop(ctx, entry.$1),
-                    child: Text(entry.$2),
-                  ),
-              ],
-            ),
-          );
-    if (quality == null || !mounted) return;
-    _fxQuality = quality;
+    // Export settings live at the export step now (one-build):
+    // the user confirms quality + frame rate here, CapCut-style,
+    // before the render starts. v1.3.0: when the AppBar pill
+    // already set them, the dialog is skipped. Build 3: the
+    // dialog now carries the frame rate too (24/30/60).
+    if (!_qualityPicked) {
+      final ok = await _pickExportSettings();
+      if (ok != true || !mounted) return;
+    }
+    final quality = _fxQuality;
     // v1.4.0 PRO: 1080p / 4K exports carry the double-ad gate for
     // free users (two back-to-back interstitials before the render
     // starts — the ad service's own 120 s interval may suppress
@@ -4250,30 +4746,37 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     return path;
   }
 
-  /// Renders the current PIP mask (shape / gradient, feather,
-  /// invert) as PNG bytes at [width]×[height] — white where the
-  /// inset shows, transparent where it is masked out. Feather on
-  /// shapes is a real alpha blur (MaskFilter.blur), so the soft
-  /// edge is identical in preview and export; on gradients the
-  /// feather widens the ramp instead.
-  Future<Uint8List?> _pipMaskPngBytes(int width, int height) async {
+  /// Renders a mask (shape / gradient, feather, invert) as PNG
+  /// bytes at [width]×[height] — white where the layer shows,
+  /// transparent where it is masked out. Feather on shapes is a
+  /// real alpha blur (MaskFilter.blur), so the soft edge is
+  /// identical in preview and export; on gradients the feather
+  /// widens the ramp instead. Build 3: this is the ONE renderer
+  /// behind both the PIP mask and the main-clip mask.
+  Future<Uint8List?> _maskPngBytes({
+    required String shape,
+    required double featherValue,
+    required bool invert,
+    required int width,
+    required int height,
+  }) async {
     if (width < 2 || height < 2) return null;
     final w = width.toDouble();
     final h = height.toDouble();
     final recorder = ui.PictureRecorder();
     final canvas = ui.Canvas(recorder);
-    final feather = _pipMaskFeather.clamp(0.0, 1.0);
+    final feather = featherValue.clamp(0.0, 1.0);
     const white = Color(0xFFFFFFFF);
     const clear = Color(0x00000000);
-    if (_pipMask == 'linear' || _pipMask == 'radial') {
+    if (shape == 'linear' || shape == 'radial') {
       final paint = ui.Paint();
-      if (_pipMask == 'linear') {
+      if (shape == 'linear') {
         final a = 0.5 - feather / 2;
         final bb = 0.5 + feather / 2;
         paint.shader = ui.Gradient.linear(
           Offset.zero,
           Offset(w, 0),
-          _pipMaskInvert
+          invert
               ? const [clear, clear, white, white]
               : const [white, white, clear, clear],
           [0, a, bb, 1],
@@ -4283,7 +4786,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         paint.shader = ui.Gradient.radial(
           Offset(w / 2, h / 2),
           radius,
-          _pipMaskInvert
+          invert
               ? const [clear, clear, white]
               : const [white, white, clear],
           [0, (1 - feather).clamp(0.0, 1.0), 1],
@@ -4291,9 +4794,9 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       }
       canvas.drawRect(Rect.fromLTWH(0, 0, w, h), paint);
     } else {
-      final path = _pipMaskShapePath(_pipMask, Size(w, h));
+      final path = _pipMaskShapePath(shape, Size(w, h));
       final sigma = feather * math.min(w, h) * 0.2;
-      if (_pipMaskInvert) {
+      if (invert) {
         canvas.drawRect(Rect.fromLTWH(0, 0, w, h), ui.Paint()..color = white);
         final cut = ui.Paint()..blendMode = BlendMode.clear;
         if (sigma > 0) {
@@ -4314,6 +4817,82 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     img.dispose();
     picture.dispose();
     return data?.buffer.asUint8List();
+  }
+
+  /// The current PIP mask as PNG bytes (the [_maskPngBytes]
+  /// renderer fed with the PIP fields).
+  Future<Uint8List?> _pipMaskPngBytes(int width, int height) =>
+      _maskPngBytes(
+        shape: _pipMask,
+        featherValue: _pipMaskFeather,
+        invert: _pipMaskInvert,
+        width: width,
+        height: height,
+      );
+
+  /// Writes the export-resolution mask PNG for the MAIN-clip mask
+  /// pass; returns its path, or null when rendering failed (the
+  /// caller then keeps the unmasked export with a status note).
+  Future<String?> _renderMainMaskPng({
+    required Directory dir,
+    required int stamp,
+    required int width,
+    required int height,
+  }) async {
+    try {
+      final bytes = await _maskPngBytes(
+        shape: _mainMask,
+        featherValue: _mainMaskFeather,
+        invert: _mainMaskInvert,
+        width: width,
+        height: height,
+      );
+      if (bytes == null) return null;
+      final f = File(p.join(dir.path, 'main_mask_$stamp.png'));
+      await f.writeAsBytes(bytes);
+      return f.path;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Loads (once per parameter change) the preview-resolution
+  /// MAIN mask image used by the stage's ShaderMask — the twin of
+  /// [_ensurePipMaskImage].
+  void _ensureMainMaskImage(int width, int height) {
+    final key =
+        '$_mainMask|${_mainMaskFeather.toStringAsFixed(2)}|'
+        '$_mainMaskInvert|${width}x$height';
+    if (_mainMaskImageKey == key || _mainMaskImageBusy) return;
+    _mainMaskImageKey = key;
+    _mainMaskImageBusy = true;
+    () async {
+      ui.Image? img;
+      try {
+        final bytes = await _maskPngBytes(
+          shape: _mainMask,
+          featherValue: _mainMaskFeather,
+          invert: _mainMaskInvert,
+          width: width,
+          height: height,
+        );
+        if (bytes != null) {
+          final codec = await ui.instantiateImageCodec(bytes);
+          final frame = await codec.getNextFrame();
+          img = frame.image;
+        }
+      } catch (_) {
+        img = null;
+      }
+      _mainMaskImageBusy = false;
+      if (!mounted) {
+        img?.dispose();
+        return;
+      }
+      final old = _mainMaskImage;
+      setState(() => _mainMaskImage = img);
+      old?.dispose();
+    }();
   }
 
   /// Writes the export-resolution mask PNG for the PIP pass;
@@ -4471,11 +5050,28 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
                     // PIP live preview (§6.11): composited over the
                     // frame, NOT transformed — the export applies
                     // its PIP pass after the transform pass.
+                    // Build 3: the layer rebuilds on every clock
+                    // tick so a keyframed inset's pose interpolates
+                    // LIVE with playback/scrubbing.
                     if (_fxPip && _fxPipVideo.isNotEmpty)
                       Positioned.fill(
-                        child: Stack(
-                          children: [_pipPreviewLayer(frame.size)],
+                        child: AnimatedBuilder(
+                          animation: _clock,
+                          builder: (context, _) => Stack(
+                            children: [_pipPreviewLayer(frame.size)],
+                          ),
                         ),
+                      ),
+                    // Build 3: the keyframed title/sticker posed
+                    // live at the playhead (preview interpolation —
+                    // the export renders the real PNG with the same
+                    // track; this pill is its stage stand-in).
+                    if (_proKeyframes &&
+                        (_proTitle.trim().isNotEmpty ||
+                            _proSticker.trim().isNotEmpty))
+                      AnimatedBuilder(
+                        animation: _clock,
+                        builder: (context, _) => _kfTitleChip(containLocal),
                       ),
                     // Guides: thirds + safe zones over everything.
                     if (_showGrid)
@@ -4525,6 +5121,42 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
   /// tap = tracking point + layer deselect, hold = compare
   /// (§6.2), scale = canvas transform (Phase 1), double-tap =
   /// transform reset.
+  /// Build 3 (Phase 3): wraps the main media in the MAIN-clip
+  /// mask's dstIn ShaderMask when a mask is chosen — the same
+  /// preview mechanism the PIP layer uses (the SAME generated mask
+  /// PNG as the export, so preview and export cannot drift). The
+  /// mask image renders at a capped resolution (shapes/gradients
+  /// are scale-invariant; feather is relative to the short side).
+  Widget _mainMasked(Widget media, double aspect) {
+    if (_mainMask == 'none') return media;
+    var mw = 480;
+    var mh = (480 / aspect).round();
+    if (mh > 480) {
+      mh = 480;
+      mw = (480 * aspect).round();
+    }
+    if (mw < 2 || mh < 2) return media;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _ensureMainMaskImage(mw, mh);
+    });
+    final img = _mainMaskImage;
+    if (img == null) return media;
+    return ShaderMask(
+      shaderCallback: (bounds) => ui.ImageShader(
+        img,
+        ui.TileMode.clamp,
+        ui.TileMode.clamp,
+        (Matrix4.diagonal3Values(
+          bounds.width / img.width,
+          bounds.height / img.height,
+          1.0,
+        )).storage,
+      ),
+      blendMode: BlendMode.dstIn,
+      child: media,
+    );
+  }
+
   Widget _stageMediaLayer(
     VideoClip clip,
     VideoPlayerController? ctrl,
@@ -4537,14 +5169,17 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         onScaleStart: _onStageScaleStart,
         onScaleUpdate: _onStageScaleUpdate,
         onDoubleTap: _resetStageTransform,
-        child: ColorFiltered(
-          colorFilter: ColorFilter.matrix(_stageMatrix),
-          child: Image.file(
-            clip.file,
-            fit: BoxFit.contain,
-            width: double.infinity,
-            height: double.infinity,
+        child: _mainMasked(
+          ColorFiltered(
+            colorFilter: ColorFilter.matrix(_stageMatrix),
+            child: Image.file(
+              clip.file,
+              fit: BoxFit.contain,
+              width: double.infinity,
+              height: double.infinity,
+            ),
           ),
+          clip.aspectRatio,
         ),
       );
     }
@@ -4568,9 +5203,12 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
       onDoubleTap: _resetStageTransform,
       child: Stack(
         children: [
-          ColorFiltered(
-            colorFilter: ColorFilter.matrix(_stageMatrix),
-            child: VideoPlayer(ctrl),
+          _mainMasked(
+            ColorFiltered(
+              colorFilter: ColorFilter.matrix(_stageMatrix),
+              child: VideoPlayer(ctrl),
+            ),
+            ctrl.value.aspectRatio,
           ),
           if (_trackStartX != null)
             Align(
@@ -4597,6 +5235,82 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
                 ),
               ),
             ),
+        ],
+      ),
+    );
+  }
+
+  /// Build 3 (Phase 3): the keyframed title/sticker as a stage
+  /// layer — a dark pill standing in for the export's rendered
+  /// PNG, posed by [keyframePoseAt] at the playhead over the
+  /// media's contain rect (the keyframe norms are fractions of
+  /// the VIDEO size, and the export anchors the PNG's top-left
+  /// the same way). Shown only while keyframes are ON for the
+  /// title/sticker, so the non-keyframed preview is untouched.
+  Widget _kfTitleChip(Rect containLocal) {
+    final label = _proTitle.trim().isNotEmpty
+        ? _proTitle.trim()
+        : _proSticker.trim();
+    final total = _totalDurationSec;
+    final f = total > 0
+        ? (_globalPositionSec / total).clamp(0.0, 1.0)
+        : 0.0;
+    final pose = keyframePoseAt(
+      KeyframeTrack(
+        start: ProKeyframe(
+          timeSec: 0,
+          xNorm: _kfStartX,
+          yNorm: _kfStartY,
+          scale: _kfStartScale,
+          opacity: _kfStartOpacity,
+          rotationDeg: _kfStartRotation,
+        ),
+        end: ProKeyframe(
+          timeSec: 1,
+          xNorm: _kfEndX,
+          yNorm: _kfEndY,
+          scale: _kfEndScale,
+          opacity: _kfEndOpacity,
+          rotationDeg: _kfEndRotation,
+        ),
+      ),
+      f,
+      _kfEasing,
+    );
+    return Positioned.fill(
+      child: Stack(
+        children: [
+          Positioned(
+            left: containLocal.left + pose.xNorm * containLocal.width,
+            top: containLocal.top + pose.yNorm * containLocal.height,
+            child: Opacity(
+              opacity: pose.opacity.clamp(0.0, 1.0),
+              child: Transform.rotate(
+                angle: pose.rotationDeg * math.pi / 180,
+                child: Transform.scale(
+                  scale: pose.scale.clamp(0.1, 3.0),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      label,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -4684,12 +5398,49 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     final pipW = dispW * pipPxW * s / basePxW;
     final pipH = pipW / pipAspect;
     final margin = dispW * 24 / basePxW;
-    final (lx, ty) = switch (_pipPosition) {
-      PipPosition.topLeft => (dispX + margin, dispY + margin),
-      PipPosition.topRight => (dispX + dispW - pipW - margin, dispY + margin),
-      PipPosition.bottomLeft => (dispX + margin, dispY + dispH - pipH - margin),
-      _ => (dispX + dispW - pipW - margin, dispY + dispH - pipH - margin),
-    };
+    // Build 3 (Phase 3): with PIP keyframes ON, the inset's pose
+    // comes from the keyframe track at the playhead (the SAME lerp
+    // the export renders, via keyframePoseAt) — the corner preset
+    // and drag offset no longer drive it.
+    final kfPose = _pipKeyframes
+        ? keyframePoseAt(
+            KeyframeTrack(
+              start: ProKeyframe(
+                timeSec: 0,
+                xNorm: _pkStartX,
+                yNorm: _pkStartY,
+                opacity: _pkStartOpacity,
+              ),
+              end: ProKeyframe(
+                timeSec: 1,
+                xNorm: _pkEndX,
+                yNorm: _pkEndY,
+                opacity: _pkEndOpacity,
+              ),
+            ),
+            _totalDurationSec > 0
+                ? (_globalPositionSec / _totalDurationSec).clamp(0.0, 1.0)
+                : 0.0,
+            _pkEasing,
+          )
+        : null;
+    final (lx, ty) = kfPose != null
+        ? (dispX + kfPose.xNorm * dispW, dispY + kfPose.yNorm * dispH)
+        : switch (_pipPosition) {
+            PipPosition.topLeft => (dispX + margin, dispY + margin),
+            PipPosition.topRight => (
+                dispX + dispW - pipW - margin,
+                dispY + margin,
+              ),
+            PipPosition.bottomLeft => (
+                dispX + margin,
+                dispY + dispH - pipH - margin,
+              ),
+            _ => (
+                dispX + dispW - pipW - margin,
+                dispY + dispH - pipH - margin,
+              ),
+          };
     // Preview mask at a capped resolution (shapes/gradients are
     // scale-invariant; feather is relative to the short side).
     if (_pipMask != 'none' && pipReady) {
@@ -4734,7 +5485,12 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         child: content,
       );
     }
-    content = Opacity(opacity: _pipOpacity.clamp(0.1, 1.0), child: content);
+    content = Opacity(
+      opacity: kfPose != null
+          ? kfPose.opacity.clamp(0.0, 1.0)
+          : _pipOpacity.clamp(0.1, 1.0),
+      child: content,
+    );
     final mode = _pipBlendMode(_pipBlend);
     if (mode != null) {
       content = _BlendLayer(mode: mode, child: content);
@@ -4743,11 +5499,13 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     // it (gold outline) and opens the Elements row, drag moves it
     // (release snaps to the nearest corner of the contain rect —
     // the PipPosition model the export consumes), pinch rescales
-    // it (the render clamp 0.15..0.5 above).
+    // it (the render clamp 0.15..0.5 above). Build 3: while PIP
+    // keyframes drive the pose, drag/pinch stand down (the track
+    // owns the position).
     final selected = _stageLayer == 'pip';
     return Positioned(
-      left: lx + _pipDragOffset.dx,
-      top: ty + _pipDragOffset.dy,
+      left: lx + (kfPose != null ? 0 : _pipDragOffset.dx),
+      top: ty + (kfPose != null ? 0 : _pipDragOffset.dy),
       width: pipW,
       height: pipH,
       child: GestureDetector(
@@ -4758,6 +5516,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
         },
         onScaleStart: (_) => _pinchPipScale = _pipScale,
         onScaleUpdate: (d) {
+          if (_pipKeyframes) return;
           setState(() {
             if (d.pointerCount >= 2) {
               _pipScale = (_pinchPipScale * d.scale).clamp(0.15, 0.5);
@@ -4766,6 +5525,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           });
         },
         onScaleEnd: (_) {
+          if (_pipKeyframes) return;
           final cxp = lx + _pipDragOffset.dx + pipW / 2;
           final cyp = ty + _pipDragOffset.dy + pipH / 2;
           final pos = (cxp < dispX + dispW / 2)
@@ -5654,18 +6414,22 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
     return names[key] ?? key;
   }
 
-  /// Header for the open tool panel: Back button + tool name + ✓.
-  /// v1.5.0 (#11): the confirm is a ✓ ICON everywhere — v1.4.0 mixed
-  /// 'Done' text here, a ✓ in Photo and a purple ✓ elsewhere.
+  /// Header for the open tool panel: ✗ Cancel + tool name + ✓
+  /// Apply — ONE pattern for every panel (Build 3 audit, PRO-SPEC
+  /// points 4 + 19). Panel edits apply LIVE to the preview while
+  /// the panel is open; ✓ keeps them and closes, ✗ rolls back
+  /// everything the panel's controls changed since it opened (the
+  /// [_panelBase] snapshot) and closes. v1.5.0 (#11): the confirm
+  /// is a ✓ ICON everywhere.
   Widget _toolPanelHeader(String toolKey) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Row(
         children: [
           IconButton(
-            tooltip: 'Back to tools',
-            onPressed: () => _openTool(null),
-            icon: const Icon(Icons.arrow_back, color: Colors.white),
+            tooltip: 'Cancel — panel ki changes wapas',
+            onPressed: _cancelPanel,
+            icon: const Icon(Icons.close, color: Colors.white),
           ),
           Expanded(
             child: Text(
@@ -5679,7 +6443,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
             ),
           ),
           IconButton(
-            tooltip: 'Done',
+            tooltip: 'Apply',
             onPressed: () => _openTool(null),
             icon: const Icon(Icons.check, color: TjProTheme.gold),
           ),
@@ -5710,7 +6474,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen> {
           ),
           const Spacer(),
           TextButton(
-            onPressed: _busy ? null : _pickExportQuality,
+            onPressed: _busy ? null : _pickExportSettings,
             child: Text(
               _qualityLabel,
               style: const TextStyle(color: Colors.white70),
