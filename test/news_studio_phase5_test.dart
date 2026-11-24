@@ -63,8 +63,12 @@ void main() {
   // 1. Caption styles (11 styles, presets, fonts, colours).
   // -----------------------------------------------------------------
   group('Caption styles (Magic Box port)', () {
-    test('11 styles, nigraan first = default, green spoken word', () {
-      expect(StudioCaptionStyles.all.length, 11);
+    // Build 7 (v1.5.9) repair: the catalogue grew after Phase 5
+    // — four Urdu styles were appended (the original 11 keep
+    // their order, nigraan still first/default). Counts and id
+    // lists below pin the CURRENT catalogue.
+    test('15 styles, nigraan first = default, green spoken word', () {
+      expect(StudioCaptionStyles.all.length, 15);
       final first = StudioCaptionStyles.all.first;
       expect(first.id, 'nigraan');
       expect(first.nameEn, 'Nigraan Karaoke');
@@ -77,7 +81,7 @@ void main() {
       expect(StudioCaptionStyles.byId('nope'), first);
     });
 
-    test('all 11 ids in picker order, last is minimal', () {
+    test('all 15 ids in picker order, Urdu styles last', () {
       expect(
         StudioCaptionStyles.all.map((s) => s.id).toList(),
         [
@@ -92,9 +96,16 @@ void main() {
           'news_ticker',
           'spotlight',
           'minimal',
+          'urdu_nastaleeq_classic',
+          'urdu_naskh_bold',
+          'urdu_kasheeda_gold',
+          'urdu_gulzar_headline',
         ],
       );
-      expect(StudioCaptionStyles.all.last.nameEn, 'Minimal');
+      expect(
+        StudioCaptionStyles.all.last.nameEn,
+        'Urdu Gulzar Headline',
+      );
     });
 
     test('highlight choices are the 6 documented colours', () {
@@ -108,8 +119,8 @@ void main() {
       ]);
     });
 
-    test('3 one-tap presets, Nigraan News = house look', () {
-      expect(CaptionPresets.all.length, 3);
+    test('5 one-tap presets, Nigraan News = house look', () {
+      expect(CaptionPresets.all.length, 5);
       final nigraan = CaptionPresets.nigraanNews;
       expect(nigraan.styleId, 'nigraan');
       expect(nigraan.fontId, 'jameel_kasheeda');
@@ -119,10 +130,22 @@ void main() {
       expect(CaptionPresets.byId('clean').styleId, 'classic');
     });
 
-    test('6 fonts, Urdu gets Jameel first, English gets display fonts', () {
-      expect(CaptionFonts.all.length, 6);
+    test('9 fonts, Urdu gets Jameel first, English gets display fonts',
+        () {
+      expect(CaptionFonts.all.length, 9);
       expect(CaptionFonts.forLang('ur').first.id, 'jameel_kasheeda');
-      expect(CaptionFonts.forLang('ur').length, 2);
+      // Urdu now offers the full registry: Jameel first, then
+      // Nastaliq / Gulzar / Naskh, then System.
+      expect(
+        CaptionFonts.forLang('ur').map((f) => f.id).toList(),
+        [
+          'jameel_kasheeda',
+          'noto_nastaliq_urdu',
+          'gulzar',
+          'noto_naskh_arabic',
+          'system',
+        ],
+      );
       expect(
         CaptionFonts.forLang('en').map((f) => f.id).toList(),
         ['system', 'bebas', 'anton', 'montserrat', 'poppins'],

@@ -1091,6 +1091,7 @@ class NigraanFinalPreview extends StatelessWidget {
               height: logoH,
               isFinal3: isFinal3,
               rotate: logoRotate,
+              logoGsFrameAssetPath: preset.logoGsFrameAssetPath,
             ),
           ),
           if (!capOv.hidden)
@@ -1182,6 +1183,8 @@ class _ParityLogoBox extends StatelessWidget {
     required this.height,
     this.isFinal3 = false,
     this.rotate = true,
+    this.logoGsFrameAssetPath =
+        AssetDownloadService.logoGsFrameAssetPath,
   });
 
   final String? logoPath;
@@ -1189,6 +1192,11 @@ class _ParityLogoBox extends StatelessWidget {
   final double width;
   final double height;
   final bool isFinal3;
+
+  /// Build 7 (v1.5.9, Phase 8 generic branding): the channel's
+  /// keyed logo still — passed from the active preset (defaults
+  /// to the Nigraan TV frame, the old hardcoded literal).
+  final String logoGsFrameAssetPath;
 
   /// v1.5.1 (fix #47): a picked logo SWINGS (3D) in the preview
   /// when true — any uploaded logo rotates, not only the built-in
@@ -1229,7 +1237,7 @@ class _ParityLogoBox extends StatelessWidget {
         width: width,
         height: height,
         child: Image.asset(
-          'assets/templates/nigraan_logo_gs_frame.png',
+          logoGsFrameAssetPath,
           fit: BoxFit.contain,
           errorBuilder: (_, _, _) => _tile(),
         ),

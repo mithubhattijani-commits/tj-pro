@@ -1,7 +1,7 @@
 name: tj_pro
 description: "TJ Pro — free offline photo and video editor for Android."
 publish_to: 'none'
-version: 1.5.8+22
+version: 1.5.9+23
 
 environment:
   sdk: ^3.13.7
@@ -82,8 +82,13 @@ dev_dependencies:
 # is ALSO listed under flutter.assets for the in-app SplashGate).
 # Android <=11: the poster fills the launch window (gravity fill)
 # over the poster's deep blue (#040F30, its dark-blue median).
-# Android 12+: the system splash shows the poster as the splash
-# image on the same deep blue. Regenerate after changing the poster:
+# Android 12+ (Build 7, v1.5.9): the system splash icon is a fully
+# TRANSPARENT image (assets/splash_blank.png) on the same deep
+# blue — the OS shows NO icon at all, only the plain #040F30
+# background, until the in-app SplashGate paints the full-screen
+# poster. (In v1.5.7/v1.5.8 the poster was the android_12 image,
+# which the OS renders small and centred — the user saw a small
+# icon instead of his poster.) Regenerate after changing this:
 #   flutter pub run flutter_native_splash:create
 flutter_native_splash:
   color: "#040F30"
@@ -94,7 +99,7 @@ flutter_native_splash:
   ios: false
   web: false
   android_12:
-    image: assets/splash_poster.png
+    image: assets/splash_blank.png
     color: "#040F30"
 
 flutter:

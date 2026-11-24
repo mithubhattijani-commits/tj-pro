@@ -1311,7 +1311,8 @@ class ReelExportService {
           preset.logoRotate &&
           framesDir == null &&
           stillPath == null) {
-        final gs = await svc.ensureLogoGsFile();
+        final gs =
+            await svc.ensureLogoGsFile(assetPath: preset.logoGsAssetPath);
         gsPath = gs?.path;
       }
       // v1.5.1 (#47): rotation OFF + default logo → the keyed
@@ -1323,7 +1324,7 @@ class ReelExportService {
           framesDir == null &&
           stillPath == null) {
         final framePng = await _extractAsset(
-          'assets/templates/nigraan_logo_gs_frame.png',
+          preset.logoGsFrameAssetPath,
           dir,
           'reel_logo_frame_$stamp.png',
         );
@@ -1725,7 +1726,7 @@ class ReelExportService {
         // v1.3.0 (§9.9): the intro ships BUNDLED with the app —
         // cache → bundle first, the (currently unconfigured)
         // download URL only as a last resort.
-        intro = await svc.ensureIntroFile();
+        intro = await svc.ensureIntroFile(assetPath: preset.introAssetPath);
         intro ??= await svc.getIntroVideo(
           url: AppConfig.nigraanIntroUrl,
         );

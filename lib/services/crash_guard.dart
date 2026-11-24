@@ -39,6 +39,26 @@ class CrashGuard {
 
   static bool _installed = false;
 
+  // --- Build 7 (v1.5.9): version + route context ---------------
+  // Diagnostics records now carry WHERE and on WHAT build an
+  // error fired, so a screenshot of About → Diagnostics is
+  // self-explaining: [appVersion] is set once from main()
+  // (PackageInfo, fail-soft — blank when unread), and
+  // [currentRoute] is kept current by [routeObserver], which
+  // MaterialApp registers as a navigator observer.
+
+  /// App version + build, e.g. '1.5.9 (23)'. Blank until main()
+  /// sets it; records simply omit it while blank.
+  static String appVersion = '';
+
+  /// Name (or runtime type) of the currently visible route.
+  static String? currentRoute;
+
+  /// The observer MaterialApp registers. It only records the
+  /// route label — it never alters navigation.
+  static final CrashGuardRouteObserver routeObserver =
+      CrashGuardRouteObserver();
+
   // --- Build 5 (v1.5.7): snackbar dedupe + throttle --------------
   // v1.5.6 on the user's phone: ONE repeating error (a layout
   // overflow refiring on every frame in the News Maker workspace)
@@ -85,37 +105,75 @@ class CrashGuard {
   // khata"), so the next occurrence names itself. Recording is
   // NEVER throttled (only the banner is) and NEVER throws.
 
-  /// SharedPreferences key holding the last diagnostic text.
+  /// SharedPreferences key holding the diagnostic text.
   static const String diagnosticsPrefsKey = 'tjpro_last_error_v1';
 
-  /// How many stack lines the stored diagnostic keeps.
+  /// How many stack lines each stored record keeps.
   static const int diagnosticsStackLines = 8;
 
-  /// Hard cap on the stored text, so a pathological error can
+  /// Hard cap on ONE record's text, so a pathological error can
   /// never bloat the preferences file.
   static const int diagnosticsMaxChars = 2000;
 
-  /// The most recent diagnostic text recorded by THIS session
-  /// (the About dialog reads [loadStoredDiagnostic] for the
-  /// persisted copy; this notifier is the in-memory mirror).
+  /// Build 7 (v1.5.9): how many records the diagnostics keep —
+  /// the LAST FIVE errors, newest first (Build 6 kept only one,
+  /// so an early, causal error could be overwritten by a later
+  /// symptom before the user ever opened About).
+  static const int diagnosticsMaxRecords = 5;
+
+  /// Hard cap on the whole stored text (all records joined).
+  static const int diagnosticsTotalMaxChars = 10000;
+
+  /// Separator between records in the stored text.
+  static const String diagnosticsSeparator = '\n\n';
+
+  /// The in-memory record list (newest first), mirrored to
+  /// storage joined by [diagnosticsSeparator].
+  static final List<String> _recentDiagnostics = <String>[];
+
+  /// The recorded diagnostics, newest first (read-only view).
+  static List<String> get recentDiagnostics =>
+      List<String>.unmodifiable(_recentDiagnostics);
+
+  /// The full diagnostics text recorded by THIS session — up to
+  /// [diagnosticsMaxRecords] records, newest first (the About
+  /// dialog reads [loadStoredDiagnostic] for the persisted copy;
+  /// this notifier is the in-memory mirror).
   static final ValueNotifier<String?> lastDiagnostic =
       ValueNotifier<String?>(null);
 
   /// Storage seam for tests; production leaves this null and the
-  /// SharedPreferences writer below is used.
+  /// SharedPreferences writer below is used. The writer receives
+  /// the FULL diagnostics text (all kept records joined).
   static Future<void> Function(String text)? diagnosticsWriter;
 
-  /// Formats one diagnostic record: timestamp + source, the
-  /// error message, then the first [diagnosticsStackLines] stack
-  /// lines — capped at [diagnosticsMaxChars].
+  /// Test seam: clears the recorded diagnostics.
+  static void resetDiagnosticsForTest() {
+    _recentDiagnostics.clear();
+    lastDiagnostic.value = null;
+  }
+
+  /// Formats one diagnostic record: timestamp + source (+ app
+  /// version and route when known), the error message, then the
+  /// first [diagnosticsStackLines] stack lines — capped at
+  /// [diagnosticsMaxChars].
   static String formatDiagnostic(
     Object error,
     StackTrace stack,
     String source,
-    DateTime when,
-  ) {
+    DateTime when, {
+    String? appVersion,
+    String? route,
+  }) {
+    final header = StringBuffer('[${when.toIso8601String()}] source: $source');
+    if (appVersion != null && appVersion.isNotEmpty) {
+      header.write(' | app: $appVersion');
+    }
+    if (route != null && route.isNotEmpty) {
+      header.write(' | route: $route');
+    }
     final buffer = StringBuffer()
-      ..writeln('[${when.toIso8601String()}] source: $source')
+      ..writeln(header.toString())
       ..writeln(error.toString());
     final stackLines = stack.toString().split('\n');
     var written = 0;
@@ -132,16 +190,37 @@ class CrashGuard {
     return text;
   }
 
-  /// Records [error] as the persistent diagnostic. Fire-and-
-  /// forget by design: diagnostics must never become an error
-  /// path of their own.
+  /// Records [error] in the persistent diagnostics (newest
+  /// first, last [diagnosticsMaxRecords] kept). Fire-and-forget
+  /// by design: diagnostics must never become an error path of
+  /// their own.
   static void _recordDiagnostic(
     Object error,
     StackTrace stack,
     String source,
   ) {
     try {
-      final text = formatDiagnostic(error, stack, source, nowFn());
+      final record = formatDiagnostic(
+        error,
+        stack,
+        source,
+        nowFn(),
+        appVersion: appVersion,
+        route: currentRoute,
+      );
+      _recentDiagnostics.insert(0, record);
+      while (_recentDiagnostics.length > diagnosticsMaxRecords) {
+        _recentDiagnostics.removeLast();
+      }
+      var text = _recentDiagnostics.join(diagnosticsSeparator);
+      while (text.length > diagnosticsTotalMaxChars &&
+          _recentDiagnostics.length > 1) {
+        _recentDiagnostics.removeLast();
+        text = _recentDiagnostics.join(diagnosticsSeparator);
+      }
+      if (text.length > diagnosticsTotalMaxChars) {
+        text = text.substring(0, diagnosticsTotalMaxChars);
+      }
       lastDiagnostic.value = text;
       final writer = diagnosticsWriter;
       if (writer != null) {
@@ -160,6 +239,23 @@ class CrashGuard {
     } catch (_) {
       // Reporting must never throw (see report()).
     }
+  }
+
+  /// Build 7 (v1.5.9): records an error that a risky boundary
+  /// has already HANDLED (the fail-soft catch blocks at the
+  /// preview player, store/Drive fetches, export start,
+  /// voice/TTS status, photo pipeline entry points and
+  /// Home config/banner loads). The record's [source] tag names
+  /// the boundary (e.g. 'maker.preview'), so the diagnostics
+  /// text says WHERE it fired. No banner — the boundary already
+  /// recovered, so this is evidence, not an alarm. Never throws.
+  static void captureHandled(
+    Object error,
+    StackTrace stack, {
+    required String source,
+  }) {
+    debugPrint('[TJPro][$source] (handled) ${error.toString()}');
+    _recordDiagnostic(error, stack, source);
   }
 
   /// The persisted diagnostic from a previous (or this) session,
@@ -291,5 +387,36 @@ class CrashGuard {
         ),
       ),
     );
+  }
+}
+
+/// Build 7 (v1.5.9): keeps [CrashGuard.currentRoute] naming the
+/// visible route, so every diagnostics record says which screen
+/// an error fired on. Registered on MaterialApp in main.dart.
+/// It observes only — it never alters navigation. Unnamed routes
+/// (the app's screens are pushed without names) fall back to the
+/// route's runtime type, which still identifies the screen class
+/// in practice (e.g. `MaterialPageRoute<dynamic>` for a push,
+/// or the dialog route type for dialogs).
+class CrashGuardRouteObserver extends NavigatorObserver {
+  void _track(Route<dynamic>? route) {
+    if (route == null) return;
+    CrashGuard.currentRoute =
+        route.settings.name ?? route.runtimeType.toString();
+  }
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    _track(route);
+  }
+
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
+    _track(newRoute);
+  }
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    _track(previousRoute ?? route);
   }
 }

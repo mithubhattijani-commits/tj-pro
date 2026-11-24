@@ -493,9 +493,23 @@ void main() {
       );
       expect(layout.categoryChip, isNull);
       expect(layout.interviewPlate, isNull);
-      // Outro is on by default (showOutro true) — sits right of intro.
-      expect(layout.outroMarker, isNotNull);
-      expect(layout.outroMarker!.left, layout.introMarker!.right + 8);
+      // Build 7 (v1.5.9) repair: the old assertion ("outro is on
+      // by default") predates the FINAL template ruling — the
+      // reference has NO outro, so the built-in preset ships
+      // showOutro = false and there is no marker by default.
+      expect(layout.outroMarker, isNull);
+      expect(layout.introMarker, isNotNull);
+      // Switched ON, the outro marker sits right of the intro.
+      final withOutro = NigraanFinalLayout.compute(
+        preset: ChannelPreset.nigraanTv()..showOutro = true,
+        width: 720,
+        height: 1280,
+      );
+      expect(withOutro.outroMarker, isNotNull);
+      expect(
+        withOutro.outroMarker!.left,
+        withOutro.introMarker!.right + 8,
+      );
     });
 
     test('category label adds a chip, intro marker shifts down', () {

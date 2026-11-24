@@ -56,6 +56,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'crash_guard.dart';
 import 'store_service.dart';
 
 /// The library categories — exact subfolder names in the store
@@ -502,7 +503,12 @@ class LibraryService {
       }
       revision.value = revision.value + 1;
       return List<LibraryItem>.unmodifiable(items);
-    } catch (_) {
+    } catch (e, s) {
+      // Build 7 (v1.5.9): a Drive/store fetch failure falls back
+      // to the cache exactly as before — but it is now RECORDED
+      // with its boundary tag (no banner), so a store outage is
+      // diagnosable from About → Diagnostics.
+      CrashGuard.captureHandled(e, s, source: 'store.fetch');
       return cachedItems(category);
     }
   }

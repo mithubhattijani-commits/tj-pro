@@ -54,6 +54,7 @@ import 'package:video_player/video_player.dart';
 import '../app_config.dart';
 import '../live/news_template.dart';
 import '../services/asset_download_service.dart';
+import '../services/crash_guard.dart';
 import '../services/project_recovery.dart';
 import '../services/remote_config_service.dart';
 import '../services/coin_service.dart';
@@ -277,7 +278,10 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       await _refreshVoiceStatus();
       await _checkFont();
       await _initFontsAndLibrary();
-    } catch (_) {
+    } catch (e, s) {
+      // Build 7: recorded with its boundary tag (no banner) —
+      // the fallback below still applies exactly as before.
+      CrashGuard.captureHandled(e, s, source: 'maker.load');
       if (!mounted || _loaded) return;
       final preset = ChannelPreset.nigraanTv();
       final project = NewsProject.create(presetId: preset.id);
@@ -304,8 +308,10 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       final remaining = await GeminiVoiceService().remainingToday();
       if (!mounted) return;
       setState(() => _voiceRemaining = remaining);
-    } catch (_) {
+    } catch (e, s) {
       // Quota display is decoration — never an error path.
+      // Build 7: recorded with its boundary tag (no banner).
+      CrashGuard.captureHandled(e, s, source: 'maker.voice');
     }
   }
 
@@ -357,8 +363,10 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               'fallback font use ho raha hai';
         });
       }
-    } catch (_) {
+    } catch (e, s) {
       // Font state is fail-soft — the preview uses the fallback.
+      // Build 7: recorded with its boundary tag (no banner).
+      CrashGuard.captureHandled(e, s, source: 'maker.fonts');
     }
   }
 
@@ -671,8 +679,10 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             'Saved • ${now.hour.toString().padLeft(2, '0')}:'
             '${now.minute.toString().padLeft(2, '0')}',
       );
-    } catch (_) {
+    } catch (e, s) {
       // Autosave is background bookkeeping — never an error path.
+      // Build 7: recorded with its boundary tag (no banner).
+      CrashGuard.captureHandled(e, s, source: 'maker.autosave');
     }
   }
 
@@ -1152,7 +1162,10 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                 : 'Nayi voice — ${result.proxyRequests} request(s) use hui.$syncNote';
       });
       _scheduleSave();
-    } catch (e) {
+    } catch (e, s) {
+      // Build 7: recorded with its boundary tag (no banner) —
+      // the status line below still reports it to the user.
+      CrashGuard.captureHandled(e, s, source: 'maker.voice');
       if (!mounted) return;
       setState(() {
         _voiceBusy = false;
@@ -1719,8 +1732,12 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             _clipDurations[path] = d;
             changed = true;
           }
-        } catch (_) {
+        } catch (e, s) {
           // Not a readable video — the lane uses equal flex.
+          // Build 7 (v1.5.9): recorded (no banner) so a preview
+          // player init/dispose failure is diagnosable from
+          // About → Diagnostics instead of staying invisible.
+          CrashGuard.captureHandled(e, s, source: 'maker.preview');
         }
       }
       if (!_clipThumbs.containsKey(path)) {
@@ -4678,8 +4695,10 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     try {
       await UserFontService.instance.loadAll();
       await UserFontService.instance.syncIntoRegistry();
-    } catch (_) {
+    } catch (e, s) {
       // Fonts are fail-soft — the pickers still show built-ins.
+      // Build 7: recorded with its boundary tag (no banner).
+      CrashGuard.captureHandled(e, s, source: 'maker.fonts');
     }
     final project = _project;
     if (project != null) {
@@ -4706,9 +4725,10 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         _transitions = transitions;
         _effects = effects;
       });
-    } catch (_) {
+    } catch (e, s) {
       // Library listings only feed the pickers — never an error
-      // path.
+      // path. Build 7: recorded with its boundary tag.
+      CrashGuard.captureHandled(e, s, source: 'maker.store');
     }
   }
 

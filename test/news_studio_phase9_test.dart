@@ -549,14 +549,21 @@ void main() {
         ),
       );
       await tester.pump();
-      // Phase 10: export costs coins (720p = 50) — seed the balance
-      // so the export runs far enough to hit the no-clips failure
-      // (the spend itself is real: local-only debit, no Supabase).
+      // Resolution is FREE since v1.2.0 (ads play alongside the
+      // export instead); the balance seed is kept harmlessly so
+      // the chroma/coins paths stay exercised elsewhere.
       CoinService.instance.balance.value = 1000;
       await tester.tap(find.byKey(const Key('startExportButton')));
       await tester.pump();
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
+      // Build 7 (v1.5.9) repair: tapping Export now also fires
+      // the alongside-export ads (v1.2.0) — UnityAdsService.init
+      // waits on a 10-second SDK timeout that stays pending in
+      // the fake-async zone and fails the test at teardown.
+      // Advance past it; the export's own failure flow is
+      // unaffected (it never waits on the ads).
+      await tester.pump(const Duration(seconds: 11));
       // The failure UI is below the fold — scroll it into view.
       await tester.scrollUntilVisible(
         find.byKey(const Key('retryExportButton')),

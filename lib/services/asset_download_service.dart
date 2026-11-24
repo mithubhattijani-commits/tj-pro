@@ -30,6 +30,8 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+
+import '../theme.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -70,7 +72,9 @@ class AssetDownloadService {
 
   /// Font family the Kasheeda font is registered under (same name the
   /// old pubspec font registration used, so renderer code does not change).
-  static const kasheedaFamily = 'JameelNooriNastaleeqKasheeda';
+  /// Build 7 (v1.5.9, Phase 8): the name's single source is the
+  /// design system — this constant delegates to it.
+  static const kasheedaFamily = TjProTheme.kasheedaFamily;
 
   Future<Directory> _cacheDir() async {
     if (cacheDirOverride != null) {
@@ -234,6 +238,13 @@ class AssetDownloadService {
   static const logoGsAssetPath = 'assets/templates/nigraan_logo_gs.mp4';
   static const logoGsFileName = 'nigraan_logo_gs.mp4';
 
+  /// Bundled asset path of the green-screen logo's keyed STILL
+  /// frame (rotation-off path, v1.5.1 #47). Build 7: named here
+  /// once — the export and the preview used to spell the literal
+  /// independently.
+  static const logoGsFrameAssetPath =
+      'assets/templates/nigraan_logo_gs_frame.png';
+
   /// Bundled asset path + cache name of the DejaVu Sans Bold font
   /// (the reference template's Latin font — ribbons' Latin runs are
   /// drawn by the PNG renderer, the ticking clock by drawtext, which
@@ -291,11 +302,22 @@ class AssetDownloadService {
   /// The channel intro file: cache → bundled asset (v1.3.0) → null
   /// (the caller may then try [getIntroVideo] with a URL). Never
   /// throws.
-  Future<File?> ensureIntroFile() async {
+  ///
+  /// Build 7 (v1.5.9, Phase 8 generic branding): [assetPath]
+  /// overrides which bundled intro to use — the export passes
+  /// the active channel preset's `introAssetPath`, so another
+  /// channel ships its own intro. The default (null) is the
+  /// Nigraan TV intro, byte-for-byte the old behaviour; a custom
+  /// path caches under its own file name so the two channels'
+  /// intros can never be served for each other.
+  Future<File?> ensureIntroFile({String? assetPath}) async {
     try {
-      final cached = await cachedFile(introFileName);
+      final String path = assetPath ?? introAssetPath;
+      final String name =
+          path == introAssetPath ? introFileName : p.basename(path);
+      final cached = await cachedFile(name);
       if (cached != null) return cached;
-      return await extractBundledAsset(introAssetPath, introFileName);
+      return await extractBundledAsset(path, name);
     } catch (_) {
       return null;
     }
@@ -316,12 +338,16 @@ class AssetDownloadService {
 
   /// The green-screen logo video file: cache → bundled asset →
   /// null (the caller falls back to the existing logo path).
-  /// Never throws.
-  Future<File?> ensureLogoGsFile() async {
+  /// Never throws. [assetPath] is the preset-level override —
+  /// see [ensureIntroFile].
+  Future<File?> ensureLogoGsFile({String? assetPath}) async {
     try {
-      final cached = await cachedFile(logoGsFileName);
+      final String path = assetPath ?? logoGsAssetPath;
+      final String name =
+          path == logoGsAssetPath ? logoGsFileName : p.basename(path);
+      final cached = await cachedFile(name);
       if (cached != null) return cached;
-      return await extractBundledAsset(logoGsAssetPath, logoGsFileName);
+      return await extractBundledAsset(path, name);
     } catch (_) {
       return null;
     }

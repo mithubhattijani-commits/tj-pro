@@ -2,6 +2,7 @@
 library;
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -25,6 +26,7 @@ import 'services/auth_service.dart';
 import 'services/coin_service.dart';
 import 'services/crash_guard.dart';
 import 'services/pro_service.dart';
+import 'services/hero_banner_cache.dart';
 import 'services/referral_service.dart';
 import 'services/remote_config_service.dart';
 import 'services/unity_ads_service.dart';
@@ -60,6 +62,19 @@ Future<void> main() async {
       // time) and load the local coin balance. Both are awaited here so
       // the app-bar coins pill is correct on first paint.
       await AuthService.init();
+      // Build 7 (v1.5.9): diagnostics records carry the app
+      // version — read it once here (fail-soft: a package-info
+      // failure leaves the version blank, never blocks startup).
+      try {
+        final info = await PackageInfo.fromPlatform();
+        CrashGuard.appVersion = '${info.version} (${info.buildNumber})';
+      } catch (_) {
+        // Diagnostics simply omit the version.
+      }
+      // Build 7 (v1.5.9): warm the splash poster's decode BEFORE
+      // the first frame, so the SplashGate paints the poster on
+      // its very first frame instead of a plain-colour flash.
+      await _warmSplashPoster();
       await CoinService.instance.load();
       // Pro (v1.4.0): load the Pro entitlement next to the coin balance.
       // Fully fail-soft — no table / offline means free mode.
@@ -80,22 +95,63 @@ Future<void> main() async {
   );
 }
 
-/// Build 6 (v1.5.8) — in-app splash gate.
+/// Build 7 (v1.5.9): resolves the splash poster once so its
+/// decode sits in the image cache before [runApp]; the
+/// SplashGate's own Image then paints synchronously on the first
+/// frame. Best-effort: never throws, and never waits longer than
+/// 600 ms — a slow decode must not delay startup (the gate's
+/// background is the same #040F30 the native splash shows, so
+/// even a missed warm-up is a seamless colour-to-poster fade).
+Future<void> _warmSplashPoster() async {
+  try {
+    const ImageProvider provider = AssetImage('assets/splash_poster.png');
+    final ImageStream stream =
+        provider.resolve(const ImageConfiguration());
+    final Completer<void> completer = Completer<void>();
+    final ImageStreamListener listener = ImageStreamListener(
+      (ImageInfo image, bool synchronousCall) {
+        if (!completer.isCompleted) completer.complete();
+      },
+      onError: (Object error, StackTrace? stack) {
+        if (!completer.isCompleted) completer.complete();
+      },
+    );
+    stream.addListener(listener);
+    try {
+      await completer.future.timeout(
+        const Duration(milliseconds: 600),
+        onTimeout: () {},
+      );
+    } finally {
+      stream.removeListener(listener);
+    }
+  } catch (_) {
+    // Warming is an optimisation only — the gate loads the
+    // poster itself regardless.
+  }
+}
+
+/// Build 6 (v1.5.8) — in-app splash gate. Build 7 (v1.5.9)
+/// hardened — see the notes in [_SplashGateState.initState].
 ///
 /// On the user's Android 12+ phone the system splash showed the
 /// poster SMALL and centred: the Android 12+ splash API only
 /// allows an icon-sized image, so full-bleed is impossible at OS
-/// level (the native splash config is unchanged — it still
-/// covers the cold-start frames). The user's intent is delivered
-/// one layer up instead: this gate is the app's first screen and
-/// shows the SAME poster full-screen (BoxFit.cover over the
-/// poster's own deep blue, #040F30 — the same colour the native
-/// splash uses, so the hand-off is seamless). It stays for
-/// [minShow] — or until the first frame is ready, whichever is
-/// LATER — and is hard-capped at [maxShow] so the app can never
-/// sit on the poster. It then swaps itself for Home in place
-/// (no route is pushed, so Back never returns here). No buttons,
-/// no tap needed, no extra branding text.
+/// level. Build 7 therefore makes the native splash icon fully
+/// transparent (pubspec flutter_native_splash android_12 image =
+/// assets/splash_blank.png): at startup the OS now shows ONLY
+/// the plain #040F30 background — no icon anywhere — until this
+/// gate paints. The gate is the app's first screen (and its only
+/// cold-start entry: MaterialApp has no routes or deep-link
+/// handlers that could bypass it, and the update prompts live
+/// behind Home) and shows the poster full-screen (BoxFit.cover
+/// over the poster's own deep blue, #040F30 — the same colour
+/// the native splash uses, so the hand-off is seamless). It
+/// stays for [minShow] — or until the first frame is ready,
+/// whichever is LATER — and is hard-capped at [maxShow] so the
+/// app can never sit on the poster. It then swaps itself for
+/// Home in place (no route is pushed, so Back never returns
+/// here). No buttons, no tap needed, no extra branding text.
 class SplashGate extends StatefulWidget {
   const SplashGate({super.key});
 
@@ -119,6 +175,16 @@ class _SplashGateState extends State<SplashGate> {
   @override
   void initState() {
     super.initState();
+    // Build 7 (v1.5.9): while the gate is up the poster runs
+    // full-bleed UNDER the status bar (immersive); [_swap]
+    // restores the normal system UI for Home. The gate is the
+    // app's root screen (MaterialApp.home) — there is no route
+    // beneath it, so the system Back button exits the app from
+    // here; it can never loop back to the poster, and after the
+    // one-way swap below the poster never returns (not on
+    // resume, not on Back — this State's [_showHome] is never
+    // reset).
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _frameReady = true;
       _maybeSwap();
@@ -128,6 +194,21 @@ class _SplashGateState extends State<SplashGate> {
       _maybeSwap();
     });
     _capTimer = Timer(SplashGate.maxShow, _swap);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Second layer of the poster warm-up (main() decodes it once
+    // before runApp): guarantees the asset is in the image cache
+    // even when the startup warm-up was skipped or timed out, so
+    // the gate's first frame is the poster, not the plain
+    // background colour.
+    precacheImage(
+      const AssetImage('assets/splash_poster.png'),
+      context,
+      onError: (Object error, StackTrace? stack) {},
+    );
   }
 
   /// Swap when BOTH the minimum time has passed AND the first
@@ -141,6 +222,8 @@ class _SplashGateState extends State<SplashGate> {
     if (!mounted || _showHome) return;
     _minTimer?.cancel();
     _capTimer?.cancel();
+    // Restore the normal system UI (the gate ran immersive).
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     setState(() => _showHome = true);
   }
 
@@ -155,13 +238,96 @@ class _SplashGateState extends State<SplashGate> {
   Widget build(BuildContext context) {
     if (_showHome) return const HomeScreen();
     return const Scaffold(
-      backgroundColor: Color(0xFF040F30),
+      backgroundColor: TjProTheme.splashBackground,
       body: SizedBox.expand(
         child: Image(
           image: AssetImage('assets/splash_poster.png'),
           fit: BoxFit.cover,
         ),
       ),
+    );
+  }
+}
+
+/// Build 7 (v1.5.9, FIX C): one hero slide's REMOTE image.
+///
+/// Display order: the on-device cached copy for this exact URL
+/// (HeroBannerCache) paints instantly; until a copy is cached
+/// the URL streams directly, showing [fallback] while loading;
+/// any failure — offline, 404, a broken file — lands on
+/// [fallback]. A remote banner can therefore never produce a
+/// blank or broken slide. When the cache downloads a fresher
+/// copy it bumps its revision and this widget swaps to it.
+class _HeroRemoteImage extends StatefulWidget {
+  const _HeroRemoteImage({
+    required this.slot,
+    required this.url,
+    required this.fit,
+    required this.fallback,
+  });
+
+  final String slot;
+  final String url;
+  final BoxFit fit;
+  final Widget fallback;
+
+  @override
+  State<_HeroRemoteImage> createState() => _HeroRemoteImageState();
+}
+
+class _HeroRemoteImageState extends State<_HeroRemoteImage> {
+  File? _file;
+
+  @override
+  void initState() {
+    super.initState();
+    _file = HeroBannerCache.instance.cachedFileFor(widget.slot, widget.url);
+    HeroBannerCache.instance.revision.addListener(_sync);
+    unawaited(HeroBannerCache.instance.warm(widget.slot, widget.url));
+  }
+
+  @override
+  void didUpdateWidget(_HeroRemoteImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.url != widget.url || oldWidget.slot != widget.slot) {
+      _file = HeroBannerCache.instance.cachedFileFor(widget.slot, widget.url);
+      unawaited(HeroBannerCache.instance.warm(widget.slot, widget.url));
+    }
+  }
+
+  @override
+  void dispose() {
+    HeroBannerCache.instance.revision.removeListener(_sync);
+    super.dispose();
+  }
+
+  void _sync() {
+    if (!mounted) return;
+    final File? file =
+        HeroBannerCache.instance.cachedFileFor(widget.slot, widget.url);
+    if (file != _file) setState(() => _file = file);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final File? file = _file;
+    if (file != null) {
+      return Image.file(
+        file,
+        fit: widget.fit,
+        width: double.infinity,
+        height: double.infinity,
+        errorBuilder: (context, error, stackTrace) => widget.fallback,
+      );
+    }
+    return Image.network(
+      widget.url,
+      fit: widget.fit,
+      width: double.infinity,
+      height: double.infinity,
+      errorBuilder: (context, error, stackTrace) => widget.fallback,
+      loadingBuilder: (context, child, loadingProgress) =>
+          loadingProgress == null ? child : widget.fallback,
     );
   }
 }
@@ -177,12 +343,14 @@ class PhotoVideoEditorApp extends StatelessWidget {
       // Phase 0: lets [CrashGuard] surface caught errors as a
       // snackbar from anywhere, no BuildContext needed.
       scaffoldMessengerKey: CrashGuard.messengerKey,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: TjProTheme.gold,
-          brightness: Brightness.dark,
-        ),
-      ),
+      // Build 7 (v1.5.9, Phase 8): the app theme IS the design
+      // system's dark theme — the identical ThemeData that used
+      // to be written inline here, now owned by theme.dart.
+      theme: TjProTheme.dark,
+      // Build 7 (v1.5.9): diagnostics records name the current
+      // route/screen — this observer keeps CrashGuard's route
+      // label current. It observes only; it changes nothing.
+      navigatorObservers: [CrashGuard.routeObserver],
       // Build 6 (v1.5.8): the app opens on the in-app splash
       // gate (full-screen poster), which swaps itself for Home.
       home: const SplashGate(),
@@ -238,8 +406,25 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     remoteConfigService.notifier.removeListener(_onRemoteConfigChanged);
+    remoteConfigService.notifier.removeListener(_warmHeroBanners);
     _heroController.dispose();
     super.dispose();
+  }
+
+  /// Build 7 (v1.5.9, FIX C): keeps the on-device hero-banner
+  /// cache warm for the CURRENT config — called once at launch
+  /// and on every remote-config change. Cached copies paint
+  /// instantly; fresh copies swap in when downloaded.
+  void _warmHeroBanners() {
+    final RemoteConfig cfg = remoteConfigService.config;
+    unawaited(
+      HeroBannerCache.instance
+          .warm(HeroBannerCache.slot1, cfg.heroBanner1ImageUrl),
+    );
+    unawaited(
+      HeroBannerCache.instance
+          .warm(HeroBannerCache.slot2, cfg.heroBanner2ImageUrl),
+    );
   }
 
   Future<void> _startPostLaunchFlow() async {
@@ -254,6 +439,8 @@ class _HomeScreenState extends State<HomeScreen> {
     // config) and on every background refresh, so a fresh kill-switch
     // trips without an app restart.
     remoteConfigService.notifier.addListener(_onRemoteConfigChanged);
+    remoteConfigService.notifier.addListener(_warmHeroBanners);
+    _warmHeroBanners();
     _onRemoteConfigChanged();
     // Update check (v1.2.0 UX): fetch silently; when a newer version
     // exists, show the once-per-launch update popup (Later snoozes it
@@ -274,8 +461,10 @@ class _HomeScreenState extends State<HomeScreen> {
           showUpdatePopupOnce(context, update);
         }
       }
-    } catch (_) {
+    } catch (e, s) {
       // The update prompt is a nicety — never an error path.
+      // Build 7: recorded with its boundary tag (no banner).
+      CrashGuard.captureHandled(e, s, source: 'home.update');
     }
   }
 
@@ -425,12 +614,14 @@ class _HomeScreenState extends State<HomeScreen> {
                 'fully offline on your phone. No account, no uploads.',
               ),
               const SizedBox(height: 16),
-              // Build 6 (v1.5.8): persistent diagnostics — the
-              // last error CrashGuard recorded (message + first
-              // stack lines + timestamp), read back from
-              // SharedPreferences so a phone-only failure can be
-              // inspected instead of guessed at. Read-only; the
-              // Copy button puts it on the clipboard.
+              // Build 6 (v1.5.8): persistent diagnostics —
+              // read back from SharedPreferences so a phone-only
+              // failure can be inspected instead of guessed at.
+              // Build 7 (v1.5.9): the text now holds the LAST
+              // FIVE recorded errors (newest first), each with
+              // its boundary tag, the app version and the screen
+              // it fired on. Read-only; the Copy button puts it
+              // on the clipboard.
               const Text(
                 'Diagnostics — aakhri khata',
                 style: TextStyle(fontWeight: FontWeight.bold),
@@ -992,11 +1183,15 @@ class _HomeScreenState extends State<HomeScreen> {
     return ValueListenableBuilder<RemoteConfig>(
       valueListenable: remoteConfigService.notifier,
       builder: (context, cfg, _) {
-        final showAdmin =
-            cfg.advertisingBannerEnabled &&
-            cfg.advertisingBannerImageUrl.isNotEmpty;
+        // Build 7 (v1.5.9, FIX C): slide 2 shows when its
+        // EFFECTIVE image exists and either the advertising
+        // banner is enabled (today's rule) or a hero-2 override
+        // is set in the remote config.
+        final showAdmin = cfg.heroBanner2ImageUrl.isNotEmpty &&
+            (cfg.advertisingBannerEnabled ||
+                cfg.heroBanner2Url.trim().isNotEmpty);
         final slides = <Widget>[
-          _newsHeroSlide(),
+          _newsHeroSlide(cfg),
           if (showAdmin) _adminHeroSlide(cfg),
         ];
         return Column(
@@ -1047,7 +1242,13 @@ class _HomeScreenState extends State<HomeScreen> {
   /// pill of our own (the artwork carries its own). The tap opens
   /// his website, nigraantv.xyz — Live Studio's Home door is the
   /// Live Streaming banner's Join Now, nowhere else.
-  Widget _newsHeroSlide() {
+  Widget _newsHeroSlide(RemoteConfig cfg) {
+    // Build 7 (v1.5.9, FIX C): when the remote config sets a
+    // hero-1 image, the slide shows it (cached on-device, cover
+    // fit as always); the bundled artwork remains both the
+    // no-config default and the never-blank fallback. The tap
+    // opens the config's hero-1 link (default: the website).
+    final String remoteUrl = cfg.heroBanner1ImageUrl;
     return Container(
       key: const Key('homeHeroBanner'),
       decoration: BoxDecoration(
@@ -1056,20 +1257,34 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: _openWebsite,
-        child: Image.asset(
-          'assets/hero_nigraan_banner.jpg',
-          fit: BoxFit.cover,
-          width: double.infinity,
-          height: double.infinity,
-        ),
+        onTap: () => _openExternal(cfg.heroBanner1TapUrl),
+        child: remoteUrl.isEmpty
+            ? Image.asset(
+                'assets/hero_nigraan_banner.jpg',
+                fit: BoxFit.cover,
+                width: double.infinity,
+                height: double.infinity,
+              )
+            : _HeroRemoteImage(
+                slot: HeroBannerCache.slot1,
+                url: remoteUrl,
+                fit: BoxFit.cover,
+                fallback: Image.asset(
+                  'assets/hero_nigraan_banner.jpg',
+                  fit: BoxFit.cover,
+                  width: double.infinity,
+                  height: double.infinity,
+                ),
+              ),
       ),
     );
   }
 
-  /// The hero banner's tap: nigraantv.xyz in the browser.
-  Future<void> _openWebsite() async {
-    final Uri uri = Uri.parse('https://nigraantv.xyz');
+  /// Opens [url] in the external browser (the hero slides' tap
+  /// targets come from the remote config; slide 1's default is
+  /// the Nigraan TV website, as it always was).
+  Future<void> _openExternal(String url) async {
+    final Uri uri = Uri.parse(url);
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     }
@@ -1080,8 +1295,14 @@ class _HomeScreenState extends State<HomeScreen> {
   /// letterbox, NEVER cropped; tap opens the banner link when one
   /// is set (no link = no handler, as before).
   Widget _adminHeroSlide(RemoteConfig cfg) {
-    final url = cfg.advertisingBannerImageUrl;
-    final link = cfg.advertisingBannerLinkUrl.trim();
+    // Build 7 (v1.5.9, FIX C): the EFFECTIVE slide-2 image/link
+    // (hero-2 remote-config override when set, else the existing
+    // advertising chain — see RemoteConfig.heroBanner2ImageUrl).
+    // Remote images go through the on-device cache; the bundled
+    // house banner is the never-blank fallback. Fit stays
+    // BoxFit.contain — the admin banner is NEVER cropped.
+    final url = cfg.heroBanner2ImageUrl;
+    final link = cfg.heroBanner2TapUrl.trim();
     return Container(
       decoration: BoxDecoration(
         color: Colors.black12,
@@ -1104,11 +1325,16 @@ class _HomeScreenState extends State<HomeScreen> {
                 errorBuilder: (context, error, stackTrace) =>
                     const SizedBox.shrink(),
               )
-            : Image.network(
-                url,
+            : _HeroRemoteImage(
+                slot: HeroBannerCache.slot2,
+                url: url,
                 fit: BoxFit.contain,
-                errorBuilder: (context, error, stackTrace) =>
-                    const SizedBox.shrink(),
+                fallback: Image.asset(
+                  AppConfig.advertisingBannerImageUrl,
+                  fit: BoxFit.contain,
+                  errorBuilder: (context, error, stackTrace) =>
+                      const SizedBox.shrink(),
+                ),
               ),
       ),
     );

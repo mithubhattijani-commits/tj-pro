@@ -38,6 +38,8 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../services/asset_download_service.dart';
+
 /// What a ribbon's text IS — which news feed fills it.
 ///
 /// See the RIBBON-CONTENT RULE in the file header. This is the rule the
@@ -318,6 +320,10 @@ class ChannelPreset {
     this.watermarkEnabled = true,
     this.watermarkPosition = 'bottomRight',
     this.watermarkSize = 0.12,
+    this.introAssetPath = AssetDownloadService.introAssetPath,
+    this.logoGsAssetPath = AssetDownloadService.logoGsAssetPath,
+    this.logoGsFrameAssetPath =
+        AssetDownloadService.logoGsFrameAssetPath,
   })  : topRibbon = topRibbon ?? RibbonConfig(),
         urduRibbon = urduRibbon ??
             RibbonConfig(
@@ -519,6 +525,18 @@ class ChannelPreset {
   String watermarkPosition;
   double watermarkSize;
 
+  /// Build 7 (v1.5.9, Phase 8 generic branding): the channel's
+  /// bundled media — intro video, green-screen logo video and
+  /// its keyed still frame. These used to be Nigraan-only
+  /// literals inside the export/preview; they now live on the
+  /// preset (defaulting to the Nigraan TV assets, so the default
+  /// channel's behaviour is byte-for-byte unchanged) and another
+  /// channel's preset can point at its own files. Serialized;
+  /// old preset JSON without the keys loads with the defaults.
+  String introAssetPath;
+  String logoGsAssetPath;
+  String logoGsFrameAssetPath;
+
   /// Watermark corner ids + labels (mirror [pipPositionIds]).
   static const List<String> watermarkPositionIds = [
     'topLeft',
@@ -687,6 +705,9 @@ class ChannelPreset {
         'watermarkEnabled': watermarkEnabled,
         'watermarkPosition': watermarkPosition,
         'watermarkSize': watermarkSize,
+        'introAssetPath': introAssetPath,
+        'logoGsAssetPath': logoGsAssetPath,
+        'logoGsFrameAssetPath': logoGsFrameAssetPath,
       };
 
   static ChannelPreset fromJson(Map<String, dynamic> json) {
@@ -764,6 +785,15 @@ class ChannelPreset {
           (json['watermarkPosition'] as String?) ?? 'bottomRight',
       watermarkSize:
           (json['watermarkSize'] as num?)?.toDouble() ?? 0.12,
+      // Build 7 generic branding: absent on old saves → the
+      // Nigraan TV assets (the constructor defaults).
+      introAssetPath: (json['introAssetPath'] as String?) ??
+          AssetDownloadService.introAssetPath,
+      logoGsAssetPath: (json['logoGsAssetPath'] as String?) ??
+          AssetDownloadService.logoGsAssetPath,
+      logoGsFrameAssetPath:
+          (json['logoGsFrameAssetPath'] as String?) ??
+              AssetDownloadService.logoGsFrameAssetPath,
     );
   }
 }
@@ -927,6 +957,9 @@ class ChannelPresetStore {
       watermarkEnabled: preset.watermarkEnabled,
       watermarkPosition: preset.watermarkPosition,
       watermarkSize: preset.watermarkSize,
+      introAssetPath: preset.introAssetPath,
+      logoGsAssetPath: preset.logoGsAssetPath,
+      logoGsFrameAssetPath: preset.logoGsFrameAssetPath,
     );
     final presets = await loadAll();
     presets.add(saved);

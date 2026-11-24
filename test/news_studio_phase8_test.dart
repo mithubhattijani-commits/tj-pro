@@ -162,7 +162,10 @@ void main() {
       final preview = weather.previewPreset(base);
       expect(preview.topRibbon.color, 0xFF00838F);
       expect(preview.categoryLabel, 'WEATHER');
-      expect(base.topRibbon.color, 0xFF01B0FF);
+      // Build 7 repair: the base preset's stored top colour is
+      // the FINAL design yellow since v1.5.1 (fix #40), not the
+      // old factory blue this assertion was written against.
+      expect(base.topRibbon.color, kFinal3TopColor);
       expect(base.categoryLabel, '');
     });
 
@@ -472,14 +475,36 @@ void main() {
       expect(effective.topRibbon.text, 'Story ticker');
     });
 
+    // Build 7 (v1.5.9) repair: the original ran under the
+    // pre-Final default design, whose ribbons took the preset's
+    // colours. Under the user-declared FINAL design (final3),
+    // ribbon colours are FIXED design colours — a preset colour
+    // edit cannot recolour the render (pinned by the next test).
+    // Preset colours still drive the render in the classic2
+    // variant, so the branding-flows-to-render intent is pinned
+    // there.
     test('changing the preset branding changes the rendered PNG', () async {
-      final plain = ChannelPreset.nigraanTv();
+      final plain = ChannelPreset.nigraanTv()
+        ..finalVariant = kFinalVariantClassic2;
       final rebranded = ChannelPreset.nigraanTv()
+        ..finalVariant = kFinalVariantClassic2
         ..topRibbon.color = 0xFF2E7D32
         ..brandColor = 0xFF2E7D32;
       final a = await _renderPreset(plain);
       final b = await _renderPreset(rebranded);
       expect(await a.readAsBytes(), isNot(await b.readAsBytes()));
+    });
+
+    test('final3 design colours are fixed: preset colour edits '
+        'do not recolour the render', () async {
+      final plain = ChannelPreset.nigraanTv();
+      final recoloured = ChannelPreset.nigraanTv()
+        ..topRibbon.color = 0xFF2E7D32
+        ..urduRibbon.color = 0xFF2E7D32
+        ..englishRibbon.color = 0xFF2E7D32;
+      final a = await _renderPreset(plain);
+      final b = await _renderPreset(recoloured);
+      expect(await a.readAsBytes(), await b.readAsBytes());
     });
 
     test('changing the watermark toggle changes the watermark PNG path',

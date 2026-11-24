@@ -48,6 +48,7 @@ import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../services/coin_service.dart';
+import '../services/crash_guard.dart';
 import '../services/export_settings.dart';
 import '../services/ffmpeg_service.dart';
 import '../services/poster_export_service.dart';
@@ -205,18 +206,38 @@ class _ExportScreenState extends State<ExportScreen> {
     unawaited(
       UnityAdsService.showExportAds(_settings.quality == 0 ? 1 : 2),
     );
-    final result = await ReelExportService.exportReel(
-      project: widget.project,
-      preset: widget.preset,
-      settings: _settings,
-      isCancelled: () => _cancelRequested,
-      onProgress: (v) {
-        if (mounted) setState(() => _progress = v);
-      },
-      onStep: (s) {
-        if (mounted) setState(() => _status = s);
-      },
-    );
+    final ReelExportResult result;
+    try {
+      result = await ReelExportService.exportReel(
+        project: widget.project,
+        preset: widget.preset,
+        settings: _settings,
+        isCancelled: () => _cancelRequested,
+        onProgress: (v) {
+          if (mounted) setState(() => _progress = v);
+        },
+        onStep: (s) {
+          if (mounted) setState(() => _status = s);
+        },
+      );
+    } catch (e, s) {
+      // Build 7 (v1.5.9): an export that THROWS (instead of
+      // returning a failed result) is reported with its boundary
+      // tag AND lands on the same failure UI a failed result
+      // uses. Before, the throw escaped the tap handler — the
+      // user got only the generic error banner and this screen
+      // stayed stuck on "exporting" with no Retry.
+      CrashGuard.report(e, s, source: 'export.start');
+      if (!mounted) return;
+      setState(() {
+        _exporting = false;
+        _progress = 0;
+        _status = 'Export fail ho gaya.';
+        _error = 'Export ke dauraan khata aa gaya: $e';
+        _failedStep = 'Export';
+      });
+      return;
+    }
     if (!mounted) return;
     int? size;
     if (result.success && result.outputPath != null) {

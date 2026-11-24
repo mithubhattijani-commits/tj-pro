@@ -3,7 +3,89 @@ import 'package:flutter/material.dart';
 /// Dark premium + gold theme (Jaani, 2 Nov 2026) — matches the TJ Pro
 /// promo poster mockup: deep-dark surfaces with gold accents and gold
 /// selection highlights (e.g. the video timeline's selected clip).
+///
+/// Build 7 (v1.5.9, Phase 8) — THE DESIGN SYSTEM, consolidated.
+/// This file is the single source for the app's approved look:
+///
+/// * Surfaces are deep-dark and professional ([background],
+///   [surface], [panelSurface], [surfaceDeep]); icons are fine
+///   monochrome line icons; sliders are thin with numeric values.
+/// * Gold ([gold] in the editors, [homeGold] on Home) is for
+///   SELECTION and ACCENT only — never decoration at large.
+/// * Violet ([violet]) is the studio/editors' action accent.
+/// * Glass ([glassCard]) is fake-glass for CHROME and PANELS
+///   only — never over live video or a photo being edited.
+/// * Home is the ONE glossy exception (user's same-to-same
+///   reference): it keeps [homeGold] and its gradient cards.
+///   That exception is Home-only; it does not leak into the
+///   workspaces.
+/// * Typography: English/Latin uses the section styles below;
+///   Urdu uses [kasheedaFamily] via [urduTextStyle] — Nastaleeq
+///   needs its natural line metrics, so Urdu styles must not be
+///   given a tight fixed height.
+///
+/// Phase 8 is consolidation, NOT a redesign: every token below
+/// is the exact value the approved screens already used (the
+/// screens were surveyed, not re-styled), so nothing's look
+/// changes — proven by the before/after widget-render comparison
+/// in BUILD7-TOOL-TESTS.md.
 class TjProTheme {
+  // ---- Surfaces (Build 7 consolidation) ----
+
+  /// App-wide deep-dark background (the studio screens' navy).
+  static const Color background = surfaceNavy;
+
+  /// Panel/card fill (the [glassCard] base).
+  static const Color surface = Color(0xFF17172B);
+
+  /// Editor panel fill (tool panels, inspector zones).
+  static const Color panelSurface = Color(0xFF181828);
+
+  /// Recessed wells (timeline surround, stage backing).
+  static const Color surfaceDeep = Color(0xFF080810);
+
+  /// Hairline border on dark surfaces (the [glassCard] border).
+  static const Color borderSubtle = Color(0x14FFFFFF);
+
+  /// Divider on dark surfaces.
+  static const Color divider = Color(0x1FFFFFFF);
+
+  /// Splash background — the in-app SplashGate and the native
+  /// splash share this exact deep blue so startup is seamless.
+  static const Color splashBackground = Color(0xFF040F30);
+
+  // ---- Text colours (Build 7 consolidation) ----
+
+  /// Primary text on dark surfaces.
+  static const Color textPrimary = Color(0xFFFFFFFF);
+
+  /// Secondary text (labels, values).
+  static const Color textSecondary = Color(0xB3FFFFFF);
+
+  /// Muted text (hints, timestamps).
+  static const Color textMuted = Color(0x8AFFFFFF);
+
+  /// Faint text (disabled, placeholders).
+  static const Color textFaint = Color(0x61FFFFFF);
+
+  /// Home's glossy gold (hero dots, Open pills, Premium pill).
+  /// HOME ONLY — the editors use [gold]. The two golds are
+  /// deliberately distinct: Home follows the user's glossy
+  /// reference, the workspaces follow the professional rule.
+  static const Color homeGold = Color(0xFFF5C542);
+
+  // ---- Typography (Build 7 consolidation) ----
+
+  /// The Jameel Noori Nastaleeq Kasheeda family name — the ONE
+  /// source for it (AssetDownloadService registers the font
+  /// under this name; renderers and pickers read it from here).
+  static const String kasheedaFamily = 'JameelNooriNastaleeqKasheeda';
+
+  /// Applies the Urdu typography rule to [base]: the Kasheeda
+  /// family, with the style's own line metrics untouched (see
+  /// the class doc — no tight fixed heights on Nastaleeq).
+  static TextStyle urduTextStyle(TextStyle base) =>
+      base.copyWith(fontFamily: kasheedaFamily);
   /// Primary gold accent (poster gold).
   static const Color gold = Color(0xFFFFD76A);
 

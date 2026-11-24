@@ -93,10 +93,16 @@ void main() {
     TestWidgetsFlutterBinding.ensureInitialized();
     final home = Platform.environment['HOME'];
     expect(home, isNotNull, reason: 'HOME must be set on the test host');
+    // Build 7 (v1.5.9) repair: the old staging folder
+    // (tj-pro-news-maker/assets-staging) no longer exists on this
+    // machine. The staged TTF now comes from the font's canonical
+    // hosted copy — the exact file the app's kasheeda_font_url
+    // serves (nigraantv.xyz/apps/fonts/), kept in the website's
+    // working tree. Same test intent: a real Kasheeda TTF on disk
+    // loads through the production FontLoader path.
     final staged = File(
-      '$home/workspace/tj-pro-news-maker/assets-staging/'
-      'Jameel Noori Nastaleeq Kasheeda/'
-      'Jameel Noori Nastaleeq Kasheeda.ttf',
+      '$home/workspace/nigraan-tv/working-site/apps/fonts/'
+      'JameelNooriNastaleeqKasheeda.ttf',
     );
     expect(await staged.exists(), isTrue,
         reason: 'staged Kasheeda TTF must exist');

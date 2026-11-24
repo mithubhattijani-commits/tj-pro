@@ -219,10 +219,10 @@ void main() {
       // (tjpro-is-admin); reset it so later tests see non-admin.
       AuthService.isAdmin.value = true;
       addTearDown(() => AuthService.isAdmin.value = false);
-      expect(
-        await GeminiVoiceService().remainingToday(),
-        greaterThan(1000000),
-      );
+      // Build 7 (v1.5.9) repair: the unlimited sentinel is -1
+      // (see GeminiVoiceService.remainingToday), not a huge
+      // number — the expectation predates that change.
+      expect(await GeminiVoiceService().remainingToday(), -1);
       expect(await GeminiVoiceService().usedToday(), 0);
     });
   });
@@ -311,8 +311,11 @@ void main() {
       expect(find.text('Email'), findsOneWidget);
       expect(find.text('Password'), findsOneWidget);
       expect(find.text('Coins kaise kamayein'), findsOneWidget);
+      // Build 7 repair: the "Admins — sab kuch free" card was
+      // REMOVED from the app on the user's order (no admin notes
+      // anywhere) — pin its absence instead of its presence.
       expect(find.text('Admins — sab kuch free, no coins, no ads'),
-          findsOneWidget);
+          findsNothing);
       expect(find.text('Continue as guest'), findsOneWidget);
       expect(
         find.text(
@@ -440,7 +443,12 @@ void main() {
   });
 
   group('ExportScreen coin label', () {
-    testWidgets('button shows the resolution price; chroma adds 50',
+    // Build 7 (v1.5.9) repair: resolution pricing was abolished
+    // on the user's order (v1.2.0 — 720p/1080p/4K are FREE, ads
+    // play alongside the export). The only remaining charge on
+    // this button is chroma key (50). The old expectations
+    // (50 for 720p, 100 with chroma) pin the abolished prices.
+    testWidgets('button shows Free at 720p; chroma adds 50',
         (tester) async {
       final project = NewsProject(
         id: 'screen-coins',
@@ -454,7 +462,7 @@ void main() {
         ),
       );
       await tester.pump();
-      expect(find.text('Export • 720p • 50 coins'), findsOneWidget);
+      expect(find.text('Export • 720p • Free'), findsOneWidget);
 
       final chromaPreset = ChannelPreset.nigraanTv()
         ..chromaEnabled = true;
@@ -464,7 +472,7 @@ void main() {
         ),
       );
       await tester.pump();
-      expect(find.text('Export • 720p • 100 coins'), findsOneWidget);
+      expect(find.text('Export • 720p • 50 coins'), findsOneWidget);
     });
   });
 }

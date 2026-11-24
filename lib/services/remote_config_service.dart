@@ -36,6 +36,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../app_config.dart';
+import 'crash_guard.dart';
 import 'supabase_service.dart';
 
 class AnnouncementConfig {
@@ -114,6 +115,10 @@ class RemoteConfig {
         AppConfig.advertisingBannerPriceCoins,
     this.advertisingBannerDurationHours =
         AppConfig.advertisingBannerDurationHours,
+    this.heroBanner1Url = '',
+    this.heroBanner1Link = heroBanner1DefaultLink,
+    this.heroBanner2Url = '',
+    this.heroBanner2Link = '',
     this.kasheedaFontUrl = AppConfig.kasheedaFontUrl,
     this.nigraanIntroUrl = AppConfig.nigraanIntroUrl,
     this.logoMovUrl = AppConfig.logoMovUrl,
@@ -158,6 +163,66 @@ class RemoteConfig {
   final int advertisingBannerPriceCoins;
   final int advertisingBannerDurationHours;
 
+  // --- Build 7 (v1.5.9, FIX C): Home hero banners, remote ------
+  // Both hero carousel slides are changeable WITHOUT a new build
+  // via tj-pro.json. The keys are purely additive: old app
+  // versions ignore them, and this version keeps today's
+  // behaviour when they are absent or empty.
+
+  /// Hero slide 1 (the user's Nigraan TV banner) remote image.
+  /// JSON key `hero_banner_1_url`. Empty (the default) = the
+  /// bundled `assets/hero_nigraan_banner.jpg`, exactly as before;
+  /// non-empty = that remote image, cached on-device by
+  /// HeroBannerCache with the bundled asset as the never-blank
+  /// fallback. Cover fit, unchanged.
+  final String heroBanner1Url;
+
+  /// Hero slide 1 tap target. JSON key `hero_banner_1_link`.
+  /// Defaults to the Nigraan TV website — the slide's original
+  /// behaviour.
+  final String heroBanner1Link;
+
+  /// Hero slide 2 (the admin house-ad banner) remote image.
+  /// JSON key `hero_banner_2_url`. When non-empty it OVERRIDES
+  /// the older advertising-banner chain FOR THE HERO SLIDE (see
+  /// [heroBanner2ImageUrl]); when empty, the existing chain —
+  /// Supabase override > `advertising_banner_image_url` >
+  /// bundled default — decides, exactly as before. The
+  /// Advertise page is untouched either way.
+  final String heroBanner2Url;
+
+  /// Hero slide 2 tap target. JSON key `hero_banner_2_link`.
+  /// When non-empty it overrides [advertisingBannerLinkUrl] for
+  /// the hero slide; empty = the advertising link (which itself
+  /// defaults to "unset" = no tap handler, as today).
+  final String heroBanner2Link;
+
+  /// Default tap target of hero slide 1 (the website).
+  static const String heroBanner1DefaultLink = 'https://nigraantv.xyz';
+
+  /// Effective slide-1 image URL; empty = bundled asset.
+  String get heroBanner1ImageUrl => heroBanner1Url.trim();
+
+  /// Effective slide-1 tap target (never empty).
+  String get heroBanner1TapUrl {
+    final String link = heroBanner1Link.trim();
+    return link.isEmpty ? heroBanner1DefaultLink : link;
+  }
+
+  /// Effective slide-2 image: the hero-2 override when set,
+  /// else the existing advertising-banner chain.
+  String get heroBanner2ImageUrl {
+    final String url = heroBanner2Url.trim();
+    return url.isNotEmpty ? url : advertisingBannerImageUrl;
+  }
+
+  /// Effective slide-2 tap target: the hero-2 override when
+  /// set, else the advertising link.
+  String get heroBanner2TapUrl {
+    final String link = heroBanner2Link.trim();
+    return link.isNotEmpty ? link : advertisingBannerLinkUrl;
+  }
+
   /// Copy with ONLY the banner image + link replaced (the Supabase
   /// admin-banner override path). Every other value is preserved
   /// exactly, so the override can never disturb unrelated config.
@@ -178,6 +243,10 @@ class RemoteConfig {
       advertisingBannerLinkUrl: linkUrl,
       advertisingBannerPriceCoins: advertisingBannerPriceCoins,
       advertisingBannerDurationHours: advertisingBannerDurationHours,
+      heroBanner1Url: heroBanner1Url,
+      heroBanner1Link: heroBanner1Link,
+      heroBanner2Url: heroBanner2Url,
+      heroBanner2Link: heroBanner2Link,
       kasheedaFontUrl: kasheedaFontUrl,
       nigraanIntroUrl: nigraanIntroUrl,
       logoMovUrl: logoMovUrl,
@@ -255,6 +324,17 @@ class RemoteConfig {
         json['advertising_banner_duration_hours'],
         AppConfig.advertisingBannerDurationHours,
       ),
+      // FIX C hero keys: absent/empty keeps today's behaviour
+      // (slide 1 = bundled asset + website tap; slide 2 = the
+      // advertising chain).
+      heroBanner1Url: (json['hero_banner_1_url'] ?? '').toString().trim(),
+      heroBanner1Link: _nonEmptyString(
+        json['hero_banner_1_link'],
+        heroBanner1DefaultLink,
+      ),
+      heroBanner2Url: (json['hero_banner_2_url'] ?? '').toString().trim(),
+      heroBanner2Link:
+          (json['hero_banner_2_link'] ?? '').toString().trim(),
       kasheedaFontUrl: _nonEmptyString(
         json['kasheeda_font_url'],
         AppConfig.kasheedaFontUrl,
@@ -426,8 +506,10 @@ class RemoteConfigService {
         imageUrl: (row['image_url'] ?? '').toString(),
         linkUrl: (row['link_url'] ?? '').toString(),
       );
-    } catch (_) {
-      // Fail-soft: keep the remote-JSON/default banner exactly as-is.
+    } catch (e, s) {
+      // Fail-soft: keep the remote-JSON/default banner exactly
+      // as-is. Build 7: recorded with its boundary tag.
+      CrashGuard.captureHandled(e, s, source: 'home.banner');
     }
   }
 
@@ -463,7 +545,9 @@ class RemoteConfigService {
           _publish(RemoteConfig.fromJson(decoded));
         }
       }
-    } catch (_) {
+    } catch (e, s) {
+      // Build 7: recorded with its boundary tag (no banner).
+      CrashGuard.captureHandled(e, s, source: 'home.config');
       _publish(RemoteConfig.defaults);
     }
   }
@@ -494,8 +578,10 @@ class RemoteConfigService {
       // The fresh remote-JSON config has resolved — re-check the
       // Supabase admin banner override on top of it.
       await _fetchAdminBannerOverride();
-    } catch (_) {
-      // Fail-soft: keep cache/defaults.
+    } catch (e, s) {
+      // Fail-soft: keep cache/defaults. Build 7: recorded with
+      // its boundary tag (no banner).
+      CrashGuard.captureHandled(e, s, source: 'home.config');
     } finally {
       client?.close(force: true);
     }

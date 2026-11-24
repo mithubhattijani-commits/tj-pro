@@ -6,6 +6,7 @@
 // news_studio_phase5_test.dart (widget-test pumps never flush real
 // dart:io work — Phase 4 note). No tester.runAsync + Future.delayed.
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -25,6 +26,10 @@ void _mockPathProvider() {
     const MethodChannel('plugins.flutter.io/path_provider'),
     (MethodCall call) async {
       if (call.method == 'getApplicationDocumentsDirectory') {
+        return '/tmp/tj_pro_phase5_widget';
+      }
+      if (call.method == 'getApplicationSupportDirectory') {
+        // google_fonts caches downloads here (Build 7 repair).
         return '/tmp/tj_pro_phase5_widget';
       }
       if (call.method == 'getTemporaryDirectory') {
@@ -53,12 +58,171 @@ Future<void> _scrollTo(
   }
 }
 
+// --- Build 7 (v1.5.9) repair ----------------------------------
+// Caption Studio's Urdu styles resolve through google_fonts,
+// which FETCHES Noto Nastaliq / Noto Naskh / Gulzar over HTTP at
+// first use. Inside a test the binding's mock client answers
+// 400 and the font-load exception fails the test (this is the
+// documented google_fonts testing problem). The documented fix
+// is an HttpOverrides serving the REAL font files for those
+// requests (google_fonts checksum-verifies downloads, so no
+// substitute passes) — see _FontResponse._serve.
+class _FontHttpOverrides extends HttpOverrides {
+  @override
+  HttpClient createHttpClient(SecurityContext? context) =>
+      _FontHttpClient();
+}
+
+class _FontHttpClient implements HttpClient {
+  @override
+  Future<HttpClientRequest> getUrl(Uri url) async => _FontRequest(url);
+
+  @override
+  Future<HttpClientRequest> openUrl(String method, Uri url) =>
+      getUrl(url);
+
+  @override
+  void close({bool force = false}) {}
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      super.noSuchMethod(invocation);
+}
+
+class _FontRequest implements HttpClientRequest {
+  _FontRequest(this.url);
+
+  final Uri url;
+  final _FontHeaders _headers = _FontHeaders();
+
+  @override
+  bool followRedirects = true;
+
+  @override
+  int maxRedirects = 5;
+
+  @override
+  bool persistentConnection = true;
+
+  @override
+  int contentLength = -1;
+
+  @override
+  HttpHeaders get headers => _headers;
+
+  @override
+  Future<void> addStream(Stream<List<int>> stream) => stream.drain<void>();
+
+  @override
+  Future<HttpClientResponse> close() async => _FontResponse(url);
+
+  @override
+  Future<HttpClientResponse> get done async => _FontResponse(url);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      super.noSuchMethod(invocation);
+}
+
+class _FontResponse extends Stream<List<int>>
+    implements HttpClientResponse {
+  _FontResponse(Uri url) : _bytes = _serve(url);
+
+  final List<int> _bytes;
+
+  // google_fonts verifies the downloaded file's length AND
+  // checksum against its compiled-in manifest, so a substitute
+  // font cannot pass. The three Urdu families this screen loads
+  // were fetched once from the exact hashed gstatic URLs and
+  // are served from the Build 7 tools dir; anything else gets a
+  // 400, like the test binding's own mock client.
+  static List<int> _serve(Uri url) {
+    final home = Platform.environment['HOME'] ?? '';
+    final file = File(
+      '$home/workspace/tj-pro-build/tools-build7/fonts/'
+      '${url.pathSegments.last}',
+    );
+    if (url.host == 'fonts.gstatic.com' && file.existsSync()) {
+      return file.readAsBytesSync();
+    }
+    return const <int>[];
+  }
+
+  @override
+  int get statusCode =>
+      _bytes.isEmpty ? HttpStatus.badRequest : HttpStatus.ok;
+
+  @override
+  int get contentLength => _bytes.length;
+
+  @override
+  HttpHeaders get headers => _FontHeaders();
+
+  @override
+  HttpConnectionInfo? get connectionInfo => null;
+
+  @override
+  bool get isRedirect => false;
+
+  @override
+  List<RedirectInfo> get redirects => const <RedirectInfo>[];
+
+  @override
+  String get reasonPhrase => 'OK';
+
+  @override
+  bool get persistentConnection => false;
+
+  @override
+  X509Certificate? get certificate => null;
+
+  @override
+  HttpClientResponseCompressionState get compressionState =>
+      HttpClientResponseCompressionState.notCompressed;
+
+  @override
+  StreamSubscription<List<int>> listen(
+    void Function(List<int> event)? onData, {
+    Function? onError,
+    void Function()? onDone,
+    bool? cancelOnError,
+  }) {
+    return Stream<List<int>>.value(_bytes).listen(
+      onData,
+      onError: onError,
+      onDone: onDone,
+      cancelOnError: cancelOnError,
+    );
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      super.noSuchMethod(invocation);
+}
+
+class _FontHeaders implements HttpHeaders {
+  @override
+  void forEach(void Function(String name, List<String> values) action) {}
+
+  @override
+  String? value(String name) => null;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      super.noSuchMethod(invocation);
+}
+
 void main() {
   setUpAll(() {
     _mockPathProvider();
+    HttpOverrides.global = _FontHttpOverrides();
     Directory('/tmp/tj_pro_phase5_widget').createSync(recursive: true);
     Directory('/tmp/tj_pro_phase5_widget_tmp')
         .createSync(recursive: true);
+  });
+
+  tearDownAll(() {
+    HttpOverrides.global = null;
   });
 
   group('Phase 5 screens build', () {

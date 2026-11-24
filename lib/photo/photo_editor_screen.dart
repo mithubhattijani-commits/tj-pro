@@ -63,6 +63,7 @@ import 'widgets/photo_stage.dart';
 import '../services/ai_service.dart';
 import '../services/caption_styles.dart';
 import '../services/coin_service.dart';
+import '../services/crash_guard.dart';
 import '../services/model_pack_service.dart';
 import '../services/onnx_image_service.dart';
 import '../services/photo_pipeline.dart';
@@ -930,7 +931,11 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen>
       await job();
       _setStatus('$label done.');
       return true;
-    } catch (e) {
+    } catch (e, s) {
+      // Build 7 (v1.5.9): every AI photo operation flows through
+      // here — failures are recorded with the boundary tag (no
+      // banner) in addition to the status-line message.
+      CrashGuard.captureHandled(e, s, source: 'photo.pipeline');
       _fail('$label failed: $e');
       return false;
     } finally {
@@ -950,7 +955,11 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen>
       await job();
       _setStatus('$label done.');
       return true;
-    } catch (e) {
+    } catch (e, s) {
+      // Build 7 (v1.5.9): every free enhance operation flows
+      // through here — recorded with the boundary tag, as in
+      // the AI runner above.
+      CrashGuard.captureHandled(e, s, source: 'photo.pipeline');
       _fail('$label failed: $e');
       return false;
     } finally {
@@ -1602,7 +1611,9 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen>
         // share sheet via share_plus.
         unawaited(_showShareSheet(outFile.path));
       }
-    } catch (e) {
+    } catch (e, s) {
+      // Build 7: recorded with its boundary tag (no banner).
+      CrashGuard.captureHandled(e, s, source: 'photo.pipeline');
       _fail('Export failed: $e');
     } finally {
       setState(() => _busy = false);

@@ -42,34 +42,61 @@ Future<File> _renderFinal({
 
 void main() {
   group('NigraanFinalLayout — reflow', () {
-    test('all ribbons on: ticker top, English half-thickness at bottom',
+    // Build 7 (v1.5.9) repair: this test asserted the ORIGINAL
+    // Phase 3 geometry (frame-top ticker strip, English ribbon
+    // at half the ticker thickness, logo under the ticker). The
+    // user-declared FINAL design (demo v4, 22 Nov 2026) replaced
+    // that geometry wholesale: no frame-top ticker, a 3-ribbon
+    // bottom stack at 31:43:28 of frame width, and the capsule
+    // ON the middle (red) ribbon with the logo above it. The
+    // assertions below pin the CURRENT final geometry.
+    test('all ribbons on: Final-3 bottom stack, capsule on red ribbon',
         () {
       final layout = NigraanFinalLayout.compute(
         preset: ChannelPreset.nigraanTv(),
         width: 720,
         height: 1280,
       );
-      expect(layout.tickerStrip, isNotNull);
-      expect(layout.tickerStrip!.top, 0);
-      expect(layout.tickerStrip!.height, 1280 * 0.055);
+      expect(layout.isFinal3, isTrue);
+      // No frame-top ticker strip in the Final design.
+      expect(layout.tickerStrip, isNull);
+      // The bottom stack: English at the very bottom, Urdu flush
+      // on it, the top (current-story) ribbon flush on that —
+      // heights 28 / 43 / 31 at this width (31:43:28 of W=720,
+      // i.e. W*31/720 etc. — see ParityGeometry).
       expect(layout.englishStrip, isNotNull);
       expect(layout.englishStrip!.bottom, 1280);
-      // Bottom English ribbon is exactly half the ticker thickness.
-      expect(layout.englishHeight, layout.tickerHeight / 2);
+      expect(layout.englishStrip!.height, 28);
+      expect(layout.englishHeight, layout.englishStrip!.height);
       expect(layout.urduStrip, isNotNull);
-      expect(layout.urduStrip!.bottom,
-          lessThan(layout.englishStrip!.top));
-      // Logo top-right below the ticker; capsule under it, same width.
-      expect(layout.logoRect.left + layout.logoRect.width, 720 - 20);
-      expect(layout.logoRect.top, layout.tickerHeight + 16);
-      expect(layout.capsuleRect.top, layout.logoRect.bottom + 6);
+      expect(layout.urduStrip!.bottom, layout.englishStrip!.top);
+      expect(layout.urduStrip!.height, 43);
+      expect(layout.topStackStrip, isNotNull);
+      expect(layout.topStackStrip!.bottom, layout.urduStrip!.top);
+      expect(layout.topStackStrip!.height, 31);
+      // Logo block at the right edge; the capsule has the same
+      // width and sits directly UNDER the logo, ON the middle
+      // (red) ribbon — its bottom edge inside the Urdu strip.
+      expect(layout.logoRect.right, 720);
+      expect(layout.capsuleRect.right, 720);
       expect(layout.capsuleRect.width, layout.logoRect.width);
       expect(layout.capsuleRect.left, layout.logoRect.left);
-      // Intro marker present when showIntro is on (default true).
+      expect(layout.logoRect.bottom, layout.capsuleRect.top);
+      expect(layout.capsuleRect.bottom,
+          lessThanOrEqualTo(layout.urduStrip!.bottom));
+      expect(layout.capsuleRect.bottom,
+          greaterThan(layout.urduStrip!.top));
+      // Intro marker present when showIntro is on (default true),
+      // top-left (no frame-top ticker to sit below in final3).
       expect(layout.introMarker, isNotNull);
       expect(layout.introMarker!.left, 16);
+      expect(layout.introMarker!.top, 16);
     });
 
+    // Build 7 repair: the chip TEXTS are unchanged, but final3
+    // draws NO chips at all (the ribbons are full-width bars) —
+    // chips live on in the classic2 variant, asserted below with
+    // the placement this test originally pinned.
     test('chips: ticker red label, Urdu black label, English label', () {
       expect(NigraanFinalLayout.tickerChipText, 'تازہ ترین');
       expect(NigraanFinalLayout.urduChipText, 'بریکنگ نیوز');
@@ -79,9 +106,24 @@ void main() {
         width: 720,
         height: 1280,
       );
-      expect(layout.tickerChip, isNotNull);
-      expect(layout.urduChip, isNotNull);
-      expect(layout.englishChip, isNotNull);
+      // final3 (the default design): no chips anywhere.
+      expect(layout.tickerChip, isNull);
+      expect(layout.urduChip, isNull);
+      expect(layout.englishChip, isNull);
+      // classic2: the chips exist, in their original spots.
+      final classic = NigraanFinalLayout.compute(
+        preset: ChannelPreset.nigraanTv()
+          ..finalVariant = kFinalVariantClassic2,
+        width: 720,
+        height: 1280,
+      );
+      expect(classic.tickerChip, isNotNull);
+      expect(classic.tickerChip!.top, 0);
+      expect(classic.tickerChip!.left, 0);
+      expect(classic.urduChip, isNotNull);
+      expect(classic.urduChip!.right, 720);
+      expect(classic.englishChip, isNotNull);
+      expect(classic.englishChip!.bottom, 1280);
     });
 
     test('middle ribbon off: Urdu strip gone, lower third reflows', () {
@@ -104,6 +146,12 @@ void main() {
           lessThanOrEqualTo(layout.englishStrip!.top));
     });
 
+    // Build 7 repair: in the Final design the logo + capsule do
+    // NOT reflow to the top with the ribbons off — they are
+    // anchored to the full-stack parity geometry (the export
+    // renders the same stack), so they stay exactly where the
+    // all-on layout puts them. (The old test pinned the pre-Final
+    // reflow-to-top behaviour.)
     test('all ribbons off: no strips, logo + capsule still placed', () {
       final preset = ChannelPreset.nigraanTv()
         ..topRibbon.enabled = false
@@ -115,12 +163,20 @@ void main() {
         height: 1280,
       );
       expect(layout.tickerStrip, isNull);
+      expect(layout.topStackStrip, isNull);
       expect(layout.urduStrip, isNull);
       expect(layout.englishStrip, isNull);
       expect(layout.lowerThird, isNull);
-      // Logo reflows to the very top when the ticker is gone.
-      expect(layout.logoRect.top, 16);
-      expect(layout.capsuleRect.top, layout.logoRect.bottom + 6);
+      // Logo + capsule still placed — at the SAME anchor as the
+      // all-ribbons-on layout (full-stack geometry).
+      final allOn = NigraanFinalLayout.compute(
+        preset: ChannelPreset.nigraanTv(),
+        width: 720,
+        height: 1280,
+      );
+      expect(layout.logoRect, allOn.logoRect);
+      expect(layout.capsuleRect, allOn.capsuleRect);
+      expect(layout.capsuleRect.top, layout.logoRect.bottom);
     });
 
     test('breaking banner off hides the Urdu chip, not the ribbon', () {

@@ -74,7 +74,11 @@ void main() {
     test('admin remainingToday is unlimited without I/O', () async {
       final service = GeminiVoiceService()
         ..currentUserEmail = 'mithubhattijani@gmail.com';
-      expect(await service.remainingToday(), greaterThan(1000000));
+      // Build 7 (v1.5.9) repair: the unlimited sentinel changed
+      // when the Phase 10 server-fed admin flag landed — admins
+      // now get -1 (documented on GeminiVoiceService.remaining-
+      // Today and handled by every caller), not a huge number.
+      expect(await service.remainingToday(), -1);
       expect(await service.usedToday(), 0);
     });
   });
@@ -83,9 +87,14 @@ void main() {
     test('Nigraan TV default: colours + content kinds + always rotate', () {
       final preset = ChannelPreset.nigraanTv();
       expect(preset.templateKind, 'nigraanFinal');
-      expect(preset.tickerColor, 0xFF01B0FF);
-      expect(preset.urduColor, 0xFF3D5AFE);
-      expect(preset.englishColor, 0xFFEF0017);
+      // Build 7 repair: since v1.5.1 (fix #40) the built-in
+      // preset's ribbons carry the declared-FINAL design colours
+      // (yellow / red / navy), not the old factory scheme — the
+      // factory colours survive only as the classic2 fallback in
+      // finalDesignRibbonColor.
+      expect(preset.tickerColor, kFinal3TopColor);
+      expect(preset.urduColor, kFinal3UrduColor);
+      expect(preset.englishColor, kFinal3EnglishColor);
       expect(preset.topRibbon.contentKind, RibbonContentKind.current);
       expect(preset.urduRibbon.contentKind, RibbonContentKind.national);
       expect(
