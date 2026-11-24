@@ -3,17 +3,19 @@
     <!-- Android 12+ splash (API 31+), flutter_native_splash wiring
          (Build 5 follow-up, v1.5.7): the system splash shows the
          user's Nigraan TV poster (@drawable/android12splash) on the
-         poster's deep blue #040F30. The generator skipped this file
-         (the Build 5 hand-written version held only 1 style), so it
-         was aligned by hand to the generated values-night-v31 twin;
-         future regenerations update it normally:
+         poster's sampled edge colour — #040F30 originally, #030E3F
+         since Build 8 (v1.6.0, sampled from the canonical poster).
+         The generator skipped this file (the Build 5 hand-written
+         version held only 1 style), so it was aligned by hand to
+         the generated values-night-v31 twin; future regenerations
+         update it normally:
            flutter pub run flutter_native_splash:create -->
     <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
         <item name="android:forceDarkAllowed">false</item>
         <item name="android:windowFullscreen">true</item>
         <item name="android:windowDrawsSystemBarBackgrounds">true</item>
         <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
-        <item name="android:windowSplashScreenBackground">#040F30</item>
+        <item name="android:windowSplashScreenBackground">#030E3F</item>
         <item name="android:windowSplashScreenAnimatedIcon">@drawable/android12splash</item>
     </style>
     <!-- Theme applied to the Android Window as soon as the process has started.

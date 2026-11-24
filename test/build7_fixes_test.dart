@@ -79,14 +79,17 @@ void main() {
       await tester.pump();
 
       // The gate is up, Home is not, and the one image on screen
-      // is the poster, cover-fit (full-bleed).
+      // is the poster. Build 8 (v1.6.0, fix-list point #1b): the
+      // fit is CONTAIN now, not cover — the user ordered the
+      // WHOLE poster visible, never cropped. This assertion was
+      // updated with that behaviour change.
       expect(find.byType(SplashGate), findsOneWidget);
       expect(find.byType(HomeScreen), findsNothing);
       final poster = find.byWidgetPredicate(
         (w) => _isAssetImage(w, 'assets/splash_poster.png'),
       );
       expect(poster, findsOneWidget);
-      expect(tester.widget<Image>(poster).fit, BoxFit.cover);
+      expect(tester.widget<Image>(poster).fit, BoxFit.contain);
 
       // Just before the 1.8 s minimum: still the gate.
       await tester.pump(const Duration(milliseconds: 1700));
@@ -482,7 +485,11 @@ void main() {
         brightness: Brightness.dark,
       );
       expect(TjProTheme.dark.colorScheme.primary, scheme.primary);
-      expect(TjProTheme.splashBackground, const Color(0xFF040F30));
+      // Build 8 (v1.6.0, fix-list point #1): the splash colour
+      // is now the canonical poster's own sampled edge colour
+      // (#030E3F), replacing the hand-picked #040F30 — this
+      // assertion was updated with that change.
+      expect(TjProTheme.splashBackground, const Color(0xFF030E3F));
       expect(
         TjProTheme.urduTextStyle(const TextStyle()).fontFamily,
         TjProTheme.kasheedaFamily,

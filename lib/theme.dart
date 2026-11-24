@@ -52,7 +52,12 @@ class TjProTheme {
 
   /// Splash background — the in-app SplashGate and the native
   /// splash share this exact deep blue so startup is seamless.
-  static const Color splashBackground = Color(0xFF040F30);
+  /// Build 8 (v1.6.0): the colour is sampled from the canonical
+  /// splash poster's own edges (mean of its top-strip and
+  /// bottom-strip medians, PIL-sampled 2026-11-24; the poster's
+  /// edges are not uniform, but deep navy dominates) so the
+  /// gate's contain-fit letterbox bands blend with the poster.
+  static const Color splashBackground = Color(0xFF030E3F);
 
   // ---- Text colours (Build 7 consolidation) ----
 

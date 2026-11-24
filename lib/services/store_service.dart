@@ -132,6 +132,31 @@ class StoreItem {
     return dot > 0 ? name.substring(0, dot) : name;
   }
 
+  /// Build 8 (v1.6.0, fix-list point #3): the card-facing name —
+  /// [title] with the technical markers removed and whitespace
+  /// tidied. DISPLAY ONLY: pricing ("FREE" detection), ownership
+  /// and downloads always use the raw [name], exactly as before.
+  String get displayTitle => cleanDisplayTitle(title);
+
+  static final RegExp _markerPattern = RegExp(
+    r'\((?:transparent|landscape|portrait|square)\)',
+    caseSensitive: false,
+  );
+
+  /// Removes the "(Transparent)" / "(Landscape)" / "(Portrait)" /
+  /// "(Square)" markers from a display title. These markers are
+  /// never parsed by the app (verified in STORE-PREVIEWS-REPORT)
+  /// — they only cluttered the card. Falls back to the raw title
+  /// when cleaning would leave nothing.
+  static String cleanDisplayTitle(String rawTitle) {
+    var cleaned = rawTitle.replaceAll(_markerPattern, '');
+    cleaned = cleaned.replaceAll(RegExp(r'\s+'), ' ').trim();
+    // A trailing marker can leave a dangling separator behind
+    // ("Caption - X -"): drop it.
+    cleaned = cleaned.replaceAll(RegExp(r'[\s\-|]+$'), '').trim();
+    return cleaned.isEmpty ? rawTitle.trim() : cleaned;
+  }
+
   /// Lower-case extension including the dot ('' when none).
   String get extension {
     final dot = name.lastIndexOf('.');
@@ -264,6 +289,7 @@ class StoreService {
 
   static const String _foldersKey = 'tjpro_store_folders_v1';
   static const String _listingPrefix = 'tjpro_store_listing_v1_';
+  static const String _previewsPrefix = 'tjpro_store_previews_v1_';
   static const String _ownedKey = 'tjpro_store_owned_v1';
 
   /// Local folder (under app documents) that holds owned files,
@@ -284,6 +310,13 @@ class StoreService {
   final Map<String, String> _folderIds = <String, String>{};
   final Map<String, List<StoreItem>> _listingCache =
       <String, List<StoreItem>>{};
+
+  /// Build 8: per-category preview map (item base name,
+  /// lower-cased -> preview Drive file id), filled by
+  /// [refreshCategory] and restored from SharedPreferences by
+  /// [cachedListing].
+  final Map<String, Map<String, String>> _previewCache =
+      <String, Map<String, String>>{};
   List<StoreOwnedItem>? _ownedCache;
   bool _foldersLoaded = false;
 
@@ -299,12 +332,68 @@ class StoreService {
   }
 
   /// True when [name]'s extension is allowed in [category].
-  bool isSupported(String category, String name) {
+  bool isSupported(String category, String name) =>
+      _isSupportedName(category, name);
+
+  static bool _isSupportedName(String category, String name) {
     final allowed = StoreConfig.allowedExtensions[category];
     if (allowed == null) return false;
     final dot = name.lastIndexOf('.');
     if (dot < 0) return false;
     return allowed.contains(name.substring(dot).toLowerCase());
+  }
+
+  // ------------------------------------------------------------------
+  // Preview files (Build 8, v1.6.0, fix-list point #3)
+  // ------------------------------------------------------------------
+
+  /// A preview file sits NEXT TO its item in the same Drive
+  /// folder, named `<item base name>.preview.jpg` (Option A of
+  /// STORE-PREVIEWS-REPORT). It is NEVER a store item itself.
+  static bool isPreviewFileName(String name) =>
+      name.toLowerCase().contains('.preview.');
+
+  /// Base name of a preview file: 'X.preview.jpg' -> 'X'
+  /// (the matching item's [StoreItem.title]).
+  static String previewBaseName(String previewName) {
+    final int idx = previewName.toLowerCase().indexOf('.preview.');
+    return idx > 0 ? previewName.substring(0, idx) : previewName;
+  }
+
+  /// Splits raw folder candidates into sellable items and the
+  /// preview map (item base name, lower-cased -> preview file
+  /// id). Pure and static so the listing rules are unit-testable.
+  /// Preview files are separated BEFORE the extension filter on
+  /// purpose: a Music preview is a .jpg inside a folder whose
+  /// allowed extensions exclude images, and it must still be
+  /// found. Zero-byte and unsupported-extension files are
+  /// skipped exactly as before; items come out name-sorted,
+  /// exactly as before.
+  static ({List<StoreItem> items, Map<String, String> previews})
+      buildCategoryListing(String category, List<StoreItem> candidates) {
+    final items = <StoreItem>[];
+    final previews = <String, String>{};
+    for (final entry in candidates) {
+      if (isPreviewFileName(entry.name)) {
+        previews[previewBaseName(entry.name).toLowerCase()] = entry.id;
+        continue;
+      }
+      if (entry.sizeBytes != null && entry.sizeBytes! <= 0) continue;
+      if (!_isSupportedName(category, entry.name)) continue;
+      items.add(entry);
+    }
+    items.sort(
+        (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    return (items: items, previews: previews);
+  }
+
+  /// Drive file id of [item]'s preview image, or null when the
+  /// item's folder holds none. Synchronous and cache-only — the
+  /// store UI reads it while building cards and never waits.
+  String? previewIdFor(StoreItem item) {
+    final Map<String, String>? map = _previewCache[item.category];
+    if (map == null) return null;
+    return map[item.title.toLowerCase()];
   }
 
   // ------------------------------------------------------------------
@@ -402,11 +491,46 @@ class StoreService {
           .map(StoreItem.fromJson)
           .where((e) => e != null)
           .cast<StoreItem>()
+          // Defensive (Build 8): a cache written by an older
+          // build after preview files reached Drive could hold a
+          // preview as an item — never surface one.
+          .where((e) => !isPreviewFileName(e.name))
           .toList();
       _listingCache[category] = items;
+      await _loadCachedPreviews(category, prefs);
       return List<StoreItem>.unmodifiable(items);
     } catch (_) {
       return const <StoreItem>[];
+    }
+  }
+
+  /// Restores the persisted preview map for [category] (once per
+  /// category per launch). Best-effort like every cache here.
+  Future<void> _loadCachedPreviews(
+    String category,
+    SharedPreferences prefs,
+  ) async {
+    if (_previewCache.containsKey(category)) return;
+    try {
+      final raw = prefs.getString('$_previewsPrefix$category');
+      if (raw == null || raw.isEmpty) {
+        _previewCache[category] = <String, String>{};
+        return;
+      }
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) {
+        _previewCache[category] = <String, String>{};
+        return;
+      }
+      final map = <String, String>{};
+      decoded.forEach((key, value) {
+        if (key is String && value is String && value.isNotEmpty) {
+          map[key] = value;
+        }
+      });
+      _previewCache[category] = map;
+    } catch (_) {
+      _previewCache[category] = <String, String>{};
     }
   }
 
@@ -440,33 +564,39 @@ class StoreService {
       final entries = await _listFolder(folderId, foldersOnly: false);
       if (entries.isEmpty) return await cachedListing(category);
       _lastSuccessfulRefreshAt = DateTime.now();
-      final items = <StoreItem>[];
-      for (final entry in entries) {
-        // Skip zero-byte files (API route reports sizes) and any
-        // extension the category does not support — this also drops
-        // still-uploading files and unparseable entries.
-        if (entry.sizeBytes != null && entry.sizeBytes! <= 0) continue;
-        if (!isSupported(category, entry.name)) continue;
-        items.add(StoreItem(
-          id: entry.id,
-          name: entry.name,
-          category: category,
-          sizeBytes: entry.sizeBytes,
-        ));
-      }
-      if (items.isEmpty) return await cachedListing(category);
-      items.sort(
-          (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-      _listingCache[category] = items;
+      // Build 8: one pass splits sellable items from preview
+      // files (see [buildCategoryListing]) — previews are never
+      // items, and each item learns its preview's file id.
+      final listing = buildCategoryListing(
+        category,
+        entries
+            .map((e) => StoreItem(
+                  id: e.id,
+                  name: e.name,
+                  category: category,
+                  sizeBytes: e.sizeBytes,
+                ))
+            .toList(),
+      );
+      _previewCache[category] = listing.previews;
+      final items = listing.items;
       try {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString(
-          '$_listingPrefix$category',
-          jsonEncode(items.map((e) => e.toJson()).toList()),
+          '$_previewsPrefix$category',
+          jsonEncode(listing.previews),
         );
+        if (items.isNotEmpty) {
+          await prefs.setString(
+            '$_listingPrefix$category',
+            jsonEncode(items.map((e) => e.toJson()).toList()),
+          );
+        }
       } catch (_) {
         // Cache is best-effort.
       }
+      if (items.isEmpty) return await cachedListing(category);
+      _listingCache[category] = items;
       revision.value = revision.value + 1;
       return List<StoreItem>.unmodifiable(items);
     } catch (_) {

@@ -36,6 +36,7 @@ import 'live/live_studio_screen.dart';
 import 'news/news_maker_screen.dart';
 import 'widgets/banner_ad_widget.dart';
 import 'widgets/help_whatsapp_button.dart';
+import 'widgets/hero_aspect.dart';
 import 'widgets/update_ui.dart';
 
 /// Shared Remote Config instance: fetched once at startup; the home
@@ -100,9 +101,20 @@ Future<void> main() async {
 /// SplashGate's own Image then paints synchronously on the first
 /// frame. Best-effort: never throws, and never waits longer than
 /// 600 ms — a slow decode must not delay startup (the gate's
-/// background is the same #040F30 the native splash shows, so
-/// even a missed warm-up is a seamless colour-to-poster fade).
+/// background is the same poster-sampled colour the native
+/// splash shows — #030E3F since Build 8 — so even a missed
+/// warm-up is a seamless colour-to-poster fade).
+/// Build 8 (v1.6.0): also kicks off the remote poster's cache
+/// warm (backgrounded, never awaited): the gate shows the
+/// cached remote copy when one exists for the config's
+/// splash_poster_url, else the bundled canonical poster.
 Future<void> _warmSplashPoster() async {
+  unawaited(
+    HeroBannerCache.instance.warm(
+      HeroBannerCache.slotSplash,
+      remoteConfigService.config.splashPosterImageUrl,
+    ),
+  );
   try {
     const ImageProvider provider = AssetImage('assets/splash_poster.png');
     final ImageStream stream =
@@ -133,6 +145,7 @@ Future<void> _warmSplashPoster() async {
 
 /// Build 6 (v1.5.8) — in-app splash gate. Build 7 (v1.5.9)
 /// hardened — see the notes in [_SplashGateState.initState].
+/// Build 8 (v1.6.0) — contain fit + remote poster, see below.
 ///
 /// On the user's Android 12+ phone the system splash showed the
 /// poster SMALL and centred: the Android 12+ splash API only
@@ -140,17 +153,30 @@ Future<void> _warmSplashPoster() async {
 /// level. Build 7 therefore makes the native splash icon fully
 /// transparent (pubspec flutter_native_splash android_12 image =
 /// assets/splash_blank.png): at startup the OS now shows ONLY
-/// the plain #040F30 background — no icon anywhere — until this
-/// gate paints. The gate is the app's first screen (and its only
-/// cold-start entry: MaterialApp has no routes or deep-link
-/// handlers that could bypass it, and the update prompts live
-/// behind Home) and shows the poster full-screen (BoxFit.cover
-/// over the poster's own deep blue, #040F30 — the same colour
-/// the native splash uses, so the hand-off is seamless). It
-/// stays for [minShow] — or until the first frame is ready,
-/// whichever is LATER — and is hard-capped at [maxShow] so the
-/// app can never sit on the poster. It then swaps itself for
-/// Home in place (no route is pushed, so Back never returns
+/// the plain background colour — no icon anywhere — until this
+/// gate paints. Build 8 changes that colour from #040F30 to the
+/// canonical poster's own sampled edge colour, #030E3F
+/// ([TjProTheme.splashBackground] and the pubspec splash config
+/// use the same value), so native -> gate reads as one
+/// continuous surface the poster appears on.
+///
+/// The gate is the app's first screen (and its only cold-start
+/// entry: MaterialApp has no routes or deep-link handlers that
+/// could bypass it, and the update prompts live behind Home).
+/// Build 8 (fix-list point #1): the poster is shown
+/// BoxFit.contain — the WHOLE poster is always visible, nothing
+/// cropped (cover cropped it on tall phones); the letterbox
+/// bands are the gate background, the poster's own sampled edge
+/// colour, so they blend with the poster's deep-navy edges. The
+/// poster itself comes from [_SplashPosterImage]: the remote
+/// config's splash_poster_url (cached on-device, hero-banner
+/// pattern) with the bundled canonical poster as the instant
+/// first paint and the never-blank fallback — the poster can
+/// now change WITHOUT a new build, like the hero banners.
+/// The gate stays for [minShow] — or until the first frame is
+/// ready, whichever is LATER — and is hard-capped at [maxShow]
+/// so the app can never sit on the poster. It then swaps itself
+/// for Home in place (no route is pushed, so Back never returns
 /// here). No buttons, no tap needed, no extra branding text.
 class SplashGate extends StatefulWidget {
   const SplashGate({super.key});
@@ -237,14 +263,99 @@ class _SplashGateState extends State<SplashGate> {
   @override
   Widget build(BuildContext context) {
     if (_showHome) return const HomeScreen();
-    return const Scaffold(
+    return Scaffold(
       backgroundColor: TjProTheme.splashBackground,
       body: SizedBox.expand(
-        child: Image(
-          image: AssetImage('assets/splash_poster.png'),
-          fit: BoxFit.cover,
+        child: ValueListenableBuilder<RemoteConfig>(
+          valueListenable: remoteConfigService.notifier,
+          builder: (context, cfg, _) =>
+              _SplashPosterImage(url: cfg.splashPosterImageUrl),
         ),
       ),
+    );
+  }
+}
+
+/// Build 8 (v1.6.0, fix-list point #1): the SplashGate's poster
+/// image — the hero banners' proven fallback pattern applied to
+/// the splash poster.
+///
+/// Display order: the on-device cached copy for this exact URL
+/// (HeroBannerCache slot [HeroBannerCache.slotSplash]) paints
+/// when one exists; otherwise the bundled canonical poster
+/// paints instantly while the remote copy downloads in the
+/// background (the cache bumps its revision when it lands and
+/// this widget swaps to it). Any failure — offline, 404, a
+/// broken remote file — simply keeps the bundled poster, so
+/// the gate can never render blank or broken. Fit is
+/// BoxFit.contain everywhere: the whole poster, never cropped.
+class _SplashPosterImage extends StatefulWidget {
+  const _SplashPosterImage({required this.url});
+
+  final String url;
+
+  @override
+  State<_SplashPosterImage> createState() => _SplashPosterImageState();
+}
+
+class _SplashPosterImageState extends State<_SplashPosterImage> {
+  File? _file;
+
+  @override
+  void initState() {
+    super.initState();
+    _file = HeroBannerCache.instance
+        .cachedFileFor(HeroBannerCache.slotSplash, widget.url);
+    HeroBannerCache.instance.revision.addListener(_sync);
+    unawaited(
+      HeroBannerCache.instance.warm(HeroBannerCache.slotSplash, widget.url),
+    );
+  }
+
+  @override
+  void didUpdateWidget(_SplashPosterImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.url != widget.url) {
+      _file = HeroBannerCache.instance
+          .cachedFileFor(HeroBannerCache.slotSplash, widget.url);
+      unawaited(
+        HeroBannerCache.instance
+            .warm(HeroBannerCache.slotSplash, widget.url),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    HeroBannerCache.instance.revision.removeListener(_sync);
+    super.dispose();
+  }
+
+  void _sync() {
+    if (!mounted) return;
+    final File? file = HeroBannerCache.instance
+        .cachedFileFor(HeroBannerCache.slotSplash, widget.url);
+    if (file != _file) setState(() => _file = file);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final File? file = _file;
+    if (file != null) {
+      return Image.file(
+        file,
+        fit: BoxFit.contain,
+        width: double.infinity,
+        height: double.infinity,
+        errorBuilder: (context, error, stackTrace) => const Image(
+          image: AssetImage('assets/splash_poster.png'),
+          fit: BoxFit.contain,
+        ),
+      );
+    }
+    return const Image(
+      image: AssetImage('assets/splash_poster.png'),
+      fit: BoxFit.contain,
     );
   }
 }
@@ -332,6 +443,86 @@ class _HeroRemoteImageState extends State<_HeroRemoteImage> {
   }
 }
 
+/// Build 8 (v1.6.0, fix-list point #2): resolves one hero
+/// slide's effective image provider purely to learn its
+/// intrinsic aspect, reported via [onAspect]. Renders nothing.
+/// Resolution shares the framework image cache with the slide's
+/// own Image widget, so it costs no extra download. Failures are
+/// silent — the frame simply keeps its current/default height.
+class _HeroAspectProbe extends StatefulWidget {
+  const _HeroAspectProbe({super.key, required this.provider, required this.onAspect});
+
+  final ImageProvider provider;
+  final ValueChanged<double> onAspect;
+
+  @override
+  State<_HeroAspectProbe> createState() => _HeroAspectProbeState();
+}
+
+class _HeroAspectProbeState extends State<_HeroAspectProbe> {
+  ImageStream? _stream;
+  ImageStreamListener? _listener;
+
+  @override
+  void initState() {
+    super.initState();
+    _resolve();
+  }
+
+  @override
+  void didUpdateWidget(_HeroAspectProbe oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.provider != widget.provider) _resolve();
+  }
+
+  void _resolve() {
+    _detach();
+    final ImageStream stream =
+        widget.provider.resolve(const ImageConfiguration());
+    final ImageStreamListener listener = ImageStreamListener(
+      (ImageInfo info, bool synchronousCall) {
+        final double? aspect = heroAspectFromSize(
+          info.image.width.toDouble(),
+          info.image.height.toDouble(),
+        );
+        if (aspect == null) return;
+        // A cache hit completes the stream SYNCHRONOUSLY —
+        // possibly during the build phase, where the parent's
+        // setState would throw. Always report after the frame.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) widget.onAspect(aspect);
+        });
+      },
+      onError: (Object error, StackTrace? stack) {
+        // Silent: no aspect reported, the frame keeps its
+        // current height and the slide's own fallback shows.
+      },
+    );
+    _stream = stream;
+    _listener = listener;
+    stream.addListener(listener);
+  }
+
+  void _detach() {
+    final ImageStream? stream = _stream;
+    final ImageStreamListener? listener = _listener;
+    if (stream != null && listener != null) {
+      stream.removeListener(listener);
+    }
+    _stream = null;
+    _listener = null;
+  }
+
+  @override
+  void dispose() {
+    _detach();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => const SizedBox.shrink();
+}
+
 class PhotoVideoEditorApp extends StatelessWidget {
   const PhotoVideoEditorApp({super.key});
 
@@ -390,6 +581,44 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Build 4 (Home reference): hero carousel state.
   final PageController _heroController = PageController();
   int _heroPage = 0;
+
+  /// Build 8 (v1.6.0, fix-list point #2): intrinsic aspect
+  /// (width / height) of each hero slide's effective image, by
+  /// slide index, reported by the slides' aspect probes. The
+  /// carousel frame follows the ACTIVE slide's aspect so a
+  /// banner is never cropped; an index with no entry yet keeps
+  /// the historical default frame height.
+  final Map<int, double> _heroAspects = <int, double>{};
+
+  void _reportHeroAspect(int index, double aspect) {
+    if (!mounted) return;
+    final double? known = _heroAspects[index];
+    if (known != null && (known - aspect).abs() < 0.005) return;
+    setState(() => _heroAspects[index] = aspect);
+  }
+
+  /// The image provider slide 1 is effectively showing (remote
+  /// cached copy, remote stream, or the bundled artwork) — the
+  /// aspect probe resolves THIS so the frame matches the image
+  /// actually on screen.
+  ImageProvider _heroProvider1(RemoteConfig cfg) {
+    final String url = cfg.heroBanner1ImageUrl;
+    if (url.isEmpty) {
+      return const AssetImage('assets/hero_nigraan_banner.jpg');
+    }
+    final File? file =
+        HeroBannerCache.instance.cachedFileFor(HeroBannerCache.slot1, url);
+    return file != null ? FileImage(file) : NetworkImage(url);
+  }
+
+  /// Same for slide 2 (the admin banner chain).
+  ImageProvider _heroProvider2(RemoteConfig cfg) {
+    final String url = cfg.heroBanner2ImageUrl;
+    if (url.startsWith('assets/')) return AssetImage(url);
+    final File? file =
+        HeroBannerCache.instance.cachedFileFor(HeroBannerCache.slot2, url);
+    return file != null ? FileImage(file) : NetworkImage(url);
+  }
 
   @override
   void initState() {
@@ -1179,6 +1408,16 @@ class _HomeScreenState extends State<HomeScreen> {
   /// is booked/enabled) = the remote ADMIN house-ad banner with
   /// its existing behaviour (contain fit, never cropped; tap
   /// opens its link when set).
+  ///
+  /// Build 8 (v1.6.0, fix-list point #2): the frame ADAPTS to
+  /// the active slide's image aspect (probed from the image
+  /// actually being shown) instead of the old fixed 178dp, so
+  /// slide 1 is never cropped whatever banner is served. The
+  /// math lives in widgets/hero_aspect.dart: aspect clamped to
+  /// 1.15:1..2.65:1, height capped at 45% of the screen, and
+  /// the historical 178dp until a slide's aspect is known. The
+  /// height change on a slide swipe animates subtly (220 ms).
+  /// Auto-scroll, dots and tap behaviour are unchanged.
   Widget _heroCarousel() {
     return ValueListenableBuilder<RemoteConfig>(
       valueListenable: remoteConfigService.notifier,
@@ -1194,42 +1433,79 @@ class _HomeScreenState extends State<HomeScreen> {
           _newsHeroSlide(cfg),
           if (showAdmin) _adminHeroSlide(cfg),
         ];
-        return Column(
-          children: [
-            SizedBox(
-              height: 178,
-              child: PageView(
-                controller: _heroController,
-                onPageChanged: (i) => setState(() => _heroPage = i),
-                children: slides,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                for (var i = 0; i < slides.length; i++)
-                  GestureDetector(
-                    onTap: () => _heroController.animateToPage(
-                      i,
-                      duration: const Duration(milliseconds: 300),
+        // Rebuild when the banner cache lands a fresh copy: the
+        // effective providers (and their aspects) can change.
+        return ValueListenableBuilder<int>(
+          valueListenable: HeroBannerCache.instance.revision,
+          builder: (context, _, _) {
+            final providers = <ImageProvider>[
+              _heroProvider1(cfg),
+              if (showAdmin) _heroProvider2(cfg),
+            ];
+            return LayoutBuilder(
+              builder: (context, constraints) {
+                final double maxHeight =
+                    MediaQuery.sizeOf(context).height *
+                        heroMaxHeightFraction;
+                final int active =
+                    _heroPage < slides.length ? _heroPage : 0;
+                final double height = heroFrameHeight(
+                  width: constraints.maxWidth,
+                  aspect: _heroAspects[active],
+                  maxHeight: maxHeight,
+                );
+                return Column(
+                  children: [
+                    // Invisible probes: each resolves its slide's
+                    // effective image and reports its aspect.
+                    for (var i = 0; i < providers.length; i++)
+                      _HeroAspectProbe(
+                        key: ValueKey<String>('heroAspectProbe$i'),
+                        provider: providers[i],
+                        onAspect: (a) => _reportHeroAspect(i, a),
+                      ),
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 220),
                       curve: Curves.easeOut,
-                    ),
-                    child: Container(
-                      width: i == _heroPage ? 16 : 7,
-                      height: 7,
-                      margin: const EdgeInsets.symmetric(horizontal: 3),
-                      decoration: BoxDecoration(
-                        color: i == _heroPage
-                            ? const Color(0xFFF5C542)
-                            : Colors.white24,
-                        borderRadius: BorderRadius.circular(4),
+                      height: height,
+                      child: PageView(
+                        controller: _heroController,
+                        onPageChanged: (i) =>
+                            setState(() => _heroPage = i),
+                        children: slides,
                       ),
                     ),
-                  ),
-              ],
-            ),
-          ],
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        for (var i = 0; i < slides.length; i++)
+                          GestureDetector(
+                            onTap: () => _heroController.animateToPage(
+                              i,
+                              duration: const Duration(milliseconds: 300),
+                              curve: Curves.easeOut,
+                            ),
+                            child: Container(
+                              width: i == _heroPage ? 16 : 7,
+                              height: 7,
+                              margin: const EdgeInsets.symmetric(
+                                  horizontal: 3),
+                              decoration: BoxDecoration(
+                                color: i == _heroPage
+                                    ? const Color(0xFFF5C542)
+                                    : Colors.white24,
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
+                );
+              },
+            );
+          },
         );
       },
     );

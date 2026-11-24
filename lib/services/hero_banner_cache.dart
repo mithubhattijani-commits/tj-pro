@@ -40,6 +40,12 @@ class HeroBannerCache {
   static const String slot1 = 'hero_banner_1';
   static const String slot2 = 'hero_banner_2';
 
+  /// Build 8 (v1.6.0): the SplashGate poster's cache slot — the
+  /// gate reuses this exact proven pattern (cached copy first,
+  /// magic-byte validation, bundled-asset fallback) so the
+  /// poster can change via remote config without a build.
+  static const String slotSplash = 'splash_poster';
+
   static const Duration downloadTimeout = Duration(seconds: 10);
 
   /// Test seam: directory override (tests point this at a temp
@@ -126,7 +132,7 @@ class HeroBannerCache {
   Future<void> _loadFromDisk() async {
     if (_diskLoaded) return;
     _diskLoaded = true;
-    for (final String slot in const <String>[slot1, slot2]) {
+    for (final String slot in const <String>[slot1, slot2, slotSplash]) {
       try {
         final Directory dir = await _dir();
         final File urlFile = File(p.join(dir.path, '$slot.url'));

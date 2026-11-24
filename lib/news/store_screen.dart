@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 
 import '../services/coin_service.dart';
+import '../services/store_preview_cache.dart';
 import '../services/store_service.dart';
 import '../services/unity_ads_service.dart';
 import '../theme.dart';
@@ -363,7 +365,9 @@ class _StoreScreenState extends State<StoreScreen> {
           maxCrossAxisExtent: 220,
           mainAxisSpacing: 12,
           crossAxisSpacing: 12,
-          childAspectRatio: 0.78,
+          // Build 8: cards are taller now — the preview area
+          // (16:10) sits above the name.
+          childAspectRatio: 0.70,
         ),
         itemCount: _items.length,
         itemBuilder: (context, index) => _itemCard(_items[index]),
@@ -381,21 +385,41 @@ class _StoreScreenState extends State<StoreScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              _categoryBadge(item.category),
-              const Spacer(),
-              Icon(
-                _iconFor(item),
-                color: TjProTheme.violetBright,
-                size: 28,
+          // Build 8 (fix-list point #3): the item's REAL preview
+          // on top of the card — what it is, how it looks, what
+          // colour — before the user spends coins on it. The
+          // category badge overlays the preview's top-left
+          // corner; the old category icon survives as the
+          // preview area's fallback (no preview / load failure
+          // = the card looks exactly as it did before).
+          AspectRatio(
+            aspectRatio: 16 / 10,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  _StorePreviewImage(
+                    previewId: _store.previewIdFor(item),
+                    fallbackIcon: _iconFor(item),
+                  ),
+                  Positioned(
+                    top: 6,
+                    left: 6,
+                    child: _categoryBadge(item.category),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           Expanded(
             child: Text(
-              item.title,
+              // Build 8: cleaned display name — the technical
+              // "(Transparent)" / "(Landscape)" / ... markers no
+              // longer clutter (or truncate) the card title.
+              // Pricing still reads the RAW name (priceFor).
+              item.displayTitle,
               maxLines: 3,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
@@ -487,6 +511,95 @@ class _StoreScreenState extends State<StoreScreen> {
       default:
         return Icons.auto_awesome_outlined;
     }
+  }
+}
+
+/// Build 8 (v1.6.0): one store card's preview area. Shows the
+/// item's cached preview image ([StorePreviewCache]) when one is
+/// available; until then — and on any failure — the card's
+/// traditional category icon on the deep preview backdrop the
+/// prepared previews were composited on (#14122B), so a card
+/// without a preview looks exactly as it did before Build 8.
+/// Loading never blocks the list: the icon paints instantly and
+/// the image swaps in when the cache lands it.
+class _StorePreviewImage extends StatefulWidget {
+  const _StorePreviewImage({
+    required this.previewId,
+    required this.fallbackIcon,
+  });
+
+  /// Drive file id of the item's preview, or null when the
+  /// item's folder holds no preview file.
+  final String? previewId;
+  final IconData fallbackIcon;
+
+  @override
+  State<_StorePreviewImage> createState() => _StorePreviewImageState();
+}
+
+class _StorePreviewImageState extends State<_StorePreviewImage> {
+  File? _file;
+
+  @override
+  void initState() {
+    super.initState();
+    StorePreviewCache.instance.revision.addListener(_sync);
+    final String? id = widget.previewId;
+    if (id != null) {
+      _file = StorePreviewCache.instance.cachedFileFor(id);
+      unawaited(StorePreviewCache.instance.warm(id));
+    }
+  }
+
+  @override
+  void didUpdateWidget(_StorePreviewImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.previewId != widget.previewId) {
+      final String? id = widget.previewId;
+      _file = id == null ? null : StorePreviewCache.instance.cachedFileFor(id);
+      if (id != null) unawaited(StorePreviewCache.instance.warm(id));
+    }
+  }
+
+  @override
+  void dispose() {
+    StorePreviewCache.instance.revision.removeListener(_sync);
+    super.dispose();
+  }
+
+  void _sync() {
+    if (!mounted) return;
+    final String? id = widget.previewId;
+    if (id == null) return;
+    final File? file = StorePreviewCache.instance.cachedFileFor(id);
+    if (file != _file) setState(() => _file = file);
+  }
+
+  Widget _fallback() {
+    return Center(
+      child: Icon(
+        widget.fallbackIcon,
+        color: TjProTheme.violetBright,
+        size: 40,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final File? file = _file;
+    return Container(
+      color: const Color(0xFF14122B),
+      child: file == null
+          ? _fallback()
+          : Image.file(
+              file,
+              fit: BoxFit.cover,
+              width: double.infinity,
+              height: double.infinity,
+              errorBuilder: (context, error, stackTrace) => _fallback(),
+            ),
+    );
   }
 }
 

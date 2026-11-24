@@ -119,6 +119,7 @@ class RemoteConfig {
     this.heroBanner1Link = heroBanner1DefaultLink,
     this.heroBanner2Url = '',
     this.heroBanner2Link = '',
+    this.splashPosterUrl = splashPosterDefaultUrl,
     this.kasheedaFontUrl = AppConfig.kasheedaFontUrl,
     this.nigraanIntroUrl = AppConfig.nigraanIntroUrl,
     this.logoMovUrl = AppConfig.logoMovUrl,
@@ -197,6 +198,29 @@ class RemoteConfig {
   /// defaults to "unset" = no tap handler, as today).
   final String heroBanner2Link;
 
+  // --- Build 8 (v1.6.0): remote splash poster -----------------
+  // The SplashGate poster is changeable WITHOUT a new build via
+  // tj-pro.json, exactly like the hero banners. The key is
+  // purely additive: old app versions ignore it.
+
+  /// Splash poster image URL. JSON key `splash_poster_url`.
+  /// Defaults to the hosted canonical poster (see
+  /// [splashPosterDefaultUrl]); the SplashGate falls back
+  /// remote -> on-device cache -> bundled canonical poster
+  /// asset, so the gate can never render blank.
+  final String splashPosterUrl;
+
+  /// Default splash poster location (the canonical poster,
+  /// hosted with the other app assets).
+  static const String splashPosterDefaultUrl =
+      'https://nigraantv.xyz/apps/splash/poster.jpg';
+
+  /// Effective splash poster URL (never empty).
+  String get splashPosterImageUrl {
+    final String url = splashPosterUrl.trim();
+    return url.isEmpty ? splashPosterDefaultUrl : url;
+  }
+
   /// Default tap target of hero slide 1 (the website).
   static const String heroBanner1DefaultLink = 'https://nigraantv.xyz';
 
@@ -247,6 +271,7 @@ class RemoteConfig {
       heroBanner1Link: heroBanner1Link,
       heroBanner2Url: heroBanner2Url,
       heroBanner2Link: heroBanner2Link,
+      splashPosterUrl: splashPosterUrl,
       kasheedaFontUrl: kasheedaFontUrl,
       nigraanIntroUrl: nigraanIntroUrl,
       logoMovUrl: logoMovUrl,
@@ -335,6 +360,13 @@ class RemoteConfig {
       heroBanner2Url: (json['hero_banner_2_url'] ?? '').toString().trim(),
       heroBanner2Link:
           (json['hero_banner_2_link'] ?? '').toString().trim(),
+      // Build 8: absent/empty keeps the hosted canonical poster
+      // as the gate's remote source (bundled asset remains the
+      // final fallback either way).
+      splashPosterUrl: _nonEmptyString(
+        json['splash_poster_url'],
+        splashPosterDefaultUrl,
+      ),
       kasheedaFontUrl: _nonEmptyString(
         json['kasheeda_font_url'],
         AppConfig.kasheedaFontUrl,

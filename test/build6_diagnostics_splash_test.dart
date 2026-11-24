@@ -118,7 +118,11 @@ void main() {
         (poster.image as AssetImage).assetName,
         'assets/splash_poster.png',
       );
-      expect(poster.fit, BoxFit.cover);
+      // Build 8 (v1.6.0, fix-list point #1b): the fit is CONTAIN
+      // now, not cover — the user ordered the WHOLE poster
+      // visible, never cropped. This assertion was updated with
+      // the behaviour change (it previously pinned cover).
+      expect(poster.fit, BoxFit.contain);
       expect(find.text('VIDEO EDITOR'), findsNothing);
 
       // After the minimum show time the gate swaps in Home.
