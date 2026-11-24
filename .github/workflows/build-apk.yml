@@ -67,18 +67,18 @@ jobs:
             unzip -t "$APK" | tail -3
             "$AAPT2" dump badging "$APK" > badging.txt
             cat badging.txt
-            grep -F "package: name='com.tjpro.app' versionCode='$EXPECTED_CODE' versionName='1.5.6'" badging.txt
+            grep -F "package: name='com.tjpro.app' versionCode='$EXPECTED_CODE' versionName='1.5.7'" badging.txt
             grep -F "sdkVersion:'24'" badging.txt
             grep -F "targetSdkVersion:'36'" badging.txt
             grep -F "application-label:'TJ Pro'" badging.txt
             "$APKSIGNER" verify --print-certs "$APK" | tee certs.txt
             ACTUAL_DIGEST=$(grep "Signer #1 certificate SHA-256 digest" certs.txt | awk '{print $NF}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
             if [ "$ACTUAL_DIGEST" != "$EXPECTED_SIGNER_SHA256" ]; then echo "SIGNER MISMATCH on $APK: got $ACTUAL_DIGEST want $EXPECTED_SIGNER_SHA256"; exit 1; fi
-            echo "VERIFY OK: $APK versionCode=$EXPECTED_CODE versionName=1.5.6 signer matches TJ Pro day-1 key"
+            echo "VERIFY OK: $APK versionCode=$EXPECTED_CODE versionName=1.5.7 signer matches TJ Pro day-1 key"
           }
-          verify_one build/app/outputs/flutter-apk/app-armeabi-v7a-debug.apk 1020
-          verify_one build/app/outputs/flutter-apk/app-arm64-v8a-debug.apk 2020
-          verify_one build/app/outputs/flutter-apk/app-x86_64-debug.apk 4020
+          verify_one build/app/outputs/flutter-apk/app-armeabi-v7a-debug.apk 1021
+          verify_one build/app/outputs/flutter-apk/app-arm64-v8a-debug.apk 2021
+          verify_one build/app/outputs/flutter-apk/app-x86_64-debug.apk 4021
           echo "VERIFY OK: all 3 split APKs match package/version/SDKs/signer"
       - name: Upload APKs to Release
         env:
