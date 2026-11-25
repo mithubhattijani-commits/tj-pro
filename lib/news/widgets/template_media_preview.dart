@@ -421,6 +421,30 @@ class _TemplateMediaPreviewState extends State<TemplateMediaPreview> {
   }
 }
 
+/// Hotfix: the notch position of the main-area clip, clamped
+/// into the band [top]..[bottom] — with the range ALWAYS valid.
+///
+/// The clipper used to call `notchTop.clamp(top, bottom)`
+/// directly. During the first layout frames (or a zero-height
+/// slot) `bottom` can be 0 while `top` is still positive, so
+/// the clamp range is inverted and double.clamp THROWS
+/// "Invalid argument(s): 0.0" — the recurring crash-report
+/// fingerprint in v1.9.0 AND v1.10.0. Here the range is
+/// normalised (min/max) before clamping and NaN inputs
+/// degrade to 0, so this can never throw. For every valid
+/// input (top ≤ bottom, finite values) the result is exactly
+/// the old clamp's result.
+double safeNotchFrom({
+  required double top,
+  required double bottom,
+  required double notchTop,
+}) {
+  if (top.isNaN || bottom.isNaN || notchTop.isNaN) return 0;
+  final lo = top < bottom ? top : bottom;
+  final hi = top < bottom ? bottom : top;
+  return notchTop.clamp(lo, hi).toDouble();
+}
+
 /// The main-area L-shape: the full-width band [top]..[bottom], with
 /// the logo block's rectangle (from [notchTop] down, at the right)
 /// cut out so the template's logo stays visible over the media —
@@ -441,7 +465,7 @@ class _MainAreaClipper extends CustomClipper<Path> {
   @override
   Path getClip(Size size) {
     final w = size.width;
-    final notchFrom = notchTop.clamp(top, bottom);
+    final notchFrom = safeNotchFrom(top: top, bottom: bottom, notchTop: notchTop);
     return Path()
       ..moveTo(0, top)
       ..lineTo(w, top)

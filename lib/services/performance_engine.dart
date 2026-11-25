@@ -37,6 +37,7 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/widgets.dart';
 
 import 'crash_guard.dart';
+import 'ffmpeg_service.dart';
 import 'hero_banner_cache.dart';
 import 'store_audio_preview.dart';
 import 'store_preview_cache.dart';
@@ -164,6 +165,8 @@ class PerformanceConfig {
     required this.photoEnlargeMaxPixels,
     required this.exportChunkSeconds,
     required this.tryHardwareEncoder,
+    required this.exportThreads,
+    required this.exportPreset,
   });
 
   final DeviceTier tier;
@@ -196,6 +199,22 @@ class PerformanceConfig {
   /// than it can save.
   final bool tryHardwareEncoder;
 
+  /// Hotfix (export-crash audit C1/C6): the libx264 thread cap
+  /// for the MAIN export passes (Video Editor + News Studio).
+  /// libx264's default is "every core, each with its own frame
+  /// queue" — on a weak phone that queue memory is what gets
+  /// the process LMK-killed mid-encode. The cap is pushed into
+  /// [FfmpegService] whenever this config changes, so a memory-
+  /// pressure step-down lightens the NEXT export stage too.
+  final int exportThreads;
+
+  /// Hotfix (audit C1): the libx264 preset for the main export
+  /// passes. LOW steps one notch faster than the historical
+  /// `veryfast` (to `superfast`): a lighter lookahead/RSS
+  /// profile for the phones that die mid-encode. Other tiers
+  /// keep `veryfast` exactly.
+  final String exportPreset;
+
   static PerformanceConfig forTier(DeviceTier tier) => switch (tier) {
         DeviceTier.low => const PerformanceConfig(
             tier: DeviceTier.low,
@@ -205,6 +224,8 @@ class PerformanceConfig {
             photoEnlargeMaxPixels: 16000000,
             exportChunkSeconds: 20,
             tryHardwareEncoder: false,
+            exportThreads: 2,
+            exportPreset: 'superfast',
           ),
         DeviceTier.mid => const PerformanceConfig(
             tier: DeviceTier.mid,
@@ -214,6 +235,8 @@ class PerformanceConfig {
             photoEnlargeMaxPixels: 25000000,
             exportChunkSeconds: 30,
             tryHardwareEncoder: true,
+            exportThreads: 4,
+            exportPreset: 'veryfast',
           ),
         DeviceTier.high => const PerformanceConfig(
             tier: DeviceTier.high,
@@ -223,6 +246,8 @@ class PerformanceConfig {
             photoEnlargeMaxPixels: 40000000,
             exportChunkSeconds: 30,
             tryHardwareEncoder: true,
+            exportThreads: 6,
+            exportPreset: 'veryfast',
           ),
         DeviceTier.flagship => const PerformanceConfig(
             tier: DeviceTier.flagship,
@@ -232,6 +257,8 @@ class PerformanceConfig {
             photoEnlargeMaxPixels: 40000000,
             exportChunkSeconds: 45,
             tryHardwareEncoder: true,
+            exportThreads: 8,
+            exportPreset: 'veryfast',
           ),
       };
 
@@ -242,7 +269,22 @@ class PerformanceConfig {
 /// The engine singleton: profile + live config + the
 /// memory-pressure responder (7A/7B/7E).
 class PerformanceEngine with WidgetsBindingObserver {
-  PerformanceEngine._();
+  PerformanceEngine._() {
+    // Hotfix (audit C1/C6): keep the ffmpeg encode policy
+    // (thread cap + preset) mirrored into FfmpegService, whose
+    // run() applies it to every libx264 command. The mirror
+    // follows EVERY config swap — tier adoption at init and
+    // the memory-pressure step-down alike — so a pressure
+    // event mid-export lightens the NEXT stage's encode.
+    config.addListener(_pushEncodePolicy);
+    _pushEncodePolicy();
+  }
+
+  void _pushEncodePolicy() {
+    final c = config.value;
+    FfmpegService.encodeThreads = c.exportThreads;
+    FfmpegService.encodePreset = c.exportPreset;
+  }
 
   static final PerformanceEngine instance = PerformanceEngine._();
 

@@ -14,6 +14,7 @@ import '../live/news_template.dart';
 import '../news/breaking_templates.dart';
 import '../news/project_handoff.dart';
 import '../services/asset_download_service.dart';
+import '../services/export_death_watcher.dart';
 import '../services/logo_loop_service.dart';
 import '../live/parity_template.dart';
 import '../services/unity_ads_service.dart';
@@ -58,6 +59,42 @@ class VideoEditorExportController {
       final dir = await host.workDir();
       final stamp = DateTime.now().millisecondsSinceEpoch;
       var out = p.join(dir.path, 'pve_export_$stamp.mp4');
+
+      // Hotfix (export-crash audit C5): stage-output handoff.
+      // Every post-pass below used to KEEP its input file, so a
+      // long export accumulated a full extra video copy per
+      // stage in the temp dir — wasted disk AND page-cache
+      // pressure in the same process the encode runs in.
+      // advanceTo moves [out] to the stage's output and deletes
+      // the previous stage's file. Only files inside this
+      // export's own temp dir are ever deleted — user media
+      // lives elsewhere and is never touched.
+      Future<void> advanceTo(String next) async {
+        final prev = out;
+        out = next;
+        if (prev != next && p.isWithin(dir.path, prev)) {
+          try {
+            await File(prev).delete();
+          } catch (_) {
+            // Housekeeping only — never fail an export over it.
+          }
+        }
+      }
+
+      // Deletes a finished group of intermediates (the
+      // per-clip normalize files once the join has consumed
+      // them). Same temp-dir-only rule as [advanceTo].
+      Future<void> discardIntermediates(Iterable<String> paths) async {
+        for (final path in paths) {
+          if (p.isWithin(dir.path, path)) {
+            try {
+              await File(path).delete();
+            } catch (_) {
+              // Housekeeping only.
+            }
+          }
+        }
+      }
       // v1.4.0: per-clip volume / mute materialisation — every clip
       // whose own gain is off 1.0 or that is muted is replaced by a
       // processed copy (video stream copied, audio gained/silenced)
@@ -280,6 +317,8 @@ class VideoEditorExportController {
           host.setStatus('Beat cuts jor rahe hain…');
           final res = await FfmpegService.run(cc);
           if (!res.ok) throw Exception('Beat cut join failed. ${res.logs}');
+          // Hotfix (audit C5): the join consumed the cut parts.
+          await discardIntermediates(cutParts);
           clips = [
             VideoClip(
               File(cutFile),
@@ -658,6 +697,11 @@ class VideoEditorExportController {
         } else if (!res.ok) {
           throw Exception('Final export failed. ${res.logs}');
         }
+        // Hotfix (audit C5): the final pass has consumed the
+        // normalized clips and the merged file — free them
+        // before the post-passes run.
+        await discardIntermediates(normFiles);
+        await discardIntermediates([merged]);
       }
 
       // v1.3.0 (§6.5): blur-fill reframe for the SINGLE-clip path
@@ -679,7 +723,7 @@ class VideoEditorExportController {
               ),
             );
             if (res.ok) {
-              out = bfOut;
+              await advanceTo(bfOut);
             } else {
               host.setStatus(
                 'Note: blur fill fail ho gaya, baghair is ke save ho raha hai.',
@@ -712,7 +756,7 @@ class VideoEditorExportController {
             ),
           );
           if (res.ok) {
-            out = duckOut;
+            await advanceTo(duckOut);
           } else {
             host.setStatus(
               'Note: music ducking fail ho gaya, baghair music ke save ho raha hai.',
@@ -746,7 +790,7 @@ class VideoEditorExportController {
             ),
           );
           if (res.ok) {
-            out = mixOut;
+            await advanceTo(mixOut);
           } else {
             host.setStatus(
               'Note: voiceover mix fail ho gaya, baghair voice ke save ho raha hai.',
@@ -788,7 +832,7 @@ class VideoEditorExportController {
             onStep: (s) => host.setStatus(s),
           );
           if (res.ok) {
-            out = stab;
+            await advanceTo(stab);
             host.setStatus('Stabilized (${res.engine}).');
           } else {
             host.setStatus(
@@ -824,7 +868,7 @@ class VideoEditorExportController {
               ),
             );
             if (res.ok) {
-              out = tfOut;
+              await advanceTo(tfOut);
             } else {
               host.setStatus(
                 'Note: transform fail ho gaya, baghair is ke save ho raha hai.',
@@ -873,7 +917,7 @@ class VideoEditorExportController {
             },
             onStep: (s) => host.setStatus(s),
           );
-          out = modnetOut;
+          await advanceTo(modnetOut);
           modnetDone = true;
           host.setStatus('Video background removed (MODNet HQ).');
         } catch (e) {
@@ -904,7 +948,7 @@ class VideoEditorExportController {
               },
               onStep: (s) => host.setStatus(s),
             );
-            out = bgOut;
+            await advanceTo(bgOut);
             host.setStatus('Video background removed.');
           } catch (e) {
             host.setStatus(
@@ -934,7 +978,7 @@ class VideoEditorExportController {
           final cmd = chromaPassCommand(input: out, c: c, output: chromaOut);
           final res = await FfmpegService.run(cmd);
           if (res.ok) {
-            out = chromaOut;
+            await advanceTo(chromaOut);
           } else {
             host.setStatus(
               'Note: chromakey fail ho gaya, baghair is ke save ho raha hai.',
@@ -978,7 +1022,7 @@ class VideoEditorExportController {
               ),
             );
             if (res.ok) {
-              out = mmOut;
+              await advanceTo(mmOut);
             } else {
               host.setStatus(
                 'Note: main mask fail ho gaya, baghair mask ke save ho raha hai.',
@@ -1015,7 +1059,7 @@ class VideoEditorExportController {
           if (cmd != null) {
             final res = await FfmpegService.run(cmd);
             if (res.ok) {
-              out = ovOut;
+              await advanceTo(ovOut);
             } else {
               host.setStatus(
                 'Note: motion title pass fail ho gaya, baghair is ke save ho raha hai.',
@@ -1194,7 +1238,7 @@ class VideoEditorExportController {
         pb.write(FfmpegService.q(pipOut));
         final FfmpegResult pr = await FfmpegService.run(pb.toString());
         if (pr.ok) {
-          out = pipOut;
+          await advanceTo(pipOut);
         }
       } else if (host.fxPip) {
         // PIP on but no inset video picked: the pass is skipped and
@@ -1288,6 +1332,26 @@ class VideoEditorExportController {
                   final gs = await svc.ensureLogoGsFile();
                   gsPath = gs?.path;
                 }
+                // Hotfix (audit C3): the mov's ping-pong is
+                // pre-rendered as ONE finite cycle file; the
+                // parity graph only loops that file (the
+                // in-graph reverse over the infinite mov input
+                // is gone). Skipped when the green-screen
+                // source won; a failed render leaves the graph
+                // to the frames/still sources above.
+                String? pingPongPath;
+                if (movPath != null && gsPath == null) {
+                  pingPongPath =
+                      await FfmpegService.prepareLogoPingPongCycle(
+                    movPath: movPath,
+                    outputPath:
+                        p.join(dir.path, 'pve_logo_cycle_$stamp.mov'),
+                    cropW: kParityLogoCropW,
+                    cropH: kParityLogoCropH,
+                    cropX: kParityLogoCropX,
+                    cropY: kParityLogoCropY,
+                  );
+                }
                 String? clockFont;
                 final dejaVu = await svc.ensureDejaVuFile();
                 clockFont = dejaVu?.path ?? FfmpegService.findFontFile();
@@ -1300,7 +1364,7 @@ class VideoEditorExportController {
                   output: parityOut,
                   assets: assets,
                   logoGsPath: gsPath,
-                  logoMovPath: movPath,
+                  logoPingPongPath: pingPongPath,
                   logoFramesDir: framesDir,
                   logoStillPng: stillPath,
                   clockFontFile: clockFont,
@@ -1309,7 +1373,7 @@ class VideoEditorExportController {
                 );
                 final res = await FfmpegService.run(cmd);
                 if (res.ok) {
-                  out = parityOut;
+                  await advanceTo(parityOut);
                   parityDone = true;
                 } else {
                   host.setStatus(
@@ -1382,7 +1446,7 @@ class VideoEditorExportController {
                 'Note: news template pass fail ho gaya, saaf video save ho rahi hai.',
               );
             } else {
-              out = templated;
+              await advanceTo(templated);
             }
           }
         }
@@ -1438,7 +1502,7 @@ class VideoEditorExportController {
                 FfmpegService.concatCommand(listFile: listFile, output: joined),
               );
               if (res.ok) {
-                out = joined;
+                await advanceTo(joined);
               } else {
                 host.setStatus(
                   'Note: intro/outro attach fail ho gaya, baghair is ke save ho raha hai.',
@@ -1522,6 +1586,10 @@ class VideoEditorExportController {
     // Build 10 (7D): this call's one quality step-down retry.
     var stepDownUsed = false;
     try {
+      // Hotfix (audit C4): mark the export window — if the
+      // process dies mid-encode, the next launch reports the
+      // death (reason + timestamp) via ExportDeathWatcher.
+      await ExportDeathWatcher.markExportStarted();
       // Phase 0 pre-run discipline: no zombie ffmpeg session from
       // an earlier abandoned run competes with this export.
       await FfmpegService.prepareForNewRun();
@@ -1581,6 +1649,10 @@ class VideoEditorExportController {
         host.setStatus('Export failed: $e');
       }
     } finally {
+      // Hotfix (audit C4): any graceful end (success, failure,
+      // cancel) closes the export window — a marker that
+      // survives to the next launch means the process died.
+      unawaited(ExportDeathWatcher.markExportFinished());
       // Phase 0 sweep: this finally was an UNGUARDED setState —
       // leaving the screen mid-export made it throw on completion.
       if (host.mounted) {

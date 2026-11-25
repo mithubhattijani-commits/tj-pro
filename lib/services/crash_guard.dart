@@ -22,7 +22,10 @@ import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'export_death_watcher.dart';
 
 class CrashGuard {
   CrashGuard._();
@@ -331,6 +334,12 @@ class CrashGuard {
       return true;
     };
     ErrorWidget.builder = errorWidgetBuilder;
+    // Hotfix (audit C4): one-shot check for a previous process
+    // death inside an export window. install() is the app's
+    // startup funnel and this guard owns crash reporting, so
+    // the check hangs off it; the watcher itself is fail-soft
+    // throughout and never touches the UI.
+    unawaited(ExportDeathWatcher.checkOnStartup());
   }
 
   /// The single reporting funnel: log loudly, remember, and (when
@@ -349,9 +358,38 @@ class CrashGuard {
     _recordDiagnostic(error, stack, source);
     final messenger = messengerKey.currentState;
     if (messenger == null) return;
-    // Dedupe + throttle (see the Build 5 note above): a repeating
-    // error is logged every time but banners at most once per
-    // signature per window, never back-to-back, never queued.
+    // Hotfix: report() also fires from INSIDE a frame — a
+    // build/paint error (the template clipper's clamp throw was
+    // one) reaches here through FlutterError.onError while the
+    // frame is still being produced. clearSnackBars() in that
+    // phase marks the messenger dirty mid-frame and throws
+    // "Build scheduled during frame" — the REPORTER itself
+    // became a recorded crash (tjpro_crash_reports, v1.9.0 +
+    // v1.10.0). So: mid-frame, the whole banner step (throttle
+    // bookkeeping included, so its state stays consistent) is
+    // deferred to the post-frame callback; outside a frame it
+    // runs immediately, exactly as before.
+    final phase = WidgetsBinding.instance.schedulerPhase;
+    if (phase == SchedulerPhase.persistentCallbacks ||
+        phase == SchedulerPhase.midFrameMicrotasks) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _showErrorBanner(messenger, error, source);
+      });
+      return;
+    }
+    _showErrorBanner(messenger, error, source);
+  }
+
+  /// The user-facing half of [report]: dedupe + throttle (see
+  /// the Build 5 note above — a repeating error is logged every
+  /// time but banners at most once per signature per window,
+  /// never back-to-back, never queued), then replace-not-queue
+  /// banner. Never throws.
+  static void _showErrorBanner(
+    ScaffoldMessengerState messenger,
+    Object error,
+    String source,
+  ) {
     final now = nowFn();
     final signature = signatureFor(error, source);
     final seenAt = _signatureSeenAt[signature];

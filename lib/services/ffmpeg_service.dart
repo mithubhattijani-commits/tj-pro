@@ -29,6 +29,52 @@ class FfmpegResult {
 
 /// Thin wrapper around FFmpegKit with progress reporting.
 class FfmpegService {
+  // ------------------------------------------------------------------
+  // Hotfix (export-crash audit C1/C6): tier-based encode policy.
+  //
+  // Every command built in this file encodes with the uniform
+  // token `-c:v libx264 -preset veryfast` and NO thread cap —
+  // libx264 then threads across every core, each thread holding
+  // its own frame queue, which is the memory profile that gets
+  // the whole process LMK-killed mid-encode on weak phones.
+  // [run] now rewrites that token with the CURRENT policy:
+  // [encodeThreads] (0 = no cap injected) and [encodePreset].
+  // The values are pushed here by PerformanceEngine whenever
+  // its config changes (tier adoption + memory-pressure
+  // step-down), so the policy is live: a pressure event during
+  // an export lightens the NEXT stage's encode automatically.
+  // ------------------------------------------------------------------
+
+  /// libx264 thread cap applied by [run] (0 = inject nothing,
+  /// the pre-engine default). Pushed by PerformanceEngine.
+  static int encodeThreads = 0;
+
+  /// libx264 preset applied by [run]. Pushed by
+  /// PerformanceEngine; 'veryfast' = the historical preset.
+  static String encodePreset = 'veryfast';
+
+  /// The uniform encode token every builder in this file emits.
+  static const String _x264Token = '-c:v libx264 -preset veryfast';
+
+  /// Pure rewrite behind the encode policy (unit-tested):
+  /// replaces the uniform libx264 token with the capped /
+  /// re-presetted form. Commands without the token (stream
+  /// copies, audio-only passes, probes) pass through untouched,
+  /// and with the default policy (no cap + veryfast) every
+  /// command passes through byte-identical.
+  static String applyEncodePolicy(
+    String command, {
+    required int threads,
+    required String preset,
+  }) {
+    if (threads <= 0 && preset == 'veryfast') return command;
+    if (!command.contains(_x264Token)) return command;
+    final capped = threads > 0
+        ? '-c:v libx264 -threads $threads -preset $preset'
+        : '-c:v libx264 -preset $preset';
+    return command.replaceFirst(_x264Token, capped);
+  }
+
   /// Session registry (Phase 0): the ids of every session currently
   /// executing through [run], in start order. Before Phase 0 there
   /// was no registry at all — a new export could not cancel a
@@ -59,6 +105,15 @@ class FfmpegService {
     int? expectedMs,
     void Function(double progress)? onProgress,
   }) async {
+    // Hotfix (audit C1/C6): apply the live encode policy
+    // (PerformanceEngine-pushed thread cap + preset) to every
+    // libx264 encode that flows through here — both export
+    // paths and every helper pass alike.
+    command = applyEncodePolicy(
+      command,
+      threads: encodeThreads,
+      preset: encodePreset,
+    );
     final done = Completer<FFmpegSession>();
     final session = await FFmpegKit.executeAsync(
       command,
@@ -937,12 +992,84 @@ class FfmpegService {
     return buf.toString();
   }
 
+  /// The alpha .mov's opaque bbox for the OVERLAY pass
+  /// (measured 235,86,396x316 on the 854x480 ProRes — the logo
+  /// occupies only the centre of the frame). Callers rendering
+  /// an overlay ping-pong cycle pass these to
+  /// [logoPingPongCycleCommand].
+  static const int logoMovCropW = 396;
+  static const int logoMovCropH = 316;
+  static const int logoMovCropX = 235;
+  static const int logoMovCropY = 86;
+
+  /// Hotfix (export-crash audit C3): renders ONE finite
+  /// ping-pong cycle of the alpha logo .mov — cropped to
+  /// [cropW]×[cropH] at [cropX],[cropY], played forward then
+  /// in `reverse` — into [output] (a lossless qtrle .mov, so
+  /// the alpha survives byte-exact).
+  ///
+  /// WHY: the overlay commands used to run `reverse` INSIDE
+  /// the export graph on a `-stream_loop -1` (infinite) input.
+  /// `reverse` buffers its entire input before emitting one
+  /// frame, so on an endless input the graph's memory grew
+  /// with export progress until Android killed the process —
+  /// a textbook 50–60% export death. Here the input is the
+  /// FINITE .mov: `reverse` buffers one 10 s cycle, once, and
+  /// the export graph afterwards only loops the small finished
+  /// cycle file. Output behaviour is identical (the same
+  /// forward+reverse seamless loop).
+  static String logoPingPongCycleCommand({
+    required String movPath,
+    required String output,
+    required int cropW,
+    required int cropH,
+    required int cropX,
+    required int cropY,
+  }) {
+    return '-y -i ${q(movPath)} '
+        '-filter_complex "[0:v]crop=$cropW:$cropH:$cropX:$cropY,'
+        'format=yuva420p,split[f][r];[r]reverse[rr];'
+        '[f][rr]concat=n=2:v=1:a=0,format=yuva420p[cyc]" '
+        '-map "[cyc]" -c:v qtrle ${q(output)}';
+  }
+
+  /// Runs [logoPingPongCycleCommand] and returns [outputPath]
+  /// on success, null on any failure (callers fall back to
+  /// their generated-frames / still logo paths, exactly as
+  /// they did when the mov overlay pass itself failed).
+  static Future<String?> prepareLogoPingPongCycle({
+    required String movPath,
+    required String outputPath,
+    required int cropW,
+    required int cropH,
+    required int cropX,
+    required int cropY,
+  }) async {
+    try {
+      final res = await run(
+        logoPingPongCycleCommand(
+          movPath: movPath,
+          output: outputPath,
+          cropW: cropW,
+          cropH: cropH,
+          cropX: cropX,
+          cropY: cropY,
+        ),
+      );
+      if (res.ok && await File(outputPath).exists()) return outputPath;
+    } catch (_) {
+      // Fall through: no cycle, the caller's fallback applies.
+    }
+    return null;
+  }
+
   /// Rotating-logo overlay pass: overlays the 3D-rotating logo
   /// bug on [input] at the template's logo-bug spot (see
   /// [logoBugRect]). The loop source is EXACTLY ONE of:
-  /// [movPath] — the pre-rendered `logo-rotating-alpha.mov`,
-  /// ping-ponged in-graph (forward + `reverse` concat, so the
-  /// 10 s asset loops seamlessly); [framesDir] — a directory of
+  /// [pingPongPath] — a FINITE pre-rendered ping-pong cycle of
+  /// the alpha .mov (see [logoPingPongCycleCommand]; hotfix
+  /// C3 — the in-graph `reverse` over an infinite input is
+  /// gone); [framesDir] — a directory of
   /// `frame_%02d.png` frames (Build 12: the generated rotating
   /// CUBE loop for a user-picked logo or the default tile, or
   /// the keyed frames of a logo video), looped with the image2
@@ -956,7 +1083,7 @@ class FfmpegService {
     required int width,
     required int height,
     required bool topRibbonEnabled,
-    String? movPath,
+    String? pingPongPath,
     String? framesDir,
     String? videoPath,
     int framesFps = 12,
@@ -964,12 +1091,12 @@ class FfmpegService {
     int? videoBitrateKbps,
   }) {
     assert(
-      (movPath != null ? 1 : 0) +
+      (pingPongPath != null ? 1 : 0) +
               (framesDir != null ? 1 : 0) +
               (videoPath != null ? 1 : 0) ==
           1,
       'logoLoopOverlayCommand needs exactly one of '
-      'movPath / framesDir / videoPath',
+      'pingPongPath / framesDir / videoPath',
     );
     final (x, y, size) = logoBugRect(
       width: width,
@@ -991,18 +1118,19 @@ class FfmpegService {
         '[1:v][bug]overlay=$x:$y:shortest=1[vout]" ',
       );
       buf.write('-map "[vout]" -map 1:a? ');
-    } else if (movPath != null) {
-      // Crop to the mov's opaque alpha bbox (measured 235,86,396x316
-      // on the 854x480 ProRes) — the logo occupies only the centre of
-      // the frame — then ping-pong forward+reverse into a seamless
-      // 20 s loop, scaled to bug size.
-      buf.write('-stream_loop -1 -i ${q(movPath)} ');
+    } else if (pingPongPath != null) {
+      // Hotfix (audit C3): the cycle file already carries the
+      // mov's opaque-alpha crop (396:316:235:86 on the 854x480
+      // ProRes, baked in by logoPingPongCycleCommand) AND the
+      // forward+reverse ping-pong — the graph here only scales
+      // the finite cycle to bug size and loops it. NO reverse
+      // in this graph, ever: on the old `-stream_loop -1` mov
+      // input it buffered without bound.
+      buf.write('-stream_loop -1 -i ${q(pingPongPath)} ');
       buf.write('-i ${q(input)} ');
       buf.write('-filter_complex "');
       buf.write(
-        '[0:v]crop=396:316:235:86,format=yuva420p,split[f][r];'
-        '[r]reverse[rr];[f][rr]concat=n=2:v=1:a=0,format=yuva420p,'
-        'scale=$size:-1[bug];'
+        '[0:v]format=yuva420p,scale=$size:-1[bug];'
         '[1:v][bug]overlay=$x:$y:shortest=1[vout]" ',
       );
       buf.write('-map "[vout]" -map 1:a? ');

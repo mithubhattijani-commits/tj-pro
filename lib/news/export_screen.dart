@@ -63,8 +63,10 @@ import 'news_project.dart';
 /// Pure — unit-tested in test/news_studio_phase10_test.dart.
 ///
 /// v1.2.0: export resolution is NO LONGER charged in coins — Unity
-/// interstitials play alongside the export instead (see
-/// [UnityAdsService.showExportAds]). This mapping is retained only
+/// interstitials play for the export instead (see
+/// [UnityAdsService.showExportAds]; since the export-crash
+/// hotfix they complete BEFORE the encode starts, never
+/// alongside it). This mapping is retained only
 /// for legacy compatibility; the export flow does not spend it.
 CoinFeature coinFeatureForQuality(int quality) {
   switch (quality) {
@@ -209,14 +211,22 @@ class _ExportScreenState extends State<ExportScreen> {
       _savedPath = null;
       _savedSizeBytes = null;
     });
-    // ADS ALONGSIDE EXPORT (v1.2.0): 720p → 1 interstitial,
-    // 1080p / 4K → 2 back-to-back. Fired UNAWAITED on purpose: the
-    // export starts immediately (the await below) and the ads never
-    // delay, block or fail it — showExportAds swallows every failure
-    // (offline / no fill included).
-    unawaited(
-      UnityAdsService.showExportAds(_settings.quality == 0 ? 1 : 2),
-    );
+    // ADS BEFORE EXPORT (v1.2.0 counts, hotfix resequencing):
+    // 720p → 1 interstitial, 1080p / 4K → 2 back-to-back — the
+    // counts are unchanged, but the ads no longer run ALONGSIDE
+    // the encode. They used to fire UNAWAITED at export start;
+    // the ad's video decode then spiked memory in the SAME
+    // process the ffmpeg encode was running in, mid-encode —
+    // the export-crash audit's C2, a direct contributor to the
+    // app dying at 50–60%. Now the sequence is awaited to
+    // completion BEFORE the encode begins (the Video Editor's
+    // gate pattern: ads first, then render). showExportAds
+    // still swallows every failure (offline / no fill
+    // included), so a failed ad never fails the export — it
+    // just starts after the attempt ends.
+    setState(() => _status = 'Ads chal rahe hain — phir export shuru hoga…');
+    await UnityAdsService.showExportAds(_settings.quality == 0 ? 1 : 2);
+    if (!mounted) return;
     final ReelExportResult result;
     try {
       result = await ReelExportService.exportReel(

@@ -71,6 +71,7 @@
 /// in Dart memory).
 library;
 
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -86,6 +87,7 @@ import '../live/parity_template.dart';
 import 'asset_download_service.dart';
 import 'caption_service.dart';
 import 'caption_styles.dart';
+import 'export_death_watcher.dart';
 import 'export_settings.dart';
 import 'ffmpeg_service.dart';
 import 'font_registry.dart';
@@ -379,6 +381,12 @@ class ReelExportService {
       // registry in FfmpegService now tracks them all — and sweep
       // this work dir's stale scratch outputs from older runs
       // (this run's own files are fresh and never touched).
+      // Hotfix (audit C4): mark the export window — if the
+      // process dies mid-encode, the next launch reports the
+      // death (reason + timestamp) via ExportDeathWatcher. The
+      // finally at the end of this method clears the mark on
+      // every graceful end.
+      await ExportDeathWatcher.markExportStarted();
       await FfmpegService.prepareForNewRun();
       await FfmpegService.cleanStaleTempFiles(
         dir,
@@ -386,6 +394,40 @@ class ReelExportService {
       );
       final stamp = DateTime.now().millisecondsSinceEpoch;
       var out = p.join(dir.path, 'reel_export_$stamp.mp4');
+
+      // Hotfix (export-crash audit C5): stage-output handoff —
+      // same rule as the Video Editor's export: every stage
+      // used to KEEP its input file, so a long export held a
+      // full extra video copy per stage in the temp dir (disk +
+      // page-cache pressure in the encode's own process).
+      // advanceTo moves [out] to the stage's output and deletes
+      // the previous stage's file; discardIntermediates frees a
+      // consumed group (the normalize files after the join).
+      // Only files inside this export's own work dir are ever
+      // deleted — user media lives elsewhere, never touched.
+      Future<void> advanceTo(String next) async {
+        final prev = out;
+        out = next;
+        if (prev != next && p.isWithin(dir.path, prev)) {
+          try {
+            await File(prev).delete();
+          } catch (_) {
+            // Housekeeping only — never fail an export over it.
+          }
+        }
+      }
+
+      Future<void> discardIntermediates(Iterable<String> paths) async {
+        for (final path in paths) {
+          if (p.isWithin(dir.path, path)) {
+            try {
+              await File(path).delete();
+            } catch (_) {
+              // Housekeeping only.
+            }
+          }
+        }
+      }
 
       // Reel duration estimate for progress mapping: the voiceover
       // length when known (the reel is cut to the voiceover), else
@@ -520,7 +562,7 @@ class ReelExportService {
         normDurationsMs.add(isPhoto ? 5000 : clipMs);
       }
       if (normFiles.length == 1) {
-        out = normFiles.first;
+        await advanceTo(normFiles.first);
       } else if (transitionItem != null &&
           normDurationsMs.every((d) => d != null)) {
         // --- 1b. Library transition (#52): xfade chain instead
@@ -549,7 +591,7 @@ class ReelExportService {
         if (xfadeCmd != null) {
           final res = await runStage(xfadeCmd, 0.25, 0.30);
           if (res.ok) {
-            out = merged;
+            await advanceTo(merged);
             transitionDone = true;
           }
         }
@@ -580,7 +622,7 @@ class ReelExportService {
               notes: notes,
             );
           }
-          out = merged;
+          await advanceTo(merged);
         }
       } else {
         final listFile = p.join(dir.path, 'reel_concat_$stamp.txt');
@@ -604,7 +646,14 @@ class ReelExportService {
             notes: notes,
           );
         }
-        out = merged;
+        await advanceTo(merged);
+      }
+      // Hotfix (audit C5): the join consumed the normalized
+      // clips — free them before the encode stages run. (The
+      // single-clip path keeps its one norm file: it IS [out],
+      // and the advanceTo chain owns it from here.)
+      if (normFiles.length > 1) {
+        await discardIntermediates(normFiles);
       }
       step('Clips join ho gaye.', 0.30);
 
@@ -631,7 +680,7 @@ class ReelExportService {
           expectedMs: reelMs,
         );
         if (res.ok) {
-          out = mixOut;
+          await advanceTo(mixOut);
         } else {
           notes.add(
             'Voiceover mix fail ho gaya — clip audio ke saath export '
@@ -740,7 +789,7 @@ class ReelExportService {
               expectedMs: reelMs,
             );
             if (duckRes.ok) {
-              out = duckOut;
+              await advanceTo(duckOut);
               ducked = true;
             }
           }
@@ -762,7 +811,7 @@ class ReelExportService {
               expectedMs: reelMs,
             );
             if (res.ok) {
-              out = bedOut;
+              await advanceTo(bedOut);
             } else {
               notes.add(
                 'Background music mix nahi hua — baghair music ke export '
@@ -822,7 +871,7 @@ class ReelExportService {
           expectedMs: reelMs,
         );
         if (res.ok) {
-          out = chromaOut;
+          await advanceTo(chromaOut);
         } else {
           notes.add(
             'Chroma key fail ho gaya — baghair chroma ke export ho '
@@ -874,7 +923,7 @@ class ReelExportService {
           expectedMs: reelMs,
         );
         if (res.ok) {
-          out = mediaOut;
+          await advanceTo(mediaOut);
         } else {
           notes.add(
             'Media adjustment nahi laga — default size/position '
@@ -947,7 +996,7 @@ class ReelExportService {
             expectedMs: reelMs,
           );
           if (res.ok) {
-            out = fxOut;
+            await advanceTo(fxOut);
           } else {
             notes.add(
               'Library effect (${effectItem.name}) nahi laga — '
@@ -1025,7 +1074,7 @@ class ReelExportService {
           tickerShadows: tickerShadows,
         );
         if (parityOut != null) {
-          out = parityOut;
+          await advanceTo(parityOut);
           parityApplied = true;
         } else {
           notes.add(
@@ -1059,7 +1108,7 @@ class ReelExportService {
             expectedMs: reelMs,
           );
           if (res.ok) {
-            out = templated;
+            await advanceTo(templated);
           } else {
             notes.add(
               'Template overlay fail ho gaya — saaf video export ho '
@@ -1093,7 +1142,7 @@ class ReelExportService {
           reelMs: reelMs,
           onProgress: onProgress,
         );
-        if (logoDone != null) out = logoDone;
+        if (logoDone != null) await advanceTo(logoDone);
       }
       step('Logo done.', 0.78);
 
@@ -1116,7 +1165,7 @@ class ReelExportService {
         onProgress: onProgress,
         overrides: project.elementOverrides,
       );
-      if (watermarkDone != null) out = watermarkDone;
+      if (watermarkDone != null) await advanceTo(watermarkDone);
       step('Watermark done.', 0.80);
 
       {
@@ -1150,7 +1199,7 @@ class ReelExportService {
           reelMs: reelMs,
           onProgress: onProgress,
         );
-        if (reporterDone != null) out = reporterDone;
+        if (reporterDone != null) await advanceTo(reporterDone);
         step('Reporter done.', 0.80);
       }
 
@@ -1195,7 +1244,7 @@ class ReelExportService {
         onProgress: onProgress,
         videoIntroPath: videoIntroPath,
       );
-      if (assembled != null) out = assembled;
+      if (assembled != null) await advanceTo(assembled);
       step('Intro/outro done.', 0.86);
 
       {
@@ -1221,7 +1270,7 @@ class ReelExportService {
           reelMs: reelMs,
           onProgress: onProgress,
         );
-        if (burned != null) out = burned;
+        if (burned != null) await advanceTo(burned);
       }
       step('Captions done.', 0.96);
 
@@ -1254,6 +1303,11 @@ class ReelExportService {
         failedStep: 'Export',
         notes: notes,
       );
+    } finally {
+      // Hotfix (audit C4): every graceful end of the export
+      // (success, failure return, cancel, throw) closes the
+      // export window — see markExportStarted above.
+      unawaited(ExportDeathWatcher.markExportFinished());
     }
   }
 
@@ -1525,13 +1579,38 @@ class ReelExportService {
           'aayegi.',
         );
       }
+      // Hotfix (audit C3): the mov's ping-pong is pre-rendered
+      // as ONE finite cycle file; the parity graph only loops
+      // that file (the in-graph reverse over the infinite mov
+      // input is gone). Skipped when the green-screen source
+      // already won (it takes precedence in the graph). A
+      // failed render leaves pingPongPath null — the graph
+      // then uses the frames/still sources resolved above, or
+      // skips the logo stack with this note.
+      String? pingPongPath;
+      if (movPath != null && gsPath == null) {
+        pingPongPath = await FfmpegService.prepareLogoPingPongCycle(
+          movPath: movPath,
+          outputPath: p.join(dir.path, 'reel_logo_cycle_$stamp.mov'),
+          cropW: kParityLogoCropW,
+          cropH: kParityLogoCropH,
+          cropX: kParityLogoCropX,
+          cropY: kParityLogoCropY,
+        );
+        if (pingPongPath == null) {
+          notes.add(
+            'Rotating logo ka cycle render nahi hua — dusray '
+            'logo source se export ho raha hai.',
+          );
+        }
+      }
       final parityOut = p.join(dir.path, 'reel_parity_$stamp.mp4');
       final cmd = buildParityTemplateCommand(
         input: input,
         output: parityOut,
         assets: assets,
         logoGsPath: gsPath,
-        logoMovPath: movPath,
+        logoPingPongPath: pingPongPath,
         logoFramesDir: framesDir,
         logoStillPng: stillPath,
         clockFontFile: clockFont,
@@ -1815,27 +1894,48 @@ class ReelExportService {
       final svc = assetService ?? const AssetDownloadService();
       final mov = await svc.cachedLogoMov();
       if (mov != null) {
-        final cmd = FfmpegService.logoLoopOverlayCommand(
-          input: input,
-          output: logoOut,
-          width: width,
-          height: height,
-          topRibbonEnabled: topRibbonEnabled,
+        // Hotfix (audit C3): pre-render ONE finite ping-pong
+        // cycle of the mov, then loop that small file in the
+        // overlay graph. The old in-graph reverse over the
+        // infinite mov input buffered without bound. A failed
+        // cycle render falls through to the generated loop
+        // below, like a failed mov pass did before.
+        final cyclePath = await FfmpegService.prepareLogoPingPongCycle(
           movPath: mov.path,
-          videoBitrateKbps: settings.videoBitrateKbps,
+          outputPath: p.join(dir.path, 'reel_logo_cycle_$stamp.mov'),
+          cropW: FfmpegService.logoMovCropW,
+          cropH: FfmpegService.logoMovCropH,
+          cropX: FfmpegService.logoMovCropX,
+          cropY: FfmpegService.logoMovCropY,
         );
-        final res = await _runStage(
-          cmd,
-          0.70,
-          0.78,
-          expectedMs: reelMs,
-          onProgress: onProgress,
-        );
-        if (res.ok) return logoOut;
-        notes.add(
-          'Rotating logo (mov) fail ho gaya — generated loop se try '
-          'ho raha hai.',
-        );
+        if (cyclePath != null) {
+          final cmd = FfmpegService.logoLoopOverlayCommand(
+            input: input,
+            output: logoOut,
+            width: width,
+            height: height,
+            topRibbonEnabled: topRibbonEnabled,
+            pingPongPath: cyclePath,
+            videoBitrateKbps: settings.videoBitrateKbps,
+          );
+          final res = await _runStage(
+            cmd,
+            0.70,
+            0.78,
+            expectedMs: reelMs,
+            onProgress: onProgress,
+          );
+          if (res.ok) return logoOut;
+          notes.add(
+            'Rotating logo (mov) fail ho gaya — generated loop se try '
+            'ho raha hai.',
+          );
+        } else {
+          notes.add(
+            'Rotating logo ka cycle render nahi hua — generated '
+            'loop se try ho raha hai.',
+          );
+        }
       } else {
         notes.add(
           'Rotating logo mov abhi download nahi hua — generated '

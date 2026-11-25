@@ -1665,11 +1665,21 @@ Future<ParityAssets> renderParityAssets({
 String _n(double v) =>
     v.toStringAsFixed(2).replaceAll(RegExp(r'\.?0+$'), '');
 
+/// The alpha .mov's opaque bbox for the PARITY graph
+/// (crop=488:382:195:57 — the reference crop). Callers
+/// rendering a parity ping-pong cycle pass these to
+/// [FfmpegService.logoPingPongCycleCommand].
+const int kParityLogoCropW = 488;
+const int kParityLogoCropH = 382;
+const int kParityLogoCropX = 195;
+const int kParityLogoCropY = 57;
+
 /// The animated parity overlay command: the ribbons scroll
 /// seamlessly in the reference directions (classic2: both;
 /// final3: the bottom ticker always, the Urdu ribbons only when
 /// their text overflows), the logo stack sits at the right (the
-/// .mov is ping-ponged and overlaid TWICE, as the reference), and
+/// .mov's pre-rendered ping-pong cycle is overlaid TWICE, as
+/// the reference), and
 /// the capsule flips DATE ↔ TIME (drawtext over epoch-shifted
 /// PTS, ticking 1 s per video second) every ~3 s — classic2 shows
 /// TIME first, final3 shows DATE first (its reference box is a
@@ -1680,8 +1690,12 @@ String _n(double v) =>
 ///   VIDEO (final3 default, demo v4): chromakeyed (0x10C81C,
 ///   0.22/0.08), despilled, cropped to the keyed union, scaled to
 ///   the logo block and alpha-hardened so it reads SOLID, looped
-///   for the export duration. Takes precedence over the .mov.
-/// * [logoMovPath]: the pre-rendered alpha .mov (reference crop).
+///   for the export duration. Takes precedence over the cycle.
+/// * [logoPingPongPath]: a FINITE pre-rendered ping-pong cycle
+///   of the alpha .mov (see
+///   [FfmpegService.logoPingPongCycleCommand]; hotfix audit C3 —
+///   the in-graph `reverse` over a `-stream_loop -1` input
+///   buffered without bound and killed exports mid-run).
 /// * [logoFramesDir]: generated rotating frames (user/default logo).
 /// * [logoStillPng]: a static logo image (last-resort fallback).
 /// When all four are null the logo stack is skipped (the capsule
@@ -1694,7 +1708,7 @@ String buildParityTemplateCommand({
   required String output,
   required ParityAssets assets,
   String? logoGsPath,
-  String? logoMovPath,
+  String? logoPingPongPath,
   String? logoFramesDir,
   String? logoStillPng,
   required String? clockFontFile,
@@ -1729,8 +1743,8 @@ String buildParityTemplateCommand({
     // export, like the .mov below.
     buf.write('-stream_loop -1 -i ${q(logoGsPath)} ');
     iLogo = idx++;
-  } else if (logoMovPath != null) {
-    buf.write('-stream_loop -1 -i ${q(logoMovPath)} ');
+  } else if (logoPingPongPath != null) {
+    buf.write('-stream_loop -1 -i ${q(logoPingPongPath)} ');
     iLogo = idx++;
   } else if (logoFramesDir != null) {
     buf.write('-framerate 12 -stream_loop -1 -i ${q('$logoFramesDir/frame_%02d.png')} ');
@@ -1806,10 +1820,15 @@ String buildParityTemplateCommand({
         '[gsrgb][gsah]alphamerge[gsout];',
       );
       step('[gsout]overlay=${_n(g.logoVisible.left)}:${_n(g.logoVisible.top)}');
-    } else if (logoMovPath != null) {
+    } else if (logoPingPongPath != null) {
+      // Hotfix (audit C3): the cycle file already carries the
+      // reference crop (488:382:195:57) AND the forward+reverse
+      // ping-pong — the graph only scales it and splits it for
+      // the reference's double overlay. The old in-graph
+      // `reverse` over the `-stream_loop -1` mov input buffered
+      // the endless stream until the process died.
       fc.write(
-        '[$iLogo:v]crop=488:382:195:57,format=yuva420p,split[lgf][lgr];'
-        '[lgr]reverse[lgrr];[lgf][lgrr]concat=n=2:v=1:a=0,format=yuva420p,'
+        '[$iLogo:v]format=yuva420p,'
         'scale=${g.logoCropW.round()}:-1,split[logoa][logob];',
       );
       final lx = _n(g.logoCropX);

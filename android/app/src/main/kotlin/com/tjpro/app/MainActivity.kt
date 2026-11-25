@@ -1,5 +1,7 @@
 package com.tjpro.app
 
+import android.app.ActivityManager
+import android.app.ApplicationExitInfo
 import android.app.DownloadManager
 import android.content.Context
 import android.content.Intent
@@ -30,6 +32,10 @@ import java.io.File
  *   DownloadManager COLUMN_REASON (PAUSED_* / ERROR_* codes, -1 if none).
  * - removeDownload(downloadId): removes the entry and its file
  *   (Build 13 cleanup for the update-download reconciliation).
+ * - getPreviousExitInfo: the most recent ApplicationExitInfo
+ *   record (reason, timestamp, description), or null — used by
+ *   the Dart ExportDeathWatcher to report process deaths that
+ *   happened during a video export (export-crash hotfix).
  */
 class MainActivity : FlutterActivity() {
     private val channelName = "tj_pro/updater"
@@ -232,6 +238,51 @@ class MainActivity : FlutterActivity() {
                             result.success(removed > 0)
                         } catch (e: Exception) {
                             result.error("REMOVE_FAILED", e.message, null)
+                        }
+                    }
+                    "getPreviousExitInfo" -> {
+                        // Hotfix (export-crash audit C4): the most
+                        // recent process exit recorded by Android
+                        // (ApplicationExitInfo, API 30 and up). The
+                        // Dart side (ExportDeathWatcher) uses the
+                        // reason and timestamp to report a process
+                        // death that happened during an export —
+                        // a low-memory kill or native crash leaves
+                        // no Dart trace of its own. Returns null
+                        // when no record exists or the API level
+                        // predates exit reasons. Plain data only:
+                        // reason code, status, importance, the
+                        // system timestamp in epoch millis, and
+                        // the system description string.
+                        try {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                                val am = getSystemService(
+                                    Context.ACTIVITY_SERVICE
+                                ) as ActivityManager
+                                val reasons = am.getHistoricalProcessExitReasons(
+                                    packageName,
+                                    0,
+                                    1,
+                                )
+                                if (reasons.isNotEmpty()) {
+                                    val info = reasons[0]
+                                    result.success(
+                                        mapOf(
+                                            "reason" to info.reason,
+                                            "status" to info.status,
+                                            "importance" to info.importance,
+                                            "timestamp" to info.timestamp,
+                                            "description" to (info.description ?: ""),
+                                        )
+                                    )
+                                } else {
+                                    result.success(null)
+                                }
+                            } else {
+                                result.success(null)
+                            }
+                        } catch (e: Exception) {
+                            result.error("EXIT_INFO_FAILED", e.message, null)
                         }
                     }
                     else -> result.notImplemented()
