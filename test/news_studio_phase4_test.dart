@@ -448,11 +448,16 @@ void main() {
       expect(find.byKey(const Key('tehreerField')), findsOneWidget);
 
       // Typing tehreer updates the word count live.
+      // Tools-fix wave P2: the field's rebuild is debounced
+      // (250 ms after the last keystroke) instead of rebuilding
+      // the whole screen per keystroke — advance past the
+      // debounce window, then the count must be there.
       await tester.enterText(
         find.byKey(const Key('tehreerField')),
         'شیخوپورہ میں پولیس نے بڑی کارروائی کی',
       );
       await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
       expect(find.textContaining('7 alfaz'), findsOneWidget);
 
       // Voice panel (fix #61): text box + build button + voices.

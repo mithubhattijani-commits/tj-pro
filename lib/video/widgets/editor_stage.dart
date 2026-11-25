@@ -250,6 +250,68 @@ class TimelineMath {
   }
 }
 
+/// P0-2 (tools-fix wave): the outcome of resolving a Split tap —
+/// which clip is cut and at what FILE second, and whether the
+/// cut is exactly where the user is looking ([atPlayhead]) or a
+/// disclosed midpoint fallback.
+class SplitResolution {
+  const SplitResolution({
+    required this.index,
+    required this.cutFileSec,
+    required this.atPlayhead,
+  });
+
+  final int index;
+  final double cutFileSec;
+  final bool atPlayhead;
+}
+
+/// Resolves a Split against the GLOBAL timeline playhead (the
+/// timeline strip's centre second, [centreSec]) with the preview
+/// clock as the fallback source. Pure — the editor screen calls
+/// this and the regression tests pin it.
+///
+/// The cut targets the SELECTED clip (Split is a per-selection
+/// op — its button lives in the selected clip's tool row):
+/// * when the strip centre sits over the selected clip, the cut
+///   is the centre's position inside it (the playhead the user
+///   SEES);
+/// * otherwise the preview clock's position inside the selected
+///   clip is used (the strip may not have been scrolled since
+///   the clip was tapped);
+/// * a clip under 0.3 s cannot split (null); a position within
+///   0.15 s of either edge falls back to the midpoint and says
+///   so via [SplitResolution.atPlayhead] = false.
+SplitResolution? resolveSplit({
+  required List<double> effectiveDurations,
+  required List<double> trimStarts,
+  required int selected,
+  required double clockInsideSelected,
+  double? centreSec,
+}) {
+  if (effectiveDurations.isEmpty ||
+      selected < 0 ||
+      selected >= effectiveDurations.length) {
+    return null;
+  }
+  var inside = clockInsideSelected;
+  if (centreSec != null) {
+    final ci = TimelineMath.indexAtSec(effectiveDurations, centreSec);
+    if (ci == selected) {
+      inside = centreSec - TimelineMath.startSec(effectiveDurations, ci);
+    }
+  }
+  final eff = effectiveDurations[selected];
+  if (eff < 0.3) return null;
+  final clamped = inside.clamp(0.0, eff).toDouble();
+  final atPlayhead = clamped > 0.15 && clamped < eff - 0.15;
+  return SplitResolution(
+    index: selected,
+    cutFileSec: trimStarts[selected] + (atPlayhead ? clamped : eff / 2),
+    atPlayhead: atPlayhead,
+  );
+}
+
 /// Rule-of-thirds grid + safe zones drawn over the canvas frame
 /// (Phase 1, PRO-SPEC point 15). Pure guide lines: thirds in faint
 /// white, the 90% action-safe and 80% title-safe rects in faint
@@ -345,6 +407,46 @@ class SpeedRampMath {
   /// handle is drawn.
   static double centreX(int third, double width) =>
       width * (third + 0.5) / 3;
+}
+
+/// P1-1: the grain overlay's noise field — a deterministic
+/// (fixed-seed) scatter of grey specks at the derived opacity,
+/// the preview's stand-in for the export's `noise` filter.
+class _GrainPainter extends CustomPainter {
+  _GrainPainter(this.opacity);
+
+  final double opacity;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.isEmpty || opacity <= 0) return;
+    final rnd = math.Random(42);
+    final paint = Paint();
+    final count =
+        (size.width * size.height / 90).round().clamp(200, 6000);
+    for (var i = 0; i < count; i++) {
+      final v = rnd.nextInt(256);
+      paint.color = Color.fromARGB(
+        (opacity * 255).round().clamp(0, 255),
+        v,
+        v,
+        v,
+      );
+      canvas.drawRect(
+        Rect.fromLTWH(
+          rnd.nextDouble() * size.width,
+          rnd.nextDouble() * size.height,
+          1.3,
+          1.3,
+        ),
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_GrainPainter oldDelegate) =>
+      oldDelegate.opacity != opacity;
 }
 
 class StageCanvas extends StatelessWidget {
@@ -507,6 +609,46 @@ class StageCanvas extends StatelessWidget {
     );
   }
 
+  /// P1-1: the Adjust extras' non-matrix layers over the graded
+  /// media — vignette (radial darkening; strength derived from
+  /// the same vignette value as the export's filter) and grain
+  /// (a seeded static noise field; opacity derived from the
+  /// same noise amount). Both vanish at 0 and while comparing
+  /// (the host getters return 0 then), exactly like the matrix.
+  Widget _adjustOverlays(Widget media) {
+    final vig = host.adjustVignetteStrength;
+    final grain = host.adjustGrainOpacity;
+    if (vig <= 0 && grain <= 0) return media;
+    return Stack(
+      fit: StackFit.passthrough,
+      children: [
+        media,
+        if (vig > 0)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    colors: [
+                      Colors.transparent,
+                      Colors.black.withValues(alpha: 0.55 * vig),
+                    ],
+                    stops: const [0.55, 1.0],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        if (grain > 0)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: CustomPaint(painter: _GrainPainter(grain)),
+            ),
+          ),
+      ],
+    );
+  }
+
   Widget _stageMediaLayer(
     VideoClip clip,
     VideoPlayerController? ctrl,
@@ -520,13 +662,15 @@ class StageCanvas extends StatelessWidget {
         onScaleUpdate: host.onStageScaleUpdate,
         onDoubleTap: host.resetStageTransform,
         child: _mainMasked(
-          ColorFiltered(
-            colorFilter: ColorFilter.matrix(host.stageMatrix),
-            child: Image.file(
-              clip.file,
-              fit: BoxFit.contain,
-              width: double.infinity,
-              height: double.infinity,
+          _adjustOverlays(
+            ColorFiltered(
+              colorFilter: ColorFilter.matrix(host.stageMatrix),
+              child: Image.file(
+                clip.file,
+                fit: BoxFit.contain,
+                width: double.infinity,
+                height: double.infinity,
+              ),
             ),
           ),
           clip.aspectRatio,
@@ -554,9 +698,11 @@ class StageCanvas extends StatelessWidget {
       child: Stack(
         children: [
           _mainMasked(
-            ColorFiltered(
-              colorFilter: ColorFilter.matrix(host.stageMatrix),
-              child: VideoPlayer(ctrl),
+            _adjustOverlays(
+              ColorFiltered(
+                colorFilter: ColorFilter.matrix(host.stageMatrix),
+                child: VideoPlayer(ctrl),
+              ),
             ),
             ctrl.value.aspectRatio,
           ),

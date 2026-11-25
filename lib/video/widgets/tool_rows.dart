@@ -9,6 +9,7 @@ library;
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../theme.dart';
+import '../../motion/motion_gallery_screen.dart';
 import '../../news/store_screen.dart';
 import '../video_editor_controller.dart';
 
@@ -21,8 +22,11 @@ class ToolRows {
   List<(String, Widget)> _toolItems() {
     final busy = host.busy;
     final hasClip = host.clips.isNotEmpty;
-    VoidCallback? clipOp(Future<void> Function() f) =>
-        (busy || !hasClip) ? null : () => unawaited(f());
+    // P2: an unavailable clip op stays TAPPABLE but only
+    // explains itself (busy / no clip) in the status line —
+    // a silently dead dimmed button was the S-VE-7 complaint.
+    VoidCallback clipOp(Future<void> Function() f) =>
+        (busy || !hasClip) ? host.explainToolTap : () => unawaited(f());
     return [
       (
         'canvas',
@@ -93,7 +97,10 @@ class ToolRows {
         _toolRowItem(
           icon: Icons.call_split,
           label: 'Split',
-          onTap: (busy || !hasClip) ? null : host.splitSelectedClip,
+          onTap: (busy || !hasClip)
+              ? host.explainToolTap
+              : host.splitSelectedClip,
+          dimmed: busy || !hasClip,
         ),
       ),
       (
@@ -103,6 +110,7 @@ class ToolRows {
           label: 'Delete',
           danger: true,
           onTap: clipOp(host.deleteSelectedClip),
+          dimmed: busy || !hasClip,
         ),
       ),
       (
@@ -167,6 +175,7 @@ class ToolRows {
           icon: Icons.swap_vert,
           label: 'Switch',
           onTap: clipOp(host.switchSelectedClipToPip),
+          dimmed: busy || !hasClip,
         ),
       ),
       (
@@ -232,6 +241,7 @@ class ToolRows {
           icon: Icons.find_replace,
           label: 'Replace',
           onTap: clipOp(host.replaceSelectedClip),
+          dimmed: busy || !hasClip,
         ),
       ),
       (
@@ -247,7 +257,10 @@ class ToolRows {
         _toolRowItem(
           icon: Icons.copy,
           label: 'Duplicate',
-          onTap: (busy || !hasClip) ? null : host.duplicateSelectedClip,
+          onTap: (busy || !hasClip)
+              ? host.explainToolTap
+              : host.duplicateSelectedClip,
+          dimmed: busy || !hasClip,
         ),
       ),
       (
@@ -264,6 +277,7 @@ class ToolRows {
           icon: Icons.ac_unit,
           label: 'Freeze',
           onTap: clipOp(host.freezeFrameInsert),
+          dimmed: busy || !hasClip,
         ),
       ),
       (
@@ -272,6 +286,7 @@ class ToolRows {
           icon: Icons.camera_alt_outlined,
           label: 'Capture',
           onTap: clipOp(host.captureFrameInsert),
+          dimmed: busy || !hasClip,
         ),
       ),
       (
@@ -280,6 +295,7 @@ class ToolRows {
           icon: Icons.history,
           label: 'Reverse',
           onTap: clipOp(host.reverseSelectedClip),
+          dimmed: busy || !hasClip,
         ),
       ),
       (
@@ -288,6 +304,26 @@ class ToolRows {
           icon: Icons.show_chart,
           label: 'Ease',
           onTap: () => host.openTool('ease'),
+        ),
+      ),
+      (
+        'motion',
+        _toolRowItem(
+          icon: Icons.movie_creation_outlined,
+          label: 'Motion',
+          // Build M1 (v1.11.0): the Motion Graphics Studio's
+          // second entry point — appended AFTER the InShot set
+          // so its 32 keep their exact order. Opens the Gallery
+          // (the Studio's home); placement INTO this editor's
+          // timeline is M3, per the Motion plan.
+          onTap: () {
+            Navigator.push(
+              host.context,
+              MaterialPageRoute(
+                builder: (_) => const MotionGalleryScreen(),
+              ),
+            );
+          },
         ),
       ),
       // Build 5 (v1.5.7, user ruling): NO News tool here — news
@@ -309,6 +345,9 @@ class ToolRows {
     required String label,
     required VoidCallback? onTap,
     bool danger = false,
+    // P2: visually dimmed while UNAVAILABLE, even when the item
+    // keeps an explain-on-tap handler (see clipOp above).
+    bool dimmed = false,
   }) {
     final color = danger ? const Color(0xFFFF6B5E) : Colors.white;
     return SizedBox(
@@ -316,7 +355,7 @@ class ToolRows {
       child: InkWell(
         onTap: onTap,
         child: Opacity(
-          opacity: onTap == null ? 0.4 : 1,
+          opacity: (onTap == null || dimmed) ? 0.4 : 1,
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [

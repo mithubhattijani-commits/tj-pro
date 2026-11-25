@@ -36,6 +36,9 @@ enum KillableFeature {
 
   /// `kill_store` — the Online Store screen.
   store,
+
+  /// `kill_motion` — the Motion Graphics Studio (Build M1).
+  motion,
 }
 
 class FeatureGate {
@@ -63,6 +66,8 @@ class FeatureGate {
         return cfg.killAiCaptions;
       case KillableFeature.store:
         return cfg.killStore;
+      case KillableFeature.motion:
+        return cfg.killMotion;
     }
   }
 }

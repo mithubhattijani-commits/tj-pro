@@ -92,6 +92,7 @@ import 'export_settings.dart';
 import 'ffmpeg_service.dart';
 import 'font_registry.dart';
 import 'library_service.dart';
+import 'fx_pack.dart';
 import 'logo_key_service.dart';
 import '../news/logo_parts.dart';
 import 'logo_loop_service.dart';
@@ -513,8 +514,14 @@ class ReelExportService {
           File(handoff.clipPaths[i]),
         );
         final clipDuration = clipSize?.durationSeconds;
-        final clipMs =
-            clipDuration == null ? null : (clipDuration * 1000).round();
+        // P1-3: this entry's trim range (full range for pre-trim
+        // projects) — the normalised segment is the USED part of
+        // the file, and its duration (for the xfade offsets) is
+        // the trimmed length, not the file length.
+        final trim = handoff.trimAt(i);
+        final effClipMs = clipDuration == null
+            ? null
+            : (trim.effectiveDuration(clipDuration) * 1000).round();
         final stageFrom = 0.05 + 0.20 * i / totalClips;
         final stageTo = 0.05 + 0.20 * (i + 1) / totalClips;
         // v1.5.0 (#32): a PHOTO in the clip list becomes a real 5s
@@ -534,11 +541,13 @@ class ReelExportService {
                 )
               : FfmpegService.normalizeCommand(
                   input: handoff.clipPaths[i],
-                  trimStart: 0,
-                  // No trim range on a project clip: the full clip is
-                  // used. `-to 3600` is a generous cap — FFmpeg stops
-                  // at EOF.
-                  trimEnd: 3600,
+                  // P1-3: the clip's real trim range (was a hard
+                  // 0/3600 full-range hardcode — a set trim had
+                  // no effect on the export at all). A trim with
+                  // no end keeps the generous 3600 cap: FFmpeg
+                  // stops at EOF.
+                  trimStart: trim.startSec,
+                  trimEnd: trim.endSec ?? 3600,
                   width: w,
                   height: h,
                   output: nf,
@@ -548,7 +557,7 @@ class ReelExportService {
                 ),
           stageFrom,
           stageTo,
-          expectedMs: isPhoto ? 5000 : clipMs,
+          expectedMs: isPhoto ? 5000 : effClipMs,
         );
         if (!res.ok) {
           return ReelExportResult(
@@ -559,7 +568,7 @@ class ReelExportService {
           );
         }
         normFiles.add(nf);
-        normDurationsMs.add(isPhoto ? 5000 : clipMs);
+        normDurationsMs.add(isPhoto ? 5000 : effClipMs);
       }
       if (normFiles.length == 1) {
         await advanceTo(normFiles.first);
@@ -1201,6 +1210,44 @@ class ReelExportService {
         );
         if (reporterDone != null) await advanceTo(reporterDone);
         step('Reporter done.', 0.80);
+      }
+
+      {
+        final c = cancelledResult();
+        if (c != null) return c;
+      }
+      // --- 5d. PIP inset (P0-3): the Template panel's PIP switch
+      // finally has a source (the project's picked inset video)
+      // and a composite pass. It runs on the templated reel,
+      // BEFORE intro/outro assembly, so the captions burned in
+      // step 7 stay OVER the inset — the broadcast order. PIP on
+      // with no video picked (or the file gone) is an honest
+      // note, never a fake inset.
+      if (effective.pipEnabled) {
+        final pipSource = handoff.pipVideoPath;
+        if (pipSource == null) {
+          notes.add(
+            'PIP on tha lekin PIP video nahi chuna gaya (ya file '
+            'nahi mili) — baghair PIP ke export ho raha hai. '
+            'Template panel ke PIP section se video chunein.',
+          );
+        } else {
+          step('PIP lag raha hai…', 0.80);
+          final pipDone = await _applyPipOverlay(
+            input: out,
+            dir: dir,
+            stamp: stamp,
+            pipPath: pipSource,
+            position: handoff.pipPosition,
+            scale: handoff.pipScale,
+            notes: notes,
+            settings: effectiveSettings,
+            reelMs: reelMs,
+            onProgress: onProgress,
+          );
+          if (pipDone != null) await advanceTo(pipDone);
+          step('PIP done.', 0.80);
+        }
       }
 
       {
@@ -2071,6 +2118,85 @@ class ReelExportService {
       notes.add(
         'Watermark lag nahi saka ($e) — baghair watermark ke export '
         'ho raha hai.',
+      );
+      return null;
+    }
+  }
+
+  /// The PIP composite command (P0-3) — a pure builder so tests
+  /// can prove the position/scale actually reach the ffmpeg
+  /// graph. The inset loops (`-stream_loop -1`) so a short PIP
+  /// clip covers the whole reel; `-shortest` ends the pass with
+  /// the main video. Audio is the main video's own.
+  static String pipPassCommand({
+    required String input,
+    required String pipPath,
+    required PipPosition position,
+    required double scale,
+    required String output,
+    int? videoBitrateKbps,
+  }) {
+    final videoArgs = videoBitrateKbps == null
+        ? '-c:v libx264 -preset veryfast -crf 23'
+        : '-c:v libx264 -preset veryfast '
+            '-b:v ${videoBitrateKbps}k '
+            '-maxrate ${(videoBitrateKbps * 3 / 2).round()}k '
+            '-bufsize ${videoBitrateKbps * 2}k';
+    final filter = pipOverlayFilter(
+      pipLabel: '[1:v]',
+      position: position,
+      pipScale: scale,
+      margin: 24,
+      outLabel: '[vout]',
+    );
+    return '-y -i ${FfmpegService.q(input)} '
+        '-stream_loop -1 -i ${FfmpegService.q(pipPath)} '
+        '-filter_complex "$filter" '
+        '-map "[vout]" -map 0:a? '
+        '$videoArgs -c:a aac -ar 48000 -ac 2 -shortest '
+        '${FfmpegService.q(output)}';
+  }
+
+  /// Step 5d — PIP inset overlay (P0-3). Returns the new output
+  /// path, or null when the pass failed (a note explains it; the
+  /// export continues without the inset — never a failed export
+  /// over a decorative inset, and never a silent skip either).
+  static Future<String?> _applyPipOverlay({
+    required String input,
+    required Directory dir,
+    required int stamp,
+    required String pipPath,
+    required PipPosition position,
+    required double scale,
+    required List<String> notes,
+    ExportSettings settings = const ExportSettings(),
+    int? reelMs,
+    void Function(double progress)? onProgress,
+  }) async {
+    final pipOut = p.join(dir.path, 'reel_pip_$stamp.mp4');
+    try {
+      final res = await _runStage(
+        pipPassCommand(
+          input: input,
+          pipPath: pipPath,
+          position: position,
+          scale: scale,
+          output: pipOut,
+          videoBitrateKbps: settings.videoBitrateKbps,
+        ),
+        0.80,
+        0.80,
+        expectedMs: reelMs,
+        onProgress: onProgress,
+      );
+      if (res.ok) return pipOut;
+      notes.add(
+        'PIP lag nahi saka — baghair PIP ke export ho raha hai.',
+      );
+      return null;
+    } catch (e) {
+      notes.add(
+        'PIP lag nahi saka ($e) — baghair PIP ke export ho raha hai.',
       );
       return null;
     }

@@ -47,6 +47,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'banner_moderation.dart';
 import 'coin_service.dart';
+import 'pricing_service.dart';
 import 'supabase_service.dart';
 
 /// One row of `tjpro_banner_bookings`.
@@ -153,12 +154,35 @@ class BannerBookingService {
   static const String spendReason = 'banner_booking';
 
   /// The user's confirmed price table (fix-list point #6A).
-  static const List<({int hours, int coins})> durations =
+  /// Point #20: each price resolves through PricingService
+  /// (price_banner_booking_1h / _2h / _4h) so the owner can
+  /// reprice a duration in tj-pro.json without a build; an
+  /// absent key keeps the confirmed 100 / 200 / 300. A getter,
+  /// not a const, because the config can change at runtime.
+  static List<({int hours, int coins})> get durations =>
       <({int hours, int coins})>[
-    (hours: 1, coins: 100),
-    (hours: 2, coins: 200),
-    (hours: 4, coins: 300),
-  ];
+        (
+          hours: 1,
+          coins: PricingService.coinsOr(
+            PricingService.keyBannerBooking1h,
+            100,
+          ),
+        ),
+        (
+          hours: 2,
+          coins: PricingService.coinsOr(
+            PricingService.keyBannerBooking2h,
+            200,
+          ),
+        ),
+        (
+          hours: 4,
+          coins: PricingService.coinsOr(
+            PricingService.keyBannerBooking4h,
+            300,
+          ),
+        ),
+      ];
 
   static const Duration _timeout = Duration(seconds: 20);
 

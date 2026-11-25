@@ -46,6 +46,14 @@ class PhotoEditParams {
     this.hueShift = 0,
     this.grain = 0,
     this.curveLuts,
+    // F3 (tools-fix wave 2): the per-color HSL table (8 ranges ×
+    // [hueShift, satScale, lightOffset]) — the SAME table the
+    // live preview applies via [adjustHSL]. Before this field
+    // existed, HSL reached the export ONLY through the panel's
+    // manual 'Apply HSL' bake; a user who just saved lost the
+    // whole adjustment silently. Null (or an all-neutral table)
+    // = no HSL pass.
+    this.hslAdjustments,
     this.text = '',
     this.textArgb = 0xFFFFFFFF,
     this.textSize = 48.0,
@@ -91,6 +99,7 @@ class PhotoEditParams {
   final double hueShift;
   final double grain;
   final List<List<int>>? curveLuts;
+  final List<List<double>>? hslAdjustments;
   final String text;
   final int textArgb;
   final double textSize;
@@ -114,6 +123,22 @@ class PhotoEditParams {
   /// True when any non-matrix Adjust control needs the per-pixel pass.
   bool get needsPixelAdjust =>
       highlights != 0 || shadows != 0 || vignette != 0 || sharpenDetail != 0;
+
+  /// F3: true when [hslAdjustments] carries at least one
+  /// non-neutral range (the export then runs the HSL pass).
+  bool get hasHslAdjustments => !hslAdjustmentsAreNeutral(hslAdjustments);
+}
+
+/// F3: the ONE neutral test for a per-color HSL table (8 ranges
+/// × [hueShift, satScale, lightOffset]; neutral = [0, 1, 0]).
+/// Shared by the editor's preview gate, [PhotoEditParams] and
+/// the export pipeline so the three can never disagree about
+/// whether an HSL adjustment exists.
+bool hslAdjustmentsAreNeutral(List<List<double>>? adjustments) {
+  if (adjustments == null) return true;
+  return adjustments.every(
+    (a) => a.length < 3 || (a[0] == 0 && a[1] == 1.0 && a[2] == 0),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1513,6 +1538,14 @@ Future<File> _exportCore({
       vignette: params.vignette,
       sharpenDetail: params.sharpenDetail,
     );
+  }
+  // F3: per-color HSL — the same adjustHSL pass the live
+  // preview runs, at the same relative position (after the
+  // classic pixel Adjust, before the tone curve / global hue /
+  // grain), so what the user sees is what saves, with no manual
+  // bake step.
+  if (params.hasHslAdjustments) {
+    image = await adjustHSL(image, params.hslAdjustments!);
   }
   // v1.4.0 Adjust additions, in pipeline order after the classic
   // pass: tone curve -> global hue -> grain.

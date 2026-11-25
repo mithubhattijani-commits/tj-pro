@@ -38,6 +38,7 @@ import 'services/unity_ads_service.dart';
 import 'services/update_service.dart';
 
 import 'live/live_studio_screen.dart';
+import 'motion/motion_gallery_screen.dart';
 import 'news/news_maker_screen.dart';
 import 'widgets/banner_ad_widget.dart';
 import 'widgets/help_whatsapp_button.dart';
@@ -58,6 +59,12 @@ Future<void> main() async {
     () async {
       WidgetsFlutterBinding.ensureInitialized();
       CrashGuard.install();
+      // Point #10 (Pro = no ads): load the CACHED Pro grant BEFORE
+      // the ads SDK preloads its interstitial, so a returning Pro
+      // user never triggers an ad preload. Cache-only and fast —
+      // the full server refresh still runs with ProService.init()
+      // further below, next to the coin balance.
+      await ProService.instance.loadCachedGrant();
       // Ads are Unity-only (one-build, defect #4) — AdMob was removed.
       UnityAdsService.init();
       // Remote Config: returns fast (cache load only); the network refresh
@@ -871,27 +878,48 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Build 5 (v1.5.7): the What's New "New Features" tile — a
   /// genuine what's-new list for this release (it previously
   /// duplicated the Updates small button's update check).
-  void _showWhatsNew() {
+  ///
+  /// F5 (tools-fix wave 2): the title used to hardcode
+  /// 'v1.7.0' — three releases stale. There is no remote-config
+  /// key for this content, so the simpler permanent route: the
+  /// TITLE always comes from the installed app's real version
+  /// (PackageInfo — it can never lie again), and the bullets
+  /// below describe the current release's features. Release
+  /// duty: refresh the bullets with each release (see the
+  /// release checklist).
+  Future<void> _showWhatsNew() async {
+    var version = '';
+    try {
+      final info = await PackageInfo.fromPlatform();
+      version = info.version;
+    } catch (_) {
+      // Version unknown — the dialog still opens, untitled.
+    }
+    if (!mounted) return;
     showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text("What's New — v1.7.0"),
+        title: Text(
+          version.isEmpty ? "What's New" : "What's New — v$version",
+        ),
         content: const Text(
+          '• News Studio captions ab ASAL timings ke sath — '
+          'voiceover ki asal awaaz se mile hue lafz-ba-lafz '
+          'captions, Maker aur Caption Studio dono mein\n'
+          '• Logo Parts: apna logo dein, app khud us ke hisay '
+          'alag kar ke har hisay ko ghumata hai; Permanent Logo '
+          'alag se hamesha ke liye\n'
+          '• Teleprompter: camera par script khud scroll hoti '
+          'hai — recording seedha project ke clips mein\n'
+          '• Audio Ducking: voice aate hi background music khud '
+          'dheema ho jata hai\n'
           '• Apna banner lagwayein: Home ke DONO hero banners '
-          'ab coins se book ho sakte hain (1 ghanta 100, '
-          '2 ghante 200, 4 ghante 300) — Advertise page se; '
-          'waqt khatam hote hi owner ka banner khud wapas\n'
-          '• Report bhejo: About mein naya button — masla '
-          'likhein ya khaali bhejein, report khud pohanch '
-          'jayegi; app ki khataen bhi khud-kar report hoti hain\n'
-          '• AI tools ki qeemat: AI captions aur Photo AI tools '
-          'ab har istemal par 25 coins\n'
-          '• Store ki 5 transitions (Zoom, Fade to Black, '
-          'Circle Close, Fade to White, Vert Open) ab app '
-          'mein durust chalein gi\n'
-          '• Splash poster ab poora dikhta hai, Home banner '
-          'baghair crop fit hota hai, aur Online Store mein '
-          'har item ki asal preview tasveer',
+          'coins se book ho sakte hain (1 ghanta 100, 2 ghante '
+          '200, 4 ghante 300) — Advertise page se; waqt khatam '
+          'hote hi owner ka banner khud wapas\n'
+          '• Report bhejo: About mein button — masla likhein, '
+          'report khud pohanch jayegi; app ki khataen bhi '
+          'khud-kar report hoti hain',
         ),
         actions: [
           TextButton(
@@ -1124,6 +1152,17 @@ class _HomeScreenState extends State<HomeScreen> {
                                 ),
                             ],
                           ),
+                          const SizedBox(height: 14),
+                          // Motion Graphics Studio (Build M1,
+                          // v1.11.0): the FIRST of its three entry
+                          // points (Home card; the other two are
+                          // the Video Editor rail and the News
+                          // Studio dock). Full-width glossy card
+                          // in the Studio's own reference colours
+                          // (Home is the glossy surface, and the
+                          // user's supplied Motion visual governs
+                          // this tool's look).
+                          _motionCard(),
                           if (AppConfig.liveStudioEnabled) ...[
                             const SizedBox(height: 14),
                             _liveBanner(),
@@ -1815,6 +1854,105 @@ class _HomeScreenState extends State<HomeScreen> {
 
   /// One of the three big editor cards (reference): glossy
   /// gradient, big icon, title, tagline, gold-toned Open pill.
+  /// Motion Graphics Studio entry card (Build M1): electric
+  /// blue -> purple gradient with a cyan glow, in the visual
+  /// language of the user's supplied Motion reference. Opens
+  /// the Gallery; the Gallery itself applies the kill_motion
+  /// gate, like the Store does for kill_store.
+  Widget _motionCard() {
+    return Container(
+      key: const Key('homeMotionCard'),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF1565C0), Color(0xFF4527A0)],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF00E5FF).withValues(alpha: 0.35)),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF2979FF).withValues(alpha: 0.35),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: InkWell(
+        onTap: () => _open(const MotionGalleryScreen()),
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+          child: Row(
+            children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(13),
+                ),
+                child: const Icon(
+                  Icons.animation,
+                  color: Colors.white,
+                  size: 27,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'MOTION GRAPHICS',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.6,
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'Animated designs • Titles, Logos, News Pack',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: Colors.white70, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 9,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF00E5FF),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Text(
+                  'NEW',
+                  style: TextStyle(
+                    color: Color(0xFF04263B),
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              const Icon(
+                Icons.arrow_forward_ios,
+                color: Colors.white70,
+                size: 15,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _bigCard({
     required IconData icon,
     required String title,

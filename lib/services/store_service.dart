@@ -49,8 +49,17 @@ class StoreConfig {
   /// no code change is needed.
   static const String driveApiKey = '';
 
-  /// The 8 store categories — these are also the exact subfolder
+  /// The store categories — these are also the exact subfolder
   /// names inside the root folder, and the app sections they feed.
+  /// F2 (tools-fix wave 2): 'Transitions' + 'Text Styles' added —
+  /// their Drive folders existed since 2026-11-23 but discovery
+  /// matched only the names listed here, so anything dropped in
+  /// those two folders NEVER surfaced in the Store (no chip, no
+  /// listing, no purchase path) — a silent break of the
+  /// zero-effort rule. The Library recipe system reads the same
+  /// folders separately for editor pickers; this list is what
+  /// makes their PLAIN stock files list/buy/download in the
+  /// Store like every other category.
   static const List<String> categories = <String>[
     'Animations',
     'Backgrounds',
@@ -60,6 +69,8 @@ class StoreConfig {
     'Ribbons',
     'Templates',
     'Text Templates',
+    'Transitions',
+    'Text Styles',
   ];
 
   /// Price table — the single source for store prices (coins).
@@ -74,6 +85,12 @@ class StoreConfig {
     'Backgrounds': 10,
     'Music': 30,
     'Templates': 50,
+    // F2: folder-default prices, matched to the comparable
+    // categories — Transitions are short video clips like
+    // Animations/Effects (10); Text Styles are text assets like
+    // Text Templates (10). "FREE" in a file name still wins (0).
+    'Transitions': 10,
+    'Text Styles': 10,
   };
 
   /// Extensions accepted per category. Anything else is skipped —
@@ -90,6 +107,11 @@ class StoreConfig {
     'Ribbons': <String>{'.png', '.jpg', '.jpeg', '.json', '.mp4'},
     'Backgrounds': <String>{'.png', '.jpg', '.jpeg', '.json', '.mp4'},
     'Captions': <String>{'.png', '.jpg', '.jpeg', '.json', '.mp4'},
+    // F2: Transitions = transition videos (+ recipe .json, the
+    // Templates set); Text Styles = style recipes + their
+    // preview images (the Text Templates set).
+    'Transitions': <String>{'.mp4', '.mov', '.json'},
+    'Text Styles': <String>{'.json', '.png', '.jpg', '.jpeg'},
   };
 
   /// Ledger reason recorded for a store purchase spend.
@@ -444,6 +466,20 @@ class StoreService {
     }
   }
 
+  /// The store category a Drive subfolder name maps to (exact
+  /// name, case-insensitive, trimmed) — null when the folder is
+  /// not a store category. Extracted from [_refreshFolders] so
+  /// the discovery rule itself is unit-testable (F2: this match
+  /// is the exact gate that kept 'Transitions' / 'Text Styles'
+  /// invisible — their names simply were not in the list).
+  static String? categoryForFolderName(String folderName) {
+    final wanted = folderName.trim().toLowerCase();
+    for (final category in StoreConfig.categories) {
+      if (category.toLowerCase() == wanted) return category;
+    }
+    return null;
+  }
+
   Future<void> _refreshFolders() async {
     try {
       final entries = await _listFolder(StoreConfig.rootFolderId,
@@ -452,12 +488,10 @@ class StoreService {
       var changed = false;
       for (final entry in entries) {
         // Match by exact category name (case-insensitive, trimmed).
-        for (final category in StoreConfig.categories) {
-          if (entry.name.trim().toLowerCase() == category.toLowerCase() &&
-              _folderIds[category] != entry.id) {
-            _folderIds[category] = entry.id;
-            changed = true;
-          }
+        final category = categoryForFolderName(entry.name);
+        if (category != null && _folderIds[category] != entry.id) {
+          _folderIds[category] = entry.id;
+          changed = true;
         }
       }
       _foldersLoaded = true;

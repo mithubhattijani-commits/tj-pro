@@ -60,6 +60,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../services/coin_service.dart';
+import '../services/pricing_service.dart';
 
 import '../services/asset_download_service.dart';
 import 'breaking_templates.dart';
@@ -516,6 +517,19 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
     });
   }
 
+  /// Point #20: an item's EFFECTIVE price — its own coinCost
+  /// resolved through the remote key `price_ns_premium_template`
+  /// (a configured number replaces the item price, 0 makes
+  /// priced items free, an absent key keeps the item price).
+  /// The card badge and the charge in [_useSelected] both read
+  /// this, so they can never disagree. Free items stay free.
+  static int _effectiveCost(_LibraryItem item) => item.coinCost > 0
+      ? PricingService.coinsOr(
+          PricingService.keyNsPremiumTemplate,
+          item.coinCost,
+        )
+      : 0;
+
   /// "Use" — applies the working template to the selected channel
   /// preset (+ the handed-in project) and persists both. The state
   /// update + confirmation happen synchronously; the JSON writes are
@@ -530,7 +544,11 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
   Future<void> _useSelected() async {
     final preset = _preset;
     if (preset == null) return;
-    final cost = _selectedItem?.coinCost ?? 0;
+    // Point #20: the charge is the item's EFFECTIVE price
+    // (see _effectiveCost) — the same number the card badge
+    // shows, so badge and charge can never disagree.
+    final cost =
+        _selectedItem == null ? 0 : _effectiveCost(_selectedItem!);
     if (cost > 0) {
       // spendAmount (not spend(premiumTemplate)) so the charge
       // always equals the badge on the card — today every priced
@@ -980,7 +998,9 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
                     ),
                   const SizedBox(width: 8),
                   Text(
-                    item.coinCost == 0 ? 'FREE' : '${item.coinCost} coins',
+                    _effectiveCost(item) == 0
+                        ? 'FREE'
+                        : '${_effectiveCost(item)} coins',
                     style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
                   if (item.isCustom) ...[

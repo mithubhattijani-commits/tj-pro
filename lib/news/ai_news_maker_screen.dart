@@ -53,6 +53,7 @@ import 'package:flutter/services.dart';
 import '../services/asset_download_service.dart';
 import '../services/coin_service.dart';
 import '../services/gemini_voice_service.dart';
+import '../services/pricing_service.dart';
 import '../video/video_editor_screen.dart';
 import 'breaking_templates.dart';
 import 'caption_studio_screen.dart';
@@ -269,15 +270,25 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
       _showMessage('Pehle tehreer paste karein.');
       return;
     }
-    // COINS (Phase 10): the 100-coin One Click charge lands BEFORE
+    // COINS (Phase 10): the One Click charge lands BEFORE
     // the run — it covers the whole 13-step flow including the
     // voiceover step, so _buildVoice is called with skipCoinSpend.
-    final spendResult =
-        await CoinService.instance.spend(CoinFeature.oneClick);
+    // Point #20: remote-priced via PricingService
+    // (price_ns_one_click, fallback 100).
+    final spendResult = await PricingService.charge(
+      PricingService.keyNsOneClick,
+      reason: CoinCosts.reasonFor(CoinFeature.oneClick),
+      fallbackCoins: CoinCosts.oneClick,
+    );
     if (!spendResult.ok) {
       _showMessage(
-        'Coins kam hain — One Click AI News Maker ke liye 100 coins '
-        'chahiye. Watch Ads se kamayein.',
+        spendResult.error == PricingService.errorProRequired
+            ? 'One Click AI News Maker sirf Pro users ke liye hai.'
+            : spendResult.error == PricingService.errorAdNotCompleted
+                ? 'Ad mukammal nahi hua — One Click nahi chala.'
+                : 'Coins kam hain — One Click AI News Maker ke liye '
+                    '${PricingService.coinsOr(PricingService.keyNsOneClick, CoinCosts.oneClick)} '
+                    'coins chahiye. Watch Ads se kamayein.',
       );
       return;
     }
@@ -347,18 +358,30 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
               voice: _voice,
             );
       if (!cached && !skipCoinSpend) {
-        final spendResult =
-            await CoinService.instance.spend(CoinFeature.voiceover);
+        // Point #20: remote-priced via PricingService
+        // (price_ns_voiceover, fallback 50).
+        final spendResult = await PricingService.charge(
+          PricingService.keyNsVoiceover,
+          reason: CoinCosts.reasonFor(CoinFeature.voiceover),
+          fallbackCoins: CoinCosts.voiceover,
+        );
         if (!spendResult.ok) {
           if (!mounted) return;
+          final String failLine =
+              spendResult.error == PricingService.errorProRequired
+                  ? 'Voiceover sirf Pro users ke liye hai.'
+                  : spendResult.error ==
+                          PricingService.errorAdNotCompleted
+                      ? 'Ad mukammal nahi hua — voiceover nahi bana.'
+                      : 'Voiceover ke liye '
+                          '${PricingService.coinsOr(PricingService.keyNsVoiceover, CoinCosts.voiceover)} '
+                          'coins chahiye — balance kam hai. '
+                          'Watch Ads se coins kamayein.';
           setState(() {
             _voiceBusy = false;
-            _voiceStatus = 'Voiceover ke liye 50 coins chahiye — '
-                'balance kam hai. Watch Ads se coins kamayein.';
+            _voiceStatus = failLine;
           });
-          _showMessage(
-            'Coins kam hain — voiceover ke liye 50 coins chahiye.',
-          );
+          _showMessage(failLine);
           return;
         }
       }
@@ -384,6 +407,8 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
           project.subtitles.isNotEmpty) {
         project.subtitles =
             resyncExistingLines(project.subtitles, duration);
+        project.captionTimingSource = 'estimate';
+        project.captionAlignedHash = '';
         _syncSubtitleControllers();
         syncNote = ' Subtitles voiceover se sync ho gaye.';
       }
@@ -1030,7 +1055,8 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
             ClipPickerList(
               paths: project.clipPaths,
               onChanged: (next) {
-                setState(() => project.clipPaths = next);
+                // P1-3: trims stay attached to their clips.
+                setState(() => project.setClipPaths(next));
                 _scheduleSave();
               },
             ),

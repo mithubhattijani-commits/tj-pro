@@ -42,6 +42,7 @@ import '../services/urdu_caption_service.dart';
 import 'video_editor_recovery.dart';
 import '../services/video_export_service.dart';
 import 'editor_stage.dart';
+import 'adjust_params.dart';
 import 'editor_models.dart';
 import 'video_editor_controller.dart';
 import 'editor_export_controller.dart';
@@ -309,71 +310,30 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       _adjVignette != 0 ||
       _adjGrain != 0;
 
+  /// The Adjust extras as the shared value object (P1-1): the
+  /// export chain AND the preview matrix/overlays both derive
+  /// from these fields through adjust_params.dart — one source
+  /// of truth, so a slider can never move the export without
+  /// moving the preview again.
+  AdjustValues get _adjustValues => AdjustValues(
+        auto: _adjAuto,
+        brilliance: _adjBrilliance,
+        sharpen: _adjSharpen,
+        clarity: _adjClarity,
+        whites: _adjWhites,
+        blacks: _adjBlacks,
+        hue: _adjHue,
+        fade: _adjFade,
+        vignette: _adjVignette,
+        grain: _adjGrain,
+      );
+
   /// The ffmpeg chain for the v1.4.0 Adjust extras ('' = nothing
-  /// set). Every entry is a stock ffmpeg filter: normalize (auto),
-  /// eq gamma/saturation (brilliance), unsharp (sharpen/clarity),
-  /// curves endpoints (whites/blacks/fade), hue, vignette, noise
-  /// (grain). HSL is deliberately NOT here: the bundled ffmpeg has
-  /// no per-hue-range HSL filter, so no fake slider is offered.
-  String _adjustExtraFilter() {
-    final parts = <String>[];
-    String n(double v) {
-      var s = v.toStringAsFixed(3);
-      while (s.contains('.') && s.endsWith('0')) {
-        s = s.substring(0, s.length - 1);
-      }
-      if (s.endsWith('.')) s = s.substring(0, s.length - 1);
-      return s.isEmpty || s == '-0' ? '0' : s;
-    }
-
-    if (_adjAuto) parts.add('normalize');
-    if (_adjBrilliance != 0) {
-      final b = _adjBrilliance.clamp(-100, 100).toDouble();
-      final gamma = math.pow(2, b / 200).toDouble();
-      final sat = 1 + b / 400;
-      parts.add('eq=gamma=${n(gamma)}:saturation=${n(sat)}');
-    }
-    if (_adjSharpen != 0) {
-      parts.add('unsharp=5:5:${n(_adjSharpen.clamp(0, 100) / 50)}');
-    }
-    if (_adjClarity != 0) {
-      parts.add('unsharp=13:13:${n(_adjClarity.clamp(0, 100) / 100)}');
-    }
-    if (_adjWhites != 0 || _adjBlacks != 0 || _adjFade != 0) {
-      final double blackLift =
-          (_adjBlacks.clamp(-100, 100) / 100 * 0.12) +
-          _adjFade.clamp(0, 100) / 100 * 0.15;
-      final double whiteMove = _adjWhites.clamp(-100, 100) / 100 * 0.12;
-      double y(double x) {
-        var v = x + blackLift * (1 - x) * (1 - x) + whiteMove * x * x;
-        if (_adjFade > 0) {
-          v = v * (1 - _adjFade / 100 * 0.3) + _adjFade / 100 * 0.3 * 0.2;
-        }
-        return v.clamp(0.0, 1.0).toDouble();
-      }
-
-      final pts = [
-        0.0,
-        0.25,
-        0.5,
-        0.75,
-        1.0,
-      ].map((x) => '${n(x)}/${y(x).toStringAsFixed(3)}').join(';');
-      parts.add("curves=master='$pts'");
-    }
-    if (_adjHue != 0) {
-      parts.add('hue=h=${n(_adjHue.clamp(-180, 180).toDouble())}');
-    }
-    if (_adjVignette != 0) {
-      final double angle = 1.5 - _adjVignette.clamp(0, 100) / 100 * 1.1;
-      parts.add('vignette=angle=${n(angle)}');
-    }
-    if (_adjGrain != 0) {
-      final amt = (_adjGrain.clamp(0, 100) / 100 * 40).round();
-      parts.add('noise=alls=$amt:allf=t');
-    }
-    return parts.join(',');
-  }
+  /// set) — built by [adjustExtraFilterChain] from the shared
+  /// derivation (the chain itself is unchanged). HSL is
+  /// deliberately NOT here: the bundled ffmpeg has no
+  /// per-hue-range HSL filter, so no fake slider is offered.
+  String _adjustExtraFilter() => adjustExtraFilterChain(_adjustValues);
 
   /// Reset for the whole Colour look (ProGrade + filters + the
   /// v1.4.0 Adjust extras) — the Adjust panel's Reset button.
@@ -1560,6 +1520,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     // the restore offer on the next plain open is opt-in.
     unawaited(_saveSessionSnapshot());
     _clock.removeListener(_onClockTick);
+    _detachTrimBinding();
     _clock.dispose();
     _scrubSeekTimer?.cancel();
     _tlScroll.dispose();
@@ -1655,7 +1616,11 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
 
   /// Filmstrip cache key: path + size + mtime (Build 2 cache
   /// hardening) — a processed copy written over the same path
-  /// never shows the OLD clip's thumbnails.
+  /// never shows the OLD clip's thumbnails. P0-2: the TRIM RANGE
+  /// is part of the key too — after a split, both halves point
+  /// at the same file with the same stamp, and without the trim
+  /// in the key they shared ONE filmstrip, so the split was
+  /// invisible in the timeline.
   String _thumbKey(VideoClip clip) {
     var stamp = 'nostat';
     try {
@@ -1665,7 +1630,9 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       // Keep the fallback stamp; generation below still guards
       // every failure silently.
     }
-    return '${clip.file.path}|$stamp';
+    return '${clip.file.path}|$stamp'
+        '|${clip.trimStart.toStringAsFixed(2)}'
+        '|${clip.effectiveEnd.toStringAsFixed(2)}';
   }
 
   /// Lazily generate filmstrip thumbnails for [clip] (up to 8
@@ -1721,6 +1688,51 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     return 'Untitled';
   }
 
+  /// P0-2: the trim-range binding for the preview player. The
+  /// player loops the clip's whole FILE (setLooping(true)), so
+  /// without a binding its position walks past the trim end and
+  /// every position reader (the old Split above all) sees a
+  /// meaningless time. This listener keeps the playhead inside
+  /// the SELECTED clip's trim range: past the end it wraps to
+  /// the trim start (the loop the user expects), before the
+  /// start it seeks forward. It reads the clip's CURRENT trim
+  /// fields on every tick, so a trim edit binds immediately.
+  VideoPlayerController? _trimBoundController;
+  DateTime _lastTrimSeek = DateTime.fromMillisecondsSinceEpoch(0);
+
+  void _attachTrimBinding(VideoPlayerController c) {
+    _detachTrimBinding();
+    _trimBoundController = c;
+    c.addListener(_enforceTrimRange);
+  }
+
+  void _detachTrimBinding() {
+    _trimBoundController?.removeListener(_enforceTrimRange);
+    _trimBoundController = null;
+  }
+
+  void _enforceTrimRange() {
+    final c = _trimBoundController;
+    if (c == null || !c.value.isInitialized || _clips.isEmpty) return;
+    final clip = _clips[_selected];
+    if (clip.isPhoto) return;
+    final pos = c.value.position.inMilliseconds / 1000;
+    final start = clip.trimStart;
+    final end = clip.effectiveEnd;
+    if (pos < start - 0.05) {
+      _guardedTrimSeek(c, start);
+    } else if (pos >= end - 0.02 && c.value.isPlaying) {
+      _guardedTrimSeek(c, start);
+    }
+  }
+
+  void _guardedTrimSeek(VideoPlayerController c, double sec) {
+    final now = DateTime.now();
+    if (now.difference(_lastTrimSeek).inMilliseconds < 300) return;
+    _lastTrimSeek = now;
+    unawaited(c.seekTo(Duration(milliseconds: (sec * 1000).round())));
+  }
+
   Future<void> _loadPreview() async {
     if (_clips.isEmpty) return;
     // v1.5.0: filmstrip thumbs for the timeline (lazy, cached).
@@ -1734,6 +1746,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     // stage shows the still image instead.
     if (_clips[_selected].isPhoto) {
       final old = _controller;
+      _detachTrimBinding();
       _clock.attach(null);
       setState(() => _controller = null);
       await old?.dispose();
@@ -1748,6 +1761,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     try {
       await c.initialize();
       await c.setLooping(true);
+      // P0-2: bind the playhead to the clip's trim range.
+      _attachTrimBinding(c);
       // Per-clip volume is audible in the preview too (v1.5.0 —
       // the Volume panel's slider now drives the preview gain).
       final clip = _clips[_selected];
@@ -2612,7 +2627,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       'Sepia' => PhotoFilter.sepia,
       _ => PhotoFilter.normal,
     };
-    return buildColorMatrix(
+    final base = buildColorMatrix(
       filter: filter,
       brightness: _proBrightness,
       contrast: _proContrast,
@@ -2623,6 +2638,15 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       tint: _proTint,
       vibrance: (_proVibrance - 1) * 100,
     );
+    // P1-1: the Adjust extras ride the SAME matrix stage — the
+    // preview now reads the fields the export reads, through the
+    // shared derivation in adjust_params.dart (brilliance
+    // saturation exact; gamma∘curves as a fitted line; hue in
+    // standard matrix form). Vignette/Grain are overlays (see
+    // the stage), Sharpen/Clarity/LUT stay export-only (no
+    // widget equivalent — documented in adjust_params.dart).
+    if (!_adjustExtraActive) return base;
+    return multiplyColorMatrices(adjustPreviewMatrix(_adjustValues), base);
   }
 
   /// Export settings dialog (AppBar pill §3 + the export flow):
@@ -3803,37 +3827,83 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     }
   }
 
+  /// P0-2 (tools-fix wave): Split cuts at the GLOBAL TIMELINE
+  /// PLAYHEAD on the clip under it — the old version read the
+  /// preview player's FILE position of the selected clip only,
+  /// and the player looped the whole file unbound by the trim
+  /// range, so the position was usually outside the range and
+  /// the split silently fell back to the midpoint (no status,
+  /// no confirmation — the user's "kitni dafa dabaya, split
+  /// kaam nahi kiya").
+  ///
+  /// Playhead resolution: the timeline strip's FIXED CENTRE is
+  /// the drawn playhead, and the codebase's own convention is
+  /// centreSec = scrollOffset / pxPerSec (scroll-end seek, live
+  /// scrub and zoom all use it). When the strip's centre sits
+  /// over the selected clip, that centre is the playhead. When
+  /// it sits over a DIFFERENT clip, the centre is stale (a clip
+  /// tap selects + reloads the preview without scrolling the
+  /// strip) and the clock's position inside the selected clip —
+  /// what the user is actually looking at — wins. Either way,
+  /// the cut needs a 0.15 s margin from both ends of the clip's
+  /// used range; without one the split falls back to the
+  /// midpoint AND says so. The split math itself (second half =
+  /// same file, trims split at the cut) is unchanged.
   void _splitSelectedClip() {
-    if (_clips.isEmpty) return;
-    final clip = _clips[_selected];
-    if (clip.effectiveDuration < 1.0) {
-      _setStatus('Clip too short to split.');
+    if (_busy) {
+      explainToolTap();
       return;
     }
-    // v1.4.0: snap ON = split at the playhead (CapCut behaviour)
-    // when it sits inside the clip's trimmed range; snap OFF (or
-    // no usable playhead) = the v1.3.0 midpoint split.
-    var mid = clip.trimStart + clip.effectiveDuration / 2;
-    final ctrl = _controller;
-    if (_snapOn && ctrl != null && ctrl.value.isInitialized) {
-      // The preview plays the clip FILE, so the playhead is
-      // already a file time inside the trimmed range.
-      final at = ctrl.value.position.inMilliseconds / 1000;
-      if (at > clip.trimStart + 0.5 && at < clip.effectiveEnd - 0.5) {
-        mid = at;
-      }
+    if (_clips.isEmpty) return;
+    final target = _selected;
+    final selectedClip = _clips[_selected];
+    double? centreSec;
+    if (_tlScroll.hasClients && _tlPxPerSec > 0) {
+      centreSec = (_tlScroll.offset / _tlPxPerSec)
+          .clamp(0.0, _totalDurationSec)
+          .toDouble();
     }
+    // The cut decision is the pure resolveSplit (editor_stage)
+    // — the functional tests pin it; this method only applies
+    // the trim math below (which was already correct).
+    final res = resolveSplit(
+      effectiveDurations: _effectiveDurations,
+      trimStarts: [for (final c in _clips) c.trimStart],
+      selected: target,
+      clockInsideSelected:
+          !selectedClip.isPhoto && _clock.isInitialized
+              ? _clock.filePositionSec - selectedClip.trimStart
+              : 0.0,
+      centreSec: centreSec,
+    );
+    if (res == null) {
+      _setStatus('Clip bohat chhota hai — split nahi ho sakta.');
+      return;
+    }
+    final clip = _clips[target];
+    final atPlayhead = res.atPlayhead;
+    final mid = res.cutFileSec;
     final second = VideoClip(clip.file, clip.duration, clip.aspectRatio);
     second.volume = clip.volume;
     second.muted = clip.muted;
+    second.isPhoto = clip.isPhoto;
+    second.kenBurns = clip.kenBurns;
+    second.kbZoomIn = clip.kbZoomIn;
     second.trimStart = mid;
     second.trimEnd = clip.effectiveEnd;
     _pushHistory();
     clip.trimEnd = mid;
     setState(() {
-      _clips.insert(_selected + 1, second);
-      _selected = _selected + 1;
+      _clips.insert(target + 1, second);
+      _selected = target + 1;
     });
+    HapticFeedback.selectionClick();
+    _setStatus(
+      atPlayhead
+          ? 'Split ho gaya — playhead par kata, 2 clips ban gaye.'
+          : 'Split ho gaya — playhead clip ke kinare par tha, is '
+              'liye darmiyan (midpoint) se kata.',
+    );
     unawaited(_loadPreview());
   }
 
@@ -5041,6 +5111,32 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
   set stageLayer(String? value) => _stageLayer = value;
   @override
   List<double> get stageMatrix => _stageMatrix;
+
+  @override
+  double get adjustVignetteStrength => _comparing
+      ? 0
+      : deriveAdjustParams(_adjustValues).vignetteStrength;
+
+  @override
+  double get adjustGrainOpacity =>
+      _comparing ? 0 : deriveAdjustParams(_adjustValues).grainOpacity;
+
+  @override
+  void explainToolTap() {
+    if (_busy) {
+      _setStatus(
+        _status.isNotEmpty
+            ? 'Abhi ye chal raha hai: $_status'
+            : 'Abhi ek kaam chal raha hai — mukammal hone dein, '
+                'phir try karein.',
+      );
+    } else if (_clips.isEmpty) {
+      _setStatus(
+        'Pehle koi clip add karein — baghair clip ke ye tool '
+        'nahi chalega.',
+      );
+    }
+  }
   @override
   Rect get stageMediaRect => _stageMediaRect;
   @override

@@ -53,6 +53,7 @@ import 'package:video_player/video_player.dart';
 
 import '../app_config.dart';
 import '../live/news_template.dart';
+import '../motion/motion_gallery_screen.dart';
 import '../services/ai_tool_charge.dart';
 import '../services/asset_download_service.dart';
 import '../services/caption_styles.dart';
@@ -68,6 +69,7 @@ import '../services/logo_key_service.dart';
 import '../services/logo_loop_service.dart';
 import '../services/logo_parts_service.dart';
 import '../services/permanent_logo_service.dart';
+import '../services/pricing_service.dart';
 import '../services/pro_service.dart';
 import '../services/supabase_service.dart';
 import '../services/store_audio_preview.dart';
@@ -97,6 +99,7 @@ import 'widgets/nigraan_final_preview.dart';
 import 'widgets/reel_export_card.dart';
 import 'widgets/reporter_overlay.dart';
 import 'widgets/studio_pickers.dart';
+import 'widgets/styled_caption_preview.dart';
 import 'widgets/template_media_preview.dart';
 import 'widgets/voice_preview_player.dart';
 
@@ -228,6 +231,33 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   Duration _transportPosition = Duration.zero;
   bool _transportPlaying = false;
   String _timelineTab = 'clips';
+
+  /// Tools-fix wave (P1-3): the clip the Clips lane / Media
+  /// panel's Trim & Split controls act on. Kept clamped to the
+  /// clip list wherever it is read.
+  int _selectedClipIndex = 0;
+  String _clipEditStatus = '';
+
+  /// Tools-fix wave (P2): debounce for the bare-rebuild text
+  /// fields (Tehreer / tickers / voice script) — typing used to
+  /// rebuild the WHOLE Maker screen on every keystroke just so
+  /// the preview + counters refreshed; now the rebuild happens
+  /// once, 250 ms after the last keystroke.
+  Timer? _textDebounce;
+
+  void _textFieldChanged() {
+    _scheduleSave();
+    _textDebounce?.cancel();
+    _textDebounce = Timer(const Duration(milliseconds: 250), () {
+      if (mounted) setState(() {});
+    });
+  }
+
+  /// The ONE height of the lower zone under the preview (P0-4):
+  /// the panel host and the timeline state share it, so the
+  /// preview's size can never depend on which state is showing.
+  double get _lowerZoneHeight =>
+      MediaQuery.of(context).size.height < 700 ? 212 : 272;
 
   void _onTransportController(VideoPlayerController? controller) {
     if (identical(controller, _transportController)) return;
@@ -556,6 +586,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     StoreService.instance.revision.removeListener(_onStoreRevision);
     _transportController?.removeListener(_onTransportTick);
     _saveTimer?.cancel();
+    _textDebounce?.cancel();
     unawaited(_recorder.dispose());
     _tehreerController.dispose();
     _tickerController.dispose();
@@ -728,18 +759,31 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         music: project.voiceMusic,
       );
       if (!result.cached) {
-        final spendResult =
-            await CoinService.instance.spend(CoinFeature.voiceover);
+        // Point #20: remote-priced via PricingService
+        // (price_ns_voiceover, fallback 50) — coins / free /
+        // Pro-only / ad-unlock per tj-pro.json, no new build.
+        final spendResult = await PricingService.charge(
+          PricingService.keyNsVoiceover,
+          reason: CoinCosts.reasonFor(CoinFeature.voiceover),
+          fallbackCoins: CoinCosts.voiceover,
+        );
         if (!spendResult.ok) {
           if (!mounted) return;
+          final String failLine =
+              spendResult.error == PricingService.errorProRequired
+                  ? 'Voiceover sirf Pro users ke liye hai.'
+                  : spendResult.error ==
+                          PricingService.errorAdNotCompleted
+                      ? 'Ad mukammal nahi hua — voiceover nahi bana.'
+                      : 'Voiceover ke liye '
+                          '${PricingService.coinsOr(PricingService.keyNsVoiceover, CoinCosts.voiceover)} '
+                          'coins chahiye — balance kam hai. '
+                          'Watch Ads se coins kamayein.';
           setState(() {
             _voiceBusy = false;
-            _voiceStatus = 'Voiceover ke liye 50 coins chahiye — '
-                'balance kam hai. Watch Ads se coins kamayein.';
+            _voiceStatus = failLine;
           });
-          _showMessage(
-            'Coins kam hain — voiceover ke liye 50 coins chahiye.',
-          );
+          _showMessage(failLine);
           return;
         }
       }
@@ -1289,18 +1333,31 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               backgroundMusic: project.voiceMusic,
             );
       if (!cached) {
-        final spendResult =
-            await CoinService.instance.spend(CoinFeature.voiceover);
+        // Point #20: remote-priced via PricingService
+        // (price_ns_voiceover, fallback 50) — coins / free /
+        // Pro-only / ad-unlock per tj-pro.json, no new build.
+        final spendResult = await PricingService.charge(
+          PricingService.keyNsVoiceover,
+          reason: CoinCosts.reasonFor(CoinFeature.voiceover),
+          fallbackCoins: CoinCosts.voiceover,
+        );
         if (!spendResult.ok) {
           if (!mounted) return;
+          final String failLine =
+              spendResult.error == PricingService.errorProRequired
+                  ? 'Voiceover sirf Pro users ke liye hai.'
+                  : spendResult.error ==
+                          PricingService.errorAdNotCompleted
+                      ? 'Ad mukammal nahi hua — voiceover nahi bana.'
+                      : 'Voiceover ke liye '
+                          '${PricingService.coinsOr(PricingService.keyNsVoiceover, CoinCosts.voiceover)} '
+                          'coins chahiye — balance kam hai. '
+                          'Watch Ads se coins kamayein.';
           setState(() {
             _voiceBusy = false;
-            _voiceStatus = 'Voiceover ke liye 50 coins chahiye — '
-                'balance kam hai. Watch Ads se coins kamayein.';
+            _voiceStatus = failLine;
           });
-          _showMessage(
-            'Coins kam hain — voiceover ke liye 50 coins chahiye.',
-          );
+          _showMessage(failLine);
           return;
         }
       }
@@ -1672,6 +1729,12 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     ('voice', Icons.record_voice_over_outlined, 'Voice'),
     ('captions', Icons.closed_caption_outlined, 'Captions'),
     ('export', Icons.ios_share_outlined, 'Export'),
+    // Build M1 (v1.11.0, user order): the Motion Graphics
+    // Studio's third entry point — appended at the END of the
+    // dock so the approved 12 keep their exact order. Unlike
+    // the others it opens a SCREEN (the Motion Gallery), not a
+    // panel — see the special case in _toolLine's onTap.
+    ('motion', Icons.animation, 'Motion'),
   ];
 
   /// Build 13: the user's own tool icons (his artwork, supplied
@@ -1711,8 +1774,21 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               active ? const Color(0xFFF5C542) : Colors.white70;
           return InkWell(
             key: Key('makerTool-$id'),
-            onTap: () =>
-                setState(() => _activeTool = active ? null : id),
+            onTap: () {
+              // Build M1: Motion is a door, not a panel — it
+              // pushes the Motion Gallery and never becomes the
+              // active tool (no 'motion' panel exists).
+              if (id == 'motion') {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const MotionGalleryScreen(),
+                  ),
+                );
+                return;
+              }
+              setState(() => _activeTool = active ? null : id);
+            },
             borderRadius: BorderRadius.circular(10),
             child: Container(
               width: 64,
@@ -1773,7 +1849,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       key: Key('makerPanel-$_activeTool'),
       color: const Color(0xFF12151C),
       child: Container(
-        height: MediaQuery.of(context).size.height < 700 ? 212 : 272,
+        height: _lowerZoneHeight,
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
         child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2633,14 +2709,24 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   /// player), the CLIPS / VOICE / TICKER / RIBBONS tabs, a time
   /// ruler, and the V1 / A1 / A2 / TC lanes reflecting the real
   /// project state, with a gold playhead at the transport
-  /// position. It stays fully visible while a tool panel is
-  /// open — the tool's parameters live in the ONE panel area
-  /// between the timeline and the tool dock.
+  /// position. P0-4 (Point #27): it shows only in the no-tool
+  /// state — opening any tool collapses it away so the preview
+  /// keeps its full size; closing the tool brings it back.
+  /// P1-3: the USED length of timeline entry [i] — its file
+  /// duration run through its trim range (a split's halves count
+  /// their own parts, not the whole file twice).
+  double? _entryDurationSec(NewsProject project, int i) =>
+      project.clipEffectiveDurationAt(
+        i,
+        _clipDurations[project.clipPaths[i]],
+      );
+
   Widget _timelineZone(NewsProject project) {
     final compact = MediaQuery.of(context).size.height < 700;
     var clipsTotal = 0.0;
-    for (final d in _clipDurations.values) {
-      clipsTotal += d;
+    for (var i = 0; i < project.clipPaths.length; i++) {
+      final eff = _entryDurationSec(project, i);
+      if (eff != null) clipsTotal += eff;
     }
     final totalAll =
         clipsTotal > 0 ? clipsTotal : (project.voiceoverDurationSec ?? 0);
@@ -2969,44 +3055,63 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           for (var i = 0; i < project.clipPaths.length; i++) ...[
             if (i > 0) const SizedBox(width: 4),
             Expanded(
-              flex: ((_clipDurations[project.clipPaths[i]] ?? 1) * 100)
+              flex: ((_entryDurationSec(project, i) ?? 1) * 100)
                   .round()
                   .clamp(40, 100000),
               child: InkWell(
-                onTap: () => setState(() => _activeTool = 'media'),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(5),
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      if (_clipThumbs[project.clipPaths[i]] != null)
-                        Image.file(
-                          File(_clipThumbs[project.clipPaths[i]]!),
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, _, _) =>
-                              Container(color: const Color(0xFF171B24)),
-                        )
-                      else
-                        Container(color: const Color(0xFF171B24)),
-                      Positioned(
-                        left: 5,
-                        bottom: 3,
-                        right: 5,
-                        child: Text(
-                          '${p.basename(project.clipPaths[i])}'
-                          '${_clipDurations[project.clipPaths[i]] != null ? ' • ${_fmtDur(_clipDurations[project.clipPaths[i]]!)}' : ''}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 9.5,
-                            color: Color(0xFFD8DCE2),
-                            shadows: [
-                              Shadow(color: Colors.black, blurRadius: 3),
-                            ],
+                key: Key('tlClip-$i'),
+                // P1-3: tapping a clip SELECTS it (gold border)
+                // and opens the Media panel, whose Trim & Split
+                // controls act on this entry.
+                onTap: () => setState(() {
+                  _selectedClipIndex = i;
+                  _activeTool = 'media';
+                  _timelineTab = 'clips';
+                }),
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(5),
+                    border: Border.all(
+                      color: _selectedClipIndex == i
+                          ? const Color(0xFFFFC800)
+                          : const Color(0x00000000),
+                      width: 1.5,
+                    ),
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(5),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        if (_clipThumbs[project.clipPaths[i]] != null)
+                          Image.file(
+                            File(_clipThumbs[project.clipPaths[i]]!),
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, _, _) =>
+                                Container(color: const Color(0xFF171B24)),
+                          )
+                        else
+                          Container(color: const Color(0xFF171B24)),
+                        Positioned(
+                          left: 5,
+                          bottom: 3,
+                          right: 5,
+                          child: Text(
+                            '${p.basename(project.clipPaths[i])}'
+                            '${_entryDurationSec(project, i) != null ? ' • ${_fmtDur(_entryDurationSec(project, i)!)}' : ''}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 9.5,
+                              color: Color(0xFFD8DCE2),
+                              shadows: [
+                                Shadow(color: Colors.black, blurRadius: 3),
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -3015,6 +3120,20 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         ],
       ),
     );
+  }
+
+  /// P1-2: the subtitle line active at the transport position
+  /// (the preview's own player position — the Maker's subtitles
+  /// are reel-timeline based and the transport drives the first
+  /// clip, so while it plays this tracks the reel position).
+  /// Null when the project has no subtitles or none is active.
+  SubtitleLine? _activeCaptionLine(NewsProject project) {
+    if (project.subtitles.isEmpty) return null;
+    final pos = _transportPosition.inMilliseconds / 1000.0;
+    for (final line in project.subtitles) {
+      if (pos >= line.startSec && pos < line.endSec) return line;
+    }
+    return null;
   }
 
   Widget _buildBody(ChannelPreset preset, NewsProject project) {
@@ -3172,6 +3291,75 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             },
                     ),
                   ),
+                  // P1-2 (tools-fix wave): the CAPTIONS layer of
+                  // the composed preview. Before this, the caption
+                  // style/position/size choices were invisible in
+                  // the Maker — the fields were read only by the
+                  // export's ASS builder, so the panel was blind.
+                  // The overlay renders the active subtitle line
+                  // with the SAME style values the export uses
+                  // (the Caption Studio's exact argument pattern),
+                  // positioned on the same centred 9:16 box the
+                  // preview widgets render into.
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final line = _activeCaptionLine(project);
+                          if (line == null) {
+                            return const SizedBox.shrink();
+                          }
+                          var boxH = constraints.maxHeight;
+                          if (boxH * 9 / 16 > constraints.maxWidth) {
+                            boxH = constraints.maxWidth * 16 / 9;
+                          }
+                          final boxW = boxH * 9 / 16;
+                          final style = StudioCaptionStyles.byId(
+                            project.captionStyleId,
+                          );
+                          return Center(
+                            child: SizedBox(
+                              key: const Key('makerCaptionOverlay'),
+                              width: boxW,
+                              height: boxH,
+                              child: Align(
+                                alignment: switch (project.captionPosition) {
+                                  CaptionPosition.top =>
+                                    Alignment.topCenter,
+                                  CaptionPosition.middle =>
+                                    Alignment.center,
+                                  CaptionPosition.bottom =>
+                                    Alignment.bottomCenter,
+                                },
+                                child: Padding(
+                                  padding: const EdgeInsets.all(10),
+                                  child: StyledCaptionPreview(
+                                    line: line,
+                                    style: style,
+                                    positionSec: _transportPosition
+                                            .inMilliseconds /
+                                        1000.0,
+                                    highlightColor:
+                                        project.captionHighlight,
+                                    fontFamily: CaptionFonts.byId(
+                                      project.captionFontId,
+                                    ).family,
+                                    fontSizePx: style.fontSizePx *
+                                        StudioCaptionStyles.sizeScale(
+                                          project.captionSize,
+                                        ) *
+                                        (boxW / 360).clamp(0.6, 1.2),
+                                    showBackground:
+                                        project.captionBackground,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
                   // Stage chips (display only, gesture-transparent):
                   // the live-preview dot + the active template.
                   Positioned(
@@ -3193,35 +3381,52 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             ),
           ),
         ),
-        // Build 13 (point #19 — the user's reference layout):
-        // preview on top, the working TIMELINE directly under
-        // it, the open tool's parameters in the ONE panel area
-        // under the timeline, and the tool dock at the very
-        // bottom. (Build 4 had dock-over-panel-over-collapsed-
-        // timeline; the reference order supersedes it. Every
-        // control itself is unchanged — only the arrangement.)
-        _timelineZone(project),
-        if (_activeTool == null)
-          _summaryInspector(preset, project, templateLabel)
-        else
-          switch (_activeTool) {
-            'template' => _templatePanel(preset, project),
-            'media' => _mediaPanel(project),
-            'elements' => _panelShell(
-                'Elements',
-                [_elementsPanel(project)],
-              ),
-            'tehreer' => _tehreerPanel(project),
-            'ticker' => _tickerPanel(project),
-            'ribbons' => _ribbonsPanel(preset, project),
-            'logo' => _logoPanel(preset, project),
-            'reporter' => _reporterPanel(project),
-            'audio' => _audioPanel(project),
-            'voice' => _voicePanel(project),
-            'captions' => _captionsPanel(project),
-            'export' => _exportPanel(preset, project),
-            _ => const SizedBox.shrink(),
-          },
+        // P0-4 (Point #27 — the user's layout correction,
+        // amending Build 13's point #19 arrangement): the zone
+        // under the preview has ONE fixed height in EVERY state
+        // ([_lowerZoneHeight] — the panel host's own height), so
+        // the preview above it is the SAME BIG SIZE whether a
+        // tool is open or not, and the composed preview widget
+        // stays mounted + live while any panel is open. States:
+        //   - no tool: the timeline + summary inspector (the
+        //     timeline's home state);
+        //   - tool open: the timeline COLLAPSES AWAY and only
+        //     that tool's panel shows. It comes back only when
+        //     the user closes the tool (the panel's ✓, or
+        //     tapping the tool again) — never automatically.
+        // The tool dock stays at the very bottom in all states.
+        SizedBox(
+          key: const Key('makerLowerZone'),
+          height: _lowerZoneHeight,
+          child: _activeTool == null
+              ? SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _timelineZone(project),
+                      _summaryInspector(preset, project, templateLabel),
+                    ],
+                  ),
+                )
+              : switch (_activeTool) {
+                  'template' => _templatePanel(preset, project),
+                  'media' => _mediaPanel(project),
+                  'elements' => _panelShell(
+                      'Elements',
+                      [_elementsPanel(project)],
+                    ),
+                  'tehreer' => _tehreerPanel(project),
+                  'ticker' => _tickerPanel(project),
+                  'ribbons' => _ribbonsPanel(preset, project),
+                  'logo' => _logoPanel(preset, project),
+                  'reporter' => _reporterPanel(project),
+                  'audio' => _audioPanel(project),
+                  'voice' => _voicePanel(project),
+                  'captions' => _captionsPanel(project),
+                  'export' => _exportPanel(preset, project),
+                  _ => const SizedBox.shrink(),
+                },
+        ),
         Container(
           decoration: const BoxDecoration(
             color: Color(0xFF12151C),
@@ -3554,9 +3759,64 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               Text('${(preset.pipScale * 100).toInt()}%'),
             ],
           ),
+          // P0-3 (tools-fix wave): the PIP VIDEO SOURCE. Before
+          // this, the section had enable/position/scale but no
+          // way to choose which video goes in the inset — the
+          // switch could never show anything in the export. The
+          // pick lives on the PROJECT (it is this story's inset),
+          // and ReelExportService composites it at the preset's
+          // position/scale.
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _project?.pipVideoPath == null
+                      ? 'PIP video: koi nahi chuna — export mein PIP '
+                          'nahi aye ga'
+                      : 'PIP video: '
+                          '${p.basename(_project!.pipVideoPath!)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.grey,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton(
+                key: const Key('studioPipPickButton'),
+                onPressed: _pickPipVideo,
+                child: const Text('Video chunein'),
+              ),
+              if (_project?.pipVideoPath != null)
+                IconButton(
+                  key: const Key('studioPipRemoveButton'),
+                  icon: const Icon(Icons.clear, size: 18),
+                  tooltip: 'PIP video hatayein',
+                  onPressed: () {
+                    setState(() => _project?.pipVideoPath = null);
+                    _scheduleSave();
+                  },
+                ),
+            ],
+          ),
         ],
       ],
     );
+  }
+
+  /// P0-3: pick the PIP inset's video (any gallery/files video).
+  Future<void> _pickPipVideo() async {
+    final project = _project;
+    if (project == null) return;
+    final picked = await FilePicker.pickFiles(type: FileType.video);
+    if (picked.isEmpty || picked.first.path == null) return;
+    if (!mounted) return;
+    setState(() => project.pipVideoPath = picked.first.path);
+    _scheduleSave();
+    _showMessage('PIP video chun liya gaya — export mein inset aye ga.');
   }
 
   /// Chroma key (preset-level): enable, background kind (the
@@ -3693,11 +3953,21 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         unifiedPicker: true,
         paths: project.clipPaths,
         onChanged: (next) {
-          setState(() => project.clipPaths = next);
+          // P1-3: setClipPaths keeps each clip's trim attached
+          // through add/remove/reorder (the picker returns paths
+          // only).
+          setState(() {
+            project.setClipPaths(next);
+            if (_selectedClipIndex >= project.clipPaths.length) {
+              _selectedClipIndex =
+                  project.clipPaths.isEmpty ? 0 : project.clipPaths.length - 1;
+            }
+          });
           _scheduleSave();
           unawaited(_probeClips());
         },
       ),
+      _clipEditSection(project),
       const SizedBox(height: 16),
       const Text(
         'Effect (Library)',
@@ -3715,6 +3985,227 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         emptyNote: 'Abhi koi Library effect nahi.',
       ),
     ]);
+  }
+
+  /// P1-3 (tools-fix wave): Trim & Split for the SELECTED clip
+  /// entry — the News Studio had NO clip trim and NO split at
+  /// all before this (the parked gap in NS-CURRENT-TOOLS). A
+  /// trim only records the used range of the file (the export's
+  /// normalise step honours it); a split inserts a second entry
+  /// for the SAME file with the adjoining range — no media is
+  /// copied or re-encoded. Both write through the project's
+  /// parallel clipTrims list and autosave.
+  Widget _clipEditSection(NewsProject project) {
+    if (project.clipPaths.isEmpty) return const SizedBox.shrink();
+    final i = _selectedClipIndex.clamp(0, project.clipPaths.length - 1);
+    final path = project.clipPaths[i];
+    final isPhoto = isPhotoMediaPath(path);
+    final fileDur = _clipDurations[path];
+    final trim = project.trimAt(i);
+    final effDur = fileDur == null ? null : trim.effectiveDuration(fileDur);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 16),
+        const Text(
+          'Clip edit — Trim / Split',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 6),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              for (var c = 0; c < project.clipPaths.length; c++) ...[
+                ChoiceChip(
+                  key: Key('nsClipChip-$c'),
+                  label: Text('Clip ${c + 1}'),
+                  selected: c == i,
+                  onSelected: (_) =>
+                      setState(() => _selectedClipIndex = c),
+                ),
+                const SizedBox(width: 6),
+              ],
+            ],
+          ),
+        ),
+        Text(
+          p.basename(path),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(color: Colors.grey, fontSize: 12),
+        ),
+        const SizedBox(height: 6),
+        if (isPhoto)
+          const Text(
+            'Photo clip ka trim/split nahi hota — photo hamesha '
+            '5 second ka segment banta hai.',
+            style: TextStyle(color: Colors.grey, fontSize: 12),
+          )
+        else if (fileDur == null)
+          const Text(
+            'Clip ki duration abhi maloom nahi ho rahi — ek lamha '
+            'ruk kar panel dobara kholein.',
+            style: TextStyle(color: Colors.grey, fontSize: 12),
+          )
+        else ...[
+          Row(
+            children: [
+              const SizedBox(width: 52, child: Text('Start')),
+              Expanded(
+                child: Slider(
+                  key: const Key('nsClipTrimStartSlider'),
+                  value: trim.startSec.clamp(0.0, fileDur - 0.2),
+                  min: 0,
+                  max: fileDur - 0.2,
+                  onChanged: (v) {
+                    var start = v;
+                    final end = trim.endSec;
+                    if (end != null && start > end - 0.2) {
+                      start = end - 0.2;
+                    }
+                    _setNsClipTrim(
+                      project,
+                      i,
+                      trim.copyWith(startSec: start),
+                    );
+                  },
+                ),
+              ),
+              Text(_fmtDur(trim.startSec)),
+            ],
+          ),
+          Row(
+            children: [
+              const SizedBox(width: 52, child: Text('End')),
+              Expanded(
+                child: Slider(
+                  key: const Key('nsClipTrimEndSlider'),
+                  value: (trim.endSec ?? fileDur)
+                      .clamp(trim.startSec + 0.2, fileDur),
+                  min: 0.2,
+                  max: fileDur,
+                  onChanged: (v) {
+                    var end = v;
+                    if (end < trim.startSec + 0.2) {
+                      end = trim.startSec + 0.2;
+                    }
+                    _setNsClipTrim(
+                      project,
+                      i,
+                      end >= fileDur
+                          ? trim.copyWith(clearEnd: true)
+                          : trim.copyWith(endSec: end),
+                    );
+                  },
+                ),
+              ),
+              Text(_fmtDur(trim.endSec ?? fileDur)),
+            ],
+          ),
+          Text(
+            'Use ho raha hissa: ${_fmtDur(trim.startSec)} — '
+            '${_fmtDur(trim.endSec ?? fileDur)} '
+            '(${_fmtDur(effDur ?? 0)} lamba)',
+            style: const TextStyle(color: Colors.grey, fontSize: 12),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              FilledButton.icon(
+                key: const Key('nsClipSplitButton'),
+                onPressed: () => _splitNsClip(project, i),
+                icon: const Icon(Icons.call_split, size: 18),
+                label: const Text('Split'),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton(
+                key: const Key('nsClipTrimResetButton'),
+                onPressed: () {
+                  _setNsClipTrim(project, i, ClipTrim.full);
+                  setState(
+                    () => _clipEditStatus = 'Trim reset — poora clip '
+                        'use hoga.',
+                  );
+                },
+                child: const Text('Trim reset'),
+              ),
+            ],
+          ),
+        ],
+        if (_clipEditStatus.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(
+            _clipEditStatus,
+            style: const TextStyle(
+              color: Color(0xFFFFC800),
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  void _setNsClipTrim(NewsProject project, int i, ClipTrim trim) {
+    setState(() {
+      final trims = List<ClipTrim>.from(project.clipTrims);
+      if (i >= 0 && i < trims.length) {
+        trims[i] = trim;
+        project.clipTrims = trims;
+      }
+    });
+    _scheduleSave();
+  }
+
+  /// Split entry [i] at the timeline playhead's position inside
+  /// it (the Maker's transport position is the global timeline
+  /// position); when the playhead is not inside this entry, the
+  /// split falls back to its midpoint AND says so — never a
+  /// silent different cut (the VE Split lesson).
+  void _splitNsClip(NewsProject project, int i) {
+    final fileDur = _clipDurations[project.clipPaths[i]];
+    if (fileDur == null) {
+      setState(
+        () => _clipEditStatus = 'Clip ki duration abhi maloom '
+            'nahi — split nahi ho saka. Ek lamha ruk kar dobara '
+            'try karein.',
+      );
+      return;
+    }
+    final trim = project.trimAt(i);
+    final effDur = trim.effectiveDuration(fileDur);
+    if (effDur < 0.3) {
+      setState(
+        () => _clipEditStatus = 'Clip ka use ho raha hissa bohat '
+            'chhota hai (${_fmtDur(effDur)}) — split nahi ho '
+            'sakta.',
+      );
+      return;
+    }
+    var startOffset = 0.0;
+    for (var j = 0; j < i; j++) {
+      startOffset += _entryDurationSec(project, j) ?? 0;
+    }
+    final globalPos = _transportPosition.inMilliseconds / 1000.0;
+    final inside = globalPos - startOffset;
+    final atPlayhead = inside > 0.15 && inside < effDur - 0.15;
+    final cut = trim.startSec + (atPlayhead ? inside : effDur / 2);
+    final paths = List<String>.from(project.clipPaths);
+    final trims = List<ClipTrim>.from(project.clipTrims);
+    paths.insert(i + 1, paths[i]);
+    trims[i] = ClipTrim(startSec: trim.startSec, endSec: cut);
+    trims.insert(i + 1, ClipTrim(startSec: cut, endSec: trim.endSec));
+    setState(() {
+      project.clipPaths = paths;
+      project.clipTrims = trims;
+      _selectedClipIndex = i + 1;
+      _clipEditStatus = atPlayhead
+          ? 'Split ho gaya — playhead par kata, 2 clips ban gaye.'
+          : 'Split ho gaya — playhead is clip ke andar nahi tha, '
+              'is liye darmiyan (midpoint) se kata.';
+    });
+    _scheduleSave();
   }
 
   /// Tehreer panel: the script field + headline font (#51) +
@@ -3743,10 +4234,9 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           hintText: 'Tehreer yahan likhein ya paste karein…',
           border: OutlineInputBorder(),
         ),
-        onChanged: (_) {
-          setState(() {});
-          _scheduleSave();
-        },
+        // P2: debounced rebuild (see _textFieldChanged) — the
+        // whole Maker no longer rebuilds on every keystroke.
+        onChanged: (_) => _textFieldChanged(),
       ),
       const SizedBox(height: 14),
       const Text(
@@ -3807,10 +4297,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                 hintText: 'Urdu ticker text paste karein…',
                 border: OutlineInputBorder(),
               ),
-              onChanged: (_) {
-                setState(() {});
-                _scheduleSave();
-              },
+              onChanged: (_) => _textFieldChanged(),
             ),
           ),
           const SizedBox(width: 8),
@@ -3841,10 +4328,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                 hintText: 'English ticker text paste karein…',
                 border: OutlineInputBorder(),
               ),
-              onChanged: (_) {
-                setState(() {});
-                _scheduleSave();
-              },
+              onChanged: (_) => _textFieldChanged(),
             ),
           ),
           const SizedBox(width: 8),
@@ -3873,8 +4357,10 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           border: OutlineInputBorder(),
         ),
         onChanged: (v) {
-          setState(() => project.tickerLabel = v.trim());
-          _scheduleSave();
+          // P2: the model write stays immediate; the screen
+          // rebuild is debounced like the other text fields.
+          project.tickerLabel = v.trim();
+          _textFieldChanged();
         },
       ),
       const SizedBox(height: 14),
@@ -4717,7 +5203,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           saveState == LogoPartsSaveState.active
               ? (savedCurrent
                   ? 'Save shuda hai — ${logoPartsSaveDaysLeft(preset.logoPartsSavedAtMs, now)} din baqi hain.'
-                  : 'Save shuda settings se tabdeeli ho gayi hai — dobara save par 300 coins lagein ge.')
+                  : 'Save shuda settings se tabdeeli ho gayi hai — dobara save par ${PricingService.coinsOr(PricingService.keyLogoPartsSave, kLogoPartsSavePriceCoins)} coins lagein ge.')
               : 'Ye settings sirf is session ke liye hain. Save karein to 7 din tak mehfooz rahengi — us ke baad khatam, dobara banana hoga.',
           style: const TextStyle(fontSize: 12, color: Colors.grey),
         ),
@@ -4726,7 +5212,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           key: const Key('logoPartsSaveButton'),
           onPressed: _partsBusy ? null : _saveLogoParts,
           icon: const Icon(Icons.save_outlined, size: 18),
-          label: const Text('Save karein — $kLogoPartsSavePriceCoins coins (7 din)'),
+          label: Text(_logoPartsSaveButtonLabel()),
         ),
       ],
     ];
@@ -4925,9 +5411,32 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     }
   }
 
-  /// Point 6: the paid save — confirm, charge 300 coins ONLY
-  /// on the success path, then persist the payload + timestamp
+  /// Point #20: the Logo Parts save button label follows the
+  /// remote price (price_logo_parts_save, fallback 300).
+  String _logoPartsSaveButtonLabel() {
+    final PriceSpec s = PricingService.specOr(
+      PricingService.keyLogoPartsSave,
+      fallbackCoins: kLogoPartsSavePriceCoins,
+    );
+    switch (s.kind) {
+      case PriceKind.coins:
+        return 'Save karein — ${s.coins} coins (7 din)';
+      case PriceKind.free:
+        return 'Save karein — FREE (7 din)';
+      case PriceKind.pro:
+        return 'Save karein — sirf Pro (7 din)';
+      case PriceKind.ad:
+        return 'Save karein — ad dekh kar (7 din)';
+    }
+  }
+
+  /// Point 6: the paid save — confirm, charge ONLY on the
+  /// success path, then persist the payload + timestamp
   /// (usable exactly 7 days; expiry removes it — no renewal).
+  /// Point #20: the price is remote (price_logo_parts_save,
+  /// fallback [kLogoPartsSavePriceCoins] = 300) and every kind
+  /// resolves through PricingService — coins (dialog + spend
+  /// below), free (save at once), Pro-only and ad-unlock.
   Future<void> _saveLogoParts() async {
     final preset = _preset;
     if (preset == null || preset.logoParts.isEmpty) return;
@@ -4935,13 +5444,63 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       _applyPartsSave(preset);
       return;
     }
+    final PriceSpec spec = PricingService.specOr(
+      PricingService.keyLogoPartsSave,
+      fallbackCoins: kLogoPartsSavePriceCoins,
+    );
+    switch (spec.kind) {
+      case PriceKind.free:
+        _applyPartsSave(preset);
+        return;
+      case PriceKind.pro:
+        if (PricingService.passesPro) {
+          _applyPartsSave(preset);
+        } else {
+          _showMessage('Logo Parts save sirf Pro users ke liye hai.');
+        }
+        return;
+      case PriceKind.ad:
+        final bool? goAd = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Logo Parts Save'),
+            content: const Text(
+              'Aik rewarded ad dekh kar parts save karein.\n'
+              'Save 7 din tak valid rahe ga — us ke baad settings '
+              'khatam ho jayengi.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Later'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Ad Dekhein — Save'),
+              ),
+            ],
+          ),
+        );
+        if (goAd != true || !mounted) return;
+        final bool watched = await PricingService.watchUnlockAd();
+        if (!mounted) return;
+        if (!watched) {
+          _showMessage('Ad mukammal nahi hua — parts save nahi hue.');
+          return;
+        }
+        _applyPartsSave(preset);
+        return;
+      case PriceKind.coins:
+        break; // confirm dialog + spend below, at the resolved price
+    }
+    final int price = spec.coins;
     final balance = CoinService.instance.balance.value;
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Logo Parts Save'),
         content: Text(
-          'Parts settings save karne ke $kLogoPartsSavePriceCoins coins '
+          'Parts settings save karne ke $price coins '
           'lagein ge.\nSave 7 din tak valid rahe ga — us ke baad settings '
           'khatam ho jayengi.\nAap ka balance: $balance coins.',
         ),
@@ -4952,7 +5511,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Save — $kLogoPartsSavePriceCoins coins'),
+            child: Text('Save — $price coins'),
           ),
         ],
       ),
@@ -4960,7 +5519,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     if (confirm != true || !mounted) return;
     final now = DateTime.now().millisecondsSinceEpoch;
     final res = await CoinService.instance.spendAmount(
-      kLogoPartsSavePriceCoins,
+      price,
       reason: kLogoPartsSaveReason,
       idempotencyKey: 'logo_parts_save:${preset.id}:$now',
     );
@@ -5605,11 +6164,38 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       ),
     );
     if (path == null || !mounted) return;
-    setState(() {
-      project.addClips([path]);
-    });
-    _scheduleSave();
-    _showMessage('Reporter recording clips mein shamil ho gayi.');
+    // P0-1 (tools-fix wave): addClips is a PURE function — it
+    // returns the new list and changes nothing itself. The old
+    // code discarded the result, then saved and announced
+    // success: the recording never reached the project and was
+    // lost. Now the result is assigned (with trims kept in sync
+    // via setClipPaths), the project is saved IMMEDIATELY, and
+    // the message only claims what actually happened.
+    final wasAlreadyThere = project.clipPaths.contains(path);
+    final res = project.addClips([path]);
+    if (wasAlreadyThere) {
+      _showMessage(
+        'Ye recording pehle se clips mein hai — dobara add nahi hui.',
+      );
+      return;
+    }
+    if (res.droppedByCap > 0 || !res.clips.contains(path)) {
+      _showMessage(
+        'Recording clips mein add nahi hui — clips ki had '
+        '(${NewsProject.maxClips}) poori hai. Pehle koi clip '
+        'hatayein.',
+      );
+      return;
+    }
+    setState(() => project.setClipPaths(res.clips));
+    await _saveNow();
+    if (!mounted) return;
+    if (project.clipPaths.contains(path)) {
+      unawaited(_probeClips());
+      _showMessage('Reporter recording clips mein shamil ho gayi.');
+    } else {
+      _showMessage('Recording add nahi ho saki — dobara try karein.');
+    }
   }
 
   Future<void> _pickReporterPhoto() async {
@@ -6080,10 +6666,9 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           hintText: 'Tehreer yahan likhein ya paste karein…',
           border: OutlineInputBorder(),
         ),
-        onChanged: (_) {
-          setState(() {});
-          _scheduleSave();
-        },
+        // P2: debounced rebuild (see _textFieldChanged) — the
+        // whole Maker no longer rebuilds on every keystroke.
+        onChanged: (_) => _textFieldChanged(),
       ),
       const SizedBox(height: 10),
       SizedBox(

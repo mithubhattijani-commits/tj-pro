@@ -59,9 +59,13 @@ class ProService {
   int limitFor(int freeLimit, int proLimit) =>
       proActive ? proLimit : freeLimit;
 
-  /// Loads the cached grant, then refreshes from the server.
-  /// Never throws; any failure leaves the cache (or free mode).
-  Future<void> init() async {
+  /// Loads ONLY the cached grant from shared_preferences (no
+  /// network). [init] runs this first and then refreshes from the
+  /// server; main() also calls it BEFORE the ads SDK preloads its
+  /// interstitial, so a returning Pro user is already recognised
+  /// when the first preload decision is made (point #10: Pro = no
+  /// ads). Never throws; any failure leaves free mode.
+  Future<void> loadCachedGrant() async {
     try {
       final SharedPreferences prefs =
           await SharedPreferences.getInstance();
@@ -79,6 +83,12 @@ class ProService {
     } catch (_) {
       // Cache unreadable -> free mode until a refresh succeeds.
     }
+  }
+
+  /// Loads the cached grant, then refreshes from the server.
+  /// Never throws; any failure leaves the cache (or free mode).
+  Future<void> init() async {
+    await loadCachedGrant();
     await refresh();
   }
 

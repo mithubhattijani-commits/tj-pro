@@ -124,6 +124,8 @@ class RemoteConfig {
     this.killPhotoAi = false,
     this.killAiCaptions = false,
     this.killStore = false,
+    this.killMotion = false,
+    this.prices = const {},
     this.aiToolPriceCoins = aiToolPriceDefaultCoins,
     this.kasheedaFontUrl = AppConfig.kasheedaFontUrl,
     this.nigraanIntroUrl = AppConfig.nigraanIntroUrl,
@@ -236,10 +238,27 @@ class RemoteConfig {
   //   kill_ai_captions   -> AI caption generation (Whisper +
   //                         Urdu (AI)) in the Video Editor
   //   kill_store         -> the Online Store screen
+  //   kill_motion        -> the Motion Graphics Studio (M1)
   final bool killVideoExport;
   final bool killPhotoAi;
   final bool killAiCaptions;
   final bool killStore;
+
+  /// Motion Graphics Studio kill switch (Build M1, v1.11.0).
+  /// JSON key `kill_motion` — same rule as the other four: only
+  /// the literal boolean true arms it; absent = Motion runs.
+  final bool killMotion;
+
+  /// Central remote pricing (fix-list point #20, user order
+  /// 2026-11-25): the raw `prices` object from tj-pro.json,
+  /// kept verbatim so price consumers can read their own keys
+  /// fail-soft. Value semantics per key: a number = that many
+  /// coins, the string "pro" = Pro-only, the string "ad" =
+  /// unlock by watching a rewarded ad, absent = the consumer's
+  /// own default. Motion templates read `motion_price_<id>`
+  /// from this map (see lib/motion/motion_access.dart); the
+  /// central PricingService reads its keys the same way.
+  final Map<String, dynamic> prices;
 
   // --- Build 9 (v1.7.0, fix-list point #6B): AI TOOL PRICE -----
   // Per-use price in coins for the big AI tools (AI caption
@@ -316,6 +335,8 @@ class RemoteConfig {
       killPhotoAi: killPhotoAi,
       killAiCaptions: killAiCaptions,
       killStore: killStore,
+      killMotion: killMotion,
+      prices: prices,
       aiToolPriceCoins: aiToolPriceCoins,
       kasheedaFontUrl: kasheedaFontUrl,
       nigraanIntroUrl: nigraanIntroUrl,
@@ -419,6 +440,10 @@ class RemoteConfig {
       killPhotoAi: json['kill_photo_ai'] == true,
       killAiCaptions: json['kill_ai_captions'] == true,
       killStore: json['kill_store'] == true,
+      killMotion: json['kill_motion'] == true,
+      // Point #20: the central price map, verbatim (consumers
+      // parse their own keys fail-soft).
+      prices: _stringMap(json['prices']),
       // Build 9: AI tool price — a positive int (or numeric
       // string) wins; anything else keeps the default of 25.
       aiToolPriceCoins: _aiToolPrice(json['ai_tool_price_coins']),

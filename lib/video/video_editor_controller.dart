@@ -401,6 +401,17 @@ abstract class VideoEditorController {
   String? get stageLayer;
   set stageLayer(String? value);
   List<double> get stageMatrix;
+
+  /// P1-1: Adjust-extras overlay strengths for the stage
+  /// (vignette 0..1, grain opacity 0..~0.35) — derived from the
+  /// same AdjustParams as the export chain; 0 while comparing.
+  double get adjustVignetteStrength;
+  double get adjustGrainOpacity;
+
+  /// P2: a tool-row item was tapped while its op cannot run
+  /// (busy / no clip) — explain WHY in the status line instead
+  /// of leaving a dead, dimmed button.
+  void explainToolTap();
   Rect get stageMediaRect;
   set stageMediaRect(Rect value);
   Matrix4 stageTransformMatrix(Size frameSize);

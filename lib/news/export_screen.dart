@@ -53,6 +53,7 @@ import '../services/export_settings.dart';
 import '../services/feature_gate.dart';
 import '../services/ffmpeg_service.dart';
 import '../services/poster_export_service.dart';
+import '../services/pricing_service.dart';
 import '../services/reel_export_service.dart';
 import '../services/unity_ads_service.dart';
 import 'channel_preset.dart';
@@ -126,11 +127,21 @@ class _ExportScreenState extends State<ExportScreen> {
   /// Total coin cost of THIS export at the current settings.
   /// v1.2.0: resolution is FREE (720p / 1080p / 4K all cost 0 coins —
   /// Unity interstitials play alongside the export instead). The
-  /// only remaining charge is +50 when the preset has chroma key on
-  /// — that is the chroma feature's own price, not a resolution
-  /// price. Shown on the Export button.
-  int get _exportCostCoins =>
-      widget.preset.chromaEnabled ? CoinCosts.chromaKey : 0;
+  /// only remaining charge is the chroma-key price when the preset
+  /// has chroma key on — that is the chroma feature's own price,
+  /// not a resolution price. Shown on the Export button.
+  /// Point #20: the chroma price is remote (price_ns_chroma,
+  /// fallback 50); the button shows an amount only for a coin
+  /// price — free / Pro-only / ad gates read 0 here and are
+  /// enforced by PricingService.charge in _export.
+  int get _exportCostCoins {
+    if (!widget.preset.chromaEnabled) return 0;
+    final PriceSpec s = PricingService.specOr(
+      PricingService.keyNsChroma,
+      fallbackCoins: CoinCosts.chromaKey,
+    );
+    return s.kind == PriceKind.coins ? s.coins : 0;
+  }
 
   String get _sizeEstimate {
     final label = _settings.estimatedSizeLabel(_durationSec);
@@ -168,33 +179,39 @@ class _ExportScreenState extends State<ExportScreen> {
     // the old 720p 50 / 1080p 100 / 4K 200 charge is abolished;
     // Unity interstitials play alongside the export instead (fired
     // unawaited below). The ONLY charge left here is chroma key
-    // (50) when the preset has chroma on — the chroma feature's own
+    // when the preset has chroma on — the chroma feature's own
     // price (plan §15), not a resolution price; the chroma pass runs
-    // inside this export. Affordability of the TOTAL is checked
-    // first so a half-paid export never starts; the spends then land
-    // in order. A failed export does NOT auto-refund — no refund
-    // function exists server-side; the charge is per export attempt,
-    // stated on the button. Admins are waived server-side.
-    final charges = <CoinFeature>[
-      if (widget.preset.chromaEnabled) CoinFeature.chromaKey,
-    ];
-    final totalCost =
-        charges.fold(0, (sum, f) => sum + CoinCosts.costFor(f));
-    if (!CoinService.instance.canAffordAmount(totalCost)) {
-      setState(() {
-        _error = 'Coins kam hain — is export ke liye $totalCost coins '
-            'chahiye (Chroma key). Watch Ads se kamayein.';
-        _failedStep = 'Coins';
-      });
-      return;
-    }
-    for (final feature in charges) {
-      final spendResult = await CoinService.instance.spend(feature);
+    // inside this export. A failed export does NOT auto-refund —
+    // no refund function exists server-side; the charge is per
+    // export attempt, stated on the button. Admins are waived
+    // server-side.
+    // Point #20: that chroma charge now resolves through
+    // PricingService (price_ns_chroma, fallback 50) — a coin
+    // price spends as before; free passes; "pro" gates the
+    // export for non-Pro users; "ad" takes one rewarded ad
+    // before the export starts. Any failure aborts BEFORE the
+    // export (and before the alongside interstitials below).
+    if (widget.preset.chromaEnabled) {
+      final spendResult = await PricingService.charge(
+        PricingService.keyNsChroma,
+        reason: CoinCosts.reasonFor(CoinFeature.chromaKey),
+        fallbackCoins: CoinCosts.chromaKey,
+      );
       if (!spendResult.ok) {
         if (!mounted) return;
         setState(() {
-          _error = 'Coins nahi kat sake (${spendResult.error}) — '
-              'export shuru nahi hua.';
+          _error = spendResult.error == PricingService.errorProRequired
+              ? 'Chroma key sirf Pro users ke liye hai — chroma '
+                  'band karke export karein ya Pro lein.'
+              : spendResult.error == PricingService.errorAdNotCompleted
+                  ? 'Chroma key ke liye ad mukammal nahi hua — '
+                      'export shuru nahi hua.'
+                  : spendResult.error == 'insufficient_balance'
+                      ? 'Coins kam hain — is export ke liye '
+                          '$_exportCostCoins coins chahiye '
+                          '(Chroma key). Watch Ads se kamayein.'
+                      : 'Coins nahi kat sake (${spendResult.error}) '
+                          '— export shuru nahi hua.';
           _failedStep = 'Coins';
         });
         return;

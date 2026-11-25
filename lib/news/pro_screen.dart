@@ -80,11 +80,23 @@ class _ProScreenState extends State<ProScreen> {
     ),
   ];
 
+  /// F1 (tools-fix wave 2): ONLY the benefits the code actually
+  /// delivers. The old list promised zyada tool limits, rozana
+  /// zyada AI Voice, AI tools par kam coins and naye features
+  /// sab se pehle — none of those mechanisms exist anywhere in
+  /// the code, and a PAID screen must never promise what the app
+  /// does not do. Verified wiring for what IS listed:
+  ///   - no ads: UnityAdsService._proNoAds — banner,
+  ///     interstitial and export ads all check
+  ///     ProService.proActive;
+  ///   - Motion Studio PRO templates: motion_access.dart
+  ///     returns proIncluded for Pro users;
+  ///   - 1080p/4K export: editor_export_controller's double-ad
+  ///     quality gate skips Pro users entirely.
   static const List<String> _benefits = <String>[
-    'Sab tools zyada limits ke sath',
-    'AI Voice rozana zyada',
-    'AI tools par kam coins',
-    'Naye features sab se pehle',
+    'Koi ads nahi — banner, interstitial aur export ads sab band',
+    'Motion Studio ke PRO templates shamil',
+    '1080p / 4K export baghair double ad ke',
   ];
 
   /// Monthly is the default selection (mockup S6).

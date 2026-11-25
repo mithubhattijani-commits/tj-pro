@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:unity_ads_plugin/unity_ads_plugin.dart';
 
 import '../app_config.dart';
+import 'pro_service.dart';
 
 /// Unity Ads rewarded + interstitial + banner integration for
 /// TJ Pro.
@@ -39,6 +40,17 @@ class UnityAdsService {
   static bool get initFailed => _initFailed;
 
   static DateTime? _lastInterstitialShown;
+
+  /// Point #10 (2026-11-25): Pro subscribers see NO ads. While the
+  /// Pro grant is active, interstitial load/show and the export-ad
+  /// sequence are suppressed CENTRALLY here, so every call site
+  /// (Home, Video Editor, News Studio, Store) is covered at once
+  /// without each one checking Pro itself. Rewarded ads are
+  /// deliberately NOT suppressed — watching one is the user's own
+  /// choice (earn-coins), a separate open question. [ProService]
+  /// is fail-soft: any doubt reads as free mode, so this guard can
+  /// never break the normal ad flow.
+  static bool get _proNoAds => ProService.instance.proActive;
 
   /// Fired when a full-screen ad has actually been watched: a
   /// rewarded ad completed in full, or an interstitial that was
@@ -199,6 +211,7 @@ class UnityAdsService {
   /// Load the interstitial ad. Called at init and automatically after
   /// each show so the next ad is ready.
   static Future<bool> loadInterstitialAd() async {
+    if (_proNoAds) return false; // Point #10: Pro = no ads.
     if (!_initialized || !AppConfig.unityInterstitialEnabled) return false;
     try {
       final completer = Completer<bool>();
@@ -224,6 +237,7 @@ class UnityAdsService {
   /// allows it (at least [interstitialMinIntervalSec] since the last
   /// show). Returns true when an ad was shown. Never throws.
   static Future<bool> showInterstitialAd() async {
+    if (_proNoAds) return false; // Point #10: Pro = no ads.
     if (!_initialized || !AppConfig.unityInterstitialEnabled) return false;
     final last = _lastInterstitialShown;
     if (last != null) {
@@ -284,6 +298,7 @@ class UnityAdsService {
   /// already running are ignored.
   static Future<void> showExportAds(int count) async {
     if (count <= 0 || _exportAdsInFlight) return;
+    if (_proNoAds) return; // Point #10: Pro = no ads, exports included.
     if (!AppConfig.unityAdsEnabled ||
         !AppConfig.unityInterstitialEnabled) {
       return;
@@ -380,7 +395,30 @@ class _UnityBannerAdWidgetState extends State<UnityBannerAdWidget> {
   bool _failed = false;
 
   @override
+  void initState() {
+    super.initState();
+    // Point #10: rebuild when the Pro state flips (sign-in, grant,
+    // refresh) so the banner disappears/appears live instead of
+    // waiting for the slot to be recreated.
+    ProService.instance.isPro.addListener(_onProChanged);
+  }
+
+  @override
+  void dispose() {
+    ProService.instance.isPro.removeListener(_onProChanged);
+    super.dispose();
+  }
+
+  void _onProChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
   Widget build(BuildContext context) {
+    // Point #10: Pro subscribers see no banner at all.
+    if (ProService.instance.proActive) {
+      return const SizedBox.shrink();
+    }
     if (!AppConfig.adsEnabled ||
         !AppConfig.bannerAdEnabled ||
         !AppConfig.unityAdsEnabled ||

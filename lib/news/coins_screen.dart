@@ -4,7 +4,68 @@ import 'package:flutter/material.dart';
 
 import '../services/auth_service.dart';
 import '../services/coin_service.dart';
+import '../services/pricing_service.dart';
+import '../services/remote_config_service.dart';
 import '../theme.dart';
+
+/// F4 (tools-fix wave 2): the Prices list's rows, DERIVED from
+/// [PricingService] — the same resolution the charges themselves
+/// use — so a remote price change updates the list and the
+/// charge together and they can never silently desync again.
+/// (The old hardcoded list showed 'AI Enhance (Photo / Video)
+/// 50 coins' while the real charge was 25.) Fallbacks are the
+/// CoinCosts legacy prices the charge sites themselves pass.
+/// [config] is a test seam; the screen reads the live config.
+/// Export rows stay literal: exports carry no coin price by
+/// design (720p free, 1080p/4K free with ads alongside).
+List<(String, String)> coinsPriceRows({RemoteConfig? config}) {
+  String label(String key, int fallback) {
+    final s = PricingService.specOr(
+      key,
+      fallbackCoins: fallback,
+      config: config,
+    );
+    return switch (s.kind) {
+      PriceKind.free => 'FREE',
+      PriceKind.coins => '${s.coins} coins',
+      PriceKind.pro => 'Pro ke liye shamil',
+      PriceKind.ad => 'Ad dekh kar',
+    };
+  }
+
+  return [
+    (
+      'One Click AI News Maker',
+      label(PricingService.keyNsOneClick, CoinCosts.oneClick),
+    ),
+    (
+      'Voiceover',
+      label(PricingService.keyNsVoiceover, CoinCosts.voiceover),
+    ),
+    (
+      'Chroma key',
+      label(PricingService.keyNsChroma, CoinCosts.chromaKey),
+    ),
+    (
+      'Premium template',
+      label(
+        PricingService.keyNsPremiumTemplate,
+        CoinCosts.premiumTemplate,
+      ),
+    ),
+    (
+      'AI Enhance (Photo / Video)',
+      label(
+        PricingService.keyPhotoAi,
+        config?.aiToolPriceCoins ??
+            RemoteConfigService.instance.config.aiToolPriceCoins,
+      ),
+    ),
+    ('Export 720p', 'FREE'),
+    ('Export 1080p', 'FREE • ads ke sath'),
+    ('Export 4K', 'FREE • ads ke sath'),
+  ];
+}
 
 /// Coins section — News Studio v1 (plan §7 item 18, mockup 1/9).
 ///
@@ -239,16 +300,9 @@ class _CoinsScreenState extends State<CoinsScreen> {
                     // nothing spends. Export is FREE (ads model);
                     // chroma inside an export is the only
                     // export-related charge, listed on its own.
-                    for (final (label, price) in const [
-                      ('One Click AI News Maker', '100 coins'),
-                      ('Voiceover', '50 coins'),
-                      ('Chroma key', '50 coins'),
-                      ('Premium template', '25 coins'),
-                      ('AI Enhance (Photo / Video)', '50 coins'),
-                      ('Export 720p', 'FREE'),
-                      ('Export 1080p', 'FREE • ads ke sath'),
-                      ('Export 4K', 'FREE • ads ke sath'),
-                    ])
+                    // F4: derived from PricingService (see
+                    // coinsPriceRows) — never hardcoded again.
+                    for (final (label, price) in coinsPriceRows())
                       ListTile(
                         dense: true,
                         title: Text(label),

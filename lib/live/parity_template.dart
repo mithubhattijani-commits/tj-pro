@@ -1352,7 +1352,12 @@ Future<ParityAssets> renderParityAssets({
           strip: t1strip,
           period: t1Period,
           chip: t1chip,
-          scrollRight: true,
+          // P0-3: the project's ticker direction (carried on the
+          // effective preset's top ribbon by effectivePresetFor,
+          // the same value the Maker preview reads) steers the
+          // scrolling Urdu band. Default rtl → true → the exact
+          // pre-fix command.
+          scrollRight: preset.topRibbon.direction == RibbonDirection.rtl,
           windowW: g.urduWindowW(),
           textDx: headOv.dx * g.width,
           textDy: headOv.dy * g.height,
@@ -1464,6 +1469,9 @@ Future<ParityAssets> renderParityAssets({
     String? fontFamily,
     // v1.5.1 (fix #52): the headline Text Style's shadows.
     List<ui.Shadow>? shadows,
+    // P0-3: scroll direction for the looping strip (the still
+    // branch never scrolls). Default true = the historic design.
+    bool scrollRight = true,
   }) async {
     if (!showText) {
       return ParityRibbonAssets(bg: bg, y: y);
@@ -1527,7 +1535,7 @@ Future<ParityAssets> renderParityAssets({
       y: y,
       strip: strip,
       period: period,
-      scrollRight: true,
+      scrollRight: scrollRight,
       windowW: g.f3TextWindowW,
       textDx: textDx,
       textDy: textDy,
@@ -1558,6 +1566,12 @@ Future<ParityAssets> renderParityAssets({
       textColor: preset.designTopTextColor,
       fontFamily: headlineFontFamily,
       shadows: headlineShadows,
+      // P0-3: the TOP band is the ticker band (the effective
+      // preset puts the project's ticker text + direction on it)
+      // — its scroll follows the project's direction, the same
+      // value the Maker preview's top marquee reads. The middle
+      // (headline) band keeps the design direction.
+      scrollRight: preset.topRibbon.direction == RibbonDirection.rtl,
     ));
   }
   if (!g.isHidden(NewsElement.middleRibbon)) {

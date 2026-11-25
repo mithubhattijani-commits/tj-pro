@@ -115,12 +115,17 @@ void main() {
 
   testWidgets('timeline: transport, tabs, A2 lane, playhead — panel open',
       (tester) async {
+    // SPEC CHANGE (Point #27, tools-fix wave P0-4): this test
+    // used to pin the Build 13 arrangement — timeline fully
+    // visible WITH a panel open. The user overruled that layout
+    // (the timeline squeezed the preview to a strip): now the
+    // timeline shows only in the no-tool state, opening a tool
+    // collapses it, and closing the tool brings it back.
     final project = NewsProject.create()
       ..voiceoverPath = '/nonexistent/vo.wav'
       ..voiceoverDurationSec = 45;
     await pumpMaker(tester, project: project);
-    await _openTool(tester, 'logo');
-    // The timeline is fully visible even with the Logo panel open.
+    // No-tool state: the full timeline is here.
     expect(find.byKey(const Key('tlPlayPause')), findsOneWidget);
     expect(find.byKey(const Key('tlStop')), findsOneWidget);
     expect(find.byKey(const Key('tlTimeText')), findsOneWidget);
@@ -131,6 +136,16 @@ void main() {
     }
     expect(find.byKey(const Key('tlTabIcon-clips')), findsOneWidget);
     expect(find.textContaining('koi music nahi'), findsOneWidget);
+    // Open the Logo tool: the timeline collapses away.
+    await _openTool(tester, 'logo');
+    expect(find.byKey(const Key('makerPanel-logo')), findsOneWidget);
+    expect(find.byKey(const Key('tlPlayPause')), findsNothing);
+    expect(find.byKey(const Key('tlTab-clips')), findsNothing);
+    // Close the tool (the panel's ✓): the timeline returns.
+    await tester.tap(find.byKey(const Key('makerPanelDone')));
+    await _frames(tester);
+    expect(find.byKey(const Key('tlPlayPause')), findsOneWidget);
+    expect(find.byKey(const Key('tlTab-clips')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

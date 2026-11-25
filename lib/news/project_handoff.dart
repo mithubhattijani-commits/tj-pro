@@ -21,8 +21,10 @@
 ///     source — a bundled asset path ([chromaBackgroundAsset]) or a
 ///     gallery file ([ProChroma.backgroundImagePath]); the editor
 ///     materialises the asset to a file before export;
-///   - PIP: the preset's enabled/position/scale (the inset VIDEO is
-///     picked in the editor itself — the project carries no PIP clip).
+///   - PIP: the preset's enabled/position/scale + the project's
+///     picked inset video ([NewsProject.pipVideoPath], P0-3 —
+///     before that field existed the switch had no source at all
+///     and the reel export never composited an inset).
 ///
 /// Pure + synchronous (only `File.existsSync` checks) so it is covered
 /// by plain unit tests with real temp files.
@@ -54,10 +56,27 @@ class ProjectHandoff {
     required this.pipPosition,
     required this.pipScale,
     required this.cappedClipCount,
+    this.clipTrims = const [],
+    this.pipVideoPath,
   });
 
   /// Clip paths that exist on disk, in timeline order.
   final List<String> clipPaths;
+
+  /// Per-clip trim ranges (P1-3), PARALLEL to [clipPaths] — the
+  /// trim of the project entry each handed-over clip came from.
+  /// May be shorter than [clipPaths] in hand-built handoffs;
+  /// [trimAt] falls back to the full range.
+  final List<ClipTrim> clipTrims;
+
+  /// Trim of handed-over clip [i] (full range when absent).
+  ClipTrim trimAt(int i) =>
+      (i >= 0 && i < clipTrims.length) ? clipTrims[i] : ClipTrim.full;
+
+  /// The project's PIP inset video (P0-3), only when the file
+  /// exists on disk — null = PIP has no source, and the export
+  /// says so in its notes instead of faking an inset.
+  final String? pipVideoPath;
 
   /// Project clip paths whose file is gone — shown to the user, never
   /// silently dropped.
@@ -135,22 +154,33 @@ ProjectHandoff buildHandoff({
   ChannelPreset? preset,
 }) {
   final clips = <String>[];
+  final clipTrims = <ClipTrim>[];
   final dropped = <String>[];
   // Phase 9 cap: only the first [NewsProject.maxClips] existing
   // clips are handed over; the rest are counted (not silently
   // dropped) so the export can report them.
   var capped = 0;
-  for (final path in project.clipPaths) {
+  for (var i = 0; i < project.clipPaths.length; i++) {
+    final path = project.clipPaths[i];
     if (File(path).existsSync()) {
       if (clips.length >= NewsProject.maxClips) {
         capped++;
         continue;
       }
       clips.add(path);
+      clipTrims.add(project.trimAt(i));
     } else {
       dropped.add(path);
     }
   }
+
+  // P0-3: the PIP inset's video source rides the handoff too —
+  // only when the picked file is actually there.
+  final pipPath = project.pipVideoPath;
+  final pipVideo =
+      (pipPath != null && pipPath.isNotEmpty && File(pipPath).existsSync())
+          ? pipPath
+          : null;
 
   String? voiceover;
   final vo = project.voiceoverPath;
@@ -232,6 +262,8 @@ ProjectHandoff buildHandoff({
     pipPosition: pipPosition,
     pipScale: (preset?.pipScale ?? 0.3).clamp(0.15, 0.5),
     cappedClipCount: capped,
+    clipTrims: clipTrims,
+    pipVideoPath: pipVideo,
   );
 }
 
@@ -256,7 +288,21 @@ ChannelPreset effectivePresetFor({
     copy.englishRibbon.text = englishTicker;
   }
   copy.templateKind = project.templateKind;
-  copy.showBreakingBanner = project.breaking;
+  // Tools-fix wave (P0-3): the Breaking Banner SWITCH is the
+  // preset's own showBreakingBanner — the deep copy above already
+  // carries it, and the Maker preview reads that same value. The
+  // old line overwrote it with project.breaking (the template
+  // KIND flag), which forced the banner off for every non-
+  // breaking project and made the Template panel's switch dead
+  // in export. The switch now wins, preview == export.
+  // P0-3 (ticker direction): the project's direction override
+  // steers the export's top ribbon exactly as it steers the
+  // Maker preview's top band (and the Breaking template, which
+  // already honoured it) — one value, read by both.
+  final directionOverride = project.tickerDirection;
+  if (directionOverride != null) {
+    copy.topRibbon.direction = RibbonDirection.fromId(directionOverride);
+  }
   // Build 13 (point #19): the project's ticker speed + loop
   // ride the copy as TRANSIENT fields (never serialised) — the
   // parity geometry reads them from here, so preview (which

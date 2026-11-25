@@ -301,8 +301,9 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen>
     fade: _fade,
   );
 
-  bool get _hslIsNeutral =>
-      _hslAdjustments.every((a) => a[0] == 0 && a[1] == 1.0 && a[2] == 0);
+  // F3: the shared neutral test from the pipeline — preview,
+  // params and export all judge the table the same way.
+  bool get _hslIsNeutral => hslAdjustmentsAreNeutral(_hslAdjustments);
 
   bool get _curveIsNeutral => _curvePoints.values.every(
     (pts) =>
@@ -1508,6 +1509,16 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen>
         hueShift: _hueShift,
         grain: _grain,
         curveLuts: _curveIsNeutral ? null : _buildCurveLuts(),
+        // F3: the per-color HSL table rides the export params
+        // (deep-copied — later slider moves must not mutate an
+        // in-flight export), so Save applies exactly what the
+        // preview shows. 'Apply HSL' still exists as a bake,
+        // but it is no longer required for the effect to save.
+        hslAdjustments: _hslIsNeutral
+            ? null
+            : _hslAdjustments
+                .map((a) => List<double>.from(a))
+                .toList(),
       );
       // Overlays: photos go as files; sticker glyphs are rasterized
       // here (main isolate) and go as PNG bytes.

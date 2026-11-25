@@ -103,6 +103,59 @@ class SeoData {
   }
 }
 
+/// Per-clip trim range (Tools-fix wave, P1-3): the part of one
+/// clip FILE the timeline entry actually uses — [startSec] into
+/// the file up to [endSec] (null = to the end of the file). A
+/// split is two entries pointing at the same file with adjoining
+/// trim ranges, so splitting never copies or re-encodes media.
+/// Defaults are the FULL range, which is exactly the pre-trim
+/// behaviour; old project JSON has no trim data and loads
+/// full-range (backward compatible both ways — an old build
+/// reading new JSON simply ignores the extra key).
+class ClipTrim {
+  const ClipTrim({this.startSec = 0, this.endSec});
+
+  /// Seconds into the clip file where this entry starts (>= 0).
+  final double startSec;
+
+  /// Seconds into the clip file where this entry ends, or null
+  /// for "to the end of the file".
+  final double? endSec;
+
+  /// The untouched range.
+  static const ClipTrim full = ClipTrim();
+
+  bool get isFullRange => startSec <= 0 && endSec == null;
+
+  /// Length of the used range when the file is [fileDurationSec]
+  /// long (0 when the range is empty / the file is unknown).
+  double effectiveDuration(double fileDurationSec) {
+    final end = endSec ?? fileDurationSec;
+    final d = end - startSec;
+    return d > 0 ? d : 0;
+  }
+
+  ClipTrim copyWith({double? startSec, double? endSec, bool clearEnd = false}) {
+    return ClipTrim(
+      startSec: startSec ?? this.startSec,
+      endSec: clearEnd ? null : (endSec ?? this.endSec),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'start': startSec,
+        if (endSec != null) 'end': endSec,
+      };
+
+  static ClipTrim fromJson(Map<String, dynamic> json) {
+    var start = (json['start'] as num?)?.toDouble() ?? 0;
+    if (start < 0) start = 0;
+    var end = (json['end'] as num?)?.toDouble();
+    if (end != null && end <= start) end = null;
+    return ClipTrim(startSec: start, endSec: end);
+  }
+}
+
 /// One news project — the shared JSON behind News Maker, AI News
 /// Maker and the SEO step.
 class NewsProject {
@@ -115,6 +168,8 @@ class NewsProject {
     this.voiceoverPath,
     this.voiceoverDurationSec,
     List<String>? clipPaths,
+    List<ClipTrim>? clipTrims,
+    this.pipVideoPath,
     this.presetId = 'nigraan-tv',
     this.templateKind = 'nigraanFinal',
     this.breakingVariant = 'breakingRedBanner',
@@ -164,6 +219,7 @@ class NewsProject {
     DateTime? updatedAt,
   })  : elementOverrides = elementOverrides ?? {},
         clipPaths = clipPaths ?? [],
+        clipTrims = normaliseClipTrims(clipPaths ?? [], clipTrims),
         subtitles = subtitles ?? [],
         sources = sources ?? [],
         seo = seo ?? SeoData(),
@@ -205,6 +261,92 @@ class NewsProject {
 
   /// Clip file paths (gallery videos), in timeline order.
   List<String> clipPaths;
+
+  /// Per-clip trim ranges (P1-3), PARALLEL to [clipPaths] — entry
+  /// i trims clip i. Always the same length as [clipPaths]: the
+  /// constructor normalises it, and every clip-list mutation must
+  /// go through [setClipPaths] (or set both lists together, as
+  /// the Maker's split does) so the two never drift apart.
+  List<ClipTrim> clipTrims;
+
+  /// Tools-fix wave (P0-3): the PIP inset's video source — a
+  /// video file the user picked in the Template panel's PIP
+  /// section. Before this field the PIP switch/position/scale
+  /// existed but no source could ever be chosen, so the export
+  /// had nothing to composite. Null = no PIP video picked.
+  String? pipVideoPath;
+
+  /// Pads/truncates [trims] to exactly one entry per path in
+  /// [paths] (full-range where missing) — the invariant keeper
+  /// for the parallel [clipTrims] list.
+  static List<ClipTrim> normaliseClipTrims(
+    List<String> paths,
+    List<ClipTrim>? trims,
+  ) {
+    return List<ClipTrim>.generate(
+      paths.length,
+      (i) => (trims != null && i < trims.length) ? trims[i] : ClipTrim.full,
+    );
+  }
+
+  /// Re-attaches trims after a clip-list edit (add / remove /
+  /// reorder from the picker, which returns paths only): the
+  /// n-th occurrence of a path in [newPaths] inherits the trim of
+  /// the n-th occurrence in [oldPaths], so a split's two halves
+  /// (same path, different trims) keep their own ranges through
+  /// a reorder. Brand-new paths get the full range.
+  static List<ClipTrim> reconcileClipTrims({
+    required List<String> oldPaths,
+    required List<ClipTrim> oldTrims,
+    required List<String> newPaths,
+  }) {
+    int occurrenceIn(List<String> list, int upto, String path) {
+      var n = 0;
+      for (var i = 0; i < upto && i < list.length; i++) {
+        if (list[i] == path) n++;
+      }
+      return n;
+    }
+
+    return List<ClipTrim>.generate(newPaths.length, (i) {
+      final path = newPaths[i];
+      final want = occurrenceIn(newPaths, i, path);
+      var seen = -1;
+      for (var j = 0; j < oldPaths.length; j++) {
+        if (oldPaths[j] != path) continue;
+        seen++;
+        if (seen == want) {
+          return j < oldTrims.length ? oldTrims[j] : ClipTrim.full;
+        }
+      }
+      return ClipTrim.full;
+    });
+  }
+
+  /// The ONE way screens replace the clip list: paths and their
+  /// trims move together (see [reconcileClipTrims]).
+  void setClipPaths(List<String> next) {
+    clipTrims = reconcileClipTrims(
+      oldPaths: clipPaths,
+      oldTrims: clipTrims,
+      newPaths: next,
+    );
+    clipPaths = List<String>.from(next);
+  }
+
+  /// Trim of clip [i] (full range when out of bounds).
+  ClipTrim trimAt(int i) =>
+      (i >= 0 && i < clipTrims.length) ? clipTrims[i] : ClipTrim.full;
+
+  /// Used length of clip [i] when its file is [fileDurationSec]
+  /// long (null = duration unknown → the trim's own span when it
+  /// has an end, else null).
+  double? clipEffectiveDurationAt(int i, double? fileDurationSec) {
+    final trim = trimAt(i);
+    if (fileDurationSec != null) return trim.effectiveDuration(fileDurationSec);
+    if (trim.endSec != null) return trim.endSec! - trim.startSec;
+    return null;
+  }
 
   /// Channel preset id this project belongs to.
   String presetId;
@@ -472,6 +614,9 @@ class NewsProject {
     String? voiceoverPath,
     double? voiceoverDurationSec,
     List<String>? clipPaths,
+    List<ClipTrim>? clipTrims,
+    String? pipVideoPath,
+    bool clearPipVideo = false,
     String? presetId,
     String? templateKind,
     String? breakingVariant,
@@ -530,6 +675,16 @@ class NewsProject {
       voiceoverDurationSec:
           voiceoverDurationSec ?? this.voiceoverDurationSec,
       clipPaths: clipPaths ?? List<String>.from(this.clipPaths),
+      clipTrims: clipTrims ??
+          (clipPaths == null
+              ? List<ClipTrim>.from(this.clipTrims)
+              : reconcileClipTrims(
+                  oldPaths: this.clipPaths,
+                  oldTrims: this.clipTrims,
+                  newPaths: clipPaths,
+                )),
+      pipVideoPath:
+          clearPipVideo ? null : (pipVideoPath ?? this.pipVideoPath),
       presetId: presetId ?? this.presetId,
       templateKind: templateKind ?? this.templateKind,
       breakingVariant: breakingVariant ?? this.breakingVariant,
@@ -597,6 +752,8 @@ class NewsProject {
         'voiceoverPath': voiceoverPath,
         'voiceoverDurationSec': voiceoverDurationSec,
         'clipPaths': clipPaths,
+        'clipTrims': clipTrims.map((t) => t.toJson()).toList(),
+        'pipVideoPath': pipVideoPath,
         'presetId': presetId,
         'templateKind': templateKind,
         'breakingVariant': breakingVariant,
@@ -658,6 +815,18 @@ class NewsProject {
         if (c is String) clips.add(c);
       }
     }
+    // P1-3: per-clip trims — absent on pre-trim saves (the
+    // constructor normalises to full ranges); malformed entries
+    // fall back to the full range for that clip only.
+    final rawTrims = json['clipTrims'];
+    final trims = <ClipTrim>[];
+    if (rawTrims is List) {
+      for (final t in rawTrims) {
+        trims.add(
+          t is Map<String, dynamic> ? ClipTrim.fromJson(t) : ClipTrim.full,
+        );
+      }
+    }
     final rawSubs = json['subtitles'];
     final subs = <SubtitleLine>[];
     if (rawSubs is List) {
@@ -707,6 +876,8 @@ class NewsProject {
       voiceoverDurationSec:
           (json['voiceoverDurationSec'] as num?)?.toDouble(),
       clipPaths: clips,
+      clipTrims: trims,
+      pipVideoPath: json['pipVideoPath'] as String?,
       presetId: (json['presetId'] as String?) ?? 'nigraan-tv',
       templateKind: (json['templateKind'] as String?) ?? 'nigraanFinal',
       breakingVariant:
