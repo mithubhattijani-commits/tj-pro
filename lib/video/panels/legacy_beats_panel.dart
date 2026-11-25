@@ -57,6 +57,52 @@ class LegacyBeatsPanel extends StatelessWidget {
                   style: TextStyle(color: Colors.grey),
                 ),
               const Divider(height: 32),
+              // A1 (v1.12): manual timeline markers.
+              const Text('Timeline markers',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 4),
+              const Text(
+                'Beats aur markers timeline par dikhte hain — playhead, '
+                'Split aur trim un par snap hote hain.',
+                style: TextStyle(color: Colors.grey, fontSize: 12),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: host.clips.isEmpty
+                          ? null
+                          : host.addMarkerAtPlayhead,
+                      icon: const Icon(Icons.bookmark_add_outlined),
+                      label: const Text('Playhead par marker'),
+                    ),
+                  ),
+                ],
+              ),
+              if (host.markers.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                for (final m in host.markers)
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.bookmark,
+                        size: 14,
+                        color: Color(0xFFFFD60A),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text('Marker — ${m.toStringAsFixed(1)}s'),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 16),
+                        tooltip: 'Marker hatayein',
+                        onPressed: () => host.removeMarker(m),
+                      ),
+                    ],
+                  ),
+              ],
+              const Divider(height: 32),
         ];
   }
 

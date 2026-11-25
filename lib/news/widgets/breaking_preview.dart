@@ -449,6 +449,7 @@ class BreakingTemplatePreview extends StatelessWidget {
               cubeClockwise: template.logoCubeDirection != 'ccw',
               cubePedestal: template.logoCubePedestal,
               parts: preset.logoParts,
+              partsScene: preset.logoPartsScene,
             ),
           ),
           // Category chip + intro/outro markers (top-left).
@@ -1012,6 +1013,7 @@ class ClassicPreview extends StatelessWidget {
               cubeClockwise: preset.logoCubeDirection != 'ccw',
               cubePedestal: preset.logoCubePedestal,
               parts: preset.logoParts,
+              partsScene: preset.logoPartsScene,
             ),
           ),
           Positioned(

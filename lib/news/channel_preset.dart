@@ -458,6 +458,16 @@ class ChannelPreset {
   /// them — the panel compares and warns).
   String? logoPartsSourcePath;
 
+  /// Transient (never serialised on its own): the WORKING
+  /// Logo Parts SCENE (redesign Build 2) — the glow layer
+  /// (Options 28–32) and base plate (Option 33) around
+  /// [logoParts]. It rides the same lifecycle as the working
+  /// parts: session-only, restored from the paid save payload
+  /// ([logoPartsSavedJson], which carries the scene since
+  /// Build 2) while the save is active, and copied onto
+  /// preview/export clones with the parts.
+  LogoPartsScene logoPartsScene = LogoPartsScene();
+
   /// Top ticker ribbon — CURRENT story (contentKind `current`).
   RibbonConfig topRibbon;
 

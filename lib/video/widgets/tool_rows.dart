@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import '../../theme.dart';
 import '../../motion/motion_gallery_screen.dart';
 import '../../news/store_screen.dart';
+import '../../widgets/tool_guide.dart';
 import '../video_editor_controller.dart';
 
 /// The three tool rails + the open panel's header, sharing the
@@ -18,6 +19,58 @@ import '../video_editor_controller.dart';
 class ToolRows {
   final VideoEditorController host;
   const ToolRows(this.host);
+
+  /// Point #21: rail item id → guide id. Har rail tool ki
+  /// guide item ko der tak dabane (long-press) se khulti hai —
+  /// panel wale tools ki guide un ke panel header mein bhi
+  /// hai; instant ops (Split, Delete, …) ke liye yahi un ki
+  /// Guide ka rasta hai.
+  static const Map<String, String> _railGuideIds = {
+    'canvas': 've.canvas',
+    'audio': 've.audio',
+    'sticker': 've.overlay',
+    'text': 've.text',
+    'effect': 've.effects',
+    'filter': 've.colour',
+    'pip': 've.overlay',
+    'precut': 've.precut',
+    'split': 've.split',
+    'delete': 've.delete',
+    'volume': 've.volume',
+    'background': 've.canvas',
+    'speed': 've.speed',
+    'animation': 've.overlay',
+    'aicut': 've.aicut',
+    'voiceenhance': 've.voiceenhance',
+    'crop': 've.edit',
+    'switch': 've.switch',
+    'enhance': 've.enhance',
+    'stabilizer': 've.stabilizer',
+    'cutout': 've.cutout',
+    'mask': 've.mask',
+    'templates': 've.templates',
+    'opacity': 've.opacity',
+    'replace': 've.replace',
+    'voiceeffect': 've.audio',
+    'duplicate': 've.duplicate',
+    'rotate': 've.rotate',
+    'freeze': 've.freeze',
+    'capture': 've.capture',
+    'reverse': 've.reverse',
+    'ease': 've.ease',
+    'motion': 'motion',
+  };
+
+  /// Wraps a rail item so a long-press opens its guide. The
+  /// item's own tap behaviour is untouched.
+  Widget _withGuide(String railId, Widget item) {
+    final guideId = _railGuideIds[railId];
+    if (guideId == null || toolGuideFor(guideId) == null) return item;
+    return GestureDetector(
+      onLongPress: () => showToolGuide(host.context, guideId),
+      child: item,
+    );
+  }
 
   List<(String, Widget)> _toolItems() {
     final busy = host.busy;
@@ -396,7 +449,10 @@ class ToolRows {
 
   /// MAIN tool row (mockup V1): the full InShot order.
   Widget mainToolRow() {
-    return _toolRowShell('video-rail', _toolItems().map((e) => e.$2).toList());
+    return _toolRowShell(
+      'video-rail',
+      _toolItems().map((e) => _withGuide(e.$1, e.$2)).toList(),
+    );
   }
 
   /// CLIP row (mockup V2): the main row minus Canvas / Audio /
@@ -413,7 +469,7 @@ class ToolRows {
         onTap: () => host.update(() => host.clipRow = false),
       ),
       for (final e in _toolItems())
-        if (!excluded.contains(e.$1)) e.$2,
+        if (!excluded.contains(e.$1)) _withGuide(e.$1, e.$2),
     ]);
   }
 
@@ -507,6 +563,8 @@ class ToolRows {
               overflow: TextOverflow.ellipsis,
             ),
           ),
+          // Point #21: har tool ki Guide, isi header mein.
+          ToolGuideButton(guideId: vePanelGuideId(toolKey), compact: true),
           IconButton(
             tooltip: 'Apply',
             onPressed: () => host.openTool(null),

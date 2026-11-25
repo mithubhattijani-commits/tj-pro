@@ -1123,6 +1123,7 @@ class NigraanFinalPreview extends StatelessWidget {
               cubeClockwise: preset.logoCubeDirection != 'ccw',
               cubePedestal: preset.logoCubePedestal,
               parts: preset.logoParts,
+              partsScene: preset.logoPartsScene,
             ),
           ),
           if (!capOv.hidden)
@@ -1225,6 +1226,7 @@ class _ParityLogoBox extends StatelessWidget {
     this.cubeClockwise = true,
     this.cubePedestal = false,
     this.parts = const [],
+    this.partsScene,
   });
 
   final String? logoPath;
@@ -1262,6 +1264,10 @@ class _ParityLogoBox extends StatelessWidget {
 
   /// Build 13 (point 6): the preset's working logo parts.
   final List<LogoPart> parts;
+
+  /// Redesign Build 2: the parts SCENE (glow + base) riding
+  /// with [parts].
+  final LogoPartsScene? partsScene;
 
   @override
   Widget build(BuildContext context) {
@@ -1302,6 +1308,7 @@ class _ParityLogoBox extends StatelessWidget {
             clockwise: cubeClockwise,
             pedestal: cubePedestal,
             parts: parts,
+            partsScene: partsScene,
           ),
         ),
       );

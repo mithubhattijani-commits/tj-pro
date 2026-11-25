@@ -54,6 +54,7 @@ import 'package:video_player/video_player.dart';
 import '../app_config.dart';
 import '../live/news_template.dart';
 import '../motion/motion_gallery_screen.dart';
+import '../widgets/tool_guide.dart';
 import '../services/ai_tool_charge.dart';
 import '../services/asset_download_service.dart';
 import '../services/caption_styles.dart';
@@ -97,6 +98,7 @@ import 'widgets/clip_picker.dart';
 import 'widgets/font_picker.dart';
 import 'widgets/nigraan_final_preview.dart';
 import 'widgets/reel_export_card.dart';
+import 'widgets/rotating_logo.dart';
 import 'widgets/reporter_overlay.dart';
 import 'widgets/studio_pickers.dart';
 import 'widgets/styled_caption_preview.dart';
@@ -219,8 +221,29 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
 
   /// Build 13 (point 6): Logo Parts + Permanent Logo run state.
   bool _partsBusy = false;
-  int _partsCount = 6;
   bool _permBusy = false;
+
+  /// Logo Parts redesign Build 1: the parts tool's own dock
+  /// tab (logo / hisay / ghumao / waqt / glow / save — har
+  /// button apni build ke sath aya), the selected part,
+  /// box-draw mode and the big preview's play state.
+  String _partsTab = 'hisay';
+  String? _selectedPartId;
+  String? _isolatePartId;
+  bool _partsDrawMode = false;
+  bool _partsPlaying = true;
+
+  /// Redesign Build 2 (Option 35): the big preview's
+  /// background — 'black' (kala, the Build 1 look), 'green'
+  /// (the export green screen) or 'checker'. PREVIEW-ONLY:
+  /// it never touches the export, it just lets the user see
+  /// the logo the way it will sit on a video.
+  String _partsPreviewBg = 'black';
+
+  /// Redesign Build 3 (Option 40): the part whose animation
+  /// settings were copied in the Ghumao tab, waiting to be
+  /// pasted onto another part. Session-only UI state.
+  String? _copiedPartAnimId;
 
   /// Build 13 (point #19): the timeline transport — the media
   /// preview's OWN video controller (reported through
@@ -1461,13 +1484,19 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     switch (logoPartsSaveState(preset.logoPartsSavedAtMs, now)) {
       case LogoPartsSaveState.active:
         if (preset.logoParts.isEmpty) {
-          preset.logoParts = decodeLogoParts(preset.logoPartsSavedJson);
+          // Build 2: the payload carries the SCENE (glow +
+          // base) with the parts; a Build 1 payload (bare
+          // list) restores the parts with the default scene.
+          final data = decodeLogoPartsSave(preset.logoPartsSavedJson);
+          preset.logoParts = data.parts;
+          preset.logoPartsScene = data.scene;
           preset.logoPartsSourcePath = preset.logoPath;
         }
       case LogoPartsSaveState.expired:
         preset.logoPartsSavedJson = '';
         preset.logoPartsSavedAtMs = 0;
         preset.logoParts = const [];
+        preset.logoPartsScene = LogoPartsScene();
         preset.logoPartsSourcePath = null;
         unawaited(persistPresetChange(preset));
       case LogoPartsSaveState.never:
@@ -1630,9 +1659,11 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     }
     // Build 13 (point 6): the working logo parts ride the
     // preview clone too (transient — see ChannelPreset).
+    // Build 2: their SCENE (glow + base) rides along.
     final src = _preset;
     if (src != null) {
       preset.logoParts = src.logoParts;
+      preset.logoPartsScene = src.logoPartsScene;
       preset.logoPartsSourcePath = src.logoPartsSourcePath;
     }
     return preset;
@@ -1876,6 +1907,10 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                   ),
                 ),
               ),
+              // Point #21: har tool ki Guide — isi panel ke
+              // tool ki guide khulti hai (data: tool_guide.dart).
+              if (_activeTool != null)
+                ToolGuideButton(guideId: 'ns.$_activeTool', compact: true),
               InkWell(
                 key: const Key('makerPanelDone'),
                 onTap: () => setState(() => _activeTool = null),
@@ -5128,25 +5163,37 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     ]);
   }
 
-  /// Build 13 (point 6 — Logo Parts Engine): the parts section
-  /// of the Logo panel. Working settings are session-only; the
-  /// paid save (300 coins) keeps them usable for exactly 7
-  /// days, then they are gone (see logo_parts.dart).
+  /// Logo Parts — ELEMENT MODEL (redesign Build 1): the parts
+  /// tool inside the Logo panel, laid out by the user's
+  /// interface law — a BIG fixed preview on top (tap selects
+  /// a part; every control's effect shows live in it), a dock
+  /// of buttons in work order (Logo → Hisay → Ghumao → Waqt →
+  /// Glow → Save), and only the selected button's controls
+  /// below. Working settings are session-only; the paid save
+  /// (300 coins) keeps them usable for exactly 7 days
+  /// (logo_parts.dart). Build 2: the Glow tab (glow layer +
+  /// base plate + preview background) and the Ghumao Andaaz
+  /// (Swing / Pulse).
   List<Widget> _logoPartsSection(ChannelPreset preset) {
     final parts = preset.logoParts;
     final now = DateTime.now().millisecondsSinceEpoch;
     final saveState = logoPartsSaveState(preset.logoPartsSavedAtMs, now);
     final savedCurrent = saveState == LogoPartsSaveState.active &&
-        preset.logoPartsSavedJson == encodeLogoParts(parts);
+        preset.logoPartsSavedJson ==
+            encodeLogoPartsSave(parts, preset.logoPartsScene);
+    final selIdx = _selectedPartIndex(preset);
+    final selPart = selIdx >= 0 ? parts[selIdx] : null;
     return [
       const Text(
-        'Logo Parts — har hisay ki alag rotation',
+        'Logo Parts — logo ke apne hisay (elements)',
         style: TextStyle(fontWeight: FontWeight.bold),
       ),
       const SizedBox(height: 4),
       const Text(
-        'Logo ke hisay (parts) tor kar har hisay ko alag ghumayein — '
-        'kis hisay ko ghumana hai, kis direction mein, kitni speed se.',
+        'Har hissa = aik box + us ke andar ka design (text apne box ke '
+        'sath aik hissa). Har hissa apne markaz (pivot) se, apni speed '
+        'aur andaaz (Flat / 3D) mein ghoomta hai — bilkul professional '
+        'logos ki tarah.',
         style: TextStyle(fontSize: 12, color: Colors.grey),
       ),
       const SizedBox(height: 8),
@@ -5155,50 +5202,1403 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           'Pehle upar se logo select karein — parts usi logo ke banein ge.',
           style: TextStyle(fontSize: 12, color: Colors.grey),
         )
-      else if (parts.isEmpty)
-        OutlinedButton.icon(
-          key: const Key('logoPartsSplitButton'),
-          onPressed: _partsBusy ? null : _splitLogoParts,
-          icon: const Icon(Icons.call_split, size: 18),
-          label: Text(_partsBusy ? 'Parts ban rahe hain…' : 'Parts banao (auto split)'),
-        )
       else ...[
-        if (preset.logoPartsSourcePath != null &&
-            preset.logoPartsSourcePath != preset.logoPath)
+        // --- BARA preview (sabit size; tap = hissa select) ---
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final side =
+                constraints.maxWidth > 248 ? 248.0 : constraints.maxWidth;
+            return Center(
+              child: Container(
+                key: const Key('logoPartsCombinedPreview'),
+                width: side,
+                height: side,
+                decoration: BoxDecoration(
+                  // Option 35: the preview's background —
+                  // kala (default), green screen, or the
+                  // checker the Glow tab paints in the Stack.
+                  color: switch (_partsPreviewBg) {
+                    'green' => const Color(0xFF00B140),
+                    'checker' => const Color(0xFF2A2A35),
+                    _ => const Color(0xFF181828),
+                  },
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Stack(
+                  children: [
+                    if (_partsPreviewBg == 'checker')
+                      const Positioned.fill(
+                        child: CustomPaint(painter: _CheckerboardPainter()),
+                      ),
+                    if (parts.isEmpty)
+                      Positioned.fill(
+                        child: Padding(
+                          padding: const EdgeInsets.all(6),
+                          child: Image.file(
+                            File(preset.logoPath!),
+                            fit: BoxFit.contain,
+                            errorBuilder: (context, error, stackTrace) =>
+                                const Icon(Icons.image_outlined,
+                                    color: Colors.grey),
+                          ),
+                        ),
+                      )
+                    else if (selPart != null && _isolatePartId == selPart.id)
+                      // ISOLATE (Option 9): sirf chuna hissa, akela —
+                      // box ne sahi cheez pakri hai ya nahi, check.
+                      Positioned.fill(
+                        child: Center(
+                          child: LogoPartPreview(part: selPart, size: side),
+                        ),
+                      )
+                    else
+                      LogoPartsEditorPreview(
+                        parts: parts,
+                        size: side,
+                        selectedId: selPart?.id,
+                        editable: _partsTab == 'hisay',
+                        drawMode: _partsDrawMode && _partsTab == 'hisay',
+                        animate: _partsPlaying,
+                        scene: preset.logoPartsScene,
+                        onSelect: (id) => setState(() {
+                          _selectedPartId = id;
+                          _partsDrawMode = false;
+                        }),
+                        onBoxChanged: (id, box) => setState(() {
+                          preset.logoParts = [
+                            for (final part in preset.logoParts)
+                              part.id == id
+                                  ? part.copyWith(box: box)
+                                  : part,
+                          ];
+                        }),
+                        onBoxDrawn: (box) => setState(() {
+                          final part = LogoPart(
+                            id: 'part${DateTime.now().millisecondsSinceEpoch}',
+                            name: 'Part ${preset.logoParts.length + 1}',
+                            sourcePath: preset.logoPath!,
+                            box: box,
+                          );
+                          preset.logoParts = [...preset.logoParts, part];
+                          preset.logoPartsSourcePath = preset.logoPath;
+                          _selectedPartId = part.id;
+                          _partsDrawMode = false;
+                        }),
+                      ),
+                    if (selPart != null && _isolatePartId == selPart.id)
+                      Positioned(
+                        left: 6,
+                        top: 6,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFC800),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: const Text(
+                            'Isolate — sirf ye hissa',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black,
+                            ),
+                          ),
+                        ),
+                      ),
+                    Positioned(
+                      right: 4,
+                      bottom: 4,
+                      child: IconButton(
+                        key: const Key('logoPartsPlayPause'),
+                        icon: Icon(
+                          _partsPlaying ? Icons.pause : Icons.play_arrow,
+                          size: 18,
+                        ),
+                        color: Colors.white,
+                        style: IconButton.styleFrom(
+                          backgroundColor: Colors.black54,
+                        ),
+                        onPressed: () =>
+                            setState(() => _partsPlaying = !_partsPlaying),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 8),
+        // --- Chuna hua hissa (har tab mein waisa hi) ---
+        if (selPart != null)
+          Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF181828),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: LogoPartPreview(
+                  key: Key('logoPartsSelectedPreview-${selPart.id}'),
+                  part: selPart,
+                  size: 44,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Chuna hua hissa: ${selPart.name}',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        const SizedBox(height: 8),
+        // --- DOCK: buttons tarteeb se ---
+        Row(
+          key: const Key('logoPartsDock'),
+          children: [
+            for (final (id, icon, label) in const [
+              ('logo', Icons.image_outlined, 'Logo'),
+              ('hisay', Icons.call_split, 'Hisay'),
+              ('ghumao', Icons.rotate_right, 'Ghumao'),
+              ('waqt', Icons.schedule, 'Waqt'),
+              ('glow', Icons.auto_awesome, 'Glow'),
+              ('save', Icons.save_outlined, 'Save'),
+            ]) ...[
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: ChoiceChip(
+                    key: Key('logoPartsTab-$id'),
+                    avatar: Icon(icon, size: 16),
+                    label: Text(label),
+                    selected: _partsTab == id,
+                    selectedColor: const Color(0xFFFFC800),
+                    onSelected: (_) => setState(() {
+                      _partsTab = id;
+                      if (id != 'hisay') _partsDrawMode = false;
+                    }),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: 8),
+        // --- Sirf chune huay button ke controls ---
+        switch (_partsTab) {
+          'logo' => _partsLogoTab(preset),
+          'ghumao' => _partsGhumaoTab(preset, selIdx),
+          'waqt' => _partsWaqtTab(preset),
+          'glow' => _partsGlowTab(preset),
+          'save' => _partsSaveTab(preset, saveState, savedCurrent, now),
+          _ => _partsHisayTab(preset),
+        },
+      ],
+    ];
+  }
+
+  /// The selected part's index — the user's tap selection, or
+  /// the first part when nothing was tapped yet (-1: no parts).
+  int _selectedPartIndex(ChannelPreset preset) {
+    final parts = preset.logoParts;
+    if (parts.isEmpty) return -1;
+    final idx = parts.indexWhere((e) => e.id == _selectedPartId);
+    return idx >= 0 ? idx : 0;
+  }
+
+  void _updatePartAt(
+    ChannelPreset preset,
+    int i,
+    LogoPart Function(LogoPart) change,
+  ) {
+    setState(() {
+      preset.logoParts = [
+        for (var j = 0; j < preset.logoParts.length; j++)
+          j == i ? change(preset.logoParts[j]) : preset.logoParts[j],
+      ];
+    });
+  }
+
+  /// Dock tab 1 — LOGO: the master the parts look into.
+  Widget _partsLogoTab(ChannelPreset preset) {
+    final stale = preset.logoPartsSourcePath != null &&
+        preset.logoPartsSourcePath != preset.logoPath;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: const Color(0xFF181828),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: Image.file(
+                  File(preset.logoPath!),
+                  fit: BoxFit.contain,
+                  errorBuilder: (context, error, stackTrace) =>
+                      const Icon(Icons.broken_image_outlined, size: 18),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                preset.logoParts.isEmpty
+                    ? 'Parts isi logo ke banein ge. Hisay tab mein ja kar '
+                        'Auto tajweez dabayein ya khud box banayein.'
+                    : '${preset.logoParts.length} hisay isi logo ke hain. '
+                        'Logo badalna ho to upar wale hisay se badlein — '
+                        'phir Hisay dobara banane honge.',
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            ),
+          ],
+        ),
+        if (stale)
           const Padding(
-            padding: EdgeInsets.only(bottom: 6),
+            padding: EdgeInsets.only(top: 6),
             child: Text(
               'Logo badal gaya hai — ye parts puranay logo ke hain. '
-              'Dobara split karein.',
+              'Hisay tab se dobara tajweez karein.',
               style: TextStyle(fontSize: 12, color: Color(0xFFFFC800)),
             ),
           ),
+        const SizedBox(height: 10),
+        // --- KEYING MAZBOOTI (Option 3, Build 3): solid
+        // background wale logo ki background keying kitni
+        // sakht ho — Auto tajweez isi keying se hisay dhoondti
+        // hai. Default wahi mazbooti hai jo hamesha thi. ---
+        Text(
+          'Keying mazbooti: '
+          '${(preset.logoPartsScene.keyingStrength * 100).round()}%',
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+        ),
+        Row(
+          children: [
+            const Text('Halka', style: TextStyle(fontSize: 11)),
+            Expanded(
+              child: Slider(
+                key: const Key('logoKeyingStrength'),
+                value: preset.logoPartsScene.keyingStrength,
+                min: 0,
+                max: 1,
+                divisions: 20,
+                onChanged: (v) => setState(
+                  () => preset.logoPartsScene =
+                      preset.logoPartsScene.copyWith(keyingStrength: v),
+                ),
+              ),
+            ),
+            const Text('Zyada saaf', style: TextStyle(fontSize: 11)),
+          ],
+        ),
+        const Text(
+          'Solid background wale logo par Auto tajweez pehle '
+          'background ko key karti hai. Halka = kinare mehfooz '
+          'rahte hain; zyada = background ke qareebi rang bhi '
+          'hat jate hain. Slider badal kar Hisay tab se dobara '
+          'tajweez karein — asar tab nazar ayega.',
+          style: TextStyle(fontSize: 12, color: Colors.grey),
+        ),
+      ],
+    );
+  }
+
+  /// Dock tab 2 — HISAY: propose, draw, select, layer order.
+  Widget _partsHisayTab(ChannelPreset preset) {
+    final parts = preset.logoParts;
+    final selIdx = _selectedPartIndex(preset);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            OutlinedButton.icon(
+              key: const Key('logoPartsProposeButton'),
+              onPressed: _partsBusy ? null : _proposeLogoParts,
+              icon: const Icon(Icons.auto_awesome_outlined, size: 18),
+              label: Text(
+                _partsBusy
+                    ? 'Tajweez ho rahi hai…'
+                    : parts.isEmpty
+                        ? 'Auto Hisay tajweez'
+                        : 'Dobara tajweez',
+              ),
+            ),
+            OutlinedButton.icon(
+              key: const Key('logoPartsDrawButton'),
+              onPressed: () =>
+                  setState(() => _partsDrawMode = !_partsDrawMode),
+              icon: const Icon(Icons.crop_free, size: 18),
+              label: Text(_partsDrawMode ? 'Box banana band' : 'Naya box banao'),
+              style: _partsDrawMode
+                  ? OutlinedButton.styleFrom(
+                      backgroundColor: const Color(0xFFFFC800),
+                      foregroundColor: Colors.black,
+                    )
+                  : null,
+            ),
+            OutlinedButton.icon(
+              key: const Key('logoPartsResetButton'),
+              onPressed: parts.isEmpty || _partsBusy ? null : _resetLogoParts,
+              icon: const Icon(Icons.restart_alt, size: 18),
+              label: const Text('Saare saaf (Reset)'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Text(
+          _partsDrawMode
+              ? 'Preview par ungli ghaseet kar box banayein — chorhte hi '
+                  'hissa ban jayega.'
+              : 'Preview par kisi hisay ko tap karke chunein. Chune huay '
+                  'box ko ghaseet kar hilayein, us ke kone (neeche-dayein) '
+                  'ko ghaseet kar size badlein. Tajweez sirf shuruaat hai — '
+                  'har box aap khud theek kar sakte hain.',
+          style: const TextStyle(fontSize: 12, color: Colors.grey),
+        ),
+        const SizedBox(height: 8),
+        if (parts.isEmpty)
+          const Text(
+            'Abhi koi hissa nahi hai.',
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+          )
+        else ...[
+          for (var i = 0; i < parts.length; i++)
+            _logoPartListRow(preset, i, selected: i == selIdx),
+          const SizedBox(height: 4),
+          // --- Chune huay hisay ke tools (Options 9–13) ---
+          const Text(
+            'Chuna hissa theek karein:',
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                key: const Key('logoPartIsolateToggle'),
+                onPressed: selIdx < 0
+                    ? null
+                    : () => setState(() {
+                          _isolatePartId =
+                              _isolatePartId == parts[selIdx].id
+                                  ? null
+                                  : parts[selIdx].id;
+                        }),
+                icon: const Icon(Icons.center_focus_strong, size: 16),
+                label: Text(
+                  selIdx >= 0 && _isolatePartId == parts[selIdx].id
+                      ? 'Isolate band'
+                      : 'Sirf ye hissa (Isolate)',
+                ),
+                style: selIdx >= 0 && _isolatePartId == parts[selIdx].id
+                    ? OutlinedButton.styleFrom(
+                        backgroundColor: const Color(0xFFFFC800),
+                        foregroundColor: Colors.black,
+                      )
+                    : null,
+              ),
+              OutlinedButton.icon(
+                key: const Key('logoPartMergeButton'),
+                onPressed:
+                    parts.length < 2 ? null : () => _mergeSelectedPart(preset),
+                icon: const Icon(Icons.merge_type, size: 16),
+                label: const Text('Sath wala milao (Merge)'),
+              ),
+              OutlinedButton.icon(
+                key: const Key('logoPartSplitButton'),
+                onPressed: selIdx < 0 ? null : () => _splitSelectedPart(preset),
+                icon: const Icon(Icons.vertical_split, size: 16),
+                label: const Text('Do hisay (Split)'),
+              ),
+              OutlinedButton.icon(
+                key: const Key('logoPartRenameButton'),
+                onPressed:
+                    selIdx < 0 ? null : () => _renameSelectedPart(preset),
+                icon: const Icon(Icons.drive_file_rename_outline, size: 16),
+                label: const Text('Naam badlein'),
+              ),
+              OutlinedButton.icon(
+                key: const Key('logoPartDeleteButton'),
+                onPressed: selIdx < 0 ? null : () => _deleteSelectedPart(preset),
+                icon: const Icon(Icons.delete_outline, size: 16),
+                label: const Text('Hissa khatam'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Merge = chuna hissa aur us ke sath wala box aik element ban '
+            'jate hain. Split = box dayein-bayein do hison mein kat jata '
+            'hai. Hissa khatam karne se asal logo ko kuch nahi hota.',
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// One part's row in the Hisay list: live preview, name,
+  /// tap-to-select, layer up/down (list order = layer order —
+  /// pehla sab se peeche, aakhri sab se upar).
+  Widget _logoPartListRow(ChannelPreset preset, int i, {required bool selected}) {
+    final part = preset.logoParts[i];
+    final last = preset.logoParts.length - 1;
+    return Container(
+      key: Key('logoPartRow-$i'),
+      margin: const EdgeInsets.only(bottom: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFF12151C),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: selected ? const Color(0xFFFFC800) : const Color(0x1FFFFFFF),
+          width: selected ? 1.6 : 1,
+        ),
+      ),
+      child: Row(
+        children: [
+          GestureDetector(
+            key: Key('logoPartSelect-$i'),
+            onTap: () => setState(() {
+              _selectedPartId = part.id;
+              _partsDrawMode = false;
+            }),
+            child: Container(
+              width: 52,
+              height: 52,
+              margin: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: const Color(0xFF181828),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: LogoPartPreview(part: part, size: 52),
+            ),
+          ),
+          Expanded(
+            child: GestureDetector(
+              onTap: () => setState(() {
+                _selectedPartId = part.id;
+                _partsDrawMode = false;
+              }),
+              child: Text(
+                part.name,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+          ),
+          IconButton(
+            key: Key('logoPartLayerDown-$i'),
+            tooltip: 'Peeche (neeche layer)',
+            icon: const Icon(Icons.arrow_downward, size: 18),
+            onPressed: i == 0
+                ? null
+                : () => setState(() {
+                      final list = [...preset.logoParts];
+                      final tmp = list[i - 1];
+                      list[i - 1] = list[i];
+                      list[i] = tmp;
+                      preset.logoParts = list;
+                    }),
+          ),
+          IconButton(
+            key: Key('logoPartLayerUp-$i'),
+            tooltip: 'Upar (agay layer)',
+            icon: const Icon(Icons.arrow_upward, size: 18),
+            onPressed: i == last
+                ? null
+                : () => setState(() {
+                      final list = [...preset.logoParts];
+                      final tmp = list[i + 1];
+                      list[i + 1] = list[i];
+                      list[i] = tmp;
+                      preset.logoParts = list;
+                    }),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Dock tab 3 — GHUMAO: the selected part's own animation
+  /// (on/off, Flat/3D, direction, speed) — the same controls
+  /// the old per-row UI had, now acting on the selected part.
+  Widget _partsGhumaoTab(ChannelPreset preset, int selIdx) {
+    if (selIdx < 0) {
+      return const Text(
+        'Abhi koi hissa nahi — pehle Hisay tab se hisay banayein.',
+        style: TextStyle(fontSize: 12, color: Colors.grey),
+      );
+    }
+    final part = preset.logoParts[selIdx];
+    final i = selIdx;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(child: Text('${part.name} — ghumao')),
+            Switch(
+              key: Key('logoPartRotate-$i'),
+              value: part.rotate,
+              onChanged: (v) =>
+                  _updatePartAt(preset, i, (e) => e.copyWith(rotate: v)),
+            ),
+          ],
+        ),
+        // ANDAAZ (Option 20, Build 2): Poora chakkar ya
+        // Jhoolna (Swing — ghari ke pendulum ki tarah).
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: Row(
             children: [
-              const Text('Parts:', style: TextStyle(fontSize: 12)),
-              const SizedBox(width: 8),
-              for (final n in const [4, 6, 8]) ...[
-                ChoiceChip(
-                  key: Key('logoPartsCount-$n'),
-                  label: Text('$n'),
-                  selected: _partsCount == n,
-                  onSelected: (_) => setState(() => _partsCount = n),
+              const Text('Andaaz:', style: TextStyle(fontSize: 12)),
+              const SizedBox(width: 6),
+              ChoiceChip(
+                key: Key('logoPartMotion-$i-spin'),
+                label: const Text('Poora chakkar'),
+                selected: part.motionMode != kLogoPartMotionSwing,
+                onSelected: (_) => _updatePartAt(
+                  preset,
+                  i,
+                  (e) => e.copyWith(motionMode: kLogoPartMotionSpin),
                 ),
-                const SizedBox(width: 6),
-              ],
-              TextButton.icon(
-                key: const Key('logoPartsResplitButton'),
-                onPressed: _partsBusy ? null : _splitLogoParts,
-                icon: const Icon(Icons.refresh, size: 16),
-                label: const Text('Dobara split'),
+              ),
+              const SizedBox(width: 6),
+              ChoiceChip(
+                key: Key('logoPartMotion-$i-swing'),
+                label: const Text('Jhoolna (Swing)'),
+                selected: part.motionMode == kLogoPartMotionSwing,
+                onSelected: (_) => _updatePartAt(
+                  preset,
+                  i,
+                  (e) => e.copyWith(motionMode: kLogoPartMotionSwing),
+                ),
               ),
             ],
           ),
         ),
-        for (var i = 0; i < parts.length; i++) _logoPartRow(preset, i),
+        if (part.motionMode == kLogoPartMotionSwing) ...[
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              Text(
+                'Jhoolne ka zawiya: ${part.swingDeg.round()}°',
+                style: const TextStyle(fontSize: 12),
+              ),
+              Expanded(
+                child: Slider(
+                  key: Key('logoPartSwingDeg-$i'),
+                  value: part.swingDeg,
+                  min: 10,
+                  max: 60,
+                  divisions: 10,
+                  onChanged: (v) => _updatePartAt(
+                    preset,
+                    i,
+                    (e) => e.copyWith(swingDeg: v),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+        const SizedBox(height: 6),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              const Text('Style:', style: TextStyle(fontSize: 12)),
+              const SizedBox(width: 6),
+              ChoiceChip(
+                key: Key('logoPartStyle-$i-flat'),
+                label: const Text('Flat'),
+                selected: part.rotationStyle != kLogoPartStyle3d,
+                onSelected: (_) => _updatePartAt(
+                  preset,
+                  i,
+                  (e) => e.copyWith(rotationStyle: kLogoPartStyleFlat),
+                ),
+              ),
+              const SizedBox(width: 6),
+              ChoiceChip(
+                key: Key('logoPartStyle-$i-3d'),
+                label: const Text('3D'),
+                selected: part.rotationStyle == kLogoPartStyle3d,
+                onSelected: (_) => _updatePartAt(
+                  preset,
+                  i,
+                  (e) => e.copyWith(rotationStyle: kLogoPartStyle3d),
+                ),
+              ),
+              const SizedBox(width: 12),
+              ChoiceChip(
+                key: Key('logoPartDir-$i-cw'),
+                label: const Text('Clockwise'),
+                selected: part.direction != 'ccw',
+                onSelected: (_) => _updatePartAt(
+                  preset,
+                  i,
+                  (e) => e.copyWith(direction: 'cw'),
+                ),
+              ),
+              const SizedBox(width: 6),
+              ChoiceChip(
+                key: Key('logoPartDir-$i-ccw'),
+                label: const Text('Anti'),
+                selected: part.direction == 'ccw',
+                onSelected: (_) => _updatePartAt(
+                  preset,
+                  i,
+                  (e) => e.copyWith(direction: 'ccw'),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 6),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              const Text('Speed:', style: TextStyle(fontSize: 12)),
+              const SizedBox(width: 6),
+              for (final s in kLogoPartSpeeds) ...[
+                ChoiceChip(
+                  key: Key('logoPartSpeed-$i-${s.toInt()}'),
+                  label: Text('${s.toInt()}s'),
+                  selected: part.speedSec == s,
+                  onSelected: (_) => _updatePartAt(
+                    preset,
+                    i,
+                    (e) => e.copyWith(speedSec: s),
+                  ),
+                ),
+                const SizedBox(width: 6),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'Flat = pahiye ki tarah apni satah mein; 3D = sikkay ki tarah '
+          'side se sikkar kar. Har hissa apne markaz (pivot) se ghoomta hai. '
+          'Swing mein Speed aik jhoolay ki muddat hai (aagay-peeche = aik chakkar).',
+          style: TextStyle(fontSize: 12, color: Colors.grey),
+        ),
+        const SizedBox(height: 10),
+        // --- PULSE (Option 23, Build 2): saans ki tarah
+        // halka bara-chhota hona — ghumao se alag, ghumao
+        // band ho tab bhi chalta hai. ---
+        Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'Pulse (bara-chhota)',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+              ),
+            ),
+            Switch(
+              key: Key('logoPartPulse-$i'),
+              value: part.pulseOn,
+              onChanged: (v) =>
+                  _updatePartAt(preset, i, (e) => e.copyWith(pulseOn: v)),
+            ),
+          ],
+        ),
+        if (part.pulseOn)
+          Row(
+            children: [
+              Text(
+                'Pulse ki taqat: ${(part.pulseStrength * 100).round()}%',
+                style: const TextStyle(fontSize: 12),
+              ),
+              Expanded(
+                child: Slider(
+                  key: Key('logoPartPulseStrength-$i'),
+                  value: part.pulseStrength,
+                  min: 0.1,
+                  max: 1,
+                  divisions: 9,
+                  onChanged: (v) => _updatePartAt(
+                    preset,
+                    i,
+                    (e) => e.copyWith(pulseStrength: v),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        const SizedBox(height: 6),
+        // --- PIVOT (Option 22): ghumne ka markaz ---
+        const Text(
+          'Ghumne ka markaz (Pivot):',
+          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 6),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Builder(
+              builder: (context) {
+                const boxSide = 110.0;
+                final fracX = (part.pivotX - part.box.x) / part.box.w;
+                final fracY = (part.pivotY - part.box.y) / part.box.h;
+                void setPivot(Offset local) {
+                  final fx = (local.dx / boxSide).clamp(0.0, 1.0);
+                  final fy = (local.dy / boxSide).clamp(0.0, 1.0);
+                  _updatePartAt(
+                    preset,
+                    i,
+                    (e) => e.copyWith(
+                      pivotDx: (fx - 0.5) * e.box.w,
+                      pivotDy: (fy - 0.5) * e.box.h,
+                    ),
+                  );
+                }
+
+                return GestureDetector(
+                  key: Key('logoPartPivotPicker-$i'),
+                  onTapDown: (d) => setPivot(d.localPosition),
+                  onPanUpdate: (d) => setPivot(d.localPosition),
+                  child: Container(
+                    width: boxSide,
+                    height: boxSide,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF181828),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFFFFC800)),
+                    ),
+                    child: Stack(
+                      children: [
+                        LogoPartPreview(
+                          part: part.copyWith(rotate: false),
+                          size: boxSide,
+                        ),
+                        Positioned(
+                          left: fracX * boxSide - 8,
+                          top: fracY * boxSide - 8,
+                          child: Container(
+                            width: 16,
+                            height: 16,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFC800),
+                              shape: BoxShape.circle,
+                              border:
+                                  Border.all(color: Colors.black, width: 2),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Sunahra nukta ghaseet kar wahan rakhein jahan se '
+                    'hissa ghume — aam tor par centre hi sahi rehta hai. '
+                    'Bare preview mein asar foran nazar ayega.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 6),
+                  OutlinedButton(
+                    key: Key('logoPartPivotReset-$i'),
+                    onPressed: part.pivotDx == 0 && part.pivotDy == 0
+                        ? null
+                        : () => _updatePartAt(
+                              preset,
+                              i,
+                              (e) => e.copyWith(pivotDx: 0, pivotDy: 0),
+                            ),
+                    child: const Text('Centre par wapas'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        // --- SETTINGS COPY (Option 40, Build 3): is hisay
+        // ki poori animation (ghumao, andaaz, pulse, narmi,
+        // waqfa, pivot) copy karke kisi doosre hisay par
+        // lagana. Box aur naam kabhi copy nahi hote — har
+        // hissa apna hi rehta hai, sirf harkat aik jaisi
+        // ho jati hai. ---
+        const Text(
+          'Settings copy:',
+          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            OutlinedButton.icon(
+              key: Key('logoPartAnimCopy-$i'),
+              onPressed: () {
+                setState(() => _copiedPartAnimId = part.id);
+                _showMessage(
+                  '${part.name} ki animation settings copy ho gayin — '
+                  'ab doosra hissa chun kar yahan lagayein.',
+                );
+              },
+              icon: const Icon(Icons.copy_all_outlined, size: 16),
+              label: const Text('Is hisay ki settings copy karein'),
+            ),
+            if (_copiedPartAnimId != null &&
+                _copiedPartAnimId != part.id &&
+                preset.logoParts.any((e) => e.id == _copiedPartAnimId))
+              OutlinedButton.icon(
+                key: Key('logoPartAnimPaste-$i'),
+                onPressed: () {
+                  final source = preset.logoParts
+                      .firstWhere((e) => e.id == _copiedPartAnimId);
+                  _updatePartAt(
+                    preset,
+                    i,
+                    (e) => copyLogoPartAnimation(source, e),
+                  );
+                  _showMessage(
+                    '${source.name} ki settings ${part.name} par lag gayin.',
+                  );
+                },
+                icon: const Icon(Icons.content_paste, size: 16),
+                label: Text(
+                  'Copy ki settings yahan lagayein '
+                  '(${preset.logoParts.firstWhere((e) => e.id == _copiedPartAnimId).name})',
+                ),
+              ),
+          ],
+        ),
+        const Text(
+          'Sirf harkat copy hoti hai — ghumao, style, speed, andaaz, '
+          'pulse, narmi, waqfa aur pivot. Hisay ka box aur naam '
+          'uska apna hi rehta hai.',
+          style: TextStyle(fontSize: 12, color: Colors.grey),
+        ),
+      ],
+    );
+  }
+
+  /// Dock tab 4 — WAQT: har hisay ka start waqfa (delay),
+  /// Sequence (aik tap stagger) aur Sync (sab aik sath).
+  Widget _partsWaqtTab(ChannelPreset preset) {
+    final parts = preset.logoParts;
+    if (parts.isEmpty) {
+      return const Text(
+        'Abhi koi hissa nahi — pehle Hisay tab se hisay banayein.',
+        style: TextStyle(fontSize: 12, color: Colors.grey),
+      );
+    }
+    const delays = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.5, 2.0];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Har hisa apna chakkar kab shuru kare — yehi professional '
+          'logos ki pehchan hai: pehle frame, phir text, phir ribbon. '
+          'Waqfa 12 second ke loop ke andar hisaab hota hai, is liye '
+          'loop kabhi nahi tootta.',
+          style: TextStyle(fontSize: 12, color: Colors.grey),
+        ),
         const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            OutlinedButton.icon(
+              key: const Key('logoPartsSequenceButton'),
+              onPressed: () => setState(
+                () => preset.logoParts = staggerLogoPartDelays(parts),
+              ),
+              icon: const Icon(Icons.format_list_numbered, size: 16),
+              label: const Text('Sequence lagao (0.2s fasla)'),
+            ),
+            OutlinedButton.icon(
+              key: const Key('logoPartsSyncButton'),
+              onPressed: () => setState(
+                () => preset.logoParts = syncLogoPartDelays(parts),
+              ),
+              icon: const Icon(Icons.groups, size: 16),
+              label: const Text('Sab aik sath (Sync)'),
+            ),
+          ],
+        ),
+        // --- GLOW KI NARMI (Option 27, Build 3): scene ki
+        // narmi sirf glow ki Pulse harkat par lagti hai —
+        // is liye ye row tab hi dikhti hai jab glow ki
+        // harkat Pulse ho. ---
+        if (preset.logoPartsScene.glowOn &&
+            preset.logoPartsScene.glowMotion == kLogoGlowMotionPulse) ...[
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              const Text('Glow ki narmi:', style: TextStyle(fontSize: 12)),
+              for (final (id, label) in const [
+                (kLogoEasingLinear, 'Barabar'),
+                (kLogoEasingSmooth, 'Narm'),
+              ])
+                ChoiceChip(
+                  key: Key('logoGlowEasing-$id'),
+                  label: Text(label),
+                  selected: preset.logoPartsScene.easing == id,
+                  onSelected: (_) => setState(
+                    () => preset.logoPartsScene =
+                        preset.logoPartsScene.copyWith(easing: id),
+                  ),
+                ),
+            ],
+          ),
+          const Text(
+            'Glow ki saans (Pulse) kaisi ho — Barabar (aik si raftaar) '
+            'ya Narm (kinaron par narm). Hison ki apni narmi neeche '
+            'har hisay ke sath hai.',
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+        ],
+        const SizedBox(height: 10),
+        for (var i = 0; i < parts.length; i++) ...[
+          Text(
+            '${parts[i].name} — waqfa '
+            '${parts[i].delaySec == 0 ? 'nahi (foran)' : '${parts[i].delaySec}s'}',
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 4),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (final v in delays) ...[
+                  ChoiceChip(
+                    key: Key('logoPartDelay-$i-${(v * 10).round()}'),
+                    label: Text(v == 0
+                        ? 'Foran'
+                        : v == v.roundToDouble()
+                            ? '${v.toInt()}s'
+                            : '${v}s'),
+                    selected: parts[i].delaySec == v,
+                    onSelected: (_) => _updatePartAt(
+                      preset,
+                      i,
+                      (e) => e.copyWith(delaySec: v),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 4),
+          // --- NARMI (Option 27, Build 3): is hisay ke
+          // Jhoolay (Swing) aur Pulse ki harkat kaisi ho.
+          // Poora chakkar hamesha aik si raftaar se ghoomta
+          // hai — narmi sirf doolnay wali harkaton par hai. ---
+          Row(
+            children: [
+              const Text('Narmi:', style: TextStyle(fontSize: 12)),
+              const SizedBox(width: 6),
+              for (final (id, label) in const [
+                (kLogoEasingLinear, 'Barabar'),
+                (kLogoEasingSmooth, 'Narm'),
+              ]) ...[
+                ChoiceChip(
+                  key: Key('logoPartEasing-$i-$id'),
+                  label: Text(label),
+                  selected: parts[i].easing == id,
+                  onSelected: (_) => _updatePartAt(
+                    preset,
+                    i,
+                    (e) => e.copyWith(easing: id),
+                  ),
+                ),
+                const SizedBox(width: 6),
+              ],
+              const Expanded(
+                child: Text(
+                  'Jhoolay/Pulse ki harkat — Barabar ya Narm',
+                  style: TextStyle(fontSize: 11, color: Colors.grey),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+        ],
+      ],
+    );
+  }
+
+  /// Dock tab 5 — GLOW (redesign Build 2): the GENERATED
+  /// glow layer behind the whole logo (Options 28–32), the
+  /// base plate under the parts (Option 33) and the big
+  /// preview's background (Option 35 — preview-only, export
+  /// par koi asar nahi). Glow hison wale logo ke peeche
+  /// lagta hai (bina hison ke logo cube par chalta hai —
+  /// wahan glow nahi hota).
+  Widget _partsGlowTab(ChannelPreset preset) {
+    final scene = preset.logoPartsScene;
+    void setScene(LogoPartsScene next) =>
+        setState(() => preset.logoPartsScene = next);
+    const swatches = <(String, int)>[
+      ('Gold', 0xFFFFC800),
+      ('Safed', 0xFFFFFFFF),
+      ('Surkh', 0xFFE53935),
+      ('Neela', 0xFF2979FF),
+      ('Jamni', 0xFF8E24AA),
+      ('Ferozi', 0xFF00BCD4),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'Glow — logo ke peeche chamak',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+              ),
+            ),
+            Switch(
+              key: const Key('logoGlowOn'),
+              value: scene.glowOn,
+              onChanged: (v) => setScene(scene.copyWith(glowOn: v)),
+            ),
+          ],
+        ),
+        const Text(
+          'Glow tasveer se kata nahi jata — app logo ki shakal ko '
+          'dhundla karke peeche aik chamak wali layer bana deti hai, '
+          'bilkul channel logos ki tarah.',
+          style: TextStyle(fontSize: 12, color: Colors.grey),
+        ),
+        if (preset.logoParts.isEmpty) ...[
+          const SizedBox(height: 6),
+          const Text(
+            'Note: glow hison wale logo ke peeche lagta hai — pehle '
+            'Hisay tab se hisay banayein, phir yahan ki settings un '
+            'ke sath hi chalengi (aur save bhi unhi ke sath hogi).',
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+        ],
+        if (scene.glowOn) ...[
+          const SizedBox(height: 8),
+          const Text('Glow ka rang:', style: TextStyle(fontSize: 12)),
+          const SizedBox(height: 4),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                ChoiceChip(
+                  key: const Key('logoGlowColor-auto'),
+                  label: const Text('Auto (logo ka rang)'),
+                  selected: scene.glowColorArgb == null,
+                  onSelected: (_) =>
+                      setScene(scene.copyWith(clearGlowColor: true)),
+                ),
+                const SizedBox(width: 6),
+                for (final (name, argb) in swatches) ...[
+                  ChoiceChip(
+                    key: Key('logoGlowColor-$argb'),
+                    label: Text(name),
+                    selected: scene.glowColorArgb == argb,
+                    onSelected: (_) =>
+                        setScene(scene.copyWith(glowColorArgb: argb)),
+                  ),
+                  const SizedBox(width: 6),
+                ],
+                OutlinedButton(
+                  key: const Key('logoGlowColorCustom'),
+                  onPressed: () async {
+                    final picked = await _pickGlowColor(
+                      scene.glowColorArgb ?? 0xFFFFC800,
+                    );
+                    if (picked != null) {
+                      setScene(scene.copyWith(glowColorArgb: picked));
+                    }
+                  },
+                  child: const Text('Apna rang…'),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Text(
+                'Shadeed: ${(scene.glowIntensity * 100).round()}%',
+                style: const TextStyle(fontSize: 12),
+              ),
+              Expanded(
+                child: Slider(
+                  key: const Key('logoGlowIntensity'),
+                  value: scene.glowIntensity,
+                  min: 0.1,
+                  max: 1,
+                  divisions: 18,
+                  onChanged: (v) =>
+                      setScene(scene.copyWith(glowIntensity: v)),
+                ),
+              ),
+            ],
+          ),
+          Row(
+            children: [
+              Text(
+                'Phailao: ${(scene.glowSpread * 100).round()}%',
+                style: const TextStyle(fontSize: 12),
+              ),
+              Expanded(
+                child: Slider(
+                  key: const Key('logoGlowSpread'),
+                  value: scene.glowSpread,
+                  min: 0,
+                  max: 1,
+                  divisions: 20,
+                  onChanged: (v) => setScene(scene.copyWith(glowSpread: v)),
+                ),
+              ),
+            ],
+          ),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                const Text('Harkat:', style: TextStyle(fontSize: 12)),
+                const SizedBox(width: 6),
+                for (final (id, label) in const [
+                  (kLogoGlowMotionStatic, 'Sabit'),
+                  (kLogoGlowMotionPulse, 'Pulse (saans)'),
+                  (kLogoGlowMotionSpin, 'Aahista ghoomti'),
+                ]) ...[
+                  ChoiceChip(
+                    key: Key('logoGlowMotion-$id'),
+                    label: Text(label),
+                    selected: scene.glowMotion == id,
+                    onSelected: (_) =>
+                        setScene(scene.copyWith(glowMotion: id)),
+                  ),
+                  const SizedBox(width: 6),
+                ],
+              ],
+            ),
+          ),
+        ],
+        const SizedBox(height: 12),
+        // --- ROSHNI KI LEHAR (Option 34, Build 3): poore
+        // logo ke upar se guzarti chamak ki lehar — channel
+        // idents ki pehchan. Glow se alag hai: ye lehar logo
+        // ki shakal ke ANDAR hi chamakti hai. ---
+        Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'Roshni ki lehar (Light Sweep)',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+              ),
+            ),
+            Switch(
+              key: const Key('logoSweepOn'),
+              value: scene.sweepOn,
+              onChanged: (v) => setScene(scene.copyWith(sweepOn: v)),
+            ),
+          ],
+        ),
+        const Text(
+          'Aik chamak ki lehar poore logo ke upar se guzarti '
+          'rehti hai — bilkul TV channel ke idents ki tarah. '
+          'Lehar sirf logo ki shakal par chamakti hai, bahir nahi.',
+          style: TextStyle(fontSize: 12, color: Colors.grey),
+        ),
+        if (scene.sweepOn)
+          Row(
+            children: [
+              Text(
+                'Lehar ki raftaar: ${(scene.sweepSpeed * 100).round()}%',
+                style: const TextStyle(fontSize: 12),
+              ),
+              Expanded(
+                child: Slider(
+                  key: const Key('logoSweepSpeed'),
+                  value: scene.sweepSpeed,
+                  min: 0,
+                  max: 1,
+                  divisions: 10,
+                  onChanged: (v) => setScene(scene.copyWith(sweepSpeed: v)),
+                ),
+              ),
+            ],
+          ),
+        const SizedBox(height: 12),
+        const Text(
+          'Neeche ki plate (Base):',
+          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 4),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              for (final (id, label) in const [
+                (kLogoPartsBaseCut, 'Kata hua base'),
+                (kLogoPartsBaseNone, 'Koi base nahi'),
+                (kLogoPartsBaseGhost, 'Poora logo neeche'),
+              ]) ...[
+                ChoiceChip(
+                  key: Key('logoPartsBase-$id'),
+                  label: Text(label),
+                  selected: scene.baseMode == id,
+                  onSelected: (_) => setScene(scene.copyWith(baseMode: id)),
+                ),
+                const SizedBox(width: 6),
+              ],
+            ],
+          ),
+        ),
+        const Text(
+          'Kata hua base: ghumta hissa uthe to us ki jagah se peeche ki '
+          'video dikhti hai. Poora logo neeche (ghost): asal logo sabit '
+          'neeche rehta hai aur hisay us ke upar ghoomte hain — dohra asar.',
+          style: TextStyle(fontSize: 12, color: Colors.grey),
+        ),
+        const SizedBox(height: 12),
+        const Text(
+          'Preview ka pas-manzar:',
+          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 4),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              for (final (id, label) in const [
+                ('checker', 'Checker'),
+                ('green', 'Green'),
+                ('black', 'Kala'),
+              ]) ...[
+                ChoiceChip(
+                  key: Key('logoPartsPreviewBg-$id'),
+                  label: Text(label),
+                  selected: _partsPreviewBg == id,
+                  onSelected: (_) => setState(() => _partsPreviewBg = id),
+                ),
+                const SizedBox(width: 6),
+              ],
+            ],
+          ),
+        ),
+        const Text(
+          'Ye sirf preview ke liye hai — export par koi asar nahi. '
+          'Checker par logo ki asal halat (khaali jaghein) saaf dikhti hai.',
+          style: TextStyle(fontSize: 12, color: Colors.grey),
+        ),
+      ],
+    );
+  }
+
+  /// The custom glow colour picker: three RGB sliders in a
+  /// dialog (no new dependency). Returns the picked ARGB, or
+  /// null when cancelled.
+  Future<int?> _pickGlowColor(int initialArgb) {
+    var r = (initialArgb >> 16) & 0xFF;
+    var g = (initialArgb >> 8) & 0xFF;
+    var b = initialArgb & 0xFF;
+    return showDialog<int>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) {
+          final argb = (0xFF << 24) | (r << 16) | (g << 8) | b;
+          Widget channel(String label, int value, ValueChanged<int> set) =>
+              Row(
+                children: [
+                  SizedBox(width: 28, child: Text(label)),
+                  Expanded(
+                    child: Slider(
+                      value: value.toDouble(),
+                      min: 0,
+                      max: 255,
+                      divisions: 255,
+                      onChanged: (v) => setLocal(() => set(v.round())),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 30,
+                    child: Text('$value', textAlign: TextAlign.right),
+                  ),
+                ],
+              );
+          return AlertDialog(
+            title: const Text('Glow ka apna rang'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    color: Color(argb),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.grey),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                channel('R', r, (v) => r = v),
+                channel('G', g, (v) => g = v),
+                channel('B', b, (v) => b = v),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, argb),
+                child: const Text('Yehi rang'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  /// Dock tab 6 — SAVE: the paid save, exactly the flow that
+  /// was here before (300 coins / 7 days, remote-priced).
+  Widget _partsSaveTab(
+    ChannelPreset preset,
+    LogoPartsSaveState saveState,
+    bool savedCurrent,
+    int now,
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
         Text(
           saveState == LogoPartsSaveState.active
               ? (savedCurrent
@@ -5210,204 +6610,78 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         const SizedBox(height: 6),
         OutlinedButton.icon(
           key: const Key('logoPartsSaveButton'),
-          onPressed: _partsBusy ? null : _saveLogoParts,
+          onPressed: _partsBusy || preset.logoParts.isEmpty
+              ? null
+              : _saveLogoParts,
           icon: const Icon(Icons.save_outlined, size: 18),
           label: Text(_logoPartsSaveButtonLabel()),
         ),
+        const SizedBox(height: 12),
+        // --- EXPORT SIZE (Option 39, Build 3): green-screen
+        // (Permanent Logo) export ke frames kitne bare hon.
+        // Default 512 wahi hai jo hamesha tha. ---
+        const Text(
+          'Export size (green-screen export ke frames):',
+          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 4),
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            for (final (size, label) in const [
+              (kLogoPartsExportSizeDefault, '512 — Halka'),
+              (kLogoPartsExportSizeLarge, '1024 — Saaf'),
+            ])
+              ChoiceChip(
+                key: Key('logoExportSize-$size'),
+                label: Text(label),
+                selected: preset.logoPartsScene.exportSize == size,
+                onSelected: (_) => setState(
+                  () => preset.logoPartsScene =
+                      preset.logoPartsScene.copyWith(exportSize: size),
+                ),
+              ),
+          ],
+        ),
+        const Text(
+          '1024 par frames zyada saaf bante hain lekin export '
+          'thoda bhari hota hai; 512 halka aur tez hai.',
+          style: TextStyle(fontSize: 12, color: Colors.grey),
+        ),
       ],
-    ];
-  }
-
-  /// One part's controls row (point 6): thumbnail, rotate
-  /// switch, direction chips, speed chips, merge-up button.
-  Widget _logoPartRow(ChannelPreset preset, int i) {
-    final part = preset.logoParts[i];
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: const Color(0xFF12151C),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0x1FFFFFFF)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF181828),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: File(part.imagePath).existsSync()
-                    ? Image.file(File(part.imagePath), fit: BoxFit.contain)
-                    : const Icon(Icons.broken_image_outlined, size: 18),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  part.name,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-              ),
-              if (i > 0)
-                TextButton(
-                  key: Key('logoPartMerge-$i'),
-                  onPressed: _partsBusy ? null : () => _mergeLogoPart(i),
-                  child: const Text('Upar walay mein merge'),
-                ),
-              Switch(
-                key: Key('logoPartRotate-$i'),
-                value: part.rotate,
-                onChanged: (v) => setState(() {
-                  preset.logoParts = [
-                    for (var j = 0; j < preset.logoParts.length; j++)
-                      j == i
-                          ? preset.logoParts[j].copyWith(rotate: v)
-                          : preset.logoParts[j],
-                  ];
-                }),
-              ),
-            ],
-          ),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                ChoiceChip(
-                  key: Key('logoPartDir-$i-cw'),
-                  label: const Text('Clockwise'),
-                  selected: part.direction != 'ccw',
-                  onSelected: (_) => setState(() {
-                    preset.logoParts = [
-                      for (var j = 0; j < preset.logoParts.length; j++)
-                        j == i
-                            ? preset.logoParts[j].copyWith(direction: 'cw')
-                            : preset.logoParts[j],
-                    ];
-                  }),
-                ),
-                const SizedBox(width: 6),
-                ChoiceChip(
-                  key: Key('logoPartDir-$i-ccw'),
-                  label: const Text('Anti'),
-                  selected: part.direction == 'ccw',
-                  onSelected: (_) => setState(() {
-                    preset.logoParts = [
-                      for (var j = 0; j < preset.logoParts.length; j++)
-                        j == i
-                            ? preset.logoParts[j].copyWith(direction: 'ccw')
-                            : preset.logoParts[j],
-                    ];
-                  }),
-                ),
-                const SizedBox(width: 10),
-                const Text('Speed:', style: TextStyle(fontSize: 12)),
-                const SizedBox(width: 6),
-                for (final s in kLogoPartSpeeds) ...[
-                  ChoiceChip(
-                    key: Key('logoPartSpeed-$i-${s.toInt()}'),
-                    label: Text('${s.toInt()}s'),
-                    selected: part.speedSec == s,
-                    onSelected: (_) => setState(() {
-                      preset.logoParts = [
-                        for (var j = 0; j < preset.logoParts.length; j++)
-                          j == i
-                              ? preset.logoParts[j].copyWith(speedSec: s)
-                              : preset.logoParts[j],
-                      ];
-                    }),
-                  ),
-                  const SizedBox(width: 6),
-                ],
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
 
-  /// Point 6: run the automatic split on the preset's logo.
-  Future<void> _splitLogoParts() async {
+  /// Auto tajweez: propose element boxes for the preset's
+  /// logo. Re-proposing replaces the working parts (settings
+  /// start fresh) — the same honesty the old re-split had.
+  Future<void> _proposeLogoParts() async {
     final preset = _preset;
     if (preset == null || preset.logoPath == null) return;
     setState(() => _partsBusy = true);
     try {
-      final parts = await LogoPartsService.splitLogoFile(
+      final parts = await LogoPartsService.proposePartsForFile(
         File(preset.logoPath!),
-        maxParts: _partsCount,
+        keyingStrength: preset.logoPartsScene.keyingStrength,
       );
       if (!mounted) return;
       setState(() {
         preset.logoParts = parts;
         preset.logoPartsSourcePath = preset.logoPath;
+        _selectedPartId = parts.isEmpty ? null : parts.first.id;
+        _partsDrawMode = false;
         _partsBusy = false;
       });
       _showMessage(
         parts.isEmpty
-            ? 'Parts nahi ban sakay — logo ki tasveer se hisay saaf nahi mile.'
-            : '${parts.length} parts ban gaye — har hisay ki rotation set karein.',
+            ? 'Hisay tajweez nahi ho sakay — "Naya box banao" se khud box kheench kar hissa banayein.'
+            : '${parts.length} hisay tajweez ho gaye — boxes ko ghaseet kar theek kar lein, phir Ghumao set karein.',
       );
     } catch (e) {
       if (!mounted) return;
       setState(() => _partsBusy = false);
-      _showMessage('Split fail ho gaya: $e');
-    }
-  }
-
-  /// Point 6: merge part [i] into part i−1 (the split
-  /// adjustment the user asked for).
-  Future<void> _mergeLogoPart(int i) async {
-    final preset = _preset;
-    if (preset == null || i <= 0 || i >= preset.logoParts.length) return;
-    setState(() => _partsBusy = true);
-    try {
-      final prev = preset.logoParts[i - 1];
-      final part = preset.logoParts[i];
-      final dir = File(prev.imagePath).parent;
-      final out = File(
-        p.join(
-          dir.path,
-          'merged_${DateTime.now().millisecondsSinceEpoch}.png',
-        ),
-      );
-      final ok = await LogoPartsService.mergePartFiles(
-        File(prev.imagePath),
-        File(part.imagePath),
-        out,
-      );
-      if (!mounted) return;
-      if (!ok) {
-        setState(() => _partsBusy = false);
-        _showMessage('Merge nahi ho saka — dobara try karein.');
-        return;
-      }
-      setState(() {
-        final merged = LogoPart(
-          id: prev.id,
-          name: '${prev.name} + ${part.name}',
-          imagePath: out.path,
-          rotate: prev.rotate,
-          direction: prev.direction,
-          speedSec: prev.speedSec,
-          centreX: (prev.centreX + part.centreX) / 2,
-          centreY: (prev.centreY + part.centreY) / 2,
-        );
-        preset.logoParts = [
-          for (var j = 0; j < preset.logoParts.length; j++)
-            if (j == i - 1) merged else if (j != i) preset.logoParts[j],
-        ];
-        _partsBusy = false;
-      });
-      _showMessage('Parts merge ho gaye.');
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _partsBusy = false);
-      _showMessage('Merge fail ho gaya: $e');
+      _showMessage('Tajweez fail ho gayi: $e');
     }
   }
 
@@ -5437,6 +6711,128 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   /// fallback [kLogoPartsSavePriceCoins] = 300) and every kind
   /// resolves through PricingService — coins (dialog + spend
   /// below), free (save at once), Pro-only and ad-unlock.
+  /// MERGE (Option 10): the selected part and its neighbour
+  /// become ONE element (union box, the selected part's
+  /// settings lead). Pure geometry — no file work.
+  void _mergeSelectedPart(ChannelPreset preset) {
+    final parts = preset.logoParts;
+    final i = _selectedPartIndex(preset);
+    if (i < 0 || parts.length < 2) return;
+    final other = i + 1 < parts.length ? i + 1 : i - 1;
+    final merged = mergeLogoParts(parts[i], parts[other]);
+    final at = i < other ? i : other;
+    setState(() {
+      final list = [...parts];
+      list[at] = merged;
+      list.removeAt(i < other ? other : i);
+      preset.logoParts = list;
+      _selectedPartId = merged.id;
+    });
+    _showMessage('Do hisay mil kar aik element ban gaye: ${merged.name}');
+  }
+
+  /// SPLIT (Option 11): the selected box is cut into
+  /// left/right halves, both keeping its settings.
+  void _splitSelectedPart(ChannelPreset preset) {
+    final i = _selectedPartIndex(preset);
+    if (i < 0) return;
+    final halves = splitLogoPart(preset.logoParts[i]);
+    setState(() {
+      final list = [...preset.logoParts];
+      list.replaceRange(i, i + 1, halves);
+      preset.logoParts = list;
+      _selectedPartId = halves.first.id;
+    });
+  }
+
+  /// DELETE (Option 12): the part goes away — the master logo
+  /// file is never touched, so nothing is lost.
+  void _deleteSelectedPart(ChannelPreset preset) {
+    final i = _selectedPartIndex(preset);
+    if (i < 0) return;
+    setState(() {
+      final list = [...preset.logoParts]..removeAt(i);
+      preset.logoParts = list;
+      _selectedPartId = list.isEmpty
+          ? null
+          : list[i >= list.length ? list.length - 1 : i].id;
+      if (_isolatePartId != null &&
+          !list.any((e) => e.id == _isolatePartId)) {
+        _isolatePartId = null;
+      }
+    });
+  }
+
+  /// NAAM (Option 13): rename the selected part.
+  Future<void> _renameSelectedPart(ChannelPreset preset) async {
+    final i = _selectedPartIndex(preset);
+    if (i < 0) return;
+    final controller =
+        TextEditingController(text: preset.logoParts[i].name);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Hisay ka naam'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: 'Masalan: NEWS box, Globe, Ribbon',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(controller.text.trim()),
+            child: const Text('Naam rakho'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (name == null || name.isEmpty || !mounted) return;
+    _updatePartAt(preset, i, (e) => e.copyWith(name: name));
+  }
+
+  /// RESET (Option 15): saare boxes saaf — the master logo
+  /// stays exactly as it was; only the parts list clears.
+  Future<void> _resetLogoParts() async {
+    final preset = _preset;
+    if (preset == null || preset.logoParts.isEmpty) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Saare hisay saaf karein?'),
+        content: const Text(
+          'Saare boxes khatam ho jayenge. Asal logo mehfooz rahe ga — '
+          'hisay dobara tajweez ya draw kar sakte hain.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Saaf karein'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() {
+      preset.logoParts = [];
+      preset.logoPartsSourcePath = null;
+      _selectedPartId = null;
+      _isolatePartId = null;
+      _partsDrawMode = false;
+    });
+  }
+
   Future<void> _saveLogoParts() async {
     final preset = _preset;
     if (preset == null || preset.logoParts.isEmpty) return;
@@ -5538,7 +6934,11 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   void _applyPartsSave(ChannelPreset preset, {int? nowMs}) {
     final now = nowMs ?? DateTime.now().millisecondsSinceEpoch;
     setState(() {
-      preset.logoPartsSavedJson = encodeLogoParts(preset.logoParts);
+      // Build 2: the payload carries the parts AND their
+      // scene (glow + base) — the flow (price/validity) is
+      // unchanged.
+      preset.logoPartsSavedJson =
+          encodeLogoPartsSave(preset.logoParts, preset.logoPartsScene);
       preset.logoPartsSavedAtMs = now;
     });
     unawaited(persistPresetChange(preset));
@@ -5643,7 +7043,9 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         await LogoPartsService.generatePartsFrames(
           parts: preset.logoParts,
           outDir: framesDir,
+          size: preset.logoPartsScene.exportSize,
           greenScreen: true,
+          scene: preset.logoPartsScene,
         );
         command = FfmpegService.logoGreenScreenCommand(
           framesDir: framesDir.path,
@@ -7192,4 +8594,32 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       ),
     );
   }
+}
+
+/// The transparency checkerboard behind the Logo Parts big
+/// preview (Option 35, redesign Build 2) — the classic
+/// two-grey grid every graphics editor uses to show where
+/// an image is empty.
+class _CheckerboardPainter extends CustomPainter {
+  const _CheckerboardPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const cell = 14.0;
+    final light = Paint()..color = const Color(0xFF3A3A46);
+    final dark = Paint()..color = const Color(0xFF26262F);
+    canvas.drawRect(Offset.zero & size, dark);
+    for (var y = 0; y * cell < size.height; y++) {
+      for (var x = 0; x * cell < size.width; x++) {
+        if ((x + y).isEven) continue;
+        canvas.drawRect(
+          Rect.fromLTWH(x * cell, y * cell, cell, cell),
+          light,
+        );
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_CheckerboardPainter oldDelegate) => false;
 }

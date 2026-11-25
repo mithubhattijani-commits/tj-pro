@@ -238,11 +238,17 @@ class TimelineBar extends StatelessWidget {
                               // Snap the resting playhead to a
                               // clip boundary when it lands close
                               // (Phase 2), with a light tick.
+                              // A1 (v1.12): beats + manual markers
+                              // are snap targets too.
                               final snapped = TimelineMath.snapSec(
                                 centreSec,
-                                TimelineMath.boundaries(
-                                  host.effectiveDurations,
-                                ),
+                                [
+                                  ...TimelineMath.boundaries(
+                                    host.effectiveDurations,
+                                  ),
+                                  ...host.timelineBeats,
+                                  ...host.markers,
+                                ],
                                 0.15,
                               );
                               if (snapped != centreSec) {
@@ -274,6 +280,52 @@ class TimelineBar extends StatelessWidget {
                                         ),
                                       ),
                                     ),
+                                  // A1 (v1.12): beat ticks in the
+                                  // ruler band — the detected beats,
+                                  // mapped onto the timeline by
+                                  // host.timelineBeats (music = 0
+                                  // offset; a clip's beats shift by
+                                  // its start + trim).
+                                  for (final t in host.timelineBeats)
+                                    Positioned(
+                                      left: halfPad +
+                                          t * host.tlPxPerSec -
+                                          0.75,
+                                      top: 2,
+                                      child: Container(
+                                        width: 1.5,
+                                        height: 9,
+                                        color: Colors.white38,
+                                      ),
+                                    ),
+                                  // A1 (v1.12): manual markers —
+                                  // a gold flag on the ruler and a
+                                  // thin gold line down the strip.
+                                  for (final t in host.markers) ...[
+                                    Positioned(
+                                      left: halfPad +
+                                          t * host.tlPxPerSec -
+                                          0.75,
+                                      top: 11,
+                                      bottom: 0,
+                                      child: Container(
+                                        width: 1.5,
+                                        color: TjProTheme.gold
+                                            .withValues(alpha: 0.55),
+                                      ),
+                                    ),
+                                    Positioned(
+                                      left: halfPad +
+                                          t * host.tlPxPerSec -
+                                          4,
+                                      top: 0,
+                                      child: Icon(
+                                        Icons.bookmark,
+                                        size: 9,
+                                        color: TjProTheme.gold,
+                                      ),
+                                    ),
+                                  ],
                                   // Clip blocks.
                                   for (var i = 0;
                                       i < host.clips.length;
@@ -763,9 +815,23 @@ class TimelineBar extends StatelessWidget {
                             .toDouble();
                         // Snap to the clip's true start (Phase 2),
                         // one haptic tick per engagement.
+                        // A1 (v1.12): beats + markers inside this
+                        // clip are targets too, converted to the
+                        // handle's file-second domain.
                         final snapped = TimelineMath.snapSec(
                           v,
-                          const [0.0],
+                          [
+                            0.0,
+                            ...TimelineMath.trimSnapFilePoints(
+                              clipStart: host.clipStartSec(i),
+                              trimStart: clip.trimStart,
+                              effectiveDuration: clip.effectiveDuration,
+                              timelinePoints: [
+                                ...host.timelineBeats,
+                                ...host.markers,
+                              ],
+                            ),
+                          ],
                           0.08,
                         );
                         if (snapped != v) {
@@ -808,9 +874,22 @@ class TimelineBar extends StatelessWidget {
                                 d.delta.dx / host.tlPxPerSec)
                             .clamp(clip.trimStart + 0.3, full);
                         // Snap to the clip's true end (Phase 2).
+                        // A1 (v1.12): beats + markers inside this
+                        // clip are targets too (file-second domain).
                         final snapped = TimelineMath.snapSec(
                           v,
-                          [full],
+                          [
+                            full,
+                            ...TimelineMath.trimSnapFilePoints(
+                              clipStart: host.clipStartSec(i),
+                              trimStart: clip.trimStart,
+                              effectiveDuration: clip.effectiveDuration,
+                              timelinePoints: [
+                                ...host.timelineBeats,
+                                ...host.markers,
+                              ],
+                            ),
+                          ],
                           0.08,
                         );
                         if (snapped != v) {

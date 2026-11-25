@@ -227,7 +227,8 @@ void main() {
         LogoPart(
           id: 'part0',
           name: 'Part 1',
-          imagePath: logoFile.path,
+          sourcePath: logoFile.path,
+          box: const LogoBox(x: 0.1, y: 0.1, w: 0.5, h: 0.5),
         ),
       ]
       ..logoPartsSourcePath = logoFile.path;
@@ -249,12 +250,21 @@ void main() {
     // Faces.
     expect(find.byKey(const Key('logoFace-front')), findsOneWidget);
     expect(find.byKey(const Key('logoFace-bottom')), findsOneWidget);
-    // Parts controls.
+    // Parts controls (element model): the dock is in work
+    // order; the rotate switch lives in the Ghumao tab and
+    // acts on the selected (first) part.
+    await tester.ensureVisible(find.byKey(const Key('logoPartsTab-ghumao')));
+    await tester.tap(find.byKey(const Key('logoPartsTab-ghumao')));
+    await _frames(tester);
     await tester.ensureVisible(find.byKey(const Key('logoPartRotate-0')));
     expect(find.byKey(const Key('logoPartRotate-0')), findsOneWidget);
     await tester.tap(find.byKey(const Key('logoPartRotate-0')));
     await _frames(tester);
     expect(preset.logoParts.single.rotate, isFalse);
+    // The save button lives in the Save tab.
+    await tester.ensureVisible(find.byKey(const Key('logoPartsTab-save')));
+    await tester.tap(find.byKey(const Key('logoPartsTab-save')));
+    await _frames(tester);
     expect(find.byKey(const Key('logoPartsSaveButton')), findsOneWidget);
     // Permanent Logo section (not entitled -> manual payment info).
     await tester.ensureVisible(

@@ -300,6 +300,7 @@ class RotatingLogo extends StatelessWidget {
     this.clockwise = true,
     this.pedestal = false,
     this.parts = const [],
+    this.partsScene,
   });
 
   final String? logoPath;
@@ -320,10 +321,20 @@ class RotatingLogo extends StatelessWidget {
   /// the export frames use.
   final List<LogoPart> parts;
 
+  /// Redesign Build 2: the parts SCENE (glow + base) that
+  /// rides with [parts]; null = the Build 1 defaults
+  /// (glow off, cut base).
+  final LogoPartsScene? partsScene;
+
   @override
   Widget build(BuildContext context) {
     if (parts.isNotEmpty) {
-      return LogoPartsView(parts: parts, size: size, animate: animate);
+      return LogoPartsView(
+        parts: parts,
+        size: size,
+        animate: animate,
+        scene: partsScene,
+      );
     }
     return LogoCubeView(
       logoPath: logoPath,
@@ -339,21 +350,27 @@ class RotatingLogo extends StatelessWidget {
   }
 }
 
-/// Build 13 (point 6): the parts animation — every part drawn
-/// full-frame, rotating parts turning around their own
-/// centroid, all through [LogoPartsService.paintParts] (the
-/// exact painter the export frames use).
+/// Logo Parts (element model): the parts animation — the
+/// cut base plus every part's box region of the master,
+/// rotating parts turning around their own box centre, all
+/// through [LogoPartsService.paintParts] (the exact painter
+/// the export frames use).
 class LogoPartsView extends StatefulWidget {
   const LogoPartsView({
     super.key,
     required this.parts,
     required this.size,
     this.animate = true,
+    this.scene,
   });
 
   final List<LogoPart> parts;
   final double size;
   final bool animate;
+
+  /// Redesign Build 2: the parts SCENE (glow + base);
+  /// null = defaults (glow off, cut base).
+  final LogoPartsScene? scene;
 
   @override
   State<LogoPartsView> createState() => _LogoPartsViewState();
@@ -362,8 +379,13 @@ class LogoPartsView extends StatefulWidget {
 class _LogoPartsViewState extends State<LogoPartsView>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
-  Map<String, ui.Image> _textures = const {};
-  String _textureKey = '';
+  ui.Image? _master;
+  String _masterKey = '';
+
+  /// The AUTO glow colour, resolved from the master when it
+  /// loads (the scene's own colour, when set, wins in the
+  /// painter — this is only the fallback).
+  int? _autoGlowArgb;
 
   @override
   void initState() {
@@ -373,7 +395,7 @@ class _LogoPartsViewState extends State<LogoPartsView>
       duration: const Duration(seconds: 12),
     );
     if (widget.animate) _controller.repeat();
-    unawaited(_loadTextures());
+    unawaited(_loadMaster());
   }
 
   @override
@@ -384,39 +406,42 @@ class _LogoPartsViewState extends State<LogoPartsView>
     } else if (!widget.animate && _controller.isAnimating) {
       _controller.stop();
     }
-    if (_keyOf(widget.parts) != _textureKey) {
-      unawaited(_loadTextures());
+    if (_keyOf(widget.parts) != _masterKey) {
+      unawaited(_loadMaster());
     }
   }
 
+  /// The master texture depends only on the parts' shared
+  /// source — box/setting changes repaint, never reload.
   String _keyOf(List<LogoPart> parts) =>
-      parts.map((e) => '${e.id}:${e.imagePath}').join('|');
+      parts.isEmpty ? '' : parts.first.sourcePath;
 
-  Future<void> _loadTextures() async {
+  Future<void> _loadMaster() async {
     final key = _keyOf(widget.parts);
-    final textures = await LogoPartsService.loadPartTextures(widget.parts);
+    final master = await LogoPartsService.loadMasterTexture(
+      key.isEmpty ? null : key,
+    );
+    final autoGlow =
+        master == null ? null : await LogoPartsService.dominantColorOfImage(
+            master,
+          );
     if (!mounted) {
-      for (final img in textures.values) {
-        img.dispose();
-      }
+      master?.dispose();
       return;
     }
-    final old = _textures;
+    final old = _master;
     setState(() {
-      _textures = textures;
-      _textureKey = key;
+      _master = master;
+      _masterKey = key;
+      _autoGlowArgb = autoGlow;
     });
-    for (final img in old.values) {
-      img.dispose();
-    }
+    old?.dispose();
   }
 
   @override
   void dispose() {
     _controller.dispose();
-    for (final img in _textures.values) {
-      img.dispose();
-    }
+    _master?.dispose();
     super.dispose();
   }
 
@@ -430,8 +455,10 @@ class _LogoPartsViewState extends State<LogoPartsView>
         builder: (context, _) => CustomPaint(
           painter: _LogoPartsPainter(
             parts: widget.parts,
-            textures: _textures,
+            master: _master,
             tSec: _controller.value * kLogoPartsLoopSec,
+            scene: widget.scene,
+            autoGlowArgb: _autoGlowArgb,
           ),
         ),
       ),
@@ -442,22 +469,507 @@ class _LogoPartsViewState extends State<LogoPartsView>
 class _LogoPartsPainter extends CustomPainter {
   _LogoPartsPainter({
     required this.parts,
-    required this.textures,
+    required this.master,
     required this.tSec,
+    required this.scene,
+    required this.autoGlowArgb,
   });
 
   final List<LogoPart> parts;
-  final Map<String, ui.Image> textures;
+  final ui.Image? master;
   final double tSec;
+  final LogoPartsScene? scene;
+  final int? autoGlowArgb;
 
   @override
   void paint(Canvas canvas, Size size) {
-    LogoPartsService.paintParts(canvas, size, parts, textures, tSec);
+    LogoPartsService.paintParts(
+      canvas,
+      size,
+      parts,
+      master,
+      tSec,
+      scene: scene,
+      autoGlowColorArgb: autoGlowArgb,
+    );
   }
 
   @override
   bool shouldRepaint(_LogoPartsPainter old) =>
-      old.tSec != tSec || old.textures != textures || old.parts != parts;
+      old.tSec != tSec ||
+      old.master != master ||
+      old.parts != parts ||
+      old.scene != scene ||
+      old.autoGlowArgb != autoGlowArgb;
+}
+
+/// Point #22 (element model): ONE part's own live preview —
+/// the widget the Logo Parts section puts in each part's row.
+/// It shows the part's own box region of the master, turning
+/// (or staying still) by its OWN settings — rotate switch,
+/// direction, speed and style — through the same shared
+/// painter ([LogoPartsService.paintPart]) the combined
+/// preview and the export frames use. Changing a control
+/// rebuilds the row with the new part and the motion changes
+/// immediately.
+class LogoPartPreview extends StatefulWidget {
+  const LogoPartPreview({
+    super.key,
+    required this.part,
+    required this.size,
+  });
+
+  final LogoPart part;
+  final double size;
+
+  @override
+  State<LogoPartPreview> createState() => _LogoPartPreviewState();
+}
+
+class _LogoPartPreviewState extends State<LogoPartPreview>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  ui.Image? _master;
+  String _masterPath = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 12),
+    );
+    // Build 2: Pulse breathes even when the rotate switch is
+    // off — the row preview animates for either motion.
+    if (widget.part.rotate || widget.part.pulseOn) _controller.repeat();
+    unawaited(_loadMaster());
+  }
+
+  @override
+  void didUpdateWidget(LogoPartPreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final wantsMotion = widget.part.rotate || widget.part.pulseOn;
+    if (wantsMotion && !_controller.isAnimating) {
+      _controller.repeat();
+    } else if (!wantsMotion && _controller.isAnimating) {
+      _controller.stop();
+    }
+    if (widget.part.sourcePath != _masterPath) {
+      unawaited(_loadMaster());
+    }
+  }
+
+  Future<void> _loadMaster() async {
+    final path = widget.part.sourcePath;
+    final master = await LogoPartsService.loadMasterTexture(path);
+    if (!mounted) {
+      master?.dispose();
+      return;
+    }
+    final old = _master;
+    setState(() {
+      _master = master;
+      _masterPath = path;
+    });
+    old?.dispose();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _master?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: widget.size,
+      height: widget.size,
+      child: AnimatedBuilder(
+        animation: _controller,
+        builder: (context, _) => CustomPaint(
+          painter: LogoPartPreviewPainter(
+            part: widget.part,
+            texture: _master,
+            tSec: _controller.value * kLogoPartsLoopSec,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The painter behind [LogoPartPreview] — public so the
+/// row-preview behaviour is directly testable (its [angle] is
+/// the part's live angle at the painter's loop time).
+/// [texture] is the MASTER logo image; the painter draws the
+/// part's box region of it.
+class LogoPartPreviewPainter extends CustomPainter {
+  LogoPartPreviewPainter({
+    required this.part,
+    required this.texture,
+    required this.tSec,
+  });
+
+  final LogoPart part;
+  final ui.Image? texture;
+  final double tSec;
+
+  /// The part's rotation angle right now (0 when its rotate
+  /// switch is off — [LogoPartsService.partAngleAt] owns that
+  /// rule, shared with the combined preview and export).
+  double get angle => LogoPartsService.partAngleAt(part, tSec);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final tex = texture;
+    if (tex == null) return;
+    LogoPartsService.paintPart(canvas, size, part, tex, tSec);
+  }
+
+  @override
+  bool shouldRepaint(LogoPartPreviewPainter old) =>
+      old.tSec != tSec ||
+      old.texture != texture ||
+      old.part.rotate != part.rotate ||
+      old.part.direction != part.direction ||
+      old.part.speedSec != part.speedSec ||
+      old.part.rotationStyle != part.rotationStyle ||
+      old.part.motionMode != part.motionMode ||
+      old.part.swingDeg != part.swingDeg ||
+      old.part.pulseOn != part.pulseOn ||
+      old.part.pulseStrength != part.pulseStrength ||
+      old.part.delaySec != part.delaySec ||
+      old.part.pivotDx != part.pivotDx ||
+      old.part.pivotDy != part.pivotDy ||
+      old.part.box != part.box ||
+      old.part.sourcePath != part.sourcePath;
+}
+
+/// The interactive BIG preview of the Logo Parts tool
+/// (redesign Build 1): the combined live animation with every
+/// part's box outlined on top — the selected part in gold
+/// with a resize handle at its bottom-right corner.
+///
+/// Gestures (fractions of the square canvas):
+/// - tap → [onSelect] with the topmost hit part's id (or
+///   null when the tap lands outside every box);
+/// - drag inside the selected box → move it ([onBoxChanged]
+///   fires live, so the effect is seen while dragging);
+/// - drag the selected box's corner handle → resize it;
+/// - with [drawMode] on, a drag rubber-bands a NEW box and
+///   [onBoxDrawn] fires when the finger lifts.
+class LogoPartsEditorPreview extends StatefulWidget {
+  const LogoPartsEditorPreview({
+    super.key,
+    required this.parts,
+    required this.size,
+    required this.selectedId,
+    required this.editable,
+    required this.drawMode,
+    required this.onSelect,
+    required this.onBoxChanged,
+    required this.onBoxDrawn,
+    this.animate = true,
+    this.scene,
+  });
+
+  final List<LogoPart> parts;
+  final double size;
+  final String? selectedId;
+
+  /// Box gestures (move/resize/draw) — on in the Hisay tab.
+  final bool editable;
+  final bool drawMode;
+  final bool animate;
+
+  /// Redesign Build 2: the parts SCENE (glow + base);
+  /// null = defaults (glow off, cut base).
+  final LogoPartsScene? scene;
+  final ValueChanged<String?> onSelect;
+  final void Function(String id, LogoBox box) onBoxChanged;
+  final ValueChanged<LogoBox> onBoxDrawn;
+
+  @override
+  State<LogoPartsEditorPreview> createState() =>
+      _LogoPartsEditorPreviewState();
+}
+
+class _LogoPartsEditorPreviewState extends State<LogoPartsEditorPreview>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  ui.Image? _master;
+  String _masterKey = '';
+
+  /// The AUTO glow colour, resolved from the master when it
+  /// loads (see LogoPartsView).
+  int? _autoGlowArgb;
+
+  // Drag state (fractions).
+  Offset? _dragStart;
+  LogoBox? _dragOrigBox;
+  LogoBox? _rubberBand;
+  int _dragKind = 0; // 0 none, 1 move, 2 resize, 3 draw
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 12),
+    );
+    if (widget.animate) _controller.repeat();
+    unawaited(_loadMaster());
+  }
+
+  @override
+  void didUpdateWidget(LogoPartsEditorPreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.animate && !_controller.isAnimating) {
+      _controller.repeat();
+    } else if (!widget.animate && _controller.isAnimating) {
+      _controller.stop();
+    }
+    final key = widget.parts.isEmpty ? '' : widget.parts.first.sourcePath;
+    if (key != _masterKey) unawaited(_loadMaster());
+  }
+
+  Future<void> _loadMaster() async {
+    final key = widget.parts.isEmpty ? '' : widget.parts.first.sourcePath;
+    final master = await LogoPartsService.loadMasterTexture(
+      key.isEmpty ? null : key,
+    );
+    final autoGlow =
+        master == null ? null : await LogoPartsService.dominantColorOfImage(
+            master,
+          );
+    if (!mounted) {
+      master?.dispose();
+      return;
+    }
+    final old = _master;
+    setState(() {
+      _master = master;
+      _masterKey = key;
+      _autoGlowArgb = autoGlow;
+    });
+    old?.dispose();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _master?.dispose();
+    super.dispose();
+  }
+
+  LogoPart? get _selected {
+    for (final part in widget.parts) {
+      if (part.id == widget.selectedId) return part;
+    }
+    return null;
+  }
+
+  Offset _frac(Offset local) =>
+      Offset(local.dx / widget.size, local.dy / widget.size);
+
+  void _tapUp(TapUpDetails d) {
+    if (widget.drawMode) return;
+    final f = _frac(d.localPosition);
+    final idx = logoPartIndexAtPoint(widget.parts, f.dx, f.dy);
+    widget.onSelect(idx < 0 ? null : widget.parts[idx].id);
+  }
+
+  void _panStart(DragStartDetails d) {
+    if (!widget.editable) return;
+    final f = _frac(d.localPosition);
+    _dragStart = f;
+    if (widget.drawMode) {
+      _dragKind = 3;
+      _rubberBand = LogoBox(x: f.dx, y: f.dy, w: 0, h: 0);
+      return;
+    }
+    final sel = _selected;
+    if (sel == null) return;
+    final box = sel.box;
+    // Corner handle: a generous zone around the bottom-right.
+    final handle = Offset(box.right, box.bottom);
+    if ((f.dx - handle.dx).abs() <= 0.09 &&
+        (f.dy - handle.dy).abs() <= 0.09) {
+      _dragKind = 2;
+      _dragOrigBox = box;
+      return;
+    }
+    if (box.containsPoint(f.dx, f.dy)) {
+      _dragKind = 1;
+      _dragOrigBox = box;
+    }
+  }
+
+  void _panUpdate(DragUpdateDetails d) {
+    if (_dragKind == 0 || _dragStart == null) return;
+    final f = _frac(d.localPosition);
+    final start = _dragStart!;
+    if (_dragKind == 3) {
+      final x = f.dx < start.dx ? f.dx : start.dx;
+      final y = f.dy < start.dy ? f.dy : start.dy;
+      setState(() {
+        _rubberBand = LogoBox(
+          x: x,
+          y: y,
+          w: (f.dx - start.dx).abs(),
+          h: (f.dy - start.dy).abs(),
+        );
+      });
+      return;
+    }
+    final sel = _selected;
+    final orig = _dragOrigBox;
+    if (sel == null || orig == null) return;
+    if (_dragKind == 1) {
+      final dx = (f.dx - start.dx).clamp(-orig.x, 1 - orig.right);
+      final dy = (f.dy - start.dy).clamp(-orig.y, 1 - orig.bottom);
+      widget.onBoxChanged(
+        sel.id,
+        orig.copyWith(x: orig.x + dx, y: orig.y + dy),
+      );
+    } else if (_dragKind == 2) {
+      widget.onBoxChanged(
+        sel.id,
+        LogoBox.clamped(
+          x: orig.x,
+          y: orig.y,
+          w: f.dx - orig.x,
+          h: f.dy - orig.y,
+        ),
+      );
+    }
+  }
+
+  void _panEnd(DragEndDetails d) {
+    if (_dragKind == 3 && _rubberBand != null) {
+      final band = _rubberBand!;
+      if (band.w >= 0.03 && band.h >= 0.03) {
+        widget.onBoxDrawn(LogoBox.clamped(x: band.x, y: band.y, w: band.w, h: band.h));
+      }
+    }
+    setState(() {
+      _dragKind = 0;
+      _dragStart = null;
+      _dragOrigBox = null;
+      _rubberBand = null;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTapUp: _tapUp,
+      onPanStart: _panStart,
+      onPanUpdate: _panUpdate,
+      onPanEnd: _panEnd,
+      child: SizedBox(
+        width: widget.size,
+        height: widget.size,
+        child: AnimatedBuilder(
+          animation: _controller,
+          builder: (context, _) => CustomPaint(
+            painter: _LogoPartsEditorPainter(
+              parts: widget.parts,
+              master: _master,
+              tSec: _controller.value * kLogoPartsLoopSec,
+              selectedId: widget.selectedId,
+              rubberBand: _rubberBand,
+              scene: widget.scene,
+              autoGlowArgb: _autoGlowArgb,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Paints the combined animation plus the box outlines
+/// (selected = gold + corner handle; rubber band while
+/// drawing a new box).
+class _LogoPartsEditorPainter extends CustomPainter {
+  _LogoPartsEditorPainter({
+    required this.parts,
+    required this.master,
+    required this.tSec,
+    required this.selectedId,
+    required this.rubberBand,
+    required this.scene,
+    required this.autoGlowArgb,
+  });
+
+  final List<LogoPart> parts;
+  final ui.Image? master;
+  final double tSec;
+  final String? selectedId;
+  final LogoBox? rubberBand;
+  final LogoPartsScene? scene;
+  final int? autoGlowArgb;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    LogoPartsService.paintParts(
+      canvas,
+      size,
+      parts,
+      master,
+      tSec,
+      scene: scene,
+      autoGlowColorArgb: autoGlowArgb,
+    );
+    for (final part in parts) {
+      final rect = LogoPartsService.boxRectIn(size, part.box);
+      final selected = part.id == selectedId;
+      canvas.drawRect(
+        rect,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = selected ? 2.5 : 1.2
+          ..color = selected
+              ? const Color(0xFFFFC800)
+              : const Color(0x99FFFFFF),
+      );
+      if (selected) {
+        const handle = 9.0;
+        canvas.drawRect(
+          Rect.fromLTWH(
+            rect.right - handle / 2,
+            rect.bottom - handle / 2,
+            handle,
+            handle,
+          ),
+          Paint()..color = const Color(0xFFFFC800),
+        );
+      }
+    }
+    final band = rubberBand;
+    if (band != null) {
+      canvas.drawRect(
+        LogoPartsService.boxRectIn(size, band),
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2
+          ..color = const Color(0xFFFFC800),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_LogoPartsEditorPainter old) =>
+      old.tSec != tSec ||
+      old.master != master ||
+      old.parts != parts ||
+      old.selectedId != selectedId ||
+      old.rubberBand != rubberBand ||
+      old.scene != scene ||
+      old.autoGlowArgb != autoGlowArgb;
 }
 
 /// The logo image itself (no animation): a picked file, or the
@@ -541,6 +1053,7 @@ class LogoBug extends StatefulWidget {
     this.cubeClockwise = true,
     this.cubePedestal = false,
     this.parts = const [],
+    this.partsScene,
   });
 
   final String? logoPath;
@@ -558,6 +1071,10 @@ class LogoBug extends StatefulWidget {
   /// Build 13 (point 6): the Logo Parts working list for the
   /// image source (see RotatingLogo.parts).
   final List<LogoPart> parts;
+
+  /// Redesign Build 2: the parts SCENE (glow + base) riding
+  /// with [parts] (see RotatingLogo.partsScene).
+  final LogoPartsScene? partsScene;
 
   /// Build 12 (point #13): 'video' when the preset's logo
   /// source is a logo VIDEO — the bug then plays the keyed
@@ -626,6 +1143,7 @@ class _LogoBugState extends State<LogoBug> {
       clockwise: widget.cubeClockwise,
       pedestal: widget.cubePedestal,
       parts: widget.parts,
+      partsScene: widget.partsScene,
     );
   }
 

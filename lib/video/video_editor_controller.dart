@@ -46,6 +46,7 @@ abstract class VideoEditorController {
   set activeTool(String? value);
   Future<void> addClip();
   Future<void> addPhotoClip();
+  void addMarkerAtPlayhead();
   bool get adjAuto;
   set adjAuto(bool value);
   double get adjBlacks;
@@ -132,6 +133,8 @@ abstract class VideoEditorController {
   set detectingBeats(bool value);
   void duplicateSelectedClip();
   Future<void> editCaptions();
+  Future<void> importCaptionsFile();
+  Future<void> shareCaptionsFile(String kind);
   List<double> get effectiveDurations;
   bool get elementRow;
   set elementRow(bool value);
@@ -222,6 +225,9 @@ abstract class VideoEditorController {
   set mainMaskInvert(bool value);
   bool get mainTrackLocked;
   set mainTrackLocked(bool value);
+  List<double> get markers;
+  set markers(List<double> value);
+  void removeMarker(double sec);
   String? get musicPath;
   set musicPath(String? value);
   double get musicVolume;
@@ -432,6 +438,7 @@ abstract class VideoEditorController {
   set tfY(double value);
   Map<String, List<String>> get thumbCache;
   String thumbKey(VideoClip clip);
+  List<double> get timelineBeats;
   double get tlPxPerSec;
   set tlPxPerSec(double value);
   ScrollController get tlScroll;

@@ -17,6 +17,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../photo_editor_controller.dart';
 import '../photo_models.dart';
 import '../../services/font_registry.dart';
+import '../../widgets/tool_guide.dart';
 import 'photo_widgets.dart';
 
 const _ratioTiles = <(String, int, int)>[
@@ -112,6 +113,8 @@ extension PhotoPanelHelpers on PhotoEditorController {
               overflow: TextOverflow.ellipsis,
             ),
           ),
+          // Point #21: har tool ki Guide, isi header mein.
+          ToolGuideButton(guideId: 'pe.$toolKey', compact: true),
           GestureDetector(
             onTapDown: (_) => update(() => comparing = true),
             onTapUp: (_) => update(() => comparing = false),

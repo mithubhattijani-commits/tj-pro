@@ -554,6 +554,75 @@ class CaptionService {
     return h * 3600 + m * 60 + s + ms / 1000;
   }
 
+  /// Parses a WebVTT document into segments (A2, v1.12 — the VE
+  /// captions import). Handles what real-world .vtt files carry:
+  /// the `WEBVTT` header (with or without a BOM / header text),
+  /// cue identifiers, cue settings after the end time
+  /// (`position:50%` etc. — stripped), and NOTE / STYLE / REGION
+  /// blocks (skipped). Timestamps may be `HH:MM:SS.mmm` or the
+  /// short `MM:SS.mmm` form. Malformed cues are skipped, never
+  /// fatal — same contract as [parseSrt].
+  static List<CaptionSegment> parseVtt(String vtt) {
+    var text = vtt.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+    if (text.startsWith('\uFEFF')) text = text.substring(1);
+    final out = <CaptionSegment>[];
+    for (final block in text.split('\n\n')) {
+      final lines = block
+          .split('\n')
+          .map((l) => l.trim())
+          .where((l) => l.isNotEmpty)
+          .toList();
+      if (lines.isEmpty) continue;
+      final head = lines.first;
+      if (head.startsWith('WEBVTT') ||
+          head == 'NOTE' ||
+          head.startsWith('NOTE ') ||
+          head.startsWith('NOTE\t') ||
+          head == 'STYLE' ||
+          head == 'REGION') {
+        continue;
+      }
+      // First line may be a cue identifier — find the timing line.
+      var timingIndex = -1;
+      for (var i = 0; i < lines.length; i++) {
+        if (lines[i].contains('-->')) {
+          timingIndex = i;
+          break;
+        }
+      }
+      if (timingIndex < 0 || timingIndex + 1 >= lines.length) continue;
+      final parts = lines[timingIndex].split('-->');
+      if (parts.length != 2) continue;
+      // The end side may carry cue settings after the timestamp.
+      final endToken = parts[1].trim().split(RegExp(r'\s+')).first;
+      final start = _parseVttTime(parts[0].trim());
+      final end = _parseVttTime(endToken);
+      if (start == null || end == null || end <= start) continue;
+      final cueText = lines.sublist(timingIndex + 1).join('\n').trim();
+      if (cueText.isEmpty) continue;
+      out.add(CaptionSegment(cueText, start, end));
+    }
+    out.sort((a, b) => a.start.compareTo(b.start));
+    return out;
+  }
+
+  static double? _parseVttTime(String stamp) {
+    var t = stamp.trim();
+    // Short form MM:SS.mmm — normalise to HH:MM:SS.mmm so the
+    // one strict parser serves both formats.
+    if (t.split(':').length == 2) t = '00:$t';
+    return _parseSrtTime(t);
+  }
+
+  /// Parses a subtitle file's contents, choosing SRT or WebVTT
+  /// by the document itself (a leading `WEBVTT` header — BOM
+  /// tolerated — means VTT; anything else is read as SRT).
+  static List<CaptionSegment> parseSubtitle(String content) {
+    var head = content.trimLeft();
+    if (head.startsWith('\uFEFF')) head = head.substring(1).trimLeft();
+    return head.startsWith('WEBVTT') ? parseVtt(content) : parseSrt(content);
+  }
+
   // ---- real word timing with even-split fallback ----
 
   /// Start of word [index] in [seg] — real timing when known.

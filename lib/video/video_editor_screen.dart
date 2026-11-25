@@ -20,6 +20,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:video_player/video_player.dart';
 
 import '../app_config.dart';
@@ -531,6 +532,14 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
 
   // Beat sync + waveform.
   List<double> _beats = [];
+  // A1 (v1.12): beat times are relative to the file detection
+  // ran on — the music file (timeline 0) or one clip's file
+  // (file seconds). The source is recorded at detection time so
+  // [timelineBeats] can map them onto the timeline correctly.
+  bool _beatSourceMusic = false;
+  String? _beatSourcePath;
+  // A1 (v1.12): manual markers, in TIMELINE seconds, sorted.
+  List<double> _markers = [];
   bool _beatAutoCut = false;
   bool _detectingBeats = false;
   String? _waveformPath;
@@ -937,10 +946,13 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     try {
       final dir = await _workDir();
       final input = _musicPath ?? _clips[_selected].file.path;
+      final fromMusic = _musicPath != null;
       final beats = await detectBeats(input: input, workDir: dir);
       if (!mounted) return;
       setState(() {
         _beats = beats;
+        _beatSourceMusic = fromMusic;
+        _beatSourcePath = input;
         _status = beats.isEmpty
             ? 'Koi beat nahi mili.'
             : '${beats.length} beats mili.';
@@ -949,6 +961,124 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       _setStatus('Beat detect failed: $e');
     } finally {
       if (mounted) setState(() => _detectingBeats = false);
+    }
+  }
+
+  /// A1 (v1.12): drop a manual marker at the playhead the user
+  /// sees (the timeline clock position). Markers are timeline
+  /// seconds, kept sorted; a second marker within 0.05 s of an
+  /// existing one is refused instead of stacking invisibly.
+  void _addMarkerAtPlayhead() {
+    if (_clips.isEmpty) {
+      _setStatus('Pehle clip add karein.');
+      return;
+    }
+    final t = _globalPositionSec.clamp(0.0, _totalDurationSec).toDouble();
+    if (_markers.any((m) => (m - t).abs() < 0.05)) {
+      _setStatus('Is jagah par marker pehle se hai.');
+      return;
+    }
+    _pushHistory();
+    setState(() {
+      _markers = [..._markers, t]..sort();
+    });
+    HapticFeedback.selectionClick();
+    _setStatus('Marker lag gaya — ${t.toStringAsFixed(1)}s par.');
+  }
+
+  /// A1 (v1.12): remove one manual marker (Beats panel list).
+  void _removeMarker(double sec) {
+    if (!_markers.any((m) => (m - sec).abs() < 0.001)) return;
+    _pushHistory();
+    setState(() {
+      _markers = _markers.where((m) => (m - sec).abs() >= 0.001).toList();
+    });
+    _setStatus('Marker hata diya.');
+  }
+
+  /// A2 (v1.12): import captions from an .srt / .vtt file. The
+  /// file's timings describe the WHOLE video, so imported
+  /// segments are timeline-relative (the handoff flag). Existing
+  /// captions are only replaced after an explicit confirmation —
+  /// never silently wiped; a file with no readable captions
+  /// changes nothing.
+  Future<void> _importCaptionsFile() async {
+    if (_busy) {
+      explainToolTap();
+      return;
+    }
+    try {
+      final file = await FilePicker.pickFile(
+        type: FileType.custom,
+        allowedExtensions: ['srt', 'vtt'],
+      );
+      if (file == null || !mounted) return;
+      final bytes = await file.readAsBytes();
+      final segments = CaptionService.parseSubtitle(utf8.decode(bytes));
+      if (!mounted) return;
+      if (segments.isEmpty) {
+        _setStatus(
+          'Is file mein koi caption nahi mila — file check karein. '
+          'Aap ki mojooda captions mehfooz hain.',
+        );
+        return;
+      }
+      if (_captions.isNotEmpty) {
+        final replace = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Captions badal dein?'),
+            content: Text(
+              'Is file ke ${segments.length} segments mojooda '
+              '${_captions.length} captions ki jagah le lenge.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text('Rehne dein'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(true),
+                child: const Text('Badal dein'),
+              ),
+            ],
+          ),
+        );
+        if (replace != true || !mounted) return;
+      }
+      setState(() {
+        _captions = segments;
+        _captionsTimelineRelative = true;
+        _status = '${segments.length} caption segments import ho gaye.';
+      });
+    } catch (e) {
+      if (mounted) _setStatus('Caption import failed: $e');
+    }
+  }
+
+  /// A2 (v1.12): write the current captions as an .srt / .vtt
+  /// file and hand it to the system share sheet. The segments
+  /// are shared exactly as the editor holds them (the same list
+  /// the Edit dialog shows), so the file round-trips back
+  /// through Import unchanged.
+  Future<void> _shareCaptionsFile(String kind) async {
+    if (_captions.isEmpty) {
+      _setStatus('Pehle captions banayein ya import karein.');
+      return;
+    }
+    try {
+      final dir = await _workDir();
+      final isVtt = kind == 'vtt';
+      final content = isVtt
+          ? CaptionService.buildVtt(_captions)
+          : CaptionService.buildSrt(_captions);
+      final out = File(
+        '${dir.path}/tj_pro_captions.${isVtt ? 'vtt' : 'srt'}',
+      );
+      await out.writeAsString(content);
+      await SharePlus.instance.share(ShareParams(files: [XFile(out.path)]));
+    } catch (e) {
+      if (mounted) _setStatus('Caption share failed: $e');
     }
   }
 
@@ -1569,6 +1699,16 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
   double _clipStartSec(int index) =>
       TimelineMath.startSec(_effectiveDurations, index);
 
+  /// A1 (v1.12): every snap target on the timeline, in timeline
+  /// seconds — clip boundaries + detected beats (mapped from
+  /// their source file) + manual markers. The resting playhead,
+  /// Split and the trim handles all snap against this one list.
+  List<double> get _snapPoints => [
+        ...TimelineMath.boundaries(_effectiveDurations),
+        ...timelineBeats,
+        ..._markers,
+      ];
+
   /// The playhead's position on the TIMELINE (seconds): the
   /// selected clip's start + the clock position inside its trimmed
   /// range. Photo clips have no clock — their start is the best
@@ -1878,6 +2018,12 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     'music': _musicPath,
     'musicVol': _musicVolume,
     'text': _text,
+    // A1 (v1.12): markers + beats ride the undo history too, so
+    // undoing a clip op never strands them.
+    'markers': _markers,
+    'beats': _beats,
+    'beatMusic': _beatSourceMusic,
+    'beatPath': _beatSourcePath,
   });
 
   void _pushHistory() {
@@ -1920,6 +2066,14 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       _musicPath = m['music'] as String?;
       _musicVolume = (m['musicVol'] as num?)?.toDouble() ?? 1;
       _text = m['text'] as String? ?? '';
+      _markers = ((m['markers'] as List?) ?? const [])
+          .map((e) => (e as num).toDouble())
+          .toList();
+      _beats = ((m['beats'] as List?) ?? const [])
+          .map((e) => (e as num).toDouble())
+          .toList();
+      _beatSourceMusic = m['beatMusic'] as bool? ?? false;
+      _beatSourcePath = m['beatPath'] as String?;
     });
     if (_clips.isNotEmpty) {
       await _loadPreview();
@@ -2058,6 +2212,12 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         'aicutThresholdDb': _aicutThresholdDb,
         'aicutMinSilenceSec': _aicutMinSilenceSec,
         'newsEnabled': _newsEnabled,
+        // A1 (v1.12): the session draft IS this panel map, so
+        // markers + beats (with their source) survive a relaunch.
+        'markers': List<double>.of(_markers),
+        'beats': List<double>.of(_beats),
+        'beatMusic': _beatSourceMusic,
+        'beatPath': _beatSourcePath,
       };
 
   void _restorePanelSnapshot(Map<String, Object?> m) {
@@ -2170,6 +2330,14 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       _aicutThresholdDb = d('aicutThresholdDb');
       _aicutMinSilenceSec = d('aicutMinSilenceSec');
       _newsEnabled = m['newsEnabled'] as bool? ?? false;
+      _markers = ((m['markers'] as List?) ?? const [])
+          .map((e) => (e as num).toDouble())
+          .toList();
+      _beats = ((m['beats'] as List?) ?? const [])
+          .map((e) => (e as num).toDouble())
+          .toList();
+      _beatSourceMusic = m['beatMusic'] as bool? ?? false;
+      _beatSourcePath = m['beatPath'] as String?;
     });
     // Mask preview images are keyed on the mask fields, so a
     // restored value re-renders itself on the next stage build.
@@ -3862,6 +4030,9 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       centreSec = (_tlScroll.offset / _tlPxPerSec)
           .clamp(0.0, _totalDurationSec)
           .toDouble();
+      // A1 (v1.12): a playhead resting within the snap threshold
+      // of a beat / marker / boundary cuts EXACTLY on it.
+      centreSec = TimelineMath.snapSec(centreSec, _snapPoints, 0.15);
     }
     // The cut decision is the pure resolveSplit (editor_stage)
     // — the functional tests pin it; this method only applies
@@ -4485,6 +4656,31 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
   List<double> get beats => _beats;
   @override
   set beats(List<double> value) => _beats = value;
+  @override
+  List<double> get timelineBeats => TimelineMath.beatsToTimeline(
+        beats: _beats,
+        sourceIsMusic: _beatSourceMusic,
+        sourceClipIndex: _beatSourceMusic
+            ? -1
+            : _clips.indexWhere((c) => c.file.path == _beatSourcePath),
+        clipStarts: [
+          for (var i = 0; i < _clips.length; i++) _clipStartSec(i),
+        ],
+        trimStarts: [for (final c in _clips) c.trimStart],
+        effectiveDurations: _effectiveDurations,
+      );
+  @override
+  List<double> get markers => _markers;
+  @override
+  set markers(List<double> value) => _markers = value;
+  @override
+  void addMarkerAtPlayhead() => _addMarkerAtPlayhead();
+  @override
+  void removeMarker(double sec) => _removeMarker(sec);
+  @override
+  Future<void> importCaptionsFile() => _importCaptionsFile();
+  @override
+  Future<void> shareCaptionsFile(String kind) => _shareCaptionsFile(kind);
   @override
   Future<String?> buildOverlayCommand({ required Directory dir, required int stamp, required String input, required String output, required double durationSec, }) => _buildOverlayCommand(dir: dir, stamp: stamp, input: input, output: output, durationSec: durationSec);
   @override

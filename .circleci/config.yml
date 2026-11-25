@@ -21,7 +21,7 @@ jobs:
           name: Install Flutter (stable channel)
           command: |
             if [ ! -d "$HOME/flutter" ]; then
-              git clone --depth 1 -b stable https://github.com/flutter/flutter.git "$HOME/flutter"
+              git clone --depth 1 -b 3.47.8 https://github.com/flutter/flutter.git "$HOME/flutter"
             fi
             echo 'export PATH="$HOME/flutter/bin:$PATH"' >> "$BASH_ENV"
             export PATH="$HOME/flutter/bin:$PATH"

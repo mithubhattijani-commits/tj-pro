@@ -15,6 +15,7 @@ import '../../services/caption_styles.dart';
 import '../../services/font_registry.dart';
 import '../widgets/panel_helpers.dart';
 import '../widgets/photo_widgets.dart';
+import '../../widgets/tool_guide.dart';
 
 class TextZone extends StatelessWidget {
   final PhotoEditorController host;
@@ -98,6 +99,9 @@ class TextZone extends StatelessWidget {
               ),
             ),
             const Spacer(),
+            // Point #21: Text tool ki Guide (ye zone generic
+            // panel header nahi use karti, is liye yahan alag).
+            const ToolGuideButton(guideId: 'pe.text', compact: true),
             IconButton(
               tooltip: 'Confirm',
               onPressed: host.closePanel,

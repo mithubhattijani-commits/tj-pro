@@ -1423,7 +1423,11 @@ class ReelExportService {
       final stat = source.statSync();
       stamp = '${stat.size}:${stat.modified.millisecondsSinceEpoch}';
     } catch (_) {}
-    return logoPartsVariantKey(sourceStamp: stamp, parts: preset.logoParts);
+    return logoPartsVariantKey(
+      sourceStamp: stamp,
+      parts: preset.logoParts,
+      scene: preset.logoPartsScene,
+    );
   }
 
   static Future<String?> _applyParityTemplate({
@@ -1559,6 +1563,7 @@ class ReelExportService {
               await LogoPartsService.generatePartsFrames(
                 parts: preset.logoParts,
                 outDir: dirFrames,
+                scene: preset.logoPartsScene,
               );
               framesDir = dirFrames.path;
             } else {
@@ -1905,6 +1910,7 @@ class ReelExportService {
           await LogoPartsService.generatePartsFrames(
             parts: preset.logoParts,
             outDir: framesDir,
+            scene: preset.logoPartsScene,
           );
         } else {
           await LogoLoopService.generateFrames(

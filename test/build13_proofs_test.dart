@@ -7,7 +7,6 @@
 /// into ~/workspace/tj-pro-build/tool-tests/build13/.
 library;
 
-import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -101,56 +100,35 @@ void main() {
     final frame = await codec.getNextFrame();
     final img = frame.image;
     final bd = await img.toByteData(format: ui.ImageByteFormat.rawRgba);
-    final detected = splitLogoRgba(
+    // Element model: the auto tajweez proposes BOXES for the
+    // fixture's elements (never colour slices).
+    final boxes = proposeLogoBoxes(
       rgba: bd!.buffer.asUint8List(),
       width: img.width,
       height: img.height,
-      maxParts: 4,
     );
-    expect(detected.length, greaterThanOrEqualTo(2));
-    final partsDir = Directory('$_outDir/parts-frame-src');
-    await partsDir.create(recursive: true);
-    final parts = <LogoPart>[];
-    for (var i = 0; i < detected.length; i++) {
-      final d = detected[i];
-      final done = Completer<ui.Image>();
-      ui.decodeImageFromPixels(
-        d.rgba,
-        d.width,
-        d.height,
-        ui.PixelFormat.rgba8888,
-        done.complete,
-      );
-      final pimg = await done.future;
-      final png = await pimg.toByteData(format: ui.ImageByteFormat.png);
-      pimg.dispose();
-      final f = File('${partsDir.path}/part_$i.png');
-      await f.writeAsBytes(png!.buffer.asUint8List());
-      parts.add(
+    expect(boxes, isNotEmpty);
+    final parts = <LogoPart>[
+      for (var i = 0; i < boxes.length && i < 4; i++)
         LogoPart(
           id: 'part$i',
           name: 'Part ${i + 1}',
-          imagePath: f.path,
+          sourcePath: fixture,
+          box: boxes[i],
           rotate: i.isEven,
           direction: i == 2 ? 'ccw' : 'cw',
           speedSec: i == 0 ? 4 : 6,
-          centreX: d.centreX,
-          centreY: d.centreY,
         ),
-      );
-    }
-    final textures = await LogoPartsService.loadPartTextures(parts);
+    ];
     final frameImg = await LogoPartsService.renderPartsFrame(
       parts: parts,
-      textures: textures,
+      masterTexture: img,
       size: 512,
       tSec: 1.0,
     );
     await _writePng('parts-frame-t1.png', frameImg);
     frameImg.dispose();
-    for (final t in textures.values) {
-      t.dispose();
-    }
+    img.dispose();
   });
 
   // NOTE: full-screen widget captures (Maker / Teleprompter)

@@ -403,21 +403,25 @@ void main() {
       expect(snapLogoPartSpeed(5.5), 6);
       expect(snapLogoPartSpeed(2.4), 2);
       expect(snapLogoPartSpeed(20), 12);
-      expect(LogoPart(id: 'a', name: 'A', imagePath: '/x.png', speedSec: 5)
-          .speedSec, 4);
+      expect(LogoPart(
+        id: 'a',
+        name: 'A',
+        sourcePath: '/x.png',
+        box: const LogoBox(x: 0, y: 0, w: 0.5, h: 0.5),
+        speedSec: 5,
+      ).speedSec, 4);
     });
 
-    test('parts JSON round-trip', () {
+    test('parts JSON round-trip (element model: box + source)', () {
       final parts = [
         LogoPart(
           id: 'p0',
           name: 'Part 1',
-          imagePath: '/a.png',
+          sourcePath: '/logo.png',
+          box: const LogoBox(x: 0.1, y: 0.2, w: 0.3, h: 0.5),
           rotate: false,
           direction: 'ccw',
           speedSec: 4,
-          centreX: 0.25,
-          centreY: 0.75,
         ),
       ];
       final back = decodeLogoParts(encodeLogoParts(parts));
@@ -425,9 +429,22 @@ void main() {
       expect(back.single.rotate, isFalse);
       expect(back.single.direction, 'ccw');
       expect(back.single.speedSec, 4);
+      expect(back.single.box, parts.single.box);
+      // Pivot = the box's centre, always.
       expect(back.single.centreX, 0.25);
+      expect(back.single.centreY, 0.45);
       expect(decodeLogoParts(''), isEmpty);
       expect(decodeLogoParts('not json'), isEmpty);
+    });
+
+    test('old slice-model save loads as NO parts (no crash)', () {
+      // The old payload: per-part PNG paths + centroids, no
+      // box, no shared source — it cannot map to elements.
+      final old = decodeLogoParts(
+        '[{"id":"a","name":"A","imagePath":"/a.png","rotate":true,'
+        '"direction":"cw","speedSec":6,"centreX":0.5,"centreY":0.5}]',
+      );
+      expect(old, isEmpty);
     });
 
     test('save state: never / active / expired at exactly 7 days', () {
@@ -454,8 +471,9 @@ void main() {
       expect(back.logoParts, isEmpty); // transient, never serialised
     });
 
-    test('split: synthetic logo on green splits into colour parts', () {
-      // 60x40: green bg, a red block left, a blue band right.
+    test('propose: synthetic logo yields element boxes, not slices', () {
+      // 60x40: green bg, a red block left, a blue band right —
+      // two separate design elements → two proposed boxes.
       const w = 60, h = 40;
       final rgba = Uint8List(w * h * 4);
       for (var y = 0; y < h; y++) {
@@ -489,11 +507,11 @@ void main() {
           rgba[o + 2] = 0;
         }
       }
-      final parts = splitLogoRgba(rgba: rgba, width: w, height: h);
-      expect(parts.length, greaterThanOrEqualTo(2));
-      final colors = parts.map((e) => e.dominantColor).toList();
-      expect(colors.any((c) => (c >> 16) & 0xFF > 150), isTrue); // red
-      expect(colors.any((c) => c & 0xFF > 150), isTrue); // blue
+      final boxes = proposeLogoBoxes(rgba: rgba, width: w, height: h);
+      expect(boxes.length, greaterThanOrEqualTo(2));
+      // The boxes sit on the two elements (left / right).
+      expect(boxes.any((b) => b.centreX < 0.45), isTrue);
+      expect(boxes.any((b) => b.centreX > 0.55), isTrue);
     });
   });
 

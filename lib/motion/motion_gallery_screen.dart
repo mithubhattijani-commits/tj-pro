@@ -21,6 +21,7 @@ import '../services/ai_tool_charge.dart';
 import '../services/feature_gate.dart';
 import '../services/pro_service.dart';
 import '../services/remote_config_service.dart';
+import '../widgets/tool_guide.dart';
 import 'motion_access.dart';
 import 'motion_preview.dart';
 import 'motion_preview_screen.dart';
@@ -176,6 +177,11 @@ class _MotionGalleryScreenState extends State<MotionGalleryScreen> {
             ),
           ],
         ),
+        // Point #21: Studio ki Guide.
+        actions: const [
+          ToolGuideButton(guideId: 'motion'),
+          SizedBox(width: 6),
+        ],
       ),
       body: Container(
         decoration: const BoxDecoration(

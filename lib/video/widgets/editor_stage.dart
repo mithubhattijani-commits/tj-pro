@@ -218,6 +218,76 @@ class TimelineMath {
     return best;
   }
 
+  /// A1 (v1.12): map detected beat times onto TIMELINE seconds.
+  ///
+  /// Beat detection returns times relative to the START OF THE
+  /// FILE it analysed — never timeline seconds. The two sources
+  /// map differently:
+  /// * the music file starts at timeline 0, so its beats are
+  ///   already timeline seconds;
+  /// * a clip's beats are FILE seconds of that clip: a beat at
+  ///   file second `b` appears on the timeline at
+  ///   `clipStart + (b - trimStart)`, and only while `b` lies
+  ///   inside the clip's used range `[trimStart, trimEnd]`
+  ///   (trimEnd = trimStart + effectiveDuration). Beats outside
+  ///   the used range are trimmed away content — they draw
+  ///   nothing and snap nothing.
+  ///
+  /// [sourceClipIndex] is the index (into the parallel lists) of
+  /// the clip the beats were detected on, or -1 when the source
+  /// was the music file / the clip is gone.
+  static List<double> beatsToTimeline({
+    required List<double> beats,
+    required bool sourceIsMusic,
+    required int sourceClipIndex,
+    required List<double> clipStarts,
+    required List<double> trimStarts,
+    required List<double> effectiveDurations,
+  }) {
+    if (beats.isEmpty) return const [];
+    if (sourceIsMusic) {
+      return [for (final b in beats) if (b >= 0) b];
+    }
+    if (sourceClipIndex < 0 ||
+        sourceClipIndex >= clipStarts.length ||
+        sourceClipIndex >= trimStarts.length ||
+        sourceClipIndex >= effectiveDurations.length) {
+      return const [];
+    }
+    final start = clipStarts[sourceClipIndex];
+    final ts = trimStarts[sourceClipIndex];
+    final te = ts + effectiveDurations[sourceClipIndex];
+    return [
+      for (final b in beats)
+        if (b >= ts && b <= te) start + (b - ts),
+    ];
+  }
+
+  /// A1 (v1.12): convert TIMELINE-domain snap points (beats,
+  /// markers) into the FILE-domain values a trim handle drags.
+  ///
+  /// A trim handle edits `trimStart`/`trimEnd` (file seconds of
+  /// one clip), while beats and markers live in timeline
+  /// seconds. A timeline point `t` strictly inside the clip's
+  /// span corresponds to the file second
+  /// `trimStart + (t - clipStart)` — snapping a handle to that
+  /// value makes the content at `t` the clip's new edge frame.
+  /// Points outside the span belong to other clips and are
+  /// dropped (the clip's own edges are the caller's existing
+  /// 0 / full-duration points).
+  static List<double> trimSnapFilePoints({
+    required double clipStart,
+    required double trimStart,
+    required double effectiveDuration,
+    required List<double> timelinePoints,
+  }) {
+    final clipEnd = clipStart + effectiveDuration;
+    return [
+      for (final t in timelinePoints)
+        if (t > clipStart && t < clipEnd) trimStart + (t - clipStart),
+    ];
+  }
+
   /// Long-press drag reorder (Phase 2): the index the dragged
   /// clip should occupy when its centre reaches [centreSec]
   /// (absolute timeline seconds), walking from [from] across
