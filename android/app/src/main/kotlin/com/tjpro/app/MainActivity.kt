@@ -27,7 +27,7 @@ import java.io.File
  * - downloadStatus(downloadId): polls DownloadManager for status/progress.
  *   Returns map: {status: "running"|"success"|"failed"|"pending"|"paused",
  *   bytesDownloaded, bytesTotal, localUri, reason} — reason is the
- *   DownloadManager COLUMN_REASON (PAUSED_*/ERROR_* code, -1 if none).
+ *   DownloadManager COLUMN_REASON (PAUSED_* / ERROR_* codes, -1 if none).
  * - removeDownload(downloadId): removes the entry and its file
  *   (Build 13 cleanup for the update-download reconciliation).
  */
