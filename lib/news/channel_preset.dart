@@ -287,6 +287,11 @@ class ChannelPreset {
     required this.name,
     this.logoPath,
     this.logoRotate = true,
+    this.logoMediaKind = 'image',
+    this.logoVideoPath,
+    this.logoVideoKeyColor,
+    this.logoKeyedFramesDir,
+    this.logoVideoStillPath,
     RibbonConfig? topRibbon,
     RibbonConfig? urduRibbon,
     RibbonConfig? englishRibbon,
@@ -347,15 +352,42 @@ class ChannelPreset {
   /// Used in the rotating logo-bug spot.
   String? logoPath;
 
-  /// LOGO 3D ROTATION (user order 20 Nov 2026): the logo 3D-rotates in
-  /// the template — preview AND export — and a user-replaced logo rotates
-  /// the same way. Rotation is ALWAYS ON: this defaults to true and must
-  /// never be switched off to show a static circular image. Preview uses
-  /// a Flutter animated 3D rotation (Matrix4 rotationY); export uses the
-  /// pre-rendered logo-rotating-alpha.mov loop for the default logo and a
-  /// generated rotating loop for a replaced logo — see
-  /// ~/workspace/tj-pro-news-maker/rotation-decision.md.
+  /// LOGO 3D ROTATION: the logo 3D-rotates in the template —
+  /// preview AND export — and a user-replaced logo rotates the
+  /// same way. Build 12 (v1.9.0, user order 2026-11-25,
+  /// SUPERSEDING the 20 Nov 2026 swing decision): the rotation
+  /// is a CONTINUOUS full 360° turn of a real 3D CUBE carrying
+  /// the image on its faces (see lib/services/logo_cube.dart);
+  /// preview paints the cube live, export renders the same
+  /// geometry into a generated frame loop. This flag defaults
+  /// to true; turning it off holds the cube at a still 3/4
+  /// angle (never a flat static image).
   bool logoRotate;
+
+  /// Build 12 (point #12/#13): the logo SOURCE kind —
+  /// 'image' (a picked image, rendered as the rotating 3D
+  /// cube; also the default channel tile) or 'video' (a logo
+  /// VIDEO in [logoVideoPath], background-keyed — see
+  /// [logoVideoKeyColor] / [logoKeyedFramesDir]).
+  String logoMediaKind;
+
+  /// The picked logo VIDEO file (kind 'video'), or null.
+  String? logoVideoPath;
+
+  /// The detected background colour (ARGB) of the logo video,
+  /// auto-sampled from its frame edges by LogoKeyService.
+  /// Null = no solid background could be detected (the video
+  /// is then used unkeyed — the panel says so honestly).
+  int? logoVideoKeyColor;
+
+  /// Directory of alpha PNG frames keyed from the logo video
+  /// (preview flipbook + export overlay share them).
+  String? logoKeyedFramesDir;
+
+  /// A still extracted from the logo video (keyed when a key
+  /// colour exists, plain otherwise) — panel thumbnail and
+  /// export fallback.
+  String? logoVideoStillPath;
 
   /// Top ticker ribbon — CURRENT story (contentKind `current`).
   RibbonConfig topRibbon;
@@ -672,6 +704,11 @@ class ChannelPreset {
         'name': name,
         'logoPath': logoPath,
         'logoRotate': logoRotate,
+        'logoMediaKind': logoMediaKind,
+        'logoVideoPath': logoVideoPath,
+        'logoVideoKeyColor': logoVideoKeyColor,
+        'logoKeyedFramesDir': logoKeyedFramesDir,
+        'logoVideoStillPath': logoVideoStillPath,
         'topRibbon': topRibbon.toJson(),
         'urduRibbon': urduRibbon.toJson(),
         'englishRibbon': englishRibbon.toJson(),
@@ -721,9 +758,15 @@ class ChannelPreset {
       id: (json['id'] as String?) ?? 'custom',
       name: (json['name'] as String?) ?? 'Channel',
       logoPath: json['logoPath'] as String?,
-      // Rotation is always ON — an old saved preset without the flag
-      // still rotates (default true, never static).
+      // Rotation defaults ON — an old saved preset without the flag
+      // still rotates.
       logoRotate: (json['logoRotate'] as bool?) ?? true,
+      // Build 12: absent on pre-v1.9.0 saves → the image source.
+      logoMediaKind: (json['logoMediaKind'] as String?) ?? 'image',
+      logoVideoPath: json['logoVideoPath'] as String?,
+      logoVideoKeyColor: json['logoVideoKeyColor'] as int?,
+      logoKeyedFramesDir: json['logoKeyedFramesDir'] as String?,
+      logoVideoStillPath: json['logoVideoStillPath'] as String?,
       topRibbon: ribbon('topRibbon', RibbonConfig()),
       urduRibbon: ribbon(
         'urduRibbon',
@@ -924,6 +967,11 @@ class ChannelPresetStore {
       name: name.trim().isEmpty ? 'Custom Template' : name.trim(),
       logoPath: preset.logoPath,
       logoRotate: preset.logoRotate,
+      logoMediaKind: preset.logoMediaKind,
+      logoVideoPath: preset.logoVideoPath,
+      logoVideoKeyColor: preset.logoVideoKeyColor,
+      logoKeyedFramesDir: preset.logoKeyedFramesDir,
+      logoVideoStillPath: preset.logoVideoStillPath,
       topRibbon: preset.topRibbon.copyWith(),
       urduRibbon: preset.urduRibbon.copyWith(),
       englishRibbon: preset.englishRibbon.copyWith(),

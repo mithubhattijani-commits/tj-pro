@@ -54,6 +54,7 @@ import 'package:video_player/video_player.dart';
 import '../app_config.dart';
 import '../live/news_template.dart';
 import '../services/asset_download_service.dart';
+import '../services/caption_styles.dart';
 import '../services/crash_guard.dart';
 import '../services/project_recovery.dart';
 import '../services/remote_config_service.dart';
@@ -62,7 +63,10 @@ import '../services/ffmpeg_service.dart';
 import '../services/font_registry.dart';
 import '../services/gemini_voice_service.dart';
 import '../services/library_service.dart';
+import '../services/logo_key_service.dart';
 import '../services/pro_service.dart';
+import '../services/store_audio_preview.dart';
+import '../services/store_service.dart';
 import '../services/tts_processing.dart';
 import '../services/tts_studio_service.dart';
 import '../services/user_font_service.dart';
@@ -185,6 +189,20 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   final AudioRecorder _recorder = AudioRecorder();
   bool _recording = false;
 
+  /// Build 12 (point #9a): the user's OWNED Online Store audio
+  /// items (Music category — sound effects + background music),
+  /// shown in the Audio panel. Loaded on entry and reloaded
+  /// whenever the store's ownership revision moves (a purchase
+  /// in the Store screen lands here without a restart).
+  List<StoreOwnedItem> _storeAudioItems = const [];
+  bool _storeAudioLoading = false;
+
+  /// Build 12 (point #13): logo-video background detection /
+  /// keying in flight + its honest status line for the Logo
+  /// panel.
+  bool _logoVideoBusy = false;
+  String _logoVideoStatus = '';
+
   String _saveStatus = '';
   Timer? _saveTimer;
 
@@ -234,9 +252,44 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       _refreshVoiceStatus();
       _checkFont();
       _initFontsAndLibrary();
+      unawaited(_loadStoreAudio());
     } else {
       _load();
     }
+    StoreService.instance.revision.addListener(_onStoreRevision);
+  }
+
+  /// Build 12 (point #9a): (re)loads the owned store audio for
+  /// the Audio panel. Fail-soft: any store failure just leaves
+  /// the previous list (or the empty state with its Store
+  /// button).
+  Future<void> _loadStoreAudio() async {
+    if (_storeAudioLoading) return;
+    _storeAudioLoading = true;
+    try {
+      // 'Music' is the StoreConfig category (the Drive
+      // subfolder name) holding sound effects + background
+      // music.
+      final owned = await StoreService.instance.ownedItems('Music');
+      final audio = owned
+          .where(
+            (o) => storeItemIsAudio(
+              StoreItem(id: o.id, name: o.name, category: o.category),
+            ),
+          )
+          .toList();
+      if (!mounted) return;
+      setState(() => _storeAudioItems = audio);
+    } catch (_) {
+      // Store unavailable — the panel keeps its honest empty
+      // state; nothing here may break the Maker.
+    } finally {
+      _storeAudioLoading = false;
+    }
+  }
+
+  void _onStoreRevision() {
+    unawaited(_loadStoreAudio());
   }
 
   Future<void> _load() async {
@@ -278,6 +331,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       await _refreshVoiceStatus();
       await _checkFont();
       await _initFontsAndLibrary();
+      unawaited(_loadStoreAudio());
     } catch (e, s) {
       // Build 7: recorded with its boundary tag (no banner) —
       // the fallback below still applies exactly as before.
@@ -418,6 +472,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
 
   @override
   void dispose() {
+    StoreService.instance.revision.removeListener(_onStoreRevision);
     _saveTimer?.cancel();
     unawaited(_recorder.dispose());
     _tehreerController.dispose();
@@ -2653,10 +2708,13 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                   Positioned.fill(
                     child: LayoutBuilder(
             builder: (context, constraints) {
-              final screenH = MediaQuery.of(context).size.height;
-              var previewH = constraints.maxHeight < screenH * 0.60
-                  ? constraints.maxHeight
-                  : screenH * 0.60;
+              // Build 12 (point #14b): the EXPANDED hero
+              // preview — the canvas takes the WHOLE region the
+              // layout leaves it (the old 60%-of-screen cap is
+              // gone for News Studio), still width-fitted so
+              // the full template — ribbons, ticker, logo —
+              // is always fully visible, never cropped.
+              var previewH = constraints.maxHeight;
               if (previewH * 9 / 16 > constraints.maxWidth) {
                 previewH = constraints.maxWidth * 16 / 9;
               }
@@ -3254,7 +3312,12 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   /// preview, an overlay blends in the export).
   Widget _mediaPanel(NewsProject project) {
     return _panelShell('Media', [
+      // Build 12 (point #14d): ONE unified media picker — the
+      // old three separate add buttons (gallery video / files /
+      // photo) are one "Media add karein" entry that opens the
+      // source sheet; every source capability is unchanged.
       ClipPickerList(
+        unifiedPicker: true,
         paths: project.clipPaths,
         onChanged: (next) {
           setState(() => project.clipPaths = next);
@@ -3382,8 +3445,8 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             key: const Key('pasteTickerButton'),
             onPressed: _pasteTicker,
             style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFF7C3AED),
-              foregroundColor: Colors.white,
+              backgroundColor: const Color(0xFFFFC800),
+              foregroundColor: Colors.black,
             ),
             child: const Text('Paste'),
           ),
@@ -3416,8 +3479,8 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             key: const Key('pasteEnglishTickerButton'),
             onPressed: _pasteEnglishTicker,
             style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFF7C3AED),
-              foregroundColor: Colors.white,
+              backgroundColor: const Color(0xFFFFC800),
+              foregroundColor: Colors.black,
             ),
             child: const Text('Paste'),
           ),
@@ -3787,9 +3850,67 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   /// status paragraph and he could not find it.)
   Widget _logoPanel(ChannelPreset preset, NewsProject project) {
     final logoOv = _elementOv(project, NewsElement.logo);
+    final isVideo = preset.logoMediaKind == 'video';
     final logoPath = preset.logoPath;
-    final hasLogo = logoPath != null && File(logoPath).existsSync();
+    final hasLogo =
+        !isVideo && logoPath != null && File(logoPath).existsSync();
+    final hasVideo = isVideo &&
+        preset.logoVideoPath != null &&
+        File(preset.logoVideoPath!).existsSync();
+    final stillPath = preset.logoVideoStillPath;
+    final hasStill = stillPath != null && File(stillPath).existsSync();
+    final String statusText;
+    if (isVideo) {
+      if (_logoVideoBusy) {
+        statusText = _logoVideoStatus;
+      } else if (!hasVideo) {
+        statusText =
+            'Logo video (MP4 / MOV) — solid background khud '
+            'detect ho kar hat jayega.';
+      } else if (preset.logoVideoKeyColor != null) {
+        statusText =
+            'Background hat gaya — rang '
+            '${LogoKeyService.displayHex(preset.logoVideoKeyColor!)} '
+            'auto-detect hua; preview mein keyed logo chal '
+            'raha hai.';
+      } else {
+        statusText =
+            'Solid background nahi mila — video baghair key '
+            'ke lage ga.';
+      }
+    } else {
+      statusText = hasLogo
+          ? '3D Cube logo — ye tasveer cube ban kar lagataar '
+              'full 360° ghoomegi.'
+          : 'Default channel logo (cube) — apni tasveer dein '
+              'to wohi cube banegi.';
+    }
     return _panelShell('Logo', [
+      // Build 12 (points #12/#13): the logo SOURCE — a picked
+      // image becomes the rotating 3D CUBE logo; a picked
+      // VIDEO is auto-keyed (background removed).
+      SegmentedButton<String>(
+        key: const Key('logoSourceToggle'),
+        segments: const [
+          ButtonSegment(
+            value: 'image',
+            icon: Icon(Icons.view_in_ar_outlined, size: 17),
+            label: Text('3D Cube'),
+          ),
+          ButtonSegment(
+            value: 'video',
+            icon: Icon(Icons.movie_outlined, size: 17),
+            label: Text('Video logo'),
+          ),
+        ],
+        selected: {isVideo ? 'video' : 'image'},
+        // The editors' shared pattern (_updatePreset):
+        // synchronous setState, persistence unawaited — the
+        // toggle responds instantly.
+        onSelectionChanged: (s) =>
+            _updatePreset(() => preset.logoMediaKind = s.first),
+      ),
+      const SizedBox(height: 10),
       Row(
         children: [
           Container(
@@ -3799,43 +3920,79 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               color: const Color(0xFF181828),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: hasLogo
-                ? ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Image.file(
-                      File(logoPath),
-                      fit: BoxFit.contain,
-                    ),
-                  )
-                : const Icon(
-                    Icons.image_outlined,
-                    color: Colors.grey,
-                  ),
+            child: isVideo
+                ? (hasStill
+                    ? ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Image.file(
+                          File(stillPath),
+                          fit: BoxFit.contain,
+                        ),
+                      )
+                    : const Icon(
+                        Icons.movie_outlined,
+                        color: Colors.grey,
+                      ))
+                : (hasLogo
+                    ? ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Image.file(
+                          File(logoPath),
+                          fit: BoxFit.contain,
+                        ),
+                      )
+                    : const Icon(
+                        Icons.image_outlined,
+                        color: Colors.grey,
+                      )),
           ),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                FilledButton.icon(
-                  key: const Key('logoPickButton'),
-                  onPressed: _pickLogo,
-                  icon: const Icon(Icons.upload_file_outlined, size: 18),
-                  label: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text(
-                      hasLogo ? 'Logo badlein' : 'Logo chunein',
+                if (isVideo)
+                  FilledButton.icon(
+                    key: const Key('logoVideoPickButton'),
+                    onPressed: _logoVideoBusy ? null : _pickLogoVideo,
+                    icon: const Icon(Icons.movie_outlined, size: 18),
+                    label: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        _logoVideoBusy
+                            ? 'Check ho raha hai…'
+                            : hasVideo
+                                ? 'Video badlein'
+                                : 'Logo video chunein',
+                      ),
+                    ),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFFFFC800),
+                      foregroundColor: Colors.black,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                  )
+                else
+                  FilledButton.icon(
+                    key: const Key('logoPickButton'),
+                    onPressed: _pickLogo,
+                    icon: const Icon(Icons.upload_file_outlined, size: 18),
+                    label: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        hasLogo ? 'Logo badlein' : 'Logo chunein',
+                      ),
+                    ),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFFFFC800),
+                      foregroundColor: Colors.black,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
                   ),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: const Color(0xFF7C3AED),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                ),
                 const SizedBox(height: 4),
                 Text(
-                  hasLogo ? 'Apna logo laga hai' : 'Default Nigraan logo',
+                  statusText,
+                  key: const Key('logoStatusText'),
                   style: const TextStyle(
                     color: Colors.grey,
                     fontSize: 12,
@@ -3844,7 +4001,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               ],
             ),
           ),
-          if (logoPath != null) ...[
+          if (logoPath != null || preset.logoVideoPath != null) ...[
             const SizedBox(width: 8),
             OutlinedButton.icon(
               key: const Key('logoRemoveButton'),
@@ -3861,7 +4018,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       const SizedBox(height: 6),
       SwitchListTile(
         key: const Key('logoRotateSwitch'),
-        title: const Text('Logo rotate (3D swing)'),
+        title: const Text('Logo rotate (full 3D rotation)'),
         value: preset.logoRotate,
         onChanged: (v) async {
           preset.logoRotate = v;
@@ -3922,6 +4079,8 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       );
       await File(picked.first.path!).copy(dest);
       preset.logoPath = dest;
+      // Build 12: an image pick IS the cube source.
+      preset.logoMediaKind = 'image';
       await persistPresetChange(preset);
       if (!mounted) return;
       setState(() {});
@@ -3931,10 +4090,93 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     }
   }
 
+  /// Build 12 (point #13): pick a logo VIDEO, then detect +
+  /// key its background automatically (green screen or ANY
+  /// solid colour). Detection failure is honest: the video
+  /// stays usable unkeyed and the status line says so.
+  Future<void> _pickLogoVideo() async {
+    final preset = _preset;
+    if (preset == null) return;
+    final picked = await FilePicker.pickFiles(type: FileType.video);
+    if (picked.isEmpty || picked.first.path == null) return;
+    try {
+      final docs = await getApplicationDocumentsDirectory();
+      final dir = Directory(p.join(docs.path, 'news_logos'));
+      if (!await dir.exists()) await dir.create(recursive: true);
+      final stamp = DateTime.now().millisecondsSinceEpoch;
+      final ext = p.extension(picked.first.path!);
+      final dest = p.join(dir.path, 'logo_video_$stamp$ext');
+      await File(picked.first.path!).copy(dest);
+      preset.logoVideoPath = dest;
+      preset.logoMediaKind = 'video';
+      preset.logoVideoKeyColor = null;
+      preset.logoKeyedFramesDir = null;
+      preset.logoVideoStillPath = null;
+      await persistPresetChange(preset);
+      if (!mounted) return;
+      setState(() {
+        _logoVideoBusy = true;
+        _logoVideoStatus = 'Background check ho raha hai…';
+      });
+      final videoFile = File(dest);
+      final workDir = Directory(p.join(dir.path, 'keywork_$stamp'));
+      final detection = await LogoKeyService.detectBackground(
+        video: videoFile,
+        workDir: workDir,
+      );
+      if (detection != null) {
+        preset.logoVideoKeyColor = detection.argb;
+        final framesDir = Directory(p.join(dir.path, 'keyed_$stamp'));
+        final frames = await LogoKeyService.generateKeyedFrames(
+          video: videoFile,
+          outDir: framesDir,
+          keyArgb: detection.argb,
+        );
+        if (frames.isNotEmpty) {
+          preset.logoKeyedFramesDir = framesDir.path;
+        }
+        final still = await LogoKeyService.extractKeyedStill(
+          video: videoFile,
+          workDir: workDir,
+          keyArgb: detection.argb,
+        );
+        if (still != null) preset.logoVideoStillPath = still.path;
+        _logoVideoStatus =
+            'Background hat gaya '
+            '(${LogoKeyService.displayHex(detection.argb)}) — '
+            'keyed logo tayyar hai.';
+      } else {
+        final still = await LogoKeyService.extractStill(
+          video: videoFile,
+          workDir: workDir,
+        );
+        if (still != null) preset.logoVideoStillPath = still.path;
+        _logoVideoStatus =
+            'Solid background nahi mila — video baghair key '
+            'ke lage ga.';
+      }
+      await persistPresetChange(preset);
+      if (!mounted) return;
+      setState(() => _logoVideoBusy = false);
+      _showMessage(_logoVideoStatus);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _logoVideoBusy = false);
+      }
+      _showMessage('Logo video nahi laga: $e');
+    }
+  }
+
   Future<void> _removeLogo() async {
     final preset = _preset;
     if (preset == null) return;
     preset.logoPath = null;
+    // Build 12: removing the logo clears BOTH sources (image
+    // + video and its key state) — one remove, no leftovers.
+    preset.logoVideoPath = null;
+    preset.logoVideoKeyColor = null;
+    preset.logoKeyedFramesDir = null;
+    preset.logoVideoStillPath = null;
     await persistPresetChange(preset);
     if (!mounted) return;
     setState(() {});
@@ -4012,8 +4254,8 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                     ),
                   ),
                   style: FilledButton.styleFrom(
-                    backgroundColor: const Color(0xFF7C3AED),
-                    foregroundColor: Colors.white,
+                    backgroundColor: const Color(0xFFFFC800),
+                    foregroundColor: Colors.black,
                   ),
                 ),
                 if (photo != null) ...[
@@ -4315,8 +4557,8 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               ),
               style: FilledButton.styleFrom(
                 backgroundColor:
-                    _recording ? Colors.redAccent : const Color(0xFF7C3AED),
-                foregroundColor: Colors.white,
+                    _recording ? Colors.redAccent : const Color(0xFFFFC800),
+                foregroundColor: _recording ? Colors.white : Colors.black,
                 padding: const EdgeInsets.symmetric(vertical: 13),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -4381,7 +4623,219 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             ],
           ),
         ),
+      const SizedBox(height: 16),
+      const Text(
+        'Background Music',
+        style: TextStyle(fontWeight: FontWeight.bold),
+      ),
+      const SizedBox(height: 4),
+      Text(
+        _selectedMusicLabel(project),
+        key: const Key('audioMusicStatus'),
+        style: const TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      const SizedBox(height: 8),
+      // Built-in tracks (the same selection the Export card
+      // offers — ONE selection, two doors; picking here clears
+      // any store pick and vice versa).
+      SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            ChoiceChip(
+              key: const Key('audioMusic-none'),
+              label: const Text('Koi nahi'),
+              selected: project.backgroundMusicAsset == null &&
+                  project.storeMusicPath == null,
+              onSelected: (_) {
+                setState(() {
+                  project.backgroundMusicAsset = null;
+                  project.storeMusicPath = null;
+                  project.storeMusicName = null;
+                });
+                _scheduleSave();
+              },
+            ),
+            const SizedBox(width: 8),
+            for (final track in BuiltInNewsMusic.defaults()) ...[
+              ChoiceChip(
+                key: Key('audioMusic-${track.id}'),
+                label: Text('${track.label} • FREE'),
+                selected: project.backgroundMusicAsset ==
+                        track.assetPath &&
+                    project.storeMusicPath == null,
+                onSelected: (_) {
+                  setState(() {
+                    project.backgroundMusicAsset = track.assetPath;
+                    project.storeMusicPath = null;
+                    project.storeMusicName = null;
+                  });
+                  _scheduleSave();
+                },
+              ),
+              const SizedBox(width: 8),
+            ],
+          ],
+        ),
+      ),
+      const SizedBox(height: 14),
+      const Text(
+        'Store Music & Sounds',
+        style: TextStyle(fontWeight: FontWeight.bold),
+      ),
+      const SizedBox(height: 6),
+      // Build 12 (point #9a): the user's owned Online Store
+      // audio — playable here through the store's ONE preview
+      // player (no second player) and selectable as the
+      // project's background music.
+      if (_storeAudioItems.isEmpty)
+        Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'Abhi koi store audio owned nahi — Store se '
+                'music / sound effect lein, woh yahan aa jayega.',
+                style: TextStyle(color: Colors.grey, fontSize: 12),
+              ),
+            ),
+            const SizedBox(width: 8),
+            OutlinedButton(
+              key: const Key('audioStoreOpenButton'),
+              onPressed: () async {
+                await Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        const StoreScreen(initialCategory: 'Music'),
+                  ),
+                );
+                unawaited(_loadStoreAudio());
+              },
+              child: const Text('Store kholein'),
+            ),
+          ],
+        )
+      else
+        for (final owned in _storeAudioItems)
+          _storeAudioRow(project, owned),
     ]);
+  }
+
+  /// The Audio panel's current-music line: the store pick
+  /// wins (it is also the export's precedence), then the
+  /// built-in track, then none.
+  String _selectedMusicLabel(NewsProject project) {
+    if (project.storeMusicPath != null) {
+      return 'Selected: ${project.storeMusicName ?? 'Store music'} '
+          '(Store)';
+    }
+    final track =
+        BuiltInNewsMusic.fromAsset(project.backgroundMusicAsset);
+    if (track != null) return 'Selected: ${track.label} (built-in)';
+    return 'Selected: koi music nahi';
+  }
+
+  /// One owned store-audio row in the Audio panel: play/pause
+  /// through [StoreAudioPreviewPlayer] (the store's own
+  /// one-at-a-time player) + select as background music.
+  Widget _storeAudioRow(NewsProject project, StoreOwnedItem owned) {
+    final item = StoreItem(
+      id: owned.id,
+      name: owned.name,
+      category: owned.category,
+    );
+    final selected = project.storeMusicPath == owned.localPath;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        children: [
+          ValueListenableBuilder<StoreAudioPreviewState>(
+            valueListenable: StoreAudioPreviewPlayer.instance.state,
+            builder: (context, state, _) {
+              final isThis = state.itemId == owned.id;
+              final playing =
+                  isThis && state.phase == StoreAudioPhase.playing;
+              final loading =
+                  isThis && state.phase == StoreAudioPhase.loading;
+              return IconButton(
+                key: Key('audioStorePlay-${owned.id}'),
+                onPressed: loading
+                    ? null
+                    : () => unawaited(
+                          StoreAudioPreviewPlayer.instance.toggle(item),
+                        ),
+                icon: loading
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Icon(
+                        playing
+                            ? Icons.pause_circle_outline
+                            : Icons.play_circle_outline,
+                        color: const Color(0xFFFFC800),
+                      ),
+                tooltip: playing ? 'Pause' : 'Play',
+              );
+            },
+          ),
+          Expanded(
+            child: Text(
+              item.displayTitle,
+              maxLines: 2,
+              style: TextStyle(
+                fontSize: 13,
+                color: selected ? const Color(0xFFFFC800) : null,
+                fontWeight:
+                    selected ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          OutlinedButton(
+            key: Key('audioStoreSelect-${owned.id}'),
+            onPressed: selected
+                ? null
+                : () {
+                    setState(() {
+                      project.storeMusicPath = owned.localPath;
+                      project.storeMusicName = item.displayTitle;
+                      project.backgroundMusicAsset = null;
+                    });
+                    _scheduleSave();
+                  },
+            child: Text(selected ? 'Laga hua' : 'Lagayen'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// One Voice-panel slider row (Build 12): label, FLEXIBLE
+  /// slider and a fixed-width value readout — the editors'
+  /// thin-slider-with-value grammar, safe at 360 px.
+  Widget _voiceSliderRow({
+    required String label,
+    required String valueText,
+    required Widget slider,
+  }) {
+    return Row(
+      children: [
+        Expanded(
+          flex: 2,
+          child: Text(label, style: const TextStyle(fontSize: 13)),
+        ),
+        Expanded(flex: 3, child: slider),
+        SizedBox(
+          width: 44,
+          child: Text(
+            valueText,
+            textAlign: TextAlign.right,
+            style: const TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+        ),
+      ],
+    );
   }
 
   /// Voice panel (v1.5.2, fix #61): the COMPLETE text-to-voice
@@ -4425,8 +4879,8 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           icon: const Icon(Icons.record_voice_over, size: 19),
           label: Text(_voiceBusy ? 'Voice ban rahi hai…' : 'Voice banayein'),
           style: FilledButton.styleFrom(
-            backgroundColor: const Color(0xFF7C3AED),
-            foregroundColor: Colors.white,
+            backgroundColor: const Color(0xFFFFC800),
+            foregroundColor: Colors.black,
             padding: const EdgeInsets.symmetric(vertical: 13),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
@@ -4454,51 +4908,75 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         ),
       ),
       const SizedBox(height: 8),
-      Row(
-        children: [
-          const Expanded(child: Text('Speed')),
-          SizedBox(
-            width: 200,
-            child: Slider(
-              key: const Key('voiceSpeedSlider'),
-              value: project.voiceSpeed,
-              min: 0.5,
-              max: 2.0,
-              divisions: 15,
-              label: '${project.voiceSpeed.toStringAsFixed(2)}x',
-              onChanged: (v) {
-                setState(() => project.voiceSpeed = v);
-                _scheduleSave();
-              },
-            ),
-          ),
-          Text('${project.voiceSpeed.toStringAsFixed(2)}x'),
-        ],
+      // Build 12 (point #14h): the slider rows flex with the
+      // panel width — the old fixed 200-wide slider squeezed
+      // the label out on narrow phones.
+      _voiceSliderRow(
+        label: 'Speed',
+        valueText: '${project.voiceSpeed.toStringAsFixed(2)}x',
+        slider: Slider(
+          key: const Key('voiceSpeedSlider'),
+          value: project.voiceSpeed,
+          min: 0.5,
+          max: 2.0,
+          divisions: 15,
+          label: '${project.voiceSpeed.toStringAsFixed(2)}x',
+          onChanged: (v) {
+            setState(() => project.voiceSpeed = v);
+            _scheduleSave();
+          },
+        ),
       ),
-      Row(
-        children: [
-          const Expanded(child: Text('Pause (sentences ke beech)')),
-          SizedBox(
-            width: 200,
-            child: Slider(
-              key: const Key('voicePauseSlider'),
-              value: project.voicePauseSec,
-              min: 0,
-              max: 1.0,
-              divisions: 10,
-              label: '${project.voicePauseSec.toStringAsFixed(1)}s',
-              onChanged: (v) {
-                setState(() => project.voicePauseSec = v);
-                _scheduleSave();
-              },
-            ),
-          ),
-          Text('${project.voicePauseSec.toStringAsFixed(1)}s'),
-        ],
+      _voiceSliderRow(
+        label: 'Pause (sentences ke beech)',
+        valueText: '${project.voicePauseSec.toStringAsFixed(1)}s',
+        slider: Slider(
+          key: const Key('voicePauseSlider'),
+          value: project.voicePauseSec,
+          min: 0,
+          max: 1.0,
+          divisions: 10,
+          label: '${project.voicePauseSec.toStringAsFixed(1)}s',
+          onChanged: (v) {
+            setState(() => project.voicePauseSec = v);
+            _scheduleSave();
+          },
+        ),
       ),
+      // Build 12 (point #14f): the BACKGROUND MUSIC toggle —
+      // the Audio tool mein selected music (store item ya
+      // built-in track) export mein voiceover ke neeche lage
+      // ya na lage. Wired in ReelExportService step 2b.
       SwitchListTile(
         key: const Key('voiceMusicSwitch'),
-        title: const Text('Background music (soft pad)'),
+        title: const Text('Background music (export mein)'),
+        subtitle: Text(
+          project.storeMusicPath != null
+              ? 'Music: ${project.storeMusicName ?? 'Store music'}'
+              : BuiltInNewsMusic.fromAsset(
+                        project.backgroundMusicAsset,
+                      ) !=
+                      null
+                  ? 'Music: ${BuiltInNewsMusic.fromAsset(project.backgroundMusicAsset)!.label}'
+                  : 'Music: koi select nahi (Audio tool se chunein)',
+          style: const TextStyle(fontSize: 12),
+        ),
+        value: project.voiceMusicEnabled,
+        onChanged: (v) {
+          setState(() => project.voiceMusicEnabled = v);
+          _scheduleSave();
+        },
+      ),
+      // The OLD soft-pad control, kept as its own switch (no
+      // control removed): ye pad voice BANATE waqt TTS mix
+      // mein lagta hai — export bed se alag cheez hai.
+      SwitchListTile(
+        key: const Key('voicePadSwitch'),
+        title: const Text('AI voice ke peeche soft pad'),
+        subtitle: const Text(
+          'Voice banate waqt halki music mix hoti hai',
+          style: TextStyle(fontSize: 12),
+        ),
         value: project.voiceMusic,
         onChanged: (v) {
           setState(() => project.voiceMusic = v);
@@ -4559,8 +5037,22 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   }
 
   /// Captions panel: the karaoke-sync summary + the ONE
-  /// Caption Studio entry.
+  /// Caption Studio entry + (Build 12, point #14g) the
+  /// CapCut-style DYNAMIC caption styles — word highlight /
+  /// pop styles jo export mein CaptionService ke styled ASS
+  /// se burn hotay hain (the same engine Caption Studio uses;
+  /// the pick here writes the project's ONE captionStyleId).
   Widget _captionsPanel(NewsProject project) {
+    const dynamicIds = <String>[
+      'nigraan',
+      'karaoke_fill',
+      'bold_pop',
+      'pop_up',
+      'one_word',
+      'highlight_box',
+      'typewriter',
+      'urdu_kasheeda_gold',
+    ];
     return _panelShell('Captions', [
       Row(
         children: [
@@ -4582,6 +5074,43 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             child: const Text('Captions →'),
           ),
         ],
+      ),
+      const SizedBox(height: 14),
+      const Text(
+        'Dynamic Captions (CapCut style)',
+        style: TextStyle(fontWeight: FontWeight.bold),
+      ),
+      const SizedBox(height: 6),
+      SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (final id in dynamicIds) ...[
+              ChoiceChip(
+                key: Key('captionDyn-$id'),
+                label: Text(StudioCaptionStyles.byId(id).nameEn),
+                selected: project.captionStyleId == id,
+                onSelected: (_) {
+                  setState(() => project.captionStyleId = id);
+                  _scheduleSave();
+                },
+              ),
+              const SizedBox(width: 8),
+            ],
+          ],
+        ),
+      ),
+      const SizedBox(height: 6),
+      Text(
+        project.voiceoverDurationSec == null
+            ? 'Har lafz ka apna time hota hai — voiceover banne '
+                'ke baad subtitles us ki REAL length se sync '
+                'hote hain, phir ye style export mein word-by-'
+                'word burn hoga. Abhi timings estimate hain.'
+            : 'Word timings voiceover ki real length se synced '
+                'hain — export mein ye style har lafz ko us ke '
+                'time par highlight / pop karega.',
+        style: const TextStyle(color: Colors.grey, fontSize: 12),
       ),
     ]);
   }
@@ -4766,12 +5295,15 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
+          // Build 12 (design law): the selected voice chip
+          // takes the gold accent with black text — the violet
+          // selection fill is gone from the Maker.
           color: selected
-              ? const Color(0xFF7C3AED)
+              ? const Color(0xFFFFC800)
               : const Color(0xFF181828),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: selected ? const Color(0xFF7C3AED) : Colors.white24,
+            color: selected ? const Color(0xFFFFC800) : Colors.white24,
           ),
         ),
         child: Row(
@@ -4780,11 +5312,14 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             Text(
               '${v.label} • ${v.gender}'
               '${v.engine == StudioTtsEngine.edge ? ' • Free' : ''}',
-              style: const TextStyle(fontWeight: FontWeight.bold),
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: selected ? Colors.black : null,
+              ),
             ),
             if (selected) ...[
               const SizedBox(width: 4),
-              const Icon(Icons.check, size: 16),
+              const Icon(Icons.check, size: 16, color: Colors.black),
             ],
           ],
         ),

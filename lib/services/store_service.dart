@@ -637,6 +637,14 @@ class StoreService {
     }
   }
 
+  /// Test seam (Build 12): drop the in-memory owned cache so
+  /// the next [ownedItems] call re-reads persistence. Widget
+  /// tests seed owned items through SharedPreferences after
+  /// another screen already loaded the (empty) list.
+  void resetOwnedCacheForTest() {
+    _ownedCache = null;
+  }
+
   Future<void> _saveOwned() async {
     try {
       final prefs = await SharedPreferences.getInstance();

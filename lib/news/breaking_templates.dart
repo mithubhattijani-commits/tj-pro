@@ -259,6 +259,11 @@ class BreakingTemplate {
     this.showBottom = true,
     this.logoPath,
     this.logoRotate = true,
+    this.logoMediaKind = 'image',
+    this.logoVideoPath,
+    this.logoVideoKeyColor,
+    this.logoKeyedFramesDir,
+    this.logoVideoStillPath,
     this.showIntro = true,
     this.showOutro = true,
     this.lowerThirdTitle = '',
@@ -352,11 +357,21 @@ class BreakingTemplate {
   bool showBottom;
 
   /// Logo snapshot for a saved custom template (null = the channel
-  /// preset's logo). The logo 3D-rotates in preview AND export — rotation
-  /// is ALWAYS ON ([logoRotate] defaults to true, never static; see
-  /// rotation-decision.md for the preview/export mechanism).
+  /// preset's logo). The logo 3D-rotates in preview AND export as a
+  /// continuous full-turn 3D cube (Build 12, superseding the 20 Nov
+  /// 2026 swing decision — see lib/services/logo_cube.dart).
   String? logoPath;
   bool logoRotate;
+
+  /// Build 12 (points #12/#13): the logo source snapshot —
+  /// mirrors [ChannelPreset.logoMediaKind] and friends so a
+  /// saved breaking template carries a logo VIDEO + its key
+  /// exactly like the preset does.
+  String logoMediaKind;
+  String? logoVideoPath;
+  int? logoVideoKeyColor;
+  String? logoKeyedFramesDir;
+  String? logoVideoStillPath;
 
   /// Intro/outro + lower-third snapshot for a saved custom template.
   bool showIntro;
@@ -466,6 +481,11 @@ class BreakingTemplate {
       showBottom: preset.englishRibbon.enabled,
       logoPath: preset.logoPath,
       logoRotate: preset.logoRotate,
+      logoMediaKind: preset.logoMediaKind,
+      logoVideoPath: preset.logoVideoPath,
+      logoVideoKeyColor: preset.logoVideoKeyColor,
+      logoKeyedFramesDir: preset.logoKeyedFramesDir,
+      logoVideoStillPath: preset.logoVideoStillPath,
       showIntro: preset.showIntro,
       showOutro: preset.showOutro,
       lowerThirdTitle: preset.lowerThirdTitle,
@@ -536,6 +556,11 @@ class BreakingTemplate {
     preset.englishRibbon.enabled = showBottom;
     preset.logoPath = logoPath;
     preset.logoRotate = logoRotate;
+    preset.logoMediaKind = logoMediaKind;
+    preset.logoVideoPath = logoVideoPath;
+    preset.logoVideoKeyColor = logoVideoKeyColor;
+    preset.logoKeyedFramesDir = logoKeyedFramesDir;
+    preset.logoVideoStillPath = logoVideoStillPath;
     preset.showIntro = showIntro;
     preset.showOutro = showOutro;
     preset.lowerThirdTitle = lowerThirdTitle;
@@ -631,6 +656,11 @@ class BreakingTemplate {
     bool? showBottom,
     String? logoPath,
     bool? logoRotate,
+    String? logoMediaKind,
+    String? logoVideoPath,
+    int? logoVideoKeyColor,
+    String? logoKeyedFramesDir,
+    String? logoVideoStillPath,
     bool? showIntro,
     bool? showOutro,
     String? lowerThirdTitle,
@@ -670,6 +700,11 @@ class BreakingTemplate {
       showBottom: showBottom ?? this.showBottom,
       logoPath: logoPath ?? this.logoPath,
       logoRotate: logoRotate ?? this.logoRotate,
+      logoMediaKind: logoMediaKind ?? this.logoMediaKind,
+      logoVideoPath: logoVideoPath ?? this.logoVideoPath,
+      logoVideoKeyColor: logoVideoKeyColor ?? this.logoVideoKeyColor,
+      logoKeyedFramesDir: logoKeyedFramesDir ?? this.logoKeyedFramesDir,
+      logoVideoStillPath: logoVideoStillPath ?? this.logoVideoStillPath,
       showIntro: showIntro ?? this.showIntro,
       showOutro: showOutro ?? this.showOutro,
       lowerThirdTitle: lowerThirdTitle ?? this.lowerThirdTitle,
@@ -713,6 +748,11 @@ class BreakingTemplate {
         'showBottom': showBottom,
         'logoPath': logoPath,
         'logoRotate': logoRotate,
+        'logoMediaKind': logoMediaKind,
+        'logoVideoPath': logoVideoPath,
+        'logoVideoKeyColor': logoVideoKeyColor,
+        'logoKeyedFramesDir': logoKeyedFramesDir,
+        'logoVideoStillPath': logoVideoStillPath,
         'showIntro': showIntro,
         'showOutro': showOutro,
         'lowerThirdTitle': lowerThirdTitle,
@@ -758,6 +798,11 @@ class BreakingTemplate {
       showBottom: (json['showBottom'] as bool?) ?? true,
       logoPath: json['logoPath'] as String?,
       logoRotate: (json['logoRotate'] as bool?) ?? true,
+      logoMediaKind: (json['logoMediaKind'] as String?) ?? 'image',
+      logoVideoPath: json['logoVideoPath'] as String?,
+      logoVideoKeyColor: json['logoVideoKeyColor'] as int?,
+      logoKeyedFramesDir: json['logoKeyedFramesDir'] as String?,
+      logoVideoStillPath: json['logoVideoStillPath'] as String?,
       showIntro: (json['showIntro'] as bool?) ?? true,
       showOutro: (json['showOutro'] as bool?) ?? true,
       lowerThirdTitle: (json['lowerThirdTitle'] as String?) ?? '',

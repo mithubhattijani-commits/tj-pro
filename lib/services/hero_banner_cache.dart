@@ -63,6 +63,12 @@ class HeroBannerCache {
   final Map<String, File?> _files = <String, File?>{};
   final Map<String, String> _urls = <String, String>{};
   final Set<String> _inFlight = <String>{};
+
+  /// Build 12 (point #11): 'slot|url' pairs whose on-disk copy
+  /// has already been signalled through [revision] in this
+  /// process — [warm] bumps once per pair for availability, and
+  /// content changes bump separately in [storeBytes].
+  final Set<String> _signalled = <String>{};
   bool _diskLoaded = false;
 
   /// The cached file for [slot] when it was downloaded for
@@ -76,35 +82,70 @@ class HeroBannerCache {
 
   /// Loads the on-disk cache (once) and downloads [url] when the
   /// cache does not already hold it. Never throws.
+  ///
+  /// Build 12 (v1.9.0, fix-list point #11): when a cached copy
+  /// for this URL already exists, [warm] STILL starts a
+  /// background [refresh] — the server-side file can change
+  /// under the same URL (that is exactly how the 2026-11-25
+  /// banner-2 fix got stuck on phones: same URL, new bytes, and
+  /// nothing ever re-downloaded it). The refresh replaces the
+  /// cache only when the bytes actually differ, so an unchanged
+  /// banner costs one small download and no visual flicker.
   Future<void> warm(String slot, String url) async {
     final String target = url.trim();
     if (target.isEmpty || target.startsWith('assets/')) return;
     await _loadFromDisk();
     if (cachedFileFor(slot, target) != null) {
       // The cached copy is already the one for this URL — make
-      // sure listeners know it is available.
-      revision.value = revision.value + 1;
+      // sure listeners know it is available (once per slot+URL
+      // per process; content changes signal themselves).
+      if (_signalled.add('$slot|$target')) {
+        revision.value = revision.value + 1;
+      }
+      unawaited(refresh(slot, target));
       return;
     }
     await refresh(slot, target);
   }
 
   /// Downloads [url] for [slot] in the background (one download
-  /// per slot at a time). A validated download replaces the
-  /// cache and bumps [revision]; anything else keeps the old
-  /// cache untouched. Never throws.
+  /// per slot at a time). A validated download whose bytes
+  /// DIFFER from the cached copy replaces the cache and bumps
+  /// [revision]; identical bytes leave the file and the
+  /// revision untouched (no rewrite, no flicker); anything else
+  /// keeps the old cache untouched. Never throws.
   Future<void> refresh(String slot, String url) async {
     if (_inFlight.contains(slot)) return;
     _inFlight.add(slot);
     try {
       final List<int>? bytes = await _download(url);
       if (bytes == null) return;
+      final File? cached = cachedFileFor(slot, url);
+      if (cached != null) {
+        try {
+          final List<int> current = await cached.readAsBytes();
+          if (bytesEqual(current, bytes)) return;
+        } catch (_) {
+          // An unreadable cache copy is replaced below.
+        }
+      }
       await storeBytes(slot, url, bytes);
     } catch (e, s) {
       CrashGuard.captureHandled(e, s, source: 'home.banner');
     } finally {
       _inFlight.remove(slot);
     }
+  }
+
+  /// Byte-for-byte comparison used by the Build 12
+  /// revalidation: same length and every byte equal.
+  static bool bytesEqual(List<int> a, List<int> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   /// Validates and stores [bytes] as [slot]'s cached image for
@@ -217,6 +258,7 @@ class HeroBannerCache {
   /// banners come back without a re-download.
   void evictMemory() {
     _files.clear();
+    _signalled.clear();
     _diskLoaded = false;
   }
 
@@ -225,6 +267,7 @@ class HeroBannerCache {
     instance._files.clear();
     instance._urls.clear();
     instance._inFlight.clear();
+    instance._signalled.clear();
     instance._diskLoaded = false;
   }
 }

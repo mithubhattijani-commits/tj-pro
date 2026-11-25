@@ -880,18 +880,19 @@ class FfmpegService {
     return buf.toString();
   }
 
-  /// Rotating-logo overlay pass (Phase 7, see
-  /// `~/workspace/tj-pro-news-maker/rotation-decision.md`): overlays
-  /// the 3D-rotating logo bug on [input] at the template's logo-bug
-  /// spot (see [logoBugRect]). The loop source is EITHER
-  /// [movPath] — the pre-rendered `logo-rotating-alpha.mov`, ping-ponged
-  /// in-graph (forward + `reverse` concat, so the 10 s truncated swing
-  /// loops seamlessly) — OR [framesDir] — a directory of
-  /// `frame_%02d.png` frames (a generated rotating loop for a
-  /// user-replaced logo, or the default initial tile), looped with the
-  /// image2 demuxer. Exactly one of the two must be given. The
-  /// `perspective` filter is deliberately NOT used (rejected in the
-  /// decision doc: a shear, not a true rotationY). Audio is copied.
+  /// Rotating-logo overlay pass: overlays the 3D-rotating logo
+  /// bug on [input] at the template's logo-bug spot (see
+  /// [logoBugRect]). The loop source is EXACTLY ONE of:
+  /// [movPath] — the pre-rendered `logo-rotating-alpha.mov`,
+  /// ping-ponged in-graph (forward + `reverse` concat, so the
+  /// 10 s asset loops seamlessly); [framesDir] — a directory of
+  /// `frame_%02d.png` frames (Build 12: the generated rotating
+  /// CUBE loop for a user-picked logo or the default tile, or
+  /// the keyed frames of a logo video), looped with the image2
+  /// demuxer; or [videoPath] — a logo video overlaid unkeyed
+  /// (point #13 fallback). The `perspective` filter is
+  /// deliberately NOT used (a shear, not a true rotation).
+  /// Audio is copied.
   static String logoLoopOverlayCommand({
     required String input,
     required String output,
@@ -900,13 +901,18 @@ class FfmpegService {
     required bool topRibbonEnabled,
     String? movPath,
     String? framesDir,
+    String? videoPath,
     int framesFps = 12,
     // Phase 9 — the export screen's real video bitrate (null = CRF 23).
     int? videoBitrateKbps,
   }) {
     assert(
-      (movPath == null) != (framesDir == null),
-      'logoLoopOverlayCommand needs exactly one of movPath / framesDir',
+      (movPath != null ? 1 : 0) +
+              (framesDir != null ? 1 : 0) +
+              (videoPath != null ? 1 : 0) ==
+          1,
+      'logoLoopOverlayCommand needs exactly one of '
+      'movPath / framesDir / videoPath',
     );
     final (x, y, size) = logoBugRect(
       width: width,
@@ -915,7 +921,20 @@ class FfmpegService {
     );
     final buf = StringBuffer();
     buf.write('-y ');
-    if (movPath != null) {
+    if (videoPath != null) {
+      // Build 12 (point #13 fallback): a logo VIDEO whose
+      // background could NOT be keyed (no solid colour) is
+      // overlaid as-is, looped — it still moves/rotates as the
+      // source does; the panel tells the user it is unkeyed.
+      buf.write('-stream_loop -1 -i ${q(videoPath)} ');
+      buf.write('-i ${q(input)} ');
+      buf.write('-filter_complex "');
+      buf.write(
+        '[0:v]scale=$size:-1,format=yuva420p[bug];'
+        '[1:v][bug]overlay=$x:$y:shortest=1[vout]" ',
+      );
+      buf.write('-map "[vout]" -map 1:a? ');
+    } else if (movPath != null) {
       // Crop to the mov's opaque alpha bbox (measured 235,86,396x316
       // on the 854x480 ProRes) — the logo occupies only the centre of
       // the frame — then ping-pong forward+reverse into a seamless
@@ -927,7 +946,7 @@ class FfmpegService {
         '[0:v]crop=396:316:235:86,format=yuva420p,split[f][r];'
         '[r]reverse[rr];[f][rr]concat=n=2:v=1:a=0,format=yuva420p,'
         'scale=$size:-1[bug];'
-        '[1:v][bug]overlay=$x:$y[vout]" ',
+        '[1:v][bug]overlay=$x:$y:shortest=1[vout]" ',
       );
       buf.write('-map "[vout]" -map 1:a? ');
     } else {
@@ -939,7 +958,7 @@ class FfmpegService {
       buf.write('-filter_complex "');
       buf.write(
         '[0:v]format=yuva420p,scale=$size:-1[bug];'
-        '[1:v][bug]overlay=$x:$y[vout]" ',
+        '[1:v][bug]overlay=$x:$y:shortest=1[vout]" ',
       );
       buf.write('-map "[vout]" -map 1:a? ');
     }
@@ -951,8 +970,16 @@ class FfmpegService {
             '-b:v ${videoBitrateKbps}k '
             '-maxrate ${(videoBitrateKbps * 3 / 2).round()}k '
             '-bufsize ${videoBitrateKbps * 2}k';
+    // Build 12 fix: EVERY branch above loops its logo input
+    // forever (-stream_loop -1). The overlay filter's
+    // framesync bound (shortest=1, set in each branch) ends
+    // the graph with the BASE video — measured on host
+    // ffmpeg 8.1.2 without it: a 4 s base produced a 1000+ s
+    // output and never finished; with it: exactly 4.0 s.
+    // The output-level -shortest stays as the house-style
+    // second bound (music beds, voiceover mixes use it).
     buf.write(
-      '$videoArgs -c:a copy '
+      '$videoArgs -c:a copy -shortest '
       '-movflags +faststart ${q(output)}',
     );
     return buf.toString();

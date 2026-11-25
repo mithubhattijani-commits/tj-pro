@@ -465,10 +465,22 @@ void main() {
       expect(find.widgetWithText(FilledButton, 'Export'), findsNothing);
       expect(find.text('Export • 100 coins'), findsNothing);
 
-      // Media panel holds the clip pickers.
+      // Media panel holds the clip pickers. Build 12 (point
+      // #14d) — UPDATED IN PLACE: the three add buttons are
+      // now ONE unified "Media add karein" entry; the sources
+      // (with their original keys) live in its sheet.
       await openTool(tester, 'media');
+      expect(find.byKey(const Key('mediaAddButton')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('mediaAddButton')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
       expect(find.byKey(const Key('addClipGallery')), findsOneWidget);
       expect(find.byKey(const Key('addClipFiles')), findsOneWidget);
+      expect(find.byKey(const Key('addClipPhoto')), findsOneWidget);
+      // Close the sheet again for the export checks below.
+      await tester.tapAt(const Offset(20, 20));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
 
       // Export panel holds the real export card (Phase 7).
       await openTool(tester, 'export');

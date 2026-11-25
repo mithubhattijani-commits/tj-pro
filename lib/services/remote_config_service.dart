@@ -504,6 +504,11 @@ class RemoteConfigService {
   static final RemoteConfigService instance = RemoteConfigService();
 
   static const Duration fetchTimeout = Duration(seconds: 8);
+
+  /// Retained for compatibility only: before Build 12 this was
+  /// the cache age that gated the startup refresh. Build 12
+  /// (point #11) refreshes on EVERY cold start, so nothing reads
+  /// this value anymore.
   static const Duration refreshInterval = Duration(hours: 6);
   static const String _cacheKey = 'tjpro_remote_config_json_v1';
   static const String _cacheTimeKey = 'tjpro_remote_config_time_v1';
@@ -610,26 +615,34 @@ class RemoteConfigService {
     }
   }
 
+  /// Test seam (Build 12): when set, [init] runs this instead of
+  /// the real network refresh, so tests can prove the
+  /// every-cold-start refresh fires without touching the network.
+  static Future<void> Function()? refreshOverrideForTest;
+
   /// Call once at startup. Returns fast: it only loads the cached
   /// JSON; the network refresh is backgrounded and never blocks.
+  ///
+  /// Build 12 (v1.9.0, fix-list point #11): the background refresh
+  /// now runs on EVERY cold start, not only when the cache is
+  /// older than [refreshInterval]. The old 6-hour gate is why a
+  /// changed hero banner never reached phones that had launched
+  /// the app recently — the config (and with it the banner URLs)
+  /// stayed frozen for up to 6 h, and an app update does not
+  /// clear the cache. The cache-first publish above still makes
+  /// the first frame instant; the refresh is fail-soft and
+  /// non-blocking, and the precedence is unchanged (Supabase
+  /// override > remote JSON > defaults).
   Future<void> init() async {
     await _loadFromCache();
     // The cached/default config has resolved — now let the Supabase
     // admin banner override (if any) take over the banner fields.
     unawaited(_fetchAdminBannerOverride());
-    final String? tsRaw = await _readKey(_cacheTimeKey);
-    final int ts = int.tryParse(tsRaw ?? '') ?? 0;
-    final int age = DateTime.now().millisecondsSinceEpoch - ts;
-    if (ts == 0 || age > refreshInterval.inMilliseconds) {
+    final override = refreshOverrideForTest;
+    if (override != null) {
+      unawaited(override());
+    } else {
       unawaited(_refresh());
-    }
-  }
-
-  Future<String?> _readKey(String key) async {
-    try {
-      return await _storage.read(key: key);
-    } catch (_) {
-      return null;
     }
   }
 

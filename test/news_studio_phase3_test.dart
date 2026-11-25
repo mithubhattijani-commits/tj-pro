@@ -377,16 +377,26 @@ void main() {
     });
   });
 
-  group('RotatingLogo swing', () {
-    test('yoyo angle: -0.7 at start, 0 at middle, +0.7 at the turn', () {
-      expect(logoSwingAngle(0), -0.7);
-      expect(logoSwingAngle(0.5), 0);
-      expect(logoSwingAngle(1), 0.7);
+  // Build 12 (v1.9.0, point #12) — UPDATED IN PLACE: this
+  // group used to pin the 20 Nov 2026 ±0.7 rad yoyo SWING
+  // (logoSwingAngle / logoSwingNeverMirrors). The user's
+  // direct order of 2026-11-25 SUPERSEDES that decision: the
+  // logo now rotates CONTINUOUSLY through full 360° rounds as
+  // a 3D cube, so the group pins the new full-rotation sweep
+  // instead. (Reason recorded per the Build 12 brief: stale
+  // assertions are updated in place, never deleted.)
+  group('RotatingLogo full rotation (Build 12)', () {
+    test('angle sweeps 0 → 2π linearly over one revolution', () {
+      expect(logoRotationAngle(0), 0);
+      expect(logoRotationAngle(0.5), closeTo(3.14159265, 1e-6));
+      expect(logoRotationAngle(1), closeTo(2 * 3.14159265, 1e-6));
     });
 
-    test('swing never reaches the mirror point', () {
-      expect(logoSwingNeverMirrors, isTrue);
-      expect(logoSwingMaxRadians, lessThan(3.14159265 / 2));
+    test('the sweep passes the old swing limit — full turn', () {
+      // Half-way through the revolution the cube has turned
+      // 180°: exactly what the superseded swing forbade.
+      expect(logoRotationAngle(0.5), greaterThan(3.14159265 / 2));
+      expect(logoRotationAngle(0.75), closeTo(1.5 * 3.14159265, 1e-6));
     });
   });
 

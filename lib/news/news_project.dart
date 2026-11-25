@@ -133,6 +133,9 @@ class NewsProject {
     this.tickerDirection,
     this.videoTemplateId = '',
     this.backgroundMusicAsset,
+    this.storeMusicPath,
+    this.storeMusicName,
+    this.voiceMusicEnabled = true,
     this.headline = '',
     this.summary = '',
     List<SubtitleLine>? subtitles,
@@ -282,6 +285,24 @@ class NewsProject {
   /// (assets/music/news_music_N.mp3, FREE), or null = none.
   String? backgroundMusicAsset;
 
+  /// Build 12 (point #9a): an Online Store audio item (sound
+  /// effect / background music) chosen as this project's
+  /// background music in the Audio tool — the owned item's
+  /// local file path + display name. When set (and the file
+  /// exists) it WINS over [backgroundMusicAsset] in the export
+  /// music bed; selecting a built-in track clears it.
+  String? storeMusicPath;
+  String? storeMusicName;
+
+  /// Build 12 (point #14f): the Voice panel's Background
+  /// Music toggle — whether the selected background music
+  /// (store item or built-in track) is mixed under the
+  /// voiceover in the export. Default true = the historic
+  /// behaviour (a selected track always bedded). NOT the same
+  /// as [voiceMusic], which is the soft pad mixed at
+  /// voice-BUILD time by the TTS services.
+  bool voiceMusicEnabled;
+
   /// The ticker direction preview + export must use: the user's
   /// [tickerDirection] override when set, otherwise the language
   /// default for the current [tickerText] (Urdu script → rtl,
@@ -399,6 +420,10 @@ class NewsProject {
     String? tickerDirection,
     String? videoTemplateId,
     String? backgroundMusicAsset,
+    String? storeMusicPath,
+    String? storeMusicName,
+    bool clearStoreMusic = false,
+    bool? voiceMusicEnabled,
     String? headline,
     String? summary,
     List<SubtitleLine>? subtitles,
@@ -449,6 +474,11 @@ class NewsProject {
       videoTemplateId: videoTemplateId ?? this.videoTemplateId,
       backgroundMusicAsset:
           backgroundMusicAsset ?? this.backgroundMusicAsset,
+      storeMusicPath:
+          clearStoreMusic ? null : (storeMusicPath ?? this.storeMusicPath),
+      storeMusicName:
+          clearStoreMusic ? null : (storeMusicName ?? this.storeMusicName),
+      voiceMusicEnabled: voiceMusicEnabled ?? this.voiceMusicEnabled,
       headline: headline ?? this.headline,
       summary: summary ?? this.summary,
       subtitles: subtitles ?? List<SubtitleLine>.from(this.subtitles),
@@ -504,6 +534,9 @@ class NewsProject {
         'tickerDirection': tickerDirection,
         'videoTemplateId': videoTemplateId,
         'backgroundMusicAsset': backgroundMusicAsset,
+        'storeMusicPath': storeMusicPath,
+        'storeMusicName': storeMusicName,
+        'voiceMusicEnabled': voiceMusicEnabled,
         'headline': headline,
         'summary': summary,
         'subtitles': subtitles.map((s) => s.toJson()).toList(),
@@ -609,6 +642,11 @@ class NewsProject {
       tickerDirection: json['tickerDirection'] as String?,
       videoTemplateId: (json['videoTemplateId'] as String?) ?? '',
       backgroundMusicAsset: json['backgroundMusicAsset'] as String?,
+      storeMusicPath: json['storeMusicPath'] as String?,
+      storeMusicName: json['storeMusicName'] as String?,
+      // Absent on pre-v1.9.0 saves → ON (the historic behaviour:
+      // a selected track always bedded under the voice).
+      voiceMusicEnabled: (json['voiceMusicEnabled'] as bool?) ?? true,
       headline: (json['headline'] as String?) ?? '',
       summary: (json['summary'] as String?) ?? '',
       subtitles: subs,

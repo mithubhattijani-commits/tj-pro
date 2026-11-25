@@ -1,42 +1,49 @@
-/// Rotating-logo loop generation for the reel export (Phase 7).
+/// Rotating-logo loop generation for the reel export.
 ///
-/// Per `~/workspace/tj-pro-news-maker/rotation-decision.md` the export
-/// logo 3D-rotates, and a user-replaced logo rotates the same way. Two
-/// loop sources exist:
+/// Build 12 (v1.9.0, fix-list point #12) — SUPERSEDES the
+/// 20 Nov 2026 swing decision. The old design oscillated the
+/// logo ±0.7 rad (a yoyo "swing") because a FLAT logo's text
+/// reads backwards for half of a full turn. The user's direct
+/// order of 2026-11-25 replaces it: the logo rotates
+/// CONTINUOUSLY through full 360° rounds, and the form is a
+/// real 3D CUBE carrying the image on its faces (broadcast
+/// cube logos) — each face reads upright on its own pass.
 ///
-///   1. The pre-rendered `logo-rotating-alpha.mov` (default logo only),
-///      ping-ponged in-graph by
-///      [FfmpegService.logoLoopOverlayCommand] — see
-///      `lib/services/asset_download_service.dart` (`getLogoMov`).
-///   2. A GENERATED loop (this file): dart:ui renders N frames of the
-///      logo with a `Matrix4.rotationY` yoyo sweep — the exact same
-///      swing the preview uses (`logoSwingAngle` in
-///      `lib/news/widgets/rotating_logo.dart`: ±0.7 rad, ease-in-out)
-///      — into `frame_%02d.png` files, and FFmpeg loops them with the
-///      image2 demuxer (`-stream_loop -1`). No alpha video encoder is
-///      needed anywhere: the frames carry the alpha channel as PNGs.
+/// Two loop sources exist:
 ///
-/// The generated loop is used for a user-replaced logo (no
-/// pre-rendered loop can exist for an arbitrary file) AND as the
-/// fallback for the default logo when the mov has not been downloaded
-/// yet. The frame sequence covers one full out-and-back cycle, so the
-/// last frame flows into the first with no snap when `-stream_loop`
-/// repeats it. Frames are cached per logo file (path + size + mtime)
-/// in the work dir — regenerating 48 frames costs a render each time.
+///   1. A GENERATED loop (this file): the shared cube engine
+///      (`lib/services/logo_cube.dart` — the same geometry +
+///      painter the preview uses) renders 48 PNG frames of one
+///      full revolution into `frame_%02d.png` files, and FFmpeg
+///      loops them with the image2 demuxer (`-stream_loop -1`).
+///      Used for a user-picked logo (image OR the default tile)
+///      and as the fallback for the default logo.
+///   2. The pre-rendered `logo-rotating-alpha.mov` (default
+///      logo only, non-parity templates), ping-ponged in-graph
+///      by [FfmpegService.logoLoopOverlayCommand] — that asset
+///      is a finished video of the channel's own cube-style
+///      logo; the parity (Final template) path prefers the
+///      generated cube frames for a picked logo and the user's
+///      green-screen logo video for the default (unchanged).
 ///
-/// FFmpeg `perspective` was REJECTED for this (decision doc): it is a
-/// shear, not a true rotationY, the loop point is not clean, and it
-/// burns CPU on every output frame instead of rendering once.
+/// The frame sequence covers exactly one revolution, so the
+/// last frame flows into the first with no snap when
+/// `-stream_loop` repeats it. Frames are cached per logo file
+/// (path + size + mtime) in the work dir — regenerating 48
+/// frames costs a render each time. The cache key carries a
+/// `cube3d_` prefix so pre-Build-12 swing frames are never
+/// reused.
 library;
 
 import 'dart:io';
-import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart'
-    show FontWeight, Matrix4, TextPainter, TextSpan, TextStyle;
+    show FontWeight, TextPainter, TextSpan, TextStyle;
 
-/// Frames in one full yoyo cycle (12 fps × 4 s loop).
+import 'logo_cube.dart';
+
+/// Frames in one full revolution (12 fps × 4 s loop).
 const int kLogoLoopFrameCount = 48;
 
 /// Frame rate the image2 input is looped at.
@@ -45,55 +52,44 @@ const int kLogoLoopFps = 12;
 /// Rendered frame size (square, RGBA PNG).
 const int kLogoLoopFrameSize = 512;
 
-/// Max swing, mirroring the preview
-/// (`kLogoSwingRadians` in rotating_logo.dart).
-const double kLogoLoopSwingRadians = 0.7;
-
-/// Ease-in-out, mirroring the preview's `Curves.easeInOut` on the
-/// angle tween.
-double _easeInOut(double t) {
-  final v = t.clamp(0.0, 1.0);
-  return v < 0.5 ? 2 * v * v : 1 - math.pow(-2 * v + 2, 2) / 2;
-}
-
-/// The rotationY angle (radians) of frame [index] in a [frames]-frame
-/// full yoyo cycle. Frame 0 sits at -0.7 rad, the middle frame at
-/// +0.7, and the last frame returns to (almost) -0.7 — so the loop
-/// point is seamless by construction, exactly like the preview's
-/// `repeat(reverse: true)` controller. Text never mirrors: the swing
-/// stays well under π/2.
+/// The rotation angle (radians) of frame [index] in a
+/// [frames]-frame loop: a continuous linear sweep 0 → 2π over
+/// the loop (Build 12 — full rotation, no yoyo). Frame 0 and
+/// frame [frames] are the same angle, so the loop point is
+/// seamless by construction.
 double logoLoopAngle(int index, [int frames = kLogoLoopFrameCount]) {
-  final c = (index % frames) / frames; // 0..1 over one full cycle
-  final p = c < 0.5 ? c * 2 : 2 - 2 * c; // out 0..1, back 1..0
-  return -kLogoLoopSwingRadians + 2 * kLogoLoopSwingRadians * _easeInOut(p);
+  return logoCubeAngle((index % frames) / frames);
 }
 
 /// Cache key for a logo file: file name + size + mtime, so a replaced
 /// logo (same path, new content) regenerates instead of reusing stale
-/// frames. The default tile uses `default_<initial>`.
+/// frames. The default tile uses `default_<initial>`. The `cube3d_`
+/// prefix versions the Build 12 cube frames apart from the old
+/// swing frames.
 String logoLoopCacheKey({File? logoFile, String initial = 'N'}) {
-  if (logoFile == null) return 'default_${initial.toUpperCase()}';
+  if (logoFile == null) return 'cube3d_default_${initial.toUpperCase()}';
   try {
     final stat = logoFile.statSync();
     final name = logoFile.path.split('/').last.replaceAll(
       RegExp(r'[^A-Za-z0-9_.-]'),
       '_',
     );
-    return '${name}_${stat.size}_${stat.modified.millisecondsSinceEpoch}';
+    return 'cube3d_${name}_${stat.size}_${stat.modified.millisecondsSinceEpoch}';
   } catch (_) {
-    return 'logo_${logoFile.path.hashCode.abs()}';
+    return 'cube3d_logo_${logoFile.path.hashCode.abs()}';
   }
 }
 
 class LogoLoopService {
-  /// Renders the full rotating loop for [logoFile] (a user-picked logo
-  /// PNG/JPG; null = the channel's default initial-letter tile) into
-  /// [outDir] as `frame_00.png` … `frame_47.png` (see
-  /// [kLogoLoopFrameCount]). Cache-first: when all frames already
-  /// exist in [outDir] they are returned untouched (0 renders).
-  /// Returns the frame files in order. Throws when the logo file
-  /// cannot be decoded (callers fall back to skipping the logo pass,
-  /// never to failing the export).
+  /// Renders the full rotating CUBE loop for [logoFile] (a
+  /// user-picked logo PNG/JPG; null = the channel's default
+  /// initial-letter tile) into [outDir] as `frame_00.png` …
+  /// `frame_47.png` (see [kLogoLoopFrameCount]). Cache-first:
+  /// when all frames already exist in [outDir] they are
+  /// returned untouched (0 renders). Returns the frame files in
+  /// order. Throws when the logo file cannot be decoded
+  /// (callers fall back to skipping the logo pass, never to
+  /// failing the export).
   static Future<List<File>> generateFrames({
     File? logoFile,
     required Directory outDir,
@@ -117,20 +113,21 @@ class LogoLoopService {
     }
     if (allExist) return existing;
 
-    ui.Image? logo;
+    ui.Image? texture;
     if (logoFile != null) {
       final bytes = await logoFile.readAsBytes();
       final codec = await ui.instantiateImageCodec(bytes);
       final frame = await codec.getNextFrame();
-      logo = frame.image;
+      texture = frame.image;
+    } else {
+      texture = await renderLogoTileTexture(initial: initial, size: 512);
     }
     final made = <File>[];
     try {
       for (var i = 0; i < frames; i++) {
         final angle = logoLoopAngle(i, frames);
-        final png = await _renderFrame(
-          logo: logo,
-          initial: initial,
+        final png = await renderLogoCubeFrame(
+          texture: texture,
           angle: angle,
           size: size,
         );
@@ -141,75 +138,72 @@ class LogoLoopService {
         made.add(file);
       }
     } finally {
-      logo?.dispose();
+      texture.dispose();
     }
     return made;
   }
 
-  /// One frame: the logo (or the default tile) drawn under a
-  /// rotationY transform with the preview's perspective entry
-  /// (0.0015), centred in a transparent [size]×[size] canvas.
-  static Future<List<int>> _renderFrame({
-    required ui.Image? logo,
+  /// The default channel tile (purple rounded rect + initial
+  /// letter) rendered into a texture image for the cube — the
+  /// same look the preview's initial tile and the template
+  /// renderer draw when no logo file exists.
+  static Future<ui.Image> renderLogoTileTexture({
     required String initial,
+    required int size,
+  }) async {
+    final recorder = ui.PictureRecorder();
+    final canvas = ui.Canvas(recorder);
+    final s = size.toDouble();
+    canvas.drawRRect(
+      ui.RRect.fromRectAndRadius(
+        ui.Rect.fromLTWH(0, 0, s, s),
+        ui.Radius.circular(s * 0.109),
+      ),
+      ui.Paint()..color = const ui.Color(0xFF7C3AED),
+    );
+    final letter = initial.trim().isEmpty
+        ? 'N'
+        : initial.trim()[0].toUpperCase();
+    final painter = TextPainter(
+      text: TextSpan(
+        text: letter,
+        style: TextStyle(
+          color: const ui.Color(0xFFFFFFFF),
+          fontSize: s * 0.45,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+      textDirection: ui.TextDirection.ltr,
+      textAlign: ui.TextAlign.center,
+    )..layout(maxWidth: s);
+    painter.paint(canvas, ui.Offset(0, (s - painter.height) / 2));
+    final picture = recorder.endRecording();
+    final image = await picture.toImage(size, size);
+    picture.dispose();
+    return image;
+  }
+
+  /// One export frame: the cube at [angle] on a transparent
+  /// [size]×[size] canvas, drawn with the SHARED cube painter
+  /// (the preview paints the identical geometry).
+  static Future<List<int>> renderLogoCubeFrame({
+    required ui.Image texture,
     required double angle,
     required int size,
   }) async {
     final recorder = ui.PictureRecorder();
     final canvas = ui.Canvas(recorder);
     final s = size.toDouble();
-    final matrix = Matrix4.identity()
-      ..setEntry(3, 2, 0.0015)
-      ..rotateY(angle);
-    canvas.save();
-    canvas.translate(s / 2, s / 2);
-    canvas.transform(matrix.storage);
-    canvas.translate(-s / 2, -s / 2);
-    if (logo != null) {
-      // Cover-fit the logo into the square, like the preview's
-      // BoxFit.cover.
-      final lw = logo.width.toDouble();
-      final lh = logo.height.toDouble();
-      final scale = math.max(s / lw, s / lh);
-      final dw = lw * scale;
-      final dh = lh * scale;
-      canvas.drawImageRect(
-        logo,
-        ui.Rect.fromLTWH(0, 0, lw, lh),
-        ui.Rect.fromLTWH((s - dw) / 2, (s - dh) / 2, dw, dh),
-        ui.Paint(),
-      );
-    } else {
-      // Default tile — the same look as the template renderer draws
-      // when no logo file exists (purple rounded rect + initial).
-      canvas.drawRRect(
-        ui.RRect.fromRectAndRadius(
-          ui.Rect.fromLTWH(0, 0, s, s),
-          ui.Radius.circular(s * 0.109),
-        ),
-        ui.Paint()..color = const ui.Color(0xFF7C3AED),
-      );
-      final letter = initial.trim().isEmpty
-          ? 'N'
-          : initial.trim()[0].toUpperCase();
-      final painter = TextPainter(
-        text: TextSpan(
-          text: letter,
-          style: TextStyle(
-            color: const ui.Color(0xFFFFFFFF),
-            fontSize: s * 0.45,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        textDirection: ui.TextDirection.ltr,
-        textAlign: ui.TextAlign.center,
-      )..layout(maxWidth: s);
-      painter.paint(
-        canvas,
-        ui.Offset(0, (s - painter.height) / 2),
-      );
-    }
-    canvas.restore();
+    paintLogoCube(
+      canvas,
+      center: ui.Offset(s / 2, s / 2),
+      // The cube's projected silhouette is ~1.22× its edge at
+      // the diagonal angles; an 0.82 factor keeps every angle
+      // inside the frame with a small margin.
+      size: s * 0.82,
+      angleY: angle,
+      texture: texture,
+    );
     final picture = recorder.endRecording();
     final image = await picture.toImage(size, size);
     final bytes = await image.toByteData(format: ui.ImageByteFormat.png);

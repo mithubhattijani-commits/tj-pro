@@ -236,9 +236,11 @@ void main() {
         '-filter_complex "[0:v]crop=396:316:235:86,format=yuva420p,'
         'split[f][r];[r]reverse[rr];[f][rr]concat=n=2:v=1:a=0,'
         'format=yuva420p,scale=110:-1[bug];'
-        '[1:v][bug]overlay=590:86[vout]" '
+        '[1:v][bug]overlay=590:86:shortest=1[vout]" '
         '-map "[vout]" -map 1:a? -c:v libx264 -preset veryfast -crf 23 '
-        "-c:a copy -movflags +faststart '/tmp/logo.mp4'",
+        // Build 12: -shortest bounds the infinitely looped
+        // logo input to the base video's duration.
+        "-c:a copy -shortest -movflags +faststart '/tmp/logo.mp4'",
       );
       // No perspective filter anywhere (rejected in the decision doc).
       expect(cmd, isNot(contains('perspective')));
@@ -258,9 +260,10 @@ void main() {
         "-y -framerate 12 -stream_loop -1 -i '/tmp/loop/frame_%02d.png' "
         "-i '/tmp/main.mp4' "
         '-filter_complex "[0:v]format=yuva420p,scale=110:-1[bug];'
-        '[1:v][bug]overlay=590:86[vout]" '
+        '[1:v][bug]overlay=590:86:shortest=1[vout]" '
         '-map "[vout]" -map 1:a? -c:v libx264 -preset veryfast -crf 23 '
-        "-c:a copy -movflags +faststart '/tmp/logo.mp4'",
+        // Build 12: -shortest (see the mov case above).
+        "-c:a copy -shortest -movflags +faststart '/tmp/logo.mp4'",
       );
     });
 
@@ -341,18 +344,37 @@ void main() {
     });
   });
 
-  group('logoLoopAngle — yoyo swing, seamless loop point', () {
-    test('starts at -0.7, peaks at +0.7 mid-cycle, returns to -0.7', () {
-      expect(logoLoopAngle(0), closeTo(-0.7, 0.001));
-      expect(logoLoopAngle(24), closeTo(0.7, 0.001));
-      expect(logoLoopAngle(47), closeTo(-0.7, 0.01));
+  // Build 12 (v1.9.0, point #12) — UPDATED IN PLACE: this
+  // group used to pin the yoyo swing (±0.7 rad, never
+  // mirroring). The user's order of 2026-11-25 supersedes the
+  // 20 Nov swing decision — the export loop is now ONE FULL
+  // 360° revolution of the 3D cube, so the group pins the
+  // continuous sweep + the seamless loop point instead.
+  group('logoLoopAngle — full revolution, seamless loop point', () {
+    test('sweeps 0 → 2π across the loop; frame N = frame 0', () {
+      expect(logoLoopAngle(0), closeTo(0, 0.001));
+      expect(logoLoopAngle(24), closeTo(3.14159265, 0.001));
+      expect(
+        logoLoopAngle(47),
+        closeTo(2 * 3.14159265 * 47 / 48, 0.01),
+      );
+      // The loop point: the frame AFTER the last wraps to
+      // frame 0's angle (index modulo the frame count), and
+      // 2π ≡ 0 in orientation, so -stream_loop never snaps.
+      expect(logoLoopAngle(kLogoLoopFrameCount), closeTo(0, 0.001));
+      expect(
+        logoLoopAngle(kLogoLoopFrameCount),
+        logoLoopAngle(0),
+      );
     });
 
-    test('never exceeds the swing and never mirrors', () {
+    test('monotonic increase — a continuous turn, no yoyo', () {
+      var prev = -1.0;
       for (var i = 0; i < kLogoLoopFrameCount; i++) {
         final a = logoLoopAngle(i);
-        expect(a.abs(), lessThanOrEqualTo(0.7));
-        expect(a.abs(), lessThan(1.5708)); // < pi/2
+        expect(a, greaterThan(prev));
+        expect(a, lessThan(2 * 3.14159265));
+        prev = a;
       }
     });
   });
@@ -391,7 +413,8 @@ void main() {
         expect(frame.image.height, kLogoLoopFrameSize);
         frame.image.dispose();
       }
-      // Frame 0 (swung left) and frame 24 (swung right) differ.
+      // Frame 0 (cube front face) and frame 24 (cube turned
+      // 180° — back face) differ.
       final b0 = await first[0].readAsBytes();
       final b24 = await first[24].readAsBytes();
       expect(b0, isNot(b24));

@@ -13,6 +13,8 @@
 /// segment via photoClipCommand.
 library;
 
+import 'dart:async';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -25,6 +27,7 @@ class ClipPickerList extends StatelessWidget {
     super.key,
     required this.paths,
     required this.onChanged,
+    this.unifiedPicker = false,
   });
 
   /// Clip file paths, in timeline order.
@@ -32,6 +35,15 @@ class ClipPickerList extends StatelessWidget {
 
   /// Called with the new list after add / reorder / remove.
   final ValueChanged<List<String>> onChanged;
+
+  /// Build 12 (point #14d): ONE unified media picker — a
+  /// single "Media add karein" button that opens a source
+  /// sheet (gallery video / files / photo) instead of three
+  /// separate add buttons. The three sources, their keys and
+  /// their handlers are exactly the same; only the entry
+  /// point is unified. The News Maker passes true; the AI
+  /// News Maker keeps the classic three-button row.
+  final bool unifiedPicker;
 
   Future<void> _addFromGallery(BuildContext context) async {
     try {
@@ -107,42 +119,123 @@ class ClipPickerList extends StatelessWidget {
     }
   }
 
+  /// Build 12 (point #14d): the unified picker's source
+  /// sheet — the same three sources with the same keys, one
+  /// door.
+  Future<void> _showUnifiedSourceSheet(BuildContext context) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF12151C),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 14, 16, 6),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Media kahan se add karein?',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                    ),
+                  ),
+                ),
+              ),
+              ListTile(
+                key: const Key('addClipGallery'),
+                leading: const Icon(Icons.video_library_outlined),
+                title: const Text('Gallery se video'),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  unawaited(_addFromGallery(context));
+                },
+              ),
+              ListTile(
+                key: const Key('addClipFiles'),
+                leading: const Icon(Icons.folder_open_outlined),
+                title: const Text('Files se chunein'),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  unawaited(_addFromFiles(context));
+                },
+              ),
+              ListTile(
+                key: const Key('addClipPhoto'),
+                leading: const Icon(Icons.photo_library_outlined),
+                title: const Text('Photo add karein'),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  unawaited(_addPhotos(context));
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                key: const Key('addClipGallery'),
-                onPressed: () => _addFromGallery(context),
-                icon: const Icon(Icons.video_library),
-                label: const Text('Gallery se video'),
+        if (unifiedPicker)
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              key: const Key('mediaAddButton'),
+              onPressed: () => _showUnifiedSourceSheet(context),
+              icon: const Icon(Icons.add_photo_alternate_outlined,
+                  size: 19),
+              label: const Text('Media add karein'),
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFFFC800),
+                foregroundColor: Colors.black,
+                padding: const EdgeInsets.symmetric(vertical: 13),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
             ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: OutlinedButton.icon(
-                key: const Key('addClipFiles'),
-                onPressed: () => _addFromFiles(context),
-                icon: const Icon(Icons.folder_open),
-                label: const Text('Files se chunein'),
+          )
+        else ...[
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  key: const Key('addClipGallery'),
+                  onPressed: () => _addFromGallery(context),
+                  icon: const Icon(Icons.video_library),
+                  label: const Text('Gallery se video'),
+                ),
               ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        SizedBox(
-          width: double.infinity,
-          child: OutlinedButton.icon(
-            key: const Key('addClipPhoto'),
-            onPressed: () => _addPhotos(context),
-            icon: const Icon(Icons.photo_library_outlined),
-            label: const Text('Photo add karein'),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  key: const Key('addClipFiles'),
+                  onPressed: () => _addFromFiles(context),
+                  icon: const Icon(Icons.folder_open),
+                  label: const Text('Files se chunein'),
+                ),
+              ),
+            ],
           ),
-        ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              key: const Key('addClipPhoto'),
+              onPressed: () => _addPhotos(context),
+              icon: const Icon(Icons.photo_library_outlined),
+              label: const Text('Photo add karein'),
+            ),
+          ),
+        ],
         const SizedBox(height: 8),
         if (paths.isEmpty)
           const Text(

@@ -90,6 +90,7 @@ import 'export_settings.dart';
 import 'ffmpeg_service.dart';
 import 'font_registry.dart';
 import 'library_service.dart';
+import 'logo_key_service.dart';
 import 'logo_loop_service.dart';
 import 'user_font_service.dart';
 import 'pro_editor.dart';
@@ -645,23 +646,56 @@ class ReelExportService {
         if (c != null) return c;
       }
       // --- 2b. Background music bed (v1.2.0, built-in news music). ---
-      // The picked built-in track (project.backgroundMusicAsset) loops
-      // quietly under whatever audio the reel already has. Any failure
-      // is a NOTE — the export continues without the bed, never fails.
+      // The picked music loops quietly under whatever audio the
+      // reel already has. Any failure is a NOTE — the export
+      // continues without the bed, never fails.
+      //
+      // Build 12 (points #9a + #14f): the bed source is the
+      // Online Store audio item the user picked in the Audio
+      // tool (project.storeMusicPath) when one is set, else the
+      // built-in track (project.backgroundMusicAsset) — and the
+      // Voice panel's Background Music toggle
+      // (project.voiceMusicEnabled) gates the whole bed: OFF =
+      // no music under the voiceover, whatever is selected.
       final musicTrack =
           BuiltInNewsMusic.fromAsset(project.backgroundMusicAsset);
-      if (musicTrack != null) {
+      final storeMusicFile = project.storeMusicPath == null ||
+              project.storeMusicPath!.isEmpty
+          ? null
+          : File(project.storeMusicPath!);
+      final hasStoreMusic =
+          storeMusicFile != null && await storeMusicFile.exists();
+      if (project.voiceMusicEnabled &&
+          (storeMusicFile != null || musicTrack != null)) {
         step('Background music mix ho raha hai…', 0.46);
-        final musicFile = await _extractAsset(
-          musicTrack.assetPath,
-          dir,
-          'reel_music_$stamp.mp3',
-        );
-        if (musicFile == null) {
-          notes.add(
-            'Background music file nahi mila — baghair music ke export '
-            'ho raha hai.',
+        // A SET store item is the source, full stop: when its
+        // file has gone missing the bed is skipped with a note
+        // (never a silent swap to another track).
+        final File? musicFile;
+        if (storeMusicFile != null) {
+          musicFile = hasStoreMusic ? storeMusicFile : null;
+          if (!hasStoreMusic) {
+            notes.add(
+              'Store music file nahi mila — baghair music ke export '
+              'ho raha hai.',
+            );
+          }
+        } else {
+          musicFile = await _extractAsset(
+            musicTrack!.assetPath,
+            dir,
+            'reel_music_$stamp.mp3',
           );
+          if (musicFile == null) {
+            notes.add(
+              'Background music file nahi mila — baghair music ke '
+              'export ho raha hai.',
+            );
+          }
+        }
+        if (musicFile == null) {
+          // Note already added above; the export continues
+          // without the bed.
         } else {
           final hasAudio = await probeHasAudio(File(out));
           final bedOut = p.join(dir.path, 'reel_musicmix_$stamp.mp4');
@@ -1277,10 +1311,63 @@ class ReelExportService {
       // stack (the capsule still renders, unless also removed).
       final logoHidden =
           overrideFor(overrides, NewsElement.logo).hidden;
-      final mov = logoHidden ? null : await svc.cachedLogoMov();
+      // Build 12 (point #13): a logo VIDEO source resolves
+      // FIRST — its keyed frames (the same frames the preview
+      // flipbook plays) feed the graph's frames input; without
+      // frames, a keyed still; without a key colour, a plain
+      // still (the parity graph has no raw-video logo input —
+      // the note says so). A resolved video source suppresses
+      // every other logo source below.
+      var videoLogoResolved = false;
+      if (!logoHidden &&
+          preset.logoMediaKind == 'video' &&
+          preset.logoVideoPath != null) {
+        videoLogoResolved = true;
+        final videoFile = File(preset.logoVideoPath!);
+        if (!await videoFile.exists()) {
+          notes.add(
+            'Logo video file nahi mila — baghair logo ke export '
+            'ho raha hai.',
+          );
+        } else if (preset.logoKeyedFramesDir != null &&
+            await File(
+              p.join(preset.logoKeyedFramesDir!, 'frame_00.png'),
+            ).exists()) {
+          framesDir = preset.logoKeyedFramesDir;
+        } else if (preset.logoVideoKeyColor != null) {
+          final keyedStill = await LogoKeyService.extractKeyedStill(
+            video: videoFile,
+            workDir: dir,
+            keyArgb: preset.logoVideoKeyColor!,
+            name: 'reel_logo_keyed_$stamp.png',
+          );
+          stillPath = keyedStill?.path;
+          if (stillPath == null) {
+            notes.add(
+              'Logo video key nahi ho saka — baghair logo ke '
+              'export ho raha hai.',
+            );
+          }
+        } else {
+          final still = await LogoKeyService.extractStill(
+            video: videoFile,
+            workDir: dir,
+            name: 'reel_logo_still_$stamp.png',
+          );
+          stillPath = still?.path;
+          notes.add(
+            'Logo video ka background solid nahi mila — export '
+            'mein us ka pehla frame still ke tor par lage ga.',
+          );
+        }
+      }
+      final mov =
+          (logoHidden || videoLogoResolved) ? null : await svc.cachedLogoMov();
       if (mov != null) {
         movPath = mov.path;
-      } else if (!logoHidden && preset.logoPath != null &&
+      } else if (!logoHidden &&
+          !videoLogoResolved &&
+          preset.logoPath != null &&
           await File(preset.logoPath!).exists()) {
         // v1.5.1 (#47): rotation OFF keeps the picked logo a
         // still in the export too (the preview already honours
@@ -1307,6 +1394,7 @@ class ReelExportService {
       // Missing bundle → null → the existing path (fail soft).
       String? gsPath;
       if (!logoHidden &&
+          !videoLogoResolved &&
           preset.finalIs3Ribbon &&
           preset.logoRotate &&
           framesDir == null &&
@@ -1318,6 +1406,7 @@ class ReelExportService {
       // v1.5.1 (#47): rotation OFF + default logo → the keyed
       // still frame of the same logo (the preview's still).
       if (!logoHidden &&
+          !videoLogoResolved &&
           preset.finalIs3Ribbon &&
           !preset.logoRotate &&
           movPath == null &&
@@ -1457,6 +1546,105 @@ class ReelExportService {
   }) async {
     final logoOut = p.join(dir.path, 'reel_logo_$stamp.mp4');
     try {
+      // Build 12 (point #13): a logo VIDEO source — keyed
+      // frames when they exist (the preview flipbook's own
+      // frames), a keyed still when only the colour is known,
+      // and the raw video (looped, unkeyed — it still moves as
+      // the source does) when no solid background was found.
+      if (preset.logoMediaKind == 'video' && preset.logoVideoPath != null) {
+        final videoFile = File(preset.logoVideoPath!);
+        if (!await videoFile.exists()) {
+          notes.add(
+            'Logo video file nahi mila — baghair logo ke export '
+            'ho raha hai.',
+          );
+          return null;
+        }
+        final keyedDir = preset.logoKeyedFramesDir;
+        final hasKeyedFrames = keyedDir != null &&
+            await File(p.join(keyedDir, 'frame_00.png')).exists();
+        final String cmd;
+        if (hasKeyedFrames && preset.logoRotate) {
+          cmd = FfmpegService.logoLoopOverlayCommand(
+            input: input,
+            output: logoOut,
+            width: width,
+            height: height,
+            topRibbonEnabled: topRibbonEnabled,
+            framesDir: keyedDir,
+            videoBitrateKbps: settings.videoBitrateKbps,
+          );
+        } else if (hasKeyedFrames || preset.logoVideoKeyColor != null) {
+          final still = hasKeyedFrames
+              ? p.join(keyedDir, 'frame_00.png')
+              : (await LogoKeyService.extractKeyedStill(
+                  video: videoFile,
+                  workDir: dir,
+                  keyArgb: preset.logoVideoKeyColor!,
+                  name: 'reel_logo_keyed_$stamp.png',
+                ))?.path;
+          if (still == null) {
+            notes.add(
+              'Logo video key nahi ho saka — baghair logo ke '
+              'export ho raha hai.',
+            );
+            return null;
+          }
+          cmd = FfmpegService.logoStillOverlayCommand(
+            input: input,
+            output: logoOut,
+            width: width,
+            height: height,
+            topRibbonEnabled: topRibbonEnabled,
+            logoPath: still,
+            videoBitrateKbps: settings.videoBitrateKbps,
+          );
+        } else if (!preset.logoRotate) {
+          final still = await LogoKeyService.extractStill(
+            video: videoFile,
+            workDir: dir,
+            name: 'reel_logo_still_$stamp.png',
+          );
+          if (still == null) {
+            notes.add(
+              'Logo video overlay fail ho gaya — baghair logo ke '
+              'export ho raha hai.',
+            );
+            return null;
+          }
+          cmd = FfmpegService.logoStillOverlayCommand(
+            input: input,
+            output: logoOut,
+            width: width,
+            height: height,
+            topRibbonEnabled: topRibbonEnabled,
+            logoPath: still.path,
+            videoBitrateKbps: settings.videoBitrateKbps,
+          );
+        } else {
+          cmd = FfmpegService.logoLoopOverlayCommand(
+            input: input,
+            output: logoOut,
+            width: width,
+            height: height,
+            topRibbonEnabled: topRibbonEnabled,
+            videoPath: videoFile.path,
+            videoBitrateKbps: settings.videoBitrateKbps,
+          );
+        }
+        final res = await _runStage(
+          cmd,
+          0.70,
+          0.78,
+          expectedMs: reelMs,
+          onProgress: onProgress,
+        );
+        if (res.ok) return logoOut;
+        notes.add(
+          'Logo video overlay fail ho gaya — baghair logo ke export.',
+        );
+        return null;
+      }
       final userLogo = preset.logoPath;
       if (userLogo != null && await File(userLogo).exists()) {
         // v1.5.1 (#47): rotation OFF → the still twin command at

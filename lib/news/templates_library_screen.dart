@@ -662,6 +662,11 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
   void _applyWorkingPreset(ChannelPreset target, ChannelPreset source) {
     target.logoPath = source.logoPath;
     target.logoRotate = source.logoRotate;
+    target.logoMediaKind = source.logoMediaKind;
+    target.logoVideoPath = source.logoVideoPath;
+    target.logoVideoKeyColor = source.logoVideoKeyColor;
+    target.logoKeyedFramesDir = source.logoKeyedFramesDir;
+    target.logoVideoStillPath = source.logoVideoStillPath;
     target.topRibbon = source.topRibbon.copyWith();
     target.urduRibbon = source.urduRibbon.copyWith();
     target.englishRibbon = source.englishRibbon.copyWith();

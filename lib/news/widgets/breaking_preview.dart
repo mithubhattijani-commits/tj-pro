@@ -429,6 +429,9 @@ class BreakingTemplatePreview extends StatelessWidget {
               logoPath: template.logoPath ?? preset.logoPath,
               initial: initial,
               size: 52,
+              logoMediaKind: template.logoMediaKind,
+              keyedFramesDir: template.logoKeyedFramesDir,
+              videoStillPath: template.logoVideoStillPath,
             ),
           ),
           // Category chip + intro/outro markers (top-left).
@@ -983,6 +986,9 @@ class ClassicPreview extends StatelessWidget {
               logoPath: preset.logoPath,
               initial: initial,
               size: 52,
+              logoMediaKind: preset.logoMediaKind,
+              keyedFramesDir: preset.logoKeyedFramesDir,
+              videoStillPath: preset.logoVideoStillPath,
             ),
           ),
           Positioned(

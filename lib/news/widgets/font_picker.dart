@@ -81,6 +81,19 @@ class NewsFontPicker extends StatelessWidget {
     // swipeable rail of chips — the same presentation the Video /
     // Photo Editor panels use for every choice row — instead of a
     // multi-row Wrap with uneven rows.
+    //
+    // Build 12 (point #14e): VISUAL font previews — each chip's
+    // label renders the font's own name IN THAT FONT (the Urdu
+    // name where the registry carries one, so Kasheeda /
+    // Nastaleeq / Naskh chips show their real glyph shapes).
+    // The style is built from the option's registered
+    // familyLabel DIRECTLY — deliberately NOT
+    // UrduFonts.styleFor/apply(): apply() would kick off a
+    // runtime download for EVERY Google-font option at panel
+    // build (the app only warms the SELECTED fonts — see
+    // _warmFont in the Maker). A family the app has already
+    // loaded renders in its real face; Kasheeda resolves to
+    // the house family the same way.
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(
@@ -88,7 +101,17 @@ class NewsFontPicker extends StatelessWidget {
         for (final font in fonts) ...[
           ChoiceChip(
             key: Key('fontChoice-${font.id}'),
-            label: Text(font.name),
+            label: Text(
+              font.nameUr ?? font.name,
+              style: TextStyle(
+                fontFamily: font.familyLabel,
+                fontSize: 15,
+                fontWeight: FontWeight.bold,
+                color: selectedId == font.id
+                    ? Colors.black
+                    : const Color(0xFFC4C9D0),
+              ),
+            ),
             selected: selectedId == font.id,
             onSelected: (_) => onChanged(font.id),
           ),

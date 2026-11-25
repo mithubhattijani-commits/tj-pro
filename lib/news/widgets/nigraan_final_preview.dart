@@ -31,6 +31,7 @@ import '../../services/asset_download_service.dart';
 import '../channel_preset.dart';
 import '../element_override.dart';
 import '../watermark.dart';
+import 'keyed_logo_flipbook.dart';
 import 'pip_inset.dart';
 import 'reporter_overlay.dart';
 import 'rotating_logo.dart';
@@ -1092,6 +1093,9 @@ class NigraanFinalPreview extends StatelessWidget {
               isFinal3: isFinal3,
               rotate: logoRotate,
               logoGsFrameAssetPath: preset.logoGsFrameAssetPath,
+              logoMediaKind: preset.logoMediaKind,
+              keyedFramesDir: preset.logoKeyedFramesDir,
+              videoStillPath: preset.logoVideoStillPath,
             ),
           ),
           if (!capOv.hidden)
@@ -1185,6 +1189,9 @@ class _ParityLogoBox extends StatelessWidget {
     this.rotate = true,
     this.logoGsFrameAssetPath =
         AssetDownloadService.logoGsFrameAssetPath,
+    this.logoMediaKind = 'image',
+    this.keyedFramesDir,
+    this.videoStillPath,
   });
 
   final String? logoPath;
@@ -1198,37 +1205,54 @@ class _ParityLogoBox extends StatelessWidget {
   /// to the Nigraan TV frame, the old hardcoded literal).
   final String logoGsFrameAssetPath;
 
-  /// v1.5.1 (fix #47): a picked logo SWINGS (3D) in the preview
+  /// v1.5.1 (fix #47): a picked logo rotates (3D) in the preview
   /// when true — any uploaded logo rotates, not only the built-in
-  /// one (the export already overlays generated rotating frames
-  /// for a picked logo).
+  /// one (the export overlays generated rotating frames for a
+  /// picked logo). Build 12: the rotation is the continuous
+  /// full-turn 3D CUBE.
   final bool rotate;
+
+  /// Build 12 (point #13): 'video' when the preset's logo
+  /// source is a logo video — the box then plays the honestly
+  /// keyed frames instead of the cube / GS still.
+  final String logoMediaKind;
+  final String? keyedFramesDir;
+  final String? videoStillPath;
 
   @override
   Widget build(BuildContext context) {
-    final path = logoPath;
-    if (path != null && path.isNotEmpty) {
-      if (rotate) {
-        return SizedBox(
-          width: width,
-          height: height,
-          child: FittedBox(
-            fit: BoxFit.fill,
-            child: RotatingLogo(
-              logoPath: path,
-              initial: initial,
-              size: width,
-            ),
-          ),
-        );
-      }
+    if (logoMediaKind == 'video') {
+      final still = videoStillPath;
       return SizedBox(
         width: width,
         height: height,
-        child: Image.file(
-          File(path),
-          fit: BoxFit.contain,
-          errorBuilder: (_, _, _) => _tile(),
+        child: KeyedLogoFlipbook(
+          framesDir: keyedFramesDir,
+          width: width,
+          height: height,
+          fallback: still != null && File(still).existsSync()
+              ? Image.file(
+                  File(still),
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, _, _) => _tile(),
+                )
+              : _tile(),
+        ),
+      );
+    }
+    final path = logoPath;
+    if (path != null && path.isNotEmpty) {
+      return SizedBox(
+        width: width,
+        height: height,
+        child: FittedBox(
+          fit: BoxFit.fill,
+          child: RotatingLogo(
+            logoPath: path,
+            initial: initial,
+            size: width,
+            animate: rotate,
+          ),
         ),
       );
     }

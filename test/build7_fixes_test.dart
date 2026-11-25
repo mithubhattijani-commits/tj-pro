@@ -370,10 +370,19 @@ void main() {
         expect(cached, isNotNull);
         expect(await cached!.readAsBytes(), jpegBytes);
 
-        // Same URL again: no second download.
+        // Build 12 (point #11) — UPDATED IN PLACE: a second
+        // warm of the same URL now REVALIDATES in the
+        // background (the server file can change under the
+        // same URL — that is the bug this build fixes). The
+        // identical bytes it downloads back must NOT rewrite
+        // the cache or bump the revision; the deep byte +
+        // revision semantics are pinned in
+        // test/build12_news_studio_test.dart.
         await HeroBannerCache.instance
             .warm(HeroBannerCache.slot1, 'https://x.test/b1.jpg');
-        expect(downloads, 1);
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(downloads, 2);
+        expect(await cached.readAsBytes(), jpegBytes);
 
         // Memory forgotten + downloader now failing: the disk
         // copy still serves (cache-first across launches).
@@ -388,15 +397,20 @@ void main() {
           ),
           isNotNull,
         );
+        // Let the background revalidation settle before the
+        // next warm (the in-flight guard would otherwise —
+        // correctly — coalesce the two refreshes).
+        await Future<void>.delayed(const Duration(milliseconds: 50));
 
-        // A URL change downloads the fresh copy.
+        // A URL change downloads the fresh copy. (Count is 3
+        // now: the Build 12 revalidation above added one.)
         HeroBannerCache.downloaderForTest = (url) async {
           downloads++;
           return jpegBytes;
         };
         await HeroBannerCache.instance
             .warm(HeroBannerCache.slot1, 'https://x.test/b1-v2.jpg');
-        expect(downloads, 2);
+        expect(downloads, 3);
         expect(
           HeroBannerCache.instance.cachedFileFor(
             HeroBannerCache.slot1,
