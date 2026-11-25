@@ -348,6 +348,19 @@ class ProTransition {
     'rectcrop',
     'hblur',
     'circleopen',
+    // Build 9 (v1.7.0, whitelist fix): the five xfade names the
+    // Online Store's hourly job had already stocked as recipes
+    // (Zoom, Fade to Black, Circle Close, Fade to White, Vert
+    // Open) but that were missing here — a recipe naming one of
+    // them silently fell back to 'fade'. All five are real
+    // FFmpeg xfade transitions. The store items were pulled
+    // from Drive on the user's order (2026-11-25) until this
+    // build shipped; they are restored to Drive separately.
+    'zoomin',
+    'fadeblack',
+    'circleclose',
+    'fadewhite',
+    'vertopen',
   ];
 }
 

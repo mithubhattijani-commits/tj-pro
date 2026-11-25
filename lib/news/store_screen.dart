@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../services/coin_service.dart';
+import '../services/feature_gate.dart';
+import '../services/remote_config_service.dart';
 import '../services/store_preview_cache.dart';
 import '../services/store_service.dart';
 import '../services/unity_ads_service.dart';
@@ -211,9 +213,19 @@ class _StoreScreenState extends State<StoreScreen> {
           ),
         ],
       ),
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
+      body: ValueListenableBuilder<RemoteConfig>(
+        valueListenable: RemoteConfigService.instance.notifier,
+        builder: (context, cfg, _) {
+          // Build 9 (v1.7.0, point #5): remote kill switch — a
+          // killed store shows the polite closed state instead
+          // of the catalogue (the AppBar and coins pill above
+          // stay exactly as they are).
+          if (FeatureGate.isKilled(KillableFeature.store, config: cfg)) {
+            return const KilledFeatureNotice();
+          }
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
           // Category chips — horizontally scrollable, all 8 categories.
           SizedBox(
             height: 52,
@@ -243,8 +255,10 @@ class _StoreScreenState extends State<StoreScreen> {
             _quietNote(
               'Showing saved items — could not refresh just now.',
             ),
-          Expanded(child: _body()),
-        ],
+              Expanded(child: _body()),
+            ],
+          );
+        },
       ),
     );
   }

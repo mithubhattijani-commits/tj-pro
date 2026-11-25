@@ -120,6 +120,11 @@ class RemoteConfig {
     this.heroBanner2Url = '',
     this.heroBanner2Link = '',
     this.splashPosterUrl = splashPosterDefaultUrl,
+    this.killVideoExport = false,
+    this.killPhotoAi = false,
+    this.killAiCaptions = false,
+    this.killStore = false,
+    this.aiToolPriceCoins = aiToolPriceDefaultCoins,
     this.kasheedaFontUrl = AppConfig.kasheedaFontUrl,
     this.nigraanIntroUrl = AppConfig.nigraanIntroUrl,
     this.logoMovUrl = AppConfig.logoMovUrl,
@@ -215,6 +220,41 @@ class RemoteConfig {
   static const String splashPosterDefaultUrl =
       'https://nigraantv.xyz/apps/splash/poster.jpg';
 
+  // --- Build 9 (v1.7.0, fix-list point #5): REMOTE KILL-SWITCH --
+  // Four independent switches in tj-pro.json. DEFAULT IS OFF for
+  // every one of them: a missing key, a non-boolean value, or an
+  // unreachable config all mean "feature runs", exactly as before
+  // this build. Setting one to true makes the matching feature
+  // show the polite "band hai, jald wapas aaye ga" state instead
+  // of running (see lib/services/feature_gate.dart for the gate
+  // helper and the notice widget, and the wiring points below).
+  //
+  //   kill_video_export  -> Video Editor export + News export
+  //   kill_photo_ai      -> Photo Editor AI tools + Video Editor
+  //                         on-device ML tools (bg remover,
+  //                         motion tracking)
+  //   kill_ai_captions   -> AI caption generation (Whisper +
+  //                         Urdu (AI)) in the Video Editor
+  //   kill_store         -> the Online Store screen
+  final bool killVideoExport;
+  final bool killPhotoAi;
+  final bool killAiCaptions;
+  final bool killStore;
+
+  // --- Build 9 (v1.7.0, fix-list point #6B): AI TOOL PRICE -----
+  // Per-use price in coins for the big AI tools (AI caption
+  // generator, AI auto captions, Photo AI tools). JSON key
+  // `ai_tool_price_coins`; absent / invalid / non-positive keeps
+  // the built-in default of 25, so the price can change without
+  // a new build but can never silently become free or absurd
+  // through a config typo alone (values are clamped to 1..10000
+  // in fromJson).
+  final int aiToolPriceCoins;
+
+  /// Built-in default for [aiToolPriceCoins] (user's price,
+  /// fix-list point #6B, 2026-11-24).
+  static const int aiToolPriceDefaultCoins = 25;
+
   /// Effective splash poster URL (never empty).
   String get splashPosterImageUrl {
     final String url = splashPosterUrl.trim();
@@ -272,6 +312,11 @@ class RemoteConfig {
       heroBanner2Url: heroBanner2Url,
       heroBanner2Link: heroBanner2Link,
       splashPosterUrl: splashPosterUrl,
+      killVideoExport: killVideoExport,
+      killPhotoAi: killPhotoAi,
+      killAiCaptions: killAiCaptions,
+      killStore: killStore,
+      aiToolPriceCoins: aiToolPriceCoins,
       kasheedaFontUrl: kasheedaFontUrl,
       nigraanIntroUrl: nigraanIntroUrl,
       logoMovUrl: logoMovUrl,
@@ -367,6 +412,16 @@ class RemoteConfig {
         json['splash_poster_url'],
         splashPosterDefaultUrl,
       ),
+      // Build 9: kill switches — ONLY the literal boolean true
+      // arms a switch; anything else (absent, string, number)
+      // leaves the feature running, exactly as before this build.
+      killVideoExport: json['kill_video_export'] == true,
+      killPhotoAi: json['kill_photo_ai'] == true,
+      killAiCaptions: json['kill_ai_captions'] == true,
+      killStore: json['kill_store'] == true,
+      // Build 9: AI tool price — a positive int (or numeric
+      // string) wins; anything else keeps the default of 25.
+      aiToolPriceCoins: _aiToolPrice(json['ai_tool_price_coins']),
       kasheedaFontUrl: _nonEmptyString(
         json['kasheeda_font_url'],
         AppConfig.kasheedaFontUrl,
@@ -407,6 +462,16 @@ class RemoteConfig {
   static String _nonEmptyString(dynamic value, String fallback) {
     final String text = (value ?? '').toString().trim();
     return text.isEmpty ? fallback : text;
+  }
+
+  /// Build 9: parses `ai_tool_price_coins` — accepts an int or a
+  /// numeric string in 1..10000; everything else falls back to
+  /// [aiToolPriceDefaultCoins].
+  static int _aiToolPrice(dynamic value) {
+    final int? parsed =
+        value is int ? value : int.tryParse('${value ?? ''}');
+    if (parsed != null && parsed >= 1 && parsed <= 10000) return parsed;
+    return aiToolPriceDefaultCoins;
   }
 
   static int _nonEmptyInt(dynamic value, int fallback) {

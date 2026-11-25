@@ -250,7 +250,14 @@ void main() {
         findsOneWidget,
       );
       expect(find.textContaining('Watch Ads, Earn Coins'), findsOneWidget);
-      expect(find.textContaining('200 coins / 2 hours'), findsOneWidget);
+      // Build 9 (v1.7.0, point #6A): the booking card no longer
+      // shows the old single remote-config price (200 coins /
+      // 2 hours via WhatsApp) — booking is in-app now with the
+      // user-confirmed 100/200/300 table for 1/2/4 hours.
+      expect(
+        find.textContaining('100 coins / 1 ghanta, 200 / 2 ghante'),
+        findsOneWidget,
+      );
     });
   });
 

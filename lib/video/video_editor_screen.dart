@@ -28,7 +28,8 @@ import '../live/news_template.dart';
 import '../news/channel_preset.dart';
 import '../news/news_project.dart';
 import '../news/project_handoff.dart';
-import '../services/coin_service.dart';
+import '../services/ai_tool_charge.dart';
+import '../services/feature_gate.dart';
 import '../services/photo_pipeline.dart';
 import '../services/ffmpeg_service.dart';
 import '../services/caption_service.dart';
@@ -160,8 +161,6 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
   /// [_export] then skips its dialog.
   bool _qualityPicked = false;
 
-  /// §8: this session's AI-tools coin unlock (charged once).
-  bool _aiCoinsPaid = false;
   // ---- v1.4.0 CapCut shell state. ----
   /// Transport snap toggle: ON = Split cuts at the playhead,
   /// OFF = Split cuts at the clip midpoint (the v1.3.0 behaviour).
@@ -619,57 +618,41 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
   };
 
   /// v1.3.0 (§8): premium ML tools unlock with COINS ONLY — the
-  /// ad-unlock path is gone from the whole app. The first AI use
-  /// in a session asks once: a confirm dialog shows the cost
-  /// (CoinFeature.aiEnhance = 50) and the current balance, then
-  /// [CoinService.spend] charges it. Admins are waived by
-  /// CoinService itself. Later AI uses in the same session proceed
-  /// without asking again. A failed/insufficient spend keeps the
+  /// ad-unlock path is gone from the whole app. Admins are waived
+  /// by CoinService itself.
+  ///
+  /// Build 9 (v1.7.0, point #6B): the price model changed on the
+  /// user's order — instead of a once-per-session 50-coin unlock,
+  /// EVERY use of an AI tool (background remover, motion
+  /// tracking) now charges the remote-config price
+  /// (`ai_tool_price_coins`, default 25) through [AiToolCharge].
+  /// Build 9 (point #5): the remote kill switch is checked
+  /// first — a killed AI tool shows the polite closed message
+  /// and never charges. A failed/insufficient charge keeps the
   /// tool OFF and says why — never a silent pass.
   Future<bool> _ensurePremiumUnlocked() async {
-    if (_aiCoinsPaid || CoinService.instance.isAdminNow) return true;
-    final cost = CoinCosts.costFor(CoinFeature.aiEnhance);
-    final balance = CoinService.instance.balance.value;
-    if (!mounted) return false;
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Premium AI tools'),
-        content: Text(
-          'AI tools (background remover, motion tracking) is session '
-          'mein $cost coins se unlock honge.\n'
-          'Aap ka balance: $balance coins.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Later'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text('Unlock — $cost coins'),
-          ),
-        ],
-      ),
-    );
-    if (confirm != true) return false;
-    final res = await CoinService.instance.spend(CoinFeature.aiEnhance);
-    if (res.ok) {
-      _aiCoinsPaid = true;
-      _setStatus(
-        res.adminFree
-            ? 'AI tools unlock ho gaye.'
-            : 'AI tools unlock ho gaye ($cost coins).',
-      );
-      return true;
+    if (FeatureGate.isKilled(KillableFeature.photoAi)) {
+      _setStatus(FeatureGate.killedMessage);
+      return false;
     }
-    _setStatus(
-      res.error == 'insufficient_balance'
-          ? 'Coins kam hain — Coins section se rewarded ads dekh kar '
-                'coins kamayein.'
-          : 'Unlock nahi hua (${res.error ?? 'error'}). Dobara try karein.',
+    final outcome = await AiToolCharge.chargeWithConfirm(
+      context,
+      toolLabel: 'AI tools (background remover, motion tracking)',
+      reason: AiToolCharge.reasonPhotoAi,
     );
-    return false;
+    if (!mounted) return false;
+    switch (outcome) {
+      case AiChargeOutcome.ok:
+        return true;
+      case AiChargeOutcome.cancelled:
+        return false;
+      case AiChargeOutcome.insufficient:
+        _setStatus(AiToolCharge.insufficientMessage);
+        return false;
+      case AiChargeOutcome.failed:
+        _setStatus('Charge nahi hua — dobara try karein.');
+        return false;
+    }
   }
 
   Future<void> _onBgRemoverChanged(bool v) async {
@@ -2364,6 +2347,12 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       return;
     }
     if (_transcribing || _busy) return;
+    if (!await _chargeAiCaptions(
+      label: 'AI auto captions — Urdu (AI)',
+      reason: AiToolCharge.reasonAutoCaptions,
+    )) {
+      return;
+    }
     final clip = _clips[_selected];
     setState(() {
       _transcribing = true;
@@ -2995,8 +2984,15 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
   /// Wrapper around [_exportInner] with one subtitles-fallback retry:
   /// if the ASS subtitles filter is missing from this FFmpeg build, retry
   /// the export with timed drawtext captions (Latin scripts only).
-  Future<void> _export() =>
-      VideoEditorExportController(this).export();
+  Future<void> _export() async {
+    // Build 9 (v1.7.0, point #5): remote kill switch — a killed
+    // export shows the polite closed message and never starts.
+    if (FeatureGate.isKilled(KillableFeature.videoExport)) {
+      _setStatus(FeatureGate.killedMessage);
+      return;
+    }
+    await VideoEditorExportController(this).export();
+  }
 
   /// §6.11 PIP advanced graph (completion fix, user order
   /// 22 Nov 2026): blend modes + masks + opacity, built on probed
@@ -3497,6 +3493,40 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         .toList();
   }
 
+  /// Build 9 (v1.7.0, points #5 + #6B): the kill-switch gate +
+  /// per-use coin charge shared by BOTH AI caption generators
+  /// (Whisper "Generate Captions" and "Urdu (AI)"). Until this
+  /// build both ran free; they now charge the remote-config
+  /// price (`ai_tool_price_coins`, default 25) per generation
+  /// through [AiToolCharge]. A killed feature never charges.
+  Future<bool> _chargeAiCaptions({
+    required String label,
+    required String reason,
+  }) async {
+    if (FeatureGate.isKilled(KillableFeature.aiCaptions)) {
+      _setStatus(FeatureGate.killedMessage);
+      return false;
+    }
+    final outcome = await AiToolCharge.chargeWithConfirm(
+      context,
+      toolLabel: label,
+      reason: reason,
+    );
+    if (!mounted) return false;
+    switch (outcome) {
+      case AiChargeOutcome.ok:
+        return true;
+      case AiChargeOutcome.cancelled:
+        return false;
+      case AiChargeOutcome.insufficient:
+        _setStatus(AiToolCharge.insufficientMessage);
+        return false;
+      case AiChargeOutcome.failed:
+        _setStatus('Charge nahi hua — dobara try karein.');
+        return false;
+    }
+  }
+
   /// Generate captions for the selected clip from the video's OWN
   /// audio track: FFmpeg extracts the trimmed range as 16 kHz mono WAV
   /// and whisper.cpp transcribes it on-device (tiny multilingual model,
@@ -3509,6 +3539,12 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       return;
     }
     if (_transcribing || _busy) return;
+    if (!await _chargeAiCaptions(
+      label: 'AI Caption Generator',
+      reason: AiToolCharge.reasonCaptionGenerator,
+    )) {
+      return;
+    }
     final clip = _clips[_selected];
     setState(() {
       _transcribing = true;

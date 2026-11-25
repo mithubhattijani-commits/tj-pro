@@ -147,6 +147,23 @@ class CrashGuard {
   /// the FULL diagnostics text (all kept records joined).
   static Future<void> Function(String text)? diagnosticsWriter;
 
+  // --- Build 9 (v1.7.0, point #5): auto-report hook -----------
+  // CrashReporter (lib/services/crash_reporter.dart) attaches
+  // here to receive every recorded error as structured data, so
+  // it can queue it on-device and upload it to Supabase when the
+  // network allows. The hook is invoked from [_recordDiagnostic]
+  // — i.e. for uncaught errors AND handled boundary errors
+  // alike — inside a try/catch: the reporter must never become
+  // an error path of its own, and it must never call back into
+  // CrashGuard (that would loop).
+
+  /// Listener for every recorded diagnostic (error, stack,
+  /// source tag). Set once by CrashReporter.attach(); null (the
+  /// default) means no auto-reporting — behaviour exactly as
+  /// before this build.
+  static void Function(Object error, StackTrace stack, String source)?
+      reportListener;
+
   /// Test seam: clears the recorded diagnostics.
   static void resetDiagnosticsForTest() {
     _recentDiagnostics.clear();
@@ -222,6 +239,17 @@ class CrashGuard {
         text = text.substring(0, diagnosticsTotalMaxChars);
       }
       lastDiagnostic.value = text;
+      // Build 9: hand the structured event to the auto-reporter
+      // (CrashReporter) when one is attached. Strictly fail-soft:
+      // a throwing listener is ignored — recording continues.
+      final listener = reportListener;
+      if (listener != null) {
+        try {
+          listener(error, stack, source);
+        } catch (_) {
+          // The reporter never breaks the guard.
+        }
+      }
       final writer = diagnosticsWriter;
       if (writer != null) {
         unawaited(writer(text).catchError((Object _) {}));

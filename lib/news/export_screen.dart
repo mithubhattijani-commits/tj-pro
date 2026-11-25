@@ -50,6 +50,7 @@ import 'package:share_plus/share_plus.dart';
 import '../services/coin_service.dart';
 import '../services/crash_guard.dart';
 import '../services/export_settings.dart';
+import '../services/feature_gate.dart';
 import '../services/ffmpeg_service.dart';
 import '../services/poster_export_service.dart';
 import '../services/reel_export_service.dart';
@@ -143,6 +144,16 @@ class _ExportScreenState extends State<ExportScreen> {
 
   Future<void> _export() async {
     if (_exporting) return;
+    // Build 9 (v1.7.0, point #5): remote kill switch — a killed
+    // export shows the polite closed message and never starts
+    // (and never reaches the chroma charge below).
+    if (FeatureGate.isKilled(KillableFeature.videoExport)) {
+      setState(() {
+        _error = FeatureGate.killedMessage;
+        _failedStep = 'Export';
+      });
+      return;
+    }
     final validationError = _settings.error;
     if (validationError != null) {
       setState(() {

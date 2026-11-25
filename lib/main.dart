@@ -13,6 +13,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'theme.dart';
 
 import 'news/coins_screen.dart';
+import 'news/feedback_screen.dart';
 import 'news/login_screen.dart';
 import 'news/pro_screen.dart';
 import 'news/share_earn_screen.dart';
@@ -23,8 +24,10 @@ import 'news/tts_studio_screen.dart';
 import 'app_config.dart';
 import 'projects/projects_hub_screen.dart';
 import 'services/auth_service.dart';
+import 'services/banner_booking_service.dart';
 import 'services/coin_service.dart';
 import 'services/crash_guard.dart';
+import 'services/crash_reporter.dart';
 import 'services/pro_service.dart';
 import 'services/hero_banner_cache.dart';
 import 'services/referral_service.dart';
@@ -72,6 +75,17 @@ Future<void> main() async {
       } catch (_) {
         // Diagnostics simply omit the version.
       }
+      // Build 9 (v1.7.0, point #5): crash auto-report — loads
+      // the offline queue, attaches to CrashGuard and flushes
+      // to Supabase when possible. Fully fail-soft and
+      // backgrounded: it can never delay or break startup, and
+      // until build9-sql.sql runs it simply keeps queueing.
+      unawaited(CrashReporter.instance.init());
+      // Build 9 (v1.7.0, point #6A): banner bookings — loads
+      // the active approved bookings for the hero slots and
+      // settles any refunds owed. Fail-soft: without the SQL
+      // the hero simply keeps the owner's own banners.
+      unawaited(BannerBookingService.instance.init());
       // Build 7 (v1.5.9): warm the splash poster's decode BEFORE
       // the first frame, so the SplashGate paints the poster on
       // its very first frame instead of a plain-colour flash.
@@ -582,6 +596,13 @@ class _HomeScreenState extends State<HomeScreen> {
   final PageController _heroController = PageController();
   int _heroPage = 0;
 
+  /// Build 9 (v1.7.0, point #6A): while Home is open, a
+  /// one-shot timer is armed for the NEXT booking transition
+  /// (a booking starting or expiring) so the hero honours it
+  /// on time — the owner's banner returns by itself when a
+  /// booking's window ends. No bookings = no timer at all.
+  Timer? _bookingRefreshTimer;
+
   /// Build 8 (v1.6.0, fix-list point #2): intrinsic aspect
   /// (width / height) of each hero slide's effective image, by
   /// slide index, reported by the slides' aspect probes. The
@@ -636,8 +657,42 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     remoteConfigService.notifier.removeListener(_onRemoteConfigChanged);
     remoteConfigService.notifier.removeListener(_warmHeroBanners);
+    BannerBookingService.instance.revision
+        .removeListener(_armBookingTimer);
+    _bookingRefreshTimer?.cancel();
     _heroController.dispose();
     super.dispose();
+  }
+
+  /// Build 9 (v1.7.0, point #6A): (re)arms the one-shot timer
+  /// for the next booking start/expiry among the cached
+  /// approved bookings (capped at 30 minutes, so the set is
+  /// also re-read periodically while any booking exists). When
+  /// it fires, the booking set is refreshed — which bumps the
+  /// service revision, rebuilds the hero and re-arms the timer
+  /// for the following transition.
+  void _armBookingTimer() {
+    _bookingRefreshTimer?.cancel();
+    _bookingRefreshTimer = null;
+    if (!mounted) return;
+    final now = DateTime.now();
+    DateTime? next;
+    for (final b in BannerBookingService.instance.approvedBookings) {
+      for (final t in <DateTime>[b.startsAt, b.endsAt]) {
+        if (t.isAfter(now) && (next == null || t.isBefore(next))) {
+          next = t;
+        }
+      }
+    }
+    if (next == null) return;
+    var delay = next.difference(now) + const Duration(seconds: 1);
+    const cap = Duration(minutes: 30);
+    if (delay > cap) delay = cap;
+    if (delay.isNegative) delay = const Duration(seconds: 1);
+    _bookingRefreshTimer = Timer(
+      delay,
+      () => unawaited(BannerBookingService.instance.refresh()),
+    );
   }
 
   /// Build 7 (v1.5.9, FIX C): keeps the on-device hero-banner
@@ -671,6 +726,12 @@ class _HomeScreenState extends State<HomeScreen> {
     remoteConfigService.notifier.addListener(_warmHeroBanners);
     _warmHeroBanners();
     _onRemoteConfigChanged();
+    // Build 9: keep the hero booking set fresh while Home is
+    // open — re-arm the transition timer whenever the booking
+    // set changes (see _armBookingTimer).
+    BannerBookingService.instance.revision
+        .addListener(_armBookingTimer);
+    _armBookingTimer();
     // Update check (v1.2.0 UX): fetch silently; when a newer version
     // exists, show the once-per-launch update popup (Later snoozes it
     // for the session). The download then runs in the background with
@@ -801,20 +862,23 @@ class _HomeScreenState extends State<HomeScreen> {
     showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text("What's New — v1.5.7"),
+        title: const Text("What's New — v1.7.0"),
         content: const Text(
-          '• Naya TJ Pro icon aur Nigraan TV splash screen\n'
-          '• News Studio ab seedha professional workspace khulta '
-          'hai — saare tools aik hi screen par, koi hub nahi\n'
-          '• Template & Studio ke saare tools (PIP, Chroma, '
-          'Interview plate, Category, Intro/Outro) ab News Maker '
-          'ke Template panel mein hain\n'
-          '• Home ka bara banner Nigraan TV ka apna banner hai — '
-          'tap karne par nigraantv.xyz khulti hai\n'
-          '• Live Studio ka aik hi darwaza: Live Streaming banner '
-          'ka Join Now\n'
-          '• "Kuch ghalat ho gaya" banner bar bar aane ka masla '
-          'theek kar diya gaya',
+          '• Apna banner lagwayein: Home ke DONO hero banners '
+          'ab coins se book ho sakte hain (1 ghanta 100, '
+          '2 ghante 200, 4 ghante 300) — Advertise page se; '
+          'waqt khatam hote hi owner ka banner khud wapas\n'
+          '• Report bhejo: About mein naya button — masla '
+          'likhein ya khaali bhejein, report khud pohanch '
+          'jayegi; app ki khataen bhi khud-kar report hoti hain\n'
+          '• AI tools ki qeemat: AI captions aur Photo AI tools '
+          'ab har istemal par 25 coins\n'
+          '• Store ki 5 transitions (Zoom, Fade to Black, '
+          'Circle Close, Fade to White, Vert Open) ab app '
+          'mein durust chalein gi\n'
+          '• Splash poster ab poora dikhta hai, Home banner '
+          'baghair crop fit hota hai, aur Online Store mein '
+          'har item ki asal preview tasveer',
         ),
         actions: [
           TextButton(
@@ -893,6 +957,24 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         actions: [
+          // Build 9 (v1.7.0, point #5): the "Report bhejo"
+          // feedback screen — the user may write a message or
+          // send it empty; the diagnostics above ride along
+          // automatically (see feedback_screen.dart).
+          TextButton.icon(
+            key: const Key('aboutReportButton'),
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              if (!mounted) return;
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const FeedbackScreen(),
+                ),
+              );
+            },
+            icon: const Icon(Icons.bug_report_outlined, size: 16),
+            label: const Text('Report bhejo'),
+          ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
             child: const Text('OK'),
@@ -1419,28 +1501,61 @@ class _HomeScreenState extends State<HomeScreen> {
   /// height change on a slide swipe animates subtly (220 ms).
   /// Auto-scroll, dots and tap behaviour are unchanged.
   Widget _heroCarousel() {
-    return ValueListenableBuilder<RemoteConfig>(
-      valueListenable: remoteConfigService.notifier,
-      builder: (context, cfg, _) {
-        // Build 7 (v1.5.9, FIX C): slide 2 shows when its
-        // EFFECTIVE image exists and either the advertising
-        // banner is enabled (today's rule) or a hero-2 override
-        // is set in the remote config.
-        final showAdmin = cfg.heroBanner2ImageUrl.isNotEmpty &&
-            (cfg.advertisingBannerEnabled ||
-                cfg.heroBanner2Url.trim().isNotEmpty);
-        final slides = <Widget>[
-          _newsHeroSlide(cfg),
-          if (showAdmin) _adminHeroSlide(cfg),
-        ];
+    // Build 9 (v1.7.0, point #6A): the booking layer sits ON
+    // TOP of the config chain — while a slot has an active
+    // approved booking, that slot shows the booked ad; the
+    // moment the booking expires (checked against the stored
+    // timestamps on every build), the owner's own banner —
+    // remote -> cache -> bundled, unchanged — is back. The
+    // outer builder rebuilds whenever the booking set changes.
+    return ValueListenableBuilder<int>(
+      valueListenable: BannerBookingService.instance.revision,
+      builder: (context, _, _) {
+        final booking1 =
+            BannerBookingService.instance.activeBookingForSlot(1);
+        final booking2 =
+            BannerBookingService.instance.activeBookingForSlot(2);
+        return ValueListenableBuilder<RemoteConfig>(
+          valueListenable: remoteConfigService.notifier,
+          builder: (context, cfg, _) {
+            // Build 7 (v1.5.9, FIX C): slide 2 shows when its
+            // EFFECTIVE image exists and either the advertising
+            // banner is enabled (today's rule) or a hero-2 override
+            // is set in the remote config. Build 9: an active
+            // slot-2 booking also brings the slide up on its own.
+            final showAdmin = booking2 != null ||
+                (cfg.heroBanner2ImageUrl.isNotEmpty &&
+                    (cfg.advertisingBannerEnabled ||
+                        cfg.heroBanner2Url.trim().isNotEmpty));
+            final slides = <Widget>[
+              if (booking1 != null)
+                _bookedHeroSlide(booking1, fallback: _newsHeroSlide(cfg))
+              else
+                _newsHeroSlide(cfg),
+              if (showAdmin)
+                if (booking2 != null)
+                  _bookedHeroSlide(
+                    booking2,
+                    fallback: _adminHeroSlide(cfg),
+                  )
+                else
+                  _adminHeroSlide(cfg),
+            ];
         // Rebuild when the banner cache lands a fresh copy: the
         // effective providers (and their aspects) can change.
         return ValueListenableBuilder<int>(
           valueListenable: HeroBannerCache.instance.revision,
           builder: (context, _, _) {
             final providers = <ImageProvider>[
-              _heroProvider1(cfg),
-              if (showAdmin) _heroProvider2(cfg),
+              if (booking1 != null)
+                NetworkImage(booking1.imageUrl)
+              else
+                _heroProvider1(cfg),
+              if (showAdmin)
+                if (booking2 != null)
+                  NetworkImage(booking2.imageUrl)
+                else
+                  _heroProvider2(cfg),
             ];
             return LayoutBuilder(
               builder: (context, constraints) {
@@ -1507,7 +1622,66 @@ class _HomeScreenState extends State<HomeScreen> {
             );
           },
         );
+          },
+        );
       },
+    );
+  }
+
+  /// Build 9 (v1.7.0, point #6A): a BOOKED hero slide — the
+  /// advertiser's image (contain fit: an ad is never cropped),
+  /// the owner's own slide as the never-blank fallback while it
+  /// loads or if it fails, the booking's link on tap when one
+  /// was given, and the ad text as a small caption chip when
+  /// one was given.
+  Widget _bookedHeroSlide(BannerBooking booking, {required Widget fallback}) {
+    final link = booking.linkUrl.trim();
+    return Container(
+      key: Key('homeHeroBooked${booking.slot}'),
+      decoration: BoxDecoration(
+        color: Colors.black12,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: GestureDetector(
+        onTap: link.isEmpty ? null : () => _openExternal(link),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.network(
+              booking.imageUrl,
+              fit: BoxFit.contain,
+              errorBuilder: (context, error, stackTrace) => fallback,
+              loadingBuilder: (context, child, progress) =>
+                  progress == null ? child : fallback,
+            ),
+            if (booking.text.trim().isNotEmpty)
+              Positioned(
+                left: 8,
+                bottom: 8,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.65),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    booking.text.trim(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 

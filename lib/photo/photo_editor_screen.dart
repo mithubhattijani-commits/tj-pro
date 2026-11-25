@@ -61,9 +61,10 @@ import 'widgets/panel_helpers.dart';
 import 'widgets/photo_stage.dart';
 
 import '../services/ai_service.dart';
+import '../services/ai_tool_charge.dart';
 import '../services/caption_styles.dart';
-import '../services/coin_service.dart';
 import '../services/crash_guard.dart';
+import '../services/feature_gate.dart';
 import '../services/model_pack_service.dart';
 import '../services/onnx_image_service.dart';
 import '../services/photo_pipeline.dart';
@@ -264,9 +265,6 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen>
   // the preview (auto-hides), never as a permanent line.
   bool _statusVisible = false;
   Timer? _statusTimer;
-  // §8: this session's AI-tools coin unlock (charged once).
-  bool _aiCoinsPaid = false;
-
   void _setStatus(String s) {
     setState(() => _status = s);
     _flashStatus();
@@ -875,53 +873,40 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen>
   }
 
   /// Runs an AI job; returns true on success. AI tools are Premium:
-  /// v1.3.0 (§8) the unlock is COINS ONLY — the first AI use in a
-  /// session charges CoinFeature.aiEnhance (50 coins) after a
-  /// confirm dialog; admins are waived by CoinService itself.
+  /// v1.3.0 (§8) the unlock is COINS ONLY; admins are waived by
+  /// CoinService itself.
+  ///
+  /// Build 9 (v1.7.0, point #6B): the price model changed on the
+  /// user's order — instead of a once-per-session 50-coin unlock,
+  /// EVERY AI use now charges the remote-config price
+  /// (`ai_tool_price_coins`, default 25) through [AiToolCharge].
+  /// Build 9 (point #5): the remote kill switch is checked
+  /// first — a killed AI tool shows the polite closed message
+  /// and never charges.
   Future<bool> _runAi(String label, Future<void> Function() job) async {
     final file = _workingFile;
     if (file == null || _busy) return false;
-    if (!_aiCoinsPaid && !CoinService.instance.isAdminNow) {
-      final cost = CoinCosts.costFor(CoinFeature.aiEnhance);
-      final balance = CoinService.instance.balance.value;
-      if (!mounted) return false;
-      final confirm = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Premium AI tools'),
-          content: Text(
-            'AI tools is session mein $cost coins se unlock honge.\n'
-            'Aap ka balance: $balance coins.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Later'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: Text('Unlock — $cost coins'),
-            ),
-          ],
-        ),
-      );
-      if (confirm != true) return false;
-      final res = await CoinService.instance.spend(CoinFeature.aiEnhance);
-      if (!res.ok) {
-        _fail(
-          res.error == 'insufficient_balance'
-              ? 'Coins kam hain — Coins section se rewarded ads '
-                    'dekh kar coins kamayein.'
-              : 'Unlock nahi hua (${res.error ?? 'error'}).',
-        );
+    if (FeatureGate.isKilled(KillableFeature.photoAi)) {
+      _fail(FeatureGate.killedMessage);
+      return false;
+    }
+    final outcome = await AiToolCharge.chargeWithConfirm(
+      context,
+      toolLabel: 'Photo AI tools',
+      reason: AiToolCharge.reasonPhotoAi,
+    );
+    if (!mounted) return false;
+    switch (outcome) {
+      case AiChargeOutcome.ok:
+        break;
+      case AiChargeOutcome.cancelled:
         return false;
-      }
-      _aiCoinsPaid = true;
-      _setStatus(
-        res.adminFree
-            ? 'AI tools unlock ho gaye.'
-            : 'AI tools unlock ho gaye ($cost coins).',
-      );
+      case AiChargeOutcome.insufficient:
+        _fail(AiToolCharge.insufficientMessage);
+        return false;
+      case AiChargeOutcome.failed:
+        _fail('Charge nahi hua — dobara try karein.');
+        return false;
     }
     setState(() {
       _busy = true;

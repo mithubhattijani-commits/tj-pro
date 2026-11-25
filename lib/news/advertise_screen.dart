@@ -16,14 +16,16 @@
 ///   - "Watch Ads, Earn Coins" button (same flow as the coins
 ///     section: one Unity rewarded ad on the coins placement → 50
 ///     coins on full watch, max 20/day). Hidden for admins.
-///   - Paid-banner booking: 200 coins / 2 hours (remote-config
-///     price/duration). The booking itself goes over WhatsApp to the
-///     owner — NO coins are taken in-app for a booking, because the
-///     paid flow (verify before live + owner approval in the admin
-///     panel + reject = refund) needs the admin-panel/server step,
-///     which does not exist yet. Taking coins here with no approval
-///     or refund path would be a fake flow. The exact backend step is
-///     listed in the Phase 10 release-prep report (parent step).
+///   - Paid-banner booking: SINCE Build 9 (v1.7.0, point #6A)
+///     the booking is IN-APP self-service — the button below
+///     opens [BannerBookingScreen] (slot + duration + image,
+///     coins charged in-app, auto-moderation before live,
+///     auto-refund on reject). The older WhatsApp route below
+///     remains only as the banner REPORT path and the general
+///     WhatsApp contact button. (The remote-config
+///     price/duration fields now describe only this page's
+///     legacy display copy, not the booking prices — those are
+///     the fixed 100/200/300 table in BannerBookingService.)
 ///   - Report button on the banner (opens WhatsApp with a prefilled
 ///     report message — real, not a dead button).
 ///   - ADMIN HOUSE-AD OVERRIDE (v1.2.0): when the Supabase table
@@ -44,6 +46,7 @@ import '../services/coin_service.dart';
 import '../services/remote_config_service.dart';
 import '../widgets/help_whatsapp_button.dart';
 import 'admin_banner_screen.dart';
+import 'banner_booking_screen.dart';
 
 class AdvertiseScreen extends StatefulWidget {
   const AdvertiseScreen({super.key});
@@ -245,29 +248,37 @@ class _AdvertiseScreenState extends State<AdvertiseScreen> {
                 // WhatsApp contact (booking / help).
                 const WhatsAppButton(),
                 const SizedBox(height: 12),
-                // Paid-banner booking — via WhatsApp (see file header:
-                // no in-app coin charge for a booking yet).
+                // Paid-banner booking — Build 9 (v1.7.0, point
+                // #6A): now IN-APP self-service (this card used to
+                // route the booking over WhatsApp because no
+                // approval/refund path existed; the booking
+                // screen + auto-moderation + auto-refund now
+                // provide it — see banner_booking_screen.dart).
+                // Prices: 100 coins / 1 hour, 200 / 2 hours,
+                // 300 / 4 hours, on EITHER hero slot.
                 Card(
                   child: Padding(
                     padding: const EdgeInsets.all(16),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          'Apna banner lagwayein — '
-                          '${config.advertisingBannerPriceCoins} coins / '
-                          '${config.advertisingBannerDurationHours} hours',
-                          style: const TextStyle(
+                        const Text(
+                          'Apna banner lagwayein — 100 coins / 1 ghanta, '
+                          '200 / 2 ghante, 300 / 4 ghante',
+                          style: TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
                         const SizedBox(height: 6),
                         const Text(
-                          'Booking WhatsApp par hoti hai — owner approve '
-                          'karne ke baad banner live hoga. Coins booking '
-                          'par nahi katte; payment/approval owner se '
-                          'WhatsApp par tay hoti hai.',
+                          'Booking ab app ke andar hoti hai — slot '
+                          'chunein, image dein, coins katte hi banner '
+                          'Home par live (pehle khud-kar moderation '
+                          'jaanch hoti hai). Waqt khatam hote hi '
+                          'banner khud hat jata hai aur owner ka '
+                          'banner wapas aa jata hai. Reject hone par '
+                          'coins khud wapas.',
                           style: TextStyle(color: Colors.grey, fontSize: 13),
                         ),
                         const SizedBox(height: 12),
@@ -275,8 +286,15 @@ class _AdvertiseScreenState extends State<AdvertiseScreen> {
                           width: double.infinity,
                           child: OutlinedButton.icon(
                             key: const Key('advertiseBookButton'),
-                            onPressed: () =>
-                                _openWhatsAppBooking(report: false),
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) =>
+                                      const BannerBookingScreen(),
+                                ),
+                              );
+                            },
                             icon: const Icon(Icons.campaign_outlined),
                             label: const Text('Book your banner'),
                           ),

@@ -1,7 +1,7 @@
 name: tj_pro
 description: "TJ Pro — free offline photo and video editor for Android."
 publish_to: 'none'
-version: 1.6.0+24
+version: 1.7.0+25
 
 environment:
   sdk: ^3.13.7
@@ -29,6 +29,10 @@ dependencies:
   url_launcher: ^6.2.5
   whisper_ggml_plus: ^1.5.0
   package_info_plus: ^10.2.2
+  # Build 9 (v1.7.0): device model + Android version for the
+  # automatic crash reports (point #5) — read once, fail-soft,
+  # 'unknown' when the platform channel is unavailable.
+  device_info_plus: ^13.3.0
   open_filex: ^4.0.0
   # v2 Live Studio: dual RTMP publish (Facebook + YouTube at once).
   # NOTE: the plugin's "Android 2.2" is its NATIVE release line, not
