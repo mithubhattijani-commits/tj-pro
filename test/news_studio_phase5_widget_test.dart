@@ -292,6 +292,15 @@ void main() {
       );
       expect(find.byKey(const Key('captionLine-0')), findsOneWidget);
       expect(find.text('پہلی خبر کی لائن۔'), findsOneWidget);
+      // Build 13: the controls section gained the Whisper
+      // "Asal timings" button + timing-status line, so the list
+      // is longer and line 2 now needs its own scroll into the
+      // lazy ListView's build range before it exists.
+      await _scrollTo(
+        tester,
+        const Key('captionStudioList'),
+        find.byKey(const Key('captionLine-1')),
+      );
       expect(find.text('دوسری خبر کی لائن۔'), findsOneWidget);
       await _scrollTo(
         tester,

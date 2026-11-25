@@ -87,6 +87,7 @@ class TemplateMediaPreview extends StatefulWidget {
     this.reporterFontFamily,
     this.logoRotate = true,
     this.gradeEffect,
+    this.onPlayerController,
   });
 
   final ChannelPreset preset;
@@ -120,6 +121,16 @@ class TemplateMediaPreview extends StatefulWidget {
   final String? reporterName;
   final String? reporterFontFamily;
   final bool logoRotate;
+
+  /// Build 13 (point #19): reports the preview's video
+  /// controller to the Maker so the timeline's transport row
+  /// (play / pause / stop / time / playhead) can drive the SAME
+  /// player the user is watching — no second player is created.
+  /// Called with the controller when a video clip's player
+  /// exists, and with null when it goes away (photo-only
+  /// project, clip removed, dispose).
+  final void Function(VideoPlayerController? controller)?
+      onPlayerController;
 
   /// v1.5.1 (fix #52): the project's selected GRADING effect
   /// (Library 'Effects', kind 'grade') — the media layer gets an
@@ -167,9 +178,11 @@ class _TemplateMediaPreviewState extends State<TemplateMediaPreview> {
     if (old != null) {
       unawaited(old.dispose());
     }
+    widget.onPlayerController?.call(null);
     if (videoPath != null) {
       final controller = VideoPlayerController.file(File(videoPath));
       _controller = controller;
+      widget.onPlayerController?.call(controller);
       unawaited(() async {
         try {
           await controller.initialize();
@@ -189,6 +202,7 @@ class _TemplateMediaPreviewState extends State<TemplateMediaPreview> {
   void dispose() {
     final controller = _controller;
     _controller = null;
+    widget.onPlayerController?.call(null);
     if (controller != null) unawaited(controller.dispose());
     super.dispose();
   }

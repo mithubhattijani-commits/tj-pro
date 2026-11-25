@@ -790,6 +790,46 @@ class FfmpegService {
   /// `-shortest` when the video has no audio of its own). Video is
   /// copied, not re-encoded. Callers treat any failure as "export
   /// without the bed" — this command never gates the export.
+  /// Build 13 (point 6 — Permanent Logo): turns a directory of
+  /// frame_%02d.png frames (the logo animation rendered on a
+  /// solid green background) into a standalone looping MP4 —
+  /// logo only, no template, no audio.
+  static String logoGreenScreenCommand({
+    required String framesDir,
+    required String output,
+    required double durationSec,
+    int fps = 12,
+  }) {
+    final pattern = framesDir.endsWith('/')
+        ? '${framesDir}frame_%02d.png'
+        : '$framesDir/frame_%02d.png';
+    return '-y -framerate $fps -stream_loop -1 -i ${q(pattern)} '
+        '-t ${durationSec.toStringAsFixed(2)} '
+        '-c:v libx264 -pix_fmt yuv420p -r 30 '
+        '-movflags +faststart ${q(output)}';
+  }
+
+  /// Build 13 (point 6 — Permanent Logo, cube path): composites
+  /// a transparent frame_%02d.png logo loop over a solid green
+  /// canvas into a standalone MP4.
+  static String logoGreenCompositeCommand({
+    required String framesDir,
+    required String output,
+    required double durationSec,
+    int size = 512,
+    int fps = 12,
+  }) {
+    final pattern = framesDir.endsWith('/')
+        ? '${framesDir}frame_%02d.png'
+        : '$framesDir/frame_%02d.png';
+    return '-y -f lavfi -i color=c=0x00B140:size=${size}x$size '
+        '-framerate $fps -stream_loop -1 -i ${q(pattern)} '
+        '-filter_complex "[0:v][1:v]overlay=0:0:format=auto[vout]" '
+        '-map "[vout]" -t ${durationSec.toStringAsFixed(2)} '
+        '-c:v libx264 -pix_fmt yuv420p -r 30 '
+        '-movflags +faststart ${q(output)}';
+  }
+
   static String musicBedCommand({
     required String input,
     required String musicPath,
@@ -853,14 +893,31 @@ class FfmpegService {
     required bool hasClipAudio,
     double musicVolume = 1.0,
     int? audioBitrateKbps,
+    double fadeInSec = 0,
+    double fadeOutSec = 0,
+    double? durationSec,
   }) {
     final vol = musicVolume.clamp(0.0, 1.5).toStringAsFixed(2);
+    // Build 13 (point 5): optional bed fades + output bound for
+    // the News Studio bed (its fixed-level mix fades the bed in
+    // and out on the Final template). All defaults reproduce
+    // the pre-Build-13 command byte-for-byte, so the Video
+    // Editor's call is unchanged.
+    var bedChain = '[1:a]volume=$vol';
+    if (fadeInSec > 0) {
+      bedChain += ',afade=t=in:st=0:d=${fadeInSec.toStringAsFixed(2)}';
+    }
+    if (fadeOutSec > 0 && durationSec != null && durationSec > fadeOutSec) {
+      bedChain +=
+          ',afade=t=out:st=${(durationSec - fadeOutSec).toStringAsFixed(2)}:d=${fadeOutSec.toStringAsFixed(2)}';
+    }
+    bedChain += '[bedraw];';
     final buf = StringBuffer();
     buf.write('-y -i ${q(input)} -stream_loop -1 -i ${q(musicPath)} ');
     if (hasClipAudio) {
       buf.write(
         '-filter_complex "[0:a]asplit[voice][sc];'
-        '[1:a]volume=$vol[bedraw];'
+        '$bedChain'
         '[bedraw][sc]sidechaincompress=threshold=0.02:ratio=8:attack=40:release=400[bed];'
         '[voice][bed]amix=inputs=2:duration=first:dropout_transition=0[aout]" '
         '-map 0:v -map "[aout]" ',

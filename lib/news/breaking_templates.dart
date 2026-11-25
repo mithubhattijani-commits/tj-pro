@@ -264,6 +264,11 @@ class BreakingTemplate {
     this.logoVideoKeyColor,
     this.logoKeyedFramesDir,
     this.logoVideoStillPath,
+    Map<String, String>? logoCubeFacePaths,
+    this.logoCubeSpeedSec = 6.0,
+    this.logoCubeDirection = 'cw',
+    this.logoCubeTilt = 0.0,
+    this.logoCubePedestal = false,
     this.showIntro = true,
     this.showOutro = true,
     this.lowerThirdTitle = '',
@@ -276,7 +281,8 @@ class BreakingTemplate {
     this.pipPosition = 'bottomRight',
     this.pipScale = 0.3,
     this.backgroundMusicAsset,
-  }) : id = id ?? variant.id;
+  })  : id = id ?? variant.id,
+        logoCubeFacePaths = logoCubeFacePaths ?? {};
 
   /// Stable id. Built-ins use the variant id; saved customs get a
   /// `custom_<millis>` id.
@@ -372,6 +378,15 @@ class BreakingTemplate {
   int? logoVideoKeyColor;
   String? logoKeyedFramesDir;
   String? logoVideoStillPath;
+
+  /// Build 13 (point #19): the Logo Cube settings snapshot —
+  /// mirrors the ChannelPreset cube fields so a saved breaking
+  /// template carries them exactly like the preset does.
+  Map<String, String> logoCubeFacePaths;
+  double logoCubeSpeedSec;
+  String logoCubeDirection;
+  double logoCubeTilt;
+  bool logoCubePedestal;
 
   /// Intro/outro + lower-third snapshot for a saved custom template.
   bool showIntro;
@@ -486,6 +501,11 @@ class BreakingTemplate {
       logoVideoKeyColor: preset.logoVideoKeyColor,
       logoKeyedFramesDir: preset.logoKeyedFramesDir,
       logoVideoStillPath: preset.logoVideoStillPath,
+      logoCubeFacePaths: Map<String, String>.of(preset.logoCubeFacePaths),
+      logoCubeSpeedSec: preset.logoCubeSpeedSec,
+      logoCubeDirection: preset.logoCubeDirection,
+      logoCubeTilt: preset.logoCubeTilt,
+      logoCubePedestal: preset.logoCubePedestal,
       showIntro: preset.showIntro,
       showOutro: preset.showOutro,
       lowerThirdTitle: preset.lowerThirdTitle,
@@ -527,6 +547,11 @@ class BreakingTemplate {
       template.direction =
           RibbonDirection.fromId(project.tickerDirection);
     }
+    // Build 13 (point #19): the project-level ticker speed
+    // multiplies the breaking ticker too (its loop setting is
+    // a Final/parity-path control — the breaking renderer has
+    // no single-pass mode, see BUILD13-REPORT).
+    template.speed = template.speed * project.tickerSpeed;
     template.backgroundMusicAsset = project.backgroundMusicAsset;
     return template;
   }
@@ -561,6 +586,11 @@ class BreakingTemplate {
     preset.logoVideoKeyColor = logoVideoKeyColor;
     preset.logoKeyedFramesDir = logoKeyedFramesDir;
     preset.logoVideoStillPath = logoVideoStillPath;
+    preset.logoCubeFacePaths = Map<String, String>.of(logoCubeFacePaths);
+    preset.logoCubeSpeedSec = logoCubeSpeedSec;
+    preset.logoCubeDirection = logoCubeDirection;
+    preset.logoCubeTilt = logoCubeTilt;
+    preset.logoCubePedestal = logoCubePedestal;
     preset.showIntro = showIntro;
     preset.showOutro = showOutro;
     preset.lowerThirdTitle = lowerThirdTitle;
@@ -661,6 +691,11 @@ class BreakingTemplate {
     int? logoVideoKeyColor,
     String? logoKeyedFramesDir,
     String? logoVideoStillPath,
+    Map<String, String>? logoCubeFacePaths,
+    double? logoCubeSpeedSec,
+    String? logoCubeDirection,
+    double? logoCubeTilt,
+    bool? logoCubePedestal,
     bool? showIntro,
     bool? showOutro,
     String? lowerThirdTitle,
@@ -705,6 +740,11 @@ class BreakingTemplate {
       logoVideoKeyColor: logoVideoKeyColor ?? this.logoVideoKeyColor,
       logoKeyedFramesDir: logoKeyedFramesDir ?? this.logoKeyedFramesDir,
       logoVideoStillPath: logoVideoStillPath ?? this.logoVideoStillPath,
+      logoCubeFacePaths: logoCubeFacePaths ?? this.logoCubeFacePaths,
+      logoCubeSpeedSec: logoCubeSpeedSec ?? this.logoCubeSpeedSec,
+      logoCubeDirection: logoCubeDirection ?? this.logoCubeDirection,
+      logoCubeTilt: logoCubeTilt ?? this.logoCubeTilt,
+      logoCubePedestal: logoCubePedestal ?? this.logoCubePedestal,
       showIntro: showIntro ?? this.showIntro,
       showOutro: showOutro ?? this.showOutro,
       lowerThirdTitle: lowerThirdTitle ?? this.lowerThirdTitle,
@@ -753,6 +793,11 @@ class BreakingTemplate {
         'logoVideoKeyColor': logoVideoKeyColor,
         'logoKeyedFramesDir': logoKeyedFramesDir,
         'logoVideoStillPath': logoVideoStillPath,
+        'logoCubeFacePaths': logoCubeFacePaths,
+        'logoCubeSpeedSec': logoCubeSpeedSec,
+        'logoCubeDirection': logoCubeDirection,
+        'logoCubeTilt': logoCubeTilt,
+        'logoCubePedestal': logoCubePedestal,
         'showIntro': showIntro,
         'showOutro': showOutro,
         'lowerThirdTitle': lowerThirdTitle,
@@ -803,6 +848,14 @@ class BreakingTemplate {
       logoVideoKeyColor: json['logoVideoKeyColor'] as int?,
       logoKeyedFramesDir: json['logoKeyedFramesDir'] as String?,
       logoVideoStillPath: json['logoVideoStillPath'] as String?,
+      logoCubeFacePaths: (json['logoCubeFacePaths'] as Map?)
+              ?.map((k, v) => MapEntry(k.toString(), v.toString())) ??
+          const {},
+      logoCubeSpeedSec:
+          (json['logoCubeSpeedSec'] as num?)?.toDouble() ?? 6.0,
+      logoCubeDirection: (json['logoCubeDirection'] as String?) ?? 'cw',
+      logoCubeTilt: (json['logoCubeTilt'] as num?)?.toDouble() ?? 0.0,
+      logoCubePedestal: (json['logoCubePedestal'] as bool?) ?? false,
       showIntro: (json['showIntro'] as bool?) ?? true,
       showOutro: (json['showOutro'] as bool?) ?? true,
       lowerThirdTitle: (json['lowerThirdTitle'] as String?) ?? '',

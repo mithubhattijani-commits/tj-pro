@@ -66,18 +66,58 @@ double logoLoopAngle(int index, [int frames = kLogoLoopFrameCount]) {
 /// frames. The default tile uses `default_<initial>`. The `cube3d_`
 /// prefix versions the Build 12 cube frames apart from the old
 /// swing frames.
-String logoLoopCacheKey({File? logoFile, String initial = 'N'}) {
-  if (logoFile == null) return 'cube3d_default_${initial.toUpperCase()}';
+String logoLoopCacheKey({
+  File? logoFile,
+  String initial = 'N',
+  String variant = '',
+}) {
+  // Build 13 (point #19): [variant] carries the cube settings
+  // (faces / speed / direction / tilt / pedestal) so frames
+  // rendered for one view are never reused for another. Callers
+  // without settings pass nothing and keep the old keys.
+  final suffix = variant.isEmpty ? '' : '_$variant';
+  if (logoFile == null) {
+    return 'cube3d_default_${initial.toUpperCase()}$suffix';
+  }
   try {
     final stat = logoFile.statSync();
     final name = logoFile.path.split('/').last.replaceAll(
       RegExp(r'[^A-Za-z0-9_.-]'),
       '_',
     );
-    return 'cube3d_${name}_${stat.size}_${stat.modified.millisecondsSinceEpoch}';
+    return 'cube3d_${name}_${stat.size}_${stat.modified.millisecondsSinceEpoch}$suffix';
   } catch (_) {
-    return 'cube3d_logo_${logoFile.path.hashCode.abs()}';
+    return 'cube3d_logo_${logoFile.path.hashCode.abs()}$suffix';
   }
+}
+
+/// Build 13 (point #19): the cache-key variant for a set of
+/// cube settings — every input that changes the rendered
+/// frames is in it (face files by path+mtime, speed, direction,
+/// tilt, pedestal).
+String logoCubeVariantKey({
+  required Map<String, String> facePaths,
+  required double speedSec,
+  required bool clockwise,
+  required double tiltX,
+  required bool pedestal,
+}) {
+  final buf = StringBuffer()
+    ..write('s${speedSec.toStringAsFixed(2)}')
+    ..write(clockwise ? '_cw' : '_ccw')
+    ..write('_t${tiltX.toStringAsFixed(2)}')
+    ..write(pedestal ? '_ped' : '_nped');
+  final keys = facePaths.keys.toList()..sort();
+  for (final k in keys) {
+    final f = File(facePaths[k]!);
+    var stamp = 'x';
+    try {
+      final st = f.statSync();
+      stamp = '${st.size}_${st.modified.millisecondsSinceEpoch}';
+    } catch (_) {}
+    buf.write('_f$k$stamp');
+  }
+  return buf.toString();
 }
 
 class LogoLoopService {
@@ -94,8 +134,19 @@ class LogoLoopService {
     File? logoFile,
     required Directory outDir,
     String initial = 'N',
+    Map<String, String> facePaths = const {},
+    double tiltX = kLogoCubeTiltX,
+    double speedSec = 4.0,
+    bool clockwise = true,
+    bool pedestal = false,
   }) async {
-    const frames = kLogoLoopFrameCount;
+    // Build 13 (point #19): the loop length follows the cube
+    // speed setting (frames = speedSec x 12 fps). The DEFAULT
+    // (4 s -> 48 frames) reproduces the pre-Build-13 export
+    // loop exactly for callers that pass no settings (the
+    // Video Editor); News Studio passes the preset's values.
+    final frames =
+        (speedSec * kLogoLoopFps).round().clamp(12, 240).toInt();
     const size = kLogoLoopFrameSize;
     if (!await outDir.exists()) {
       await outDir.create(recursive: true);
@@ -122,14 +173,34 @@ class LogoLoopService {
     } else {
       texture = await renderLogoTileTexture(initial: initial, size: 512);
     }
+    // Build 13: per-face textures — a face file that cannot be
+    // decoded is simply skipped (that face keeps the main
+    // texture); a broken face pick never fails the export.
+    final faceTextures = <int, ui.Image>{};
+    for (final entry in facePaths.entries) {
+      final faceIndex = logoCubeFaceIndex(entry.key);
+      if (faceIndex < 0) continue;
+      try {
+        final bytes = await File(entry.value).readAsBytes();
+        final codec = await ui.instantiateImageCodec(bytes);
+        final frame = await codec.getNextFrame();
+        faceTextures[faceIndex] = frame.image;
+      } catch (_) {}
+    }
     final made = <File>[];
     try {
       for (var i = 0; i < frames; i++) {
-        final angle = logoLoopAngle(i, frames);
+        final angle = logoCubeAngleFor(
+          i / frames,
+          clockwise: clockwise,
+        );
         final png = await renderLogoCubeFrame(
           texture: texture,
           angle: angle,
           size: size,
+          tiltX: tiltX,
+          faceTextures: faceTextures.isEmpty ? null : faceTextures,
+          pedestal: pedestal,
         );
         final file = File(
           '${outDir.path}/frame_${i.toString().padLeft(2, '0')}.png',
@@ -139,6 +210,9 @@ class LogoLoopService {
       }
     } finally {
       texture.dispose();
+      for (final img in faceTextures.values) {
+        img.dispose();
+      }
     }
     return made;
   }
@@ -190,6 +264,9 @@ class LogoLoopService {
     required ui.Image texture,
     required double angle,
     required int size,
+    double tiltX = kLogoCubeTiltX,
+    Map<int, ui.Image>? faceTextures,
+    bool pedestal = false,
   }) async {
     final recorder = ui.PictureRecorder();
     final canvas = ui.Canvas(recorder);
@@ -203,6 +280,9 @@ class LogoLoopService {
       size: s * 0.82,
       angleY: angle,
       texture: texture,
+      tiltX: tiltX,
+      faceTextures: faceTextures,
+      pedestal: pedestal,
     );
     final picture = recorder.endRecording();
     final image = await picture.toImage(size, size);

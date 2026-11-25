@@ -97,10 +97,24 @@ enum ParityVariant {
 class ParityGeometry {
   ParityGeometry(this.width, this.height,
       {this.variant = ParityVariant.classic2,
-      this.overrides = const {}});
+      this.overrides = const {},
+      this.tickerSpeedFactor = 1.0,
+      this.tickerLoop = true});
 
   final double width;
   final double height;
+
+  /// Build 13 (point #19): the project-level ticker speed
+  /// factor (NewsProject.tickerSpeed, carried on the effective
+  /// preset) — [scrollSpeed] is multiplied by it. Default 1.0 =
+  /// the designed speed, so every pre-Build-13 caller renders
+  /// identically.
+  final double tickerSpeedFactor;
+
+  /// Build 13 (point #19): false = the ticker strip plays ONE
+  /// pass and stops (no wrap); true = the historic seamless
+  /// loop.
+  final bool tickerLoop;
 
   /// Which Final design this geometry describes.
   final ParityVariant variant;
@@ -268,8 +282,10 @@ class ParityGeometry {
 
   // ---- Motion / text metrics ----
 
-  /// Ticker speed: 110 px/s scaled by frame width (brief §9.1).
-  double get scrollSpeed => 110 * width / 1080;
+  /// Ticker speed: 110 px/s scaled by frame width (brief §9.1),
+  /// times the project's ticker speed factor (Build 13).
+  double get scrollSpeed =>
+      110 * width / 1080 * tickerSpeedFactor.clamp(0.25, 3.0);
 
   /// Gold-dot separator slot / radius (52 / 7 px at reference).
   double get sepSlot => 52 * s;
@@ -1274,6 +1290,8 @@ Future<ParityAssets> renderParityAssets({
     height.toDouble(),
     variant: variant,
     overrides: overrides,
+    tickerSpeedFactor: preset.tickerSpeedFactor,
+    tickerLoop: preset.tickerLoop,
   );
   final urdu = urduText.trim().isNotEmpty
       ? urduText.trim()
@@ -1747,9 +1765,16 @@ String buildParityTemplateCommand({
       // offset (0/0 = designed — the pre-#33 command string).
       step('[$iStill:v]overlay=${_n(r.textDx)}:${_n(r.y + r.textDy)}');
     } else if (iStrip != null) {
-      final x = r.scrollRight
-          ? '${_n(r.textDx + r.windowW - 2 * r.period)}+mod(t*$speed\\,${_n(r.period)})'
-          : '${_n(r.textDx + r.chipW)}-mod(t*$speed\\,${_n(r.period)})';
+      // Build 13 (point #19): loop OFF replaces the mod() wrap
+      // with a min() clamp — the strip travels exactly one
+      // period and then stays past the window (single pass).
+      final x = g.tickerLoop
+          ? (r.scrollRight
+              ? '${_n(r.textDx + r.windowW - 2 * r.period)}+mod(t*$speed\\,${_n(r.period)})'
+              : '${_n(r.textDx + r.chipW)}-mod(t*$speed\\,${_n(r.period)})')
+          : (r.scrollRight
+              ? '${_n(r.textDx + r.windowW - 2 * r.period)}+min(t*$speed\\,${_n(r.period)})'
+              : '${_n(r.textDx + r.chipW)}-min(t*$speed\\,${_n(r.period)})');
       step("[$iStrip:v]overlay=x='$x':y=${_n(r.y + r.textDy)}");
     }
     if (iChip != null) {

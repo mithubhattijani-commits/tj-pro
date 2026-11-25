@@ -136,6 +136,11 @@ class NewsProject {
     this.storeMusicPath,
     this.storeMusicName,
     this.voiceMusicEnabled = true,
+    this.musicDucking = true,
+    this.tickerSpeed = 1.0,
+    this.tickerLoop = true,
+    this.captionTimingSource = 'estimate',
+    this.captionAlignedHash = '',
     this.headline = '',
     this.summary = '',
     List<SubtitleLine>? subtitles,
@@ -303,6 +308,72 @@ class NewsProject {
   /// voice-BUILD time by the TTS services.
   bool voiceMusicEnabled;
 
+  /// Build 13 (point 5): Auto Ducking — when the export mixes
+  /// the background-music bed under a voiceover, the bed ducks
+  /// under the voice via the engine's sidechain compressor
+  /// (the same musicDuckCommand the Video Editor uses). OFF =
+  /// the fixed-level bed mix (the pre-Build-13 behaviour).
+  /// Default true.
+  bool musicDucking;
+
+  /// Build 13 (point 3 / #19): project-level ticker speed
+  /// multiplier (0.25–3.0, default 1.0 = the designed speed).
+  /// Applied to the parity strip speed in export and to the
+  /// preview marquees through the effective preset's transient
+  /// tickerSpeedFactor — the Ribbons panel's per-ribbon speeds
+  /// are a separate, preset-level control and are untouched.
+  double tickerSpeed;
+
+  /// Build 13 (point 3 / #19): whether the ticker scrolls in a
+  /// seamless loop (default true, the historic behaviour) or
+  /// plays a single pass and stops.
+  bool tickerLoop;
+
+  /// Build 13 (point 1 / #16): where the subtitle word timings
+  /// came from — 'estimate' (karaoke_sync's proportional
+  /// estimator over the real voiceover length) or 'whisper'
+  /// (real word timings from the word-split transcription,
+  /// mapped onto the script by the script aligner). The UI
+  /// labels the two honestly; old projects read as 'estimate'.
+  String captionTimingSource;
+
+  /// Build 13 (point 1 / #16): the fingerprint of the inputs
+  /// the current 'whisper' timings were computed from (script
+  /// text + line texts + voiceover path + duration — see
+  /// [captionTimingFingerprint]). When the live fingerprint
+  /// differs, the timings are STALE and the UI badges them so.
+  String captionAlignedHash;
+
+  /// Build 13 (point 1 / #16): djb2 fingerprint of everything
+  /// the aligned timings depend on. Any edit to the tehreer, a
+  /// subtitle line's text, or the voiceover itself changes it.
+  String get captionTimingFingerprint {
+    final buf = StringBuffer()
+      ..write(tehreer)
+      ..write('|')
+      ..write(voiceoverPath ?? '')
+      ..write('|')
+      ..write(voiceoverDurationSec?.toStringAsFixed(2) ?? '');
+    for (final line in subtitles) {
+      buf
+        ..write('|')
+        ..write(line.text);
+    }
+    final s = buf.toString();
+    var hash = 5381;
+    for (var i = 0; i < s.length; i++) {
+      hash = ((hash * 33) ^ s.codeUnitAt(i)) & 0x7fffffff;
+    }
+    return hash.toRadixString(16);
+  }
+
+  /// True when Whisper-aligned timings exist but their inputs
+  /// changed afterwards — the badge condition in the UI.
+  bool get captionTimingsStale =>
+      captionTimingSource == 'whisper' &&
+      captionAlignedHash.isNotEmpty &&
+      captionAlignedHash != captionTimingFingerprint;
+
   /// The ticker direction preview + export must use: the user's
   /// [tickerDirection] override when set, otherwise the language
   /// default for the current [tickerText] (Urdu script → rtl,
@@ -424,6 +495,11 @@ class NewsProject {
     String? storeMusicName,
     bool clearStoreMusic = false,
     bool? voiceMusicEnabled,
+    bool? musicDucking,
+    double? tickerSpeed,
+    bool? tickerLoop,
+    String? captionTimingSource,
+    String? captionAlignedHash,
     String? headline,
     String? summary,
     List<SubtitleLine>? subtitles,
@@ -479,6 +555,11 @@ class NewsProject {
       storeMusicName:
           clearStoreMusic ? null : (storeMusicName ?? this.storeMusicName),
       voiceMusicEnabled: voiceMusicEnabled ?? this.voiceMusicEnabled,
+      musicDucking: musicDucking ?? this.musicDucking,
+      tickerSpeed: tickerSpeed ?? this.tickerSpeed,
+      tickerLoop: tickerLoop ?? this.tickerLoop,
+      captionTimingSource: captionTimingSource ?? this.captionTimingSource,
+      captionAlignedHash: captionAlignedHash ?? this.captionAlignedHash,
       headline: headline ?? this.headline,
       summary: summary ?? this.summary,
       subtitles: subtitles ?? List<SubtitleLine>.from(this.subtitles),
@@ -537,6 +618,11 @@ class NewsProject {
         'storeMusicPath': storeMusicPath,
         'storeMusicName': storeMusicName,
         'voiceMusicEnabled': voiceMusicEnabled,
+        'musicDucking': musicDucking,
+        'tickerSpeed': tickerSpeed,
+        'tickerLoop': tickerLoop,
+        'captionTimingSource': captionTimingSource,
+        'captionAlignedHash': captionAlignedHash,
         'headline': headline,
         'summary': summary,
         'subtitles': subtitles.map((s) => s.toJson()).toList(),
@@ -647,6 +733,15 @@ class NewsProject {
       // Absent on pre-v1.9.0 saves → ON (the historic behaviour:
       // a selected track always bedded under the voice).
       voiceMusicEnabled: (json['voiceMusicEnabled'] as bool?) ?? true,
+      // Build 13: absent on pre-v1.10.0 saves → defaults (ducking
+      // ON, designed ticker speed, looping ticker, estimator
+      // timings — exactly the historic behaviour).
+      musicDucking: (json['musicDucking'] as bool?) ?? true,
+      tickerSpeed: (json['tickerSpeed'] as num?)?.toDouble() ?? 1.0,
+      tickerLoop: (json['tickerLoop'] as bool?) ?? true,
+      captionTimingSource:
+          (json['captionTimingSource'] as String?) ?? 'estimate',
+      captionAlignedHash: (json['captionAlignedHash'] as String?) ?? '',
       headline: (json['headline'] as String?) ?? '',
       summary: (json['summary'] as String?) ?? '',
       subtitles: subs,

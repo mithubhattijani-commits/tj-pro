@@ -91,7 +91,9 @@ import 'ffmpeg_service.dart';
 import 'font_registry.dart';
 import 'library_service.dart';
 import 'logo_key_service.dart';
+import '../news/logo_parts.dart';
 import 'logo_loop_service.dart';
+import 'logo_parts_service.dart';
 import 'user_font_service.dart';
 import 'pro_editor.dart';
 import 'video_export_service.dart';
@@ -699,36 +701,74 @@ class ReelExportService {
         } else {
           final hasAudio = await probeHasAudio(File(out));
           final bedOut = p.join(dir.path, 'reel_musicmix_$stamp.mp4');
-          final res = await runStage(
-            FfmpegService.musicBedCommand(
-              input: out,
-              musicPath: musicFile.path,
-              output: bedOut,
-              hasClipAudio: hasAudio,
-              // v1.3.0 (§9 criterion 10): the Final template's bed
-              // sits at the reference level 0.12 with 0.8 s / 1.5 s
-              // fades; other kinds keep the v1.2.0 level.
-              musicVolume:
-                  project.templateKind == 'nigraanFinal' ? 0.12 : 0.18,
-              fadeInSec: project.templateKind == 'nigraanFinal' ? 0.8 : 0,
-              fadeOutSec: project.templateKind == 'nigraanFinal' ? 1.5 : 0,
-              durationSec:
-                  project.templateKind == 'nigraanFinal' && reelMs != null
-                      ? reelMs / 1000
-                      : null,
-              audioBitrateKbps: effectiveSettings.audioBitrateKbps,
-            ),
-            0.46,
-            0.48,
-            expectedMs: reelMs,
-          );
-          if (res.ok) {
-            out = bedOut;
-          } else {
-            notes.add(
-              'Background music mix nahi hua — baghair music ke export '
-              'ho raha hai.',
+          // v1.3.0 (§9 criterion 10): the Final template's bed
+          // sits at the reference level 0.12 with 0.8 s / 1.5 s
+          // fades; other kinds keep the v1.2.0 level.
+          final bedVolume =
+              project.templateKind == 'nigraanFinal' ? 0.12 : 0.18;
+          final bedFadeIn =
+              project.templateKind == 'nigraanFinal' ? 0.8 : 0.0;
+          final bedFadeOut =
+              project.templateKind == 'nigraanFinal' ? 1.5 : 0.0;
+          final bedDuration = project.templateKind == 'nigraanFinal' &&
+                  reelMs != null
+              ? reelMs / 1000
+              : null;
+          // Build 13 (point 5 — Auto Ducking): when the toggle
+          // is ON and the reel carries a voiceover, the bed is
+          // sidechain-ducked under the voice (the Video Editor's
+          // engine command) instead of sitting at a fixed level.
+          // A ducking failure falls back to the fixed-level bed
+          // below — never to no music.
+          var ducked = false;
+          if (project.musicDucking && handoff.voiceoverPath != null) {
+            final duckOut = p.join(dir.path, 'reel_duckmix_$stamp.mp4');
+            final duckRes = await runStage(
+              FfmpegService.musicDuckCommand(
+                input: out,
+                musicPath: musicFile.path,
+                output: duckOut,
+                hasClipAudio: true,
+                musicVolume: bedVolume,
+                fadeInSec: bedFadeIn,
+                fadeOutSec: bedFadeOut,
+                durationSec: bedDuration,
+                audioBitrateKbps: effectiveSettings.audioBitrateKbps,
+              ),
+              0.46,
+              0.48,
+              expectedMs: reelMs,
             );
+            if (duckRes.ok) {
+              out = duckOut;
+              ducked = true;
+            }
+          }
+          if (!ducked) {
+            final res = await runStage(
+              FfmpegService.musicBedCommand(
+                input: out,
+                musicPath: musicFile.path,
+                output: bedOut,
+                hasClipAudio: hasAudio,
+                musicVolume: bedVolume,
+                fadeInSec: bedFadeIn,
+                fadeOutSec: bedFadeOut,
+                durationSec: bedDuration,
+                audioBitrateKbps: effectiveSettings.audioBitrateKbps,
+              ),
+              0.46,
+              0.48,
+              expectedMs: reelMs,
+            );
+            if (res.ok) {
+              out = bedOut;
+            } else {
+              notes.add(
+                'Background music mix nahi hua — baghair music ke export '
+                'ho raha hai.',
+              );
+            }
           }
         }
         step('Background music done.', 0.48);
@@ -1259,6 +1299,32 @@ class ReelExportService {
   /// frames from the picked logo → the picked logo as a still.
   /// Returns the new output path, or null on failure (the caller
   /// falls back to the static overlay with a note).
+  /// Build 13 (point #19): the Logo Cube settings of [preset]
+  /// as generateFrames arguments + cache variant — one helper
+  /// so every NS logo-loop call site renders the cube the Logo
+  /// panel configured (faces / speed / direction / view tilt /
+  /// pedestal), identical to the preview.
+  static String _logoCubeVariant(ChannelPreset preset) =>
+      logoCubeVariantKey(
+        facePaths: preset.logoCubeFacePaths,
+        speedSec: preset.logoCubeSpeedSec,
+        clockwise: preset.logoCubeDirection != 'ccw',
+        tiltX: preset.logoCubeTilt,
+        pedestal: preset.logoCubePedestal,
+      );
+
+  /// Build 13 (point 6): the parts-frames cache variant for
+  /// [preset]'s working logo parts (source file stamp + every
+  /// part's settings).
+  static String _logoPartsVariant(ChannelPreset preset, File source) {
+    var stamp = 'nosrc';
+    try {
+      final stat = source.statSync();
+      stamp = '${stat.size}:${stat.modified.millisecondsSinceEpoch}';
+    } catch (_) {}
+    return logoPartsVariantKey(sourceStamp: stamp, parts: preset.logoParts);
+  }
+
   static Future<String?> _applyParityTemplate({
     required String input,
     required Directory dir,
@@ -1376,13 +1442,42 @@ class ReelExportService {
           stillPath = preset.logoPath;
         } else {
           try {
-            final key = logoLoopCacheKey(logoFile: File(preset.logoPath!));
-            final dirFrames = Directory(p.join(dir.path, 'logo_loop_$key'));
-            await LogoLoopService.generateFrames(
-              logoFile: File(preset.logoPath!),
-              outDir: dirFrames,
-            );
-            framesDir = dirFrames.path;
+            // Build 13 (point 6): working logo parts replace
+            // the cube loop — same frames contract, each part
+            // animating on its own settings.
+            if (preset.logoParts.isNotEmpty) {
+              final key = logoLoopCacheKey(
+                logoFile: File(preset.logoPath!),
+                variant: _logoPartsVariant(
+                  preset,
+                  File(preset.logoPath!),
+                ),
+              );
+              final dirFrames =
+                  Directory(p.join(dir.path, 'logo_loop_$key'));
+              await LogoPartsService.generatePartsFrames(
+                parts: preset.logoParts,
+                outDir: dirFrames,
+              );
+              framesDir = dirFrames.path;
+            } else {
+              final key = logoLoopCacheKey(
+                logoFile: File(preset.logoPath!),
+                variant: _logoCubeVariant(preset),
+              );
+              final dirFrames =
+                  Directory(p.join(dir.path, 'logo_loop_$key'));
+              await LogoLoopService.generateFrames(
+                logoFile: File(preset.logoPath!),
+                outDir: dirFrames,
+                facePaths: preset.logoCubeFacePaths,
+                tiltX: preset.logoCubeTilt,
+                speedSec: preset.logoCubeSpeedSec,
+                clockwise: preset.logoCubeDirection != 'ccw',
+                pedestal: preset.logoCubePedestal,
+              );
+              framesDir = dirFrames.path;
+            }
           } catch (_) {
             stillPath = preset.logoPath;
           }
@@ -1670,12 +1765,32 @@ class ReelExportService {
           notes.add('Logo overlay fail ho gaya — baghair logo ke export.');
           return null;
         }
-        final key = logoLoopCacheKey(logoFile: File(userLogo));
+        final key = preset.logoParts.isNotEmpty
+            ? logoLoopCacheKey(
+                logoFile: File(userLogo),
+                variant: _logoPartsVariant(preset, File(userLogo)),
+              )
+            : logoLoopCacheKey(
+                logoFile: File(userLogo),
+                variant: _logoCubeVariant(preset),
+              );
         final framesDir = Directory(p.join(dir.path, 'logo_loop_$key'));
-        await LogoLoopService.generateFrames(
-          logoFile: File(userLogo),
-          outDir: framesDir,
-        );
+        if (preset.logoParts.isNotEmpty) {
+          await LogoPartsService.generatePartsFrames(
+            parts: preset.logoParts,
+            outDir: framesDir,
+          );
+        } else {
+          await LogoLoopService.generateFrames(
+            logoFile: File(userLogo),
+            outDir: framesDir,
+            facePaths: preset.logoCubeFacePaths,
+            tiltX: preset.logoCubeTilt,
+            speedSec: preset.logoCubeSpeedSec,
+            clockwise: preset.logoCubeDirection != 'ccw',
+            pedestal: preset.logoCubePedestal,
+          );
+        }
         final cmd = FfmpegService.logoLoopOverlayCommand(
           input: input,
           output: logoOut,
@@ -1730,9 +1845,22 @@ class ReelExportService {
       final initial = preset.name.trim().isEmpty
           ? 'N'
           : preset.name.trim()[0].toUpperCase();
-      final key = logoLoopCacheKey(initial: initial);
+      final key = logoLoopCacheKey(
+        initial: initial,
+        variant: _logoCubeVariant(preset),
+      );
       final framesDir = Directory(p.join(dir.path, 'logo_loop_$key'));
-      await LogoLoopService.generateFrames(outDir: framesDir, initial: initial);
+      // (No parts branch here: parts are split from a picked
+      // logo file — the default initial tile has none.)
+      await LogoLoopService.generateFrames(
+        outDir: framesDir,
+        initial: initial,
+        facePaths: preset.logoCubeFacePaths,
+        tiltX: preset.logoCubeTilt,
+        speedSec: preset.logoCubeSpeedSec,
+        clockwise: preset.logoCubeDirection != 'ccw',
+        pedestal: preset.logoCubePedestal,
+      );
       final cmd = FfmpegService.logoLoopOverlayCommand(
         input: input,
         output: logoOut,

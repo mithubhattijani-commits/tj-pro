@@ -39,6 +39,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../services/asset_download_service.dart';
+import 'logo_parts.dart';
 
 /// What a ribbon's text IS — which news feed fills it.
 ///
@@ -292,6 +293,13 @@ class ChannelPreset {
     this.logoVideoKeyColor,
     this.logoKeyedFramesDir,
     this.logoVideoStillPath,
+    Map<String, String>? logoCubeFacePaths,
+    this.logoCubeSpeedSec = 6.0,
+    this.logoCubeDirection = 'cw',
+    this.logoCubeTilt = 0.0,
+    this.logoCubePedestal = false,
+    this.logoPartsSavedJson = '',
+    this.logoPartsSavedAtMs = 0,
     RibbonConfig? topRibbon,
     RibbonConfig? urduRibbon,
     RibbonConfig? englishRibbon,
@@ -329,7 +337,8 @@ class ChannelPreset {
     this.logoGsAssetPath = AssetDownloadService.logoGsAssetPath,
     this.logoGsFrameAssetPath =
         AssetDownloadService.logoGsFrameAssetPath,
-  })  : topRibbon = topRibbon ?? RibbonConfig(),
+  })  : logoCubeFacePaths = logoCubeFacePaths ?? {},
+        topRibbon = topRibbon ?? RibbonConfig(),
         urduRibbon = urduRibbon ??
             RibbonConfig(
               color: 0xFF3D5AFE,
@@ -388,6 +397,66 @@ class ChannelPreset {
   /// colour exists, plain otherwise) — panel thumbnail and
   /// export fallback.
   String? logoVideoStillPath;
+
+  /// Build 13 (point #19): Logo Cube per-face images — keys
+  /// 'front' / 'back' / 'left' / 'right' / 'top' / 'bottom'
+  /// (the logo_cube.dart face names) mapped to picked image
+  /// paths. A face with no entry carries the main logo image
+  /// ([logoPath] / the channel tile), exactly as before.
+  Map<String, String> logoCubeFacePaths;
+
+  /// Build 13 (point #19): seconds per full cube revolution
+  /// (preview AND export — the shared painter + frame renderer
+  /// both take it). Default 6 = the historic preview period.
+  double logoCubeSpeedSec;
+
+  /// Build 13 (point #19): cube spin direction — 'cw'
+  /// (clockwise, the historic sense) or 'ccw'.
+  String logoCubeDirection;
+
+  /// Build 13 (point #19): the cube VIEW tilt (radians about
+  /// the screen X axis, the painter's tilt). DEFAULT 0.0 =
+  /// 'Samne' — the cube faces the viewer squarely (the user's
+  /// complaint was the old fixed 0.42 tilt showing the top
+  /// face). Presets: Samne 0.0, Upar Se +0.85, Neeche Se -0.85;
+  /// the slider range is -1.2..1.2.
+  double logoCubeTilt;
+
+  /// Build 13 (point #19): draw a base plate (pedestal) under
+  /// the cube. Default FALSE — no pedestal existed before, so
+  /// the default look is unchanged.
+  bool logoCubePedestal;
+
+  /// Build 13 (point #19): TRANSIENT (never serialised) ticker
+  /// speed factor, set on the effective/preview preset clones
+  /// from NewsProject.tickerSpeed — the parity geometry
+  /// multiplies its strip speed by it. 1.0 = designed speed.
+  double tickerSpeedFactor = 1.0;
+
+  /// Build 13 (point #19): TRANSIENT (never serialised) ticker
+  /// loop flag, set on the clones from NewsProject.tickerLoop.
+  bool tickerLoop = true;
+
+  /// Build 13 (point 6 — Logo Parts Engine): the PAID-SAVED
+  /// parts payload (a JSON list of LogoPart) and when it was
+  /// saved. The save costs 300 coins and stays usable exactly
+  /// 7 days; on expiry the Maker clears both fields — the
+  /// settings are gone and saving again costs another 300
+  /// (the user's model — no renewal path).
+  String logoPartsSavedJson;
+  int logoPartsSavedAtMs;
+
+  /// Transient (never serialised): the WORKING parts list —
+  /// session-only until paid-saved. Preview/export clones copy
+  /// it explicitly (the ticker transients' pattern), and the
+  /// Maker restores it from [logoPartsSavedJson] on load while
+  /// the save is active.
+  List<LogoPart> logoParts = const [];
+
+  /// Transient: the logo file the working parts were split
+  /// from (switching to another logo must not silently reuse
+  /// them — the panel compares and warns).
+  String? logoPartsSourcePath;
 
   /// Top ticker ribbon — CURRENT story (contentKind `current`).
   RibbonConfig topRibbon;
@@ -709,6 +778,13 @@ class ChannelPreset {
         'logoVideoKeyColor': logoVideoKeyColor,
         'logoKeyedFramesDir': logoKeyedFramesDir,
         'logoVideoStillPath': logoVideoStillPath,
+        'logoCubeFacePaths': logoCubeFacePaths,
+        'logoCubeSpeedSec': logoCubeSpeedSec,
+        'logoCubeDirection': logoCubeDirection,
+        'logoCubeTilt': logoCubeTilt,
+        'logoCubePedestal': logoCubePedestal,
+        'logoPartsSavedJson': logoPartsSavedJson,
+        'logoPartsSavedAtMs': logoPartsSavedAtMs,
         'topRibbon': topRibbon.toJson(),
         'urduRibbon': urduRibbon.toJson(),
         'englishRibbon': englishRibbon.toJson(),
@@ -767,6 +843,24 @@ class ChannelPreset {
       logoVideoKeyColor: json['logoVideoKeyColor'] as int?,
       logoKeyedFramesDir: json['logoKeyedFramesDir'] as String?,
       logoVideoStillPath: json['logoVideoStillPath'] as String?,
+      // Build 13: absent on pre-v1.10.0 saves -> defaults
+      // (no per-face images, 6 s revolution, clockwise, Samne
+      // view, no pedestal).
+      logoCubeFacePaths: (json['logoCubeFacePaths'] as Map?)
+              ?.map(
+                (k, v) => MapEntry(k.toString(), v.toString()),
+              ) ??
+          const {},
+      logoCubeSpeedSec:
+          (json['logoCubeSpeedSec'] as num?)?.toDouble() ?? 6.0,
+      logoCubeDirection:
+          (json['logoCubeDirection'] as String?) ?? 'cw',
+      logoCubeTilt: (json['logoCubeTilt'] as num?)?.toDouble() ?? 0.0,
+      logoCubePedestal: (json['logoCubePedestal'] as bool?) ?? false,
+      logoPartsSavedJson:
+          (json['logoPartsSavedJson'] as String?) ?? '',
+      logoPartsSavedAtMs:
+          ((json['logoPartsSavedAtMs'] as num?) ?? 0).toInt(),
       topRibbon: ribbon('topRibbon', RibbonConfig()),
       urduRibbon: ribbon(
         'urduRibbon',

@@ -32,6 +32,8 @@ import 'package:flutter/material.dart';
 
 import '../../services/logo_cube.dart';
 import '../../services/logo_loop_service.dart';
+import '../../services/logo_parts_service.dart';
+import '../logo_parts.dart';
 import 'keyed_logo_flipbook.dart';
 
 /// One full revolution of the preview cube.
@@ -53,6 +55,11 @@ class LogoCubeView extends StatefulWidget {
     this.initial = 'N',
     this.size = 64,
     this.animate = true,
+    this.facePaths = const {},
+    this.tiltX = kLogoCubeTiltX,
+    this.speedSec = 6,
+    this.clockwise = true,
+    this.pedestal = false,
   });
 
   final String? logoPath;
@@ -63,6 +70,26 @@ class LogoCubeView extends StatefulWidget {
   /// off). The cube form stays — only the motion stops.
   final bool animate;
 
+  /// Build 13 (point #19): per-face images (logo_cube face
+  /// keys -> file paths); a face without an entry keeps the
+  /// main logo texture.
+  final Map<String, String> facePaths;
+
+  /// Build 13 (point #19): the cube VIEW tilt — the default
+  /// here is the historic fixed tilt so non-News-Studio callers
+  /// render exactly as before; the News Studio passes the
+  /// preset's user control (default 0 = 'Samne').
+  final double tiltX;
+
+  /// Build 13 (point #19): seconds per full revolution.
+  final double speedSec;
+
+  /// Build 13 (point #19): spin direction.
+  final bool clockwise;
+
+  /// Build 13 (point #19): draw the base plate under the cube.
+  final bool pedestal;
+
   @override
   State<LogoCubeView> createState() => _LogoCubeViewState();
 }
@@ -71,11 +98,18 @@ class _LogoCubeViewState extends State<LogoCubeView>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller = AnimationController(
     vsync: this,
-    duration: kLogoRotationDuration,
+    duration: _durationFor(widget.speedSec),
   );
+
+  static Duration _durationFor(double speedSec) => Duration(
+        milliseconds: (speedSec.clamp(1, 20) * 1000).round(),
+      );
 
   ui.Image? _texture;
   String? _textureKey;
+
+  /// Build 13: decoded per-face textures (face index -> image).
+  Map<int, ui.Image> _faceTextures = {};
 
   @override
   void initState() {
@@ -99,21 +133,41 @@ class _LogoCubeViewState extends State<LogoCubeView>
         _controller.value = 0.1;
       }
     }
+    if (widget.speedSec != oldWidget.speedSec) {
+      _controller.duration = _durationFor(widget.speedSec);
+      if (widget.animate) _controller.repeat();
+    }
     if (widget.logoPath != oldWidget.logoPath ||
-        widget.initial != oldWidget.initial) {
+        widget.initial != oldWidget.initial ||
+        !_sameFaces(widget.facePaths, oldWidget.facePaths)) {
       unawaited(_loadTexture());
     }
+  }
+
+  static bool _sameFaces(Map<String, String> a, Map<String, String> b) {
+    if (a.length != b.length) return false;
+    for (final e in a.entries) {
+      if (b[e.key] != e.value) return false;
+    }
+    return true;
   }
 
   @override
   void dispose() {
     _controller.dispose();
     _texture?.dispose();
+    for (final img in _faceTextures.values) {
+      img.dispose();
+    }
     super.dispose();
   }
 
   Future<void> _loadTexture() async {
-    final key = '${widget.logoPath}|${widget.initial}';
+    final faceKey = (widget.facePaths.entries.toList()
+          ..sort((a, b) => a.key.compareTo(b.key)))
+        .map((e) => '${e.key}=${e.value}')
+        .join(';');
+    final key = '${widget.logoPath}|${widget.initial}|$faceKey';
     if (_textureKey == key) return;
     _textureKey = key;
     try {
@@ -130,13 +184,37 @@ class _LogoCubeViewState extends State<LogoCubeView>
           size: 256,
         );
       }
+      // Build 13: per-face textures, decoded the same fail-soft
+      // way — an undecodable face file just leaves that face on
+      // the main texture.
+      final faces = <int, ui.Image>{};
+      for (final entry in widget.facePaths.entries) {
+        final idx = logoCubeFaceIndex(entry.key);
+        if (idx < 0) continue;
+        try {
+          final bytes = await File(entry.value).readAsBytes();
+          final codec = await ui.instantiateImageCodec(bytes);
+          final frame = await codec.getNextFrame();
+          faces[idx] = frame.image;
+        } catch (_) {}
+      }
       if (!mounted) {
         image.dispose();
+        for (final img in faces.values) {
+          img.dispose();
+        }
         return;
       }
       final old = _texture;
-      setState(() => _texture = image);
+      final oldFaces = _faceTextures;
+      setState(() {
+        _texture = image;
+        _faceTextures = faces;
+      });
       old?.dispose();
+      for (final img in oldFaces.values) {
+        img.dispose();
+      }
     } catch (_) {
       // Texture failed — the flat fallback in build() shows the
       // image / tile directly; the logo never disappears.
@@ -158,17 +236,31 @@ class _LogoCubeViewState extends State<LogoCubeView>
       painter: _LogoCubePainter(
         texture: texture,
         animation: _controller,
+        tiltX: widget.tiltX,
+        clockwise: widget.clockwise,
+        pedestal: widget.pedestal,
+        faceTextures: _faceTextures.isEmpty ? null : _faceTextures,
       ),
     );
   }
 }
 
 class _LogoCubePainter extends CustomPainter {
-  _LogoCubePainter({required this.texture, required this.animation})
-      : super(repaint: animation);
+  _LogoCubePainter({
+    required this.texture,
+    required this.animation,
+    required this.tiltX,
+    required this.clockwise,
+    required this.pedestal,
+    required this.faceTextures,
+  }) : super(repaint: animation);
 
   final ui.Image texture;
   final Animation<double> animation;
+  final double tiltX;
+  final bool clockwise;
+  final bool pedestal;
+  final Map<int, ui.Image>? faceTextures;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -176,14 +268,21 @@ class _LogoCubePainter extends CustomPainter {
       canvas,
       center: Offset(size.width / 2, size.height / 2),
       size: size.width * 0.92,
-      angleY: logoCubeAngle(animation.value),
+      angleY: logoCubeAngleFor(animation.value, clockwise: clockwise),
       texture: texture,
+      tiltX: tiltX,
+      faceTextures: faceTextures,
+      pedestal: pedestal,
     );
   }
 
   @override
   bool shouldRepaint(_LogoCubePainter oldDelegate) =>
-      oldDelegate.texture != texture;
+      oldDelegate.texture != texture ||
+      oldDelegate.tiltX != tiltX ||
+      oldDelegate.clockwise != clockwise ||
+      oldDelegate.pedestal != pedestal ||
+      oldDelegate.faceTextures != faceTextures;
 }
 
 /// The rotating channel logo (kept name — every template
@@ -195,6 +294,12 @@ class RotatingLogo extends StatelessWidget {
     this.initial = 'N',
     this.size = 64,
     this.animate = true,
+    this.facePaths = const {},
+    this.tiltX = kLogoCubeTiltX,
+    this.speedSec = 6,
+    this.clockwise = true,
+    this.pedestal = false,
+    this.parts = const [],
   });
 
   final String? logoPath;
@@ -202,15 +307,157 @@ class RotatingLogo extends StatelessWidget {
   final double size;
   final bool animate;
 
+  /// Build 13 (point #19): the cube settings (see LogoCubeView).
+  final Map<String, String> facePaths;
+  final double tiltX;
+  final double speedSec;
+  final bool clockwise;
+  final bool pedestal;
+
+  /// Build 13 (point 6 — Logo Parts Engine): when the preset
+  /// has working parts, they replace the cube/still — each part
+  /// animating on its own settings, through the same painter
+  /// the export frames use.
+  final List<LogoPart> parts;
+
   @override
   Widget build(BuildContext context) {
+    if (parts.isNotEmpty) {
+      return LogoPartsView(parts: parts, size: size, animate: animate);
+    }
     return LogoCubeView(
       logoPath: logoPath,
       initial: initial,
       size: size,
       animate: animate,
+      facePaths: facePaths,
+      tiltX: tiltX,
+      speedSec: speedSec,
+      clockwise: clockwise,
+      pedestal: pedestal,
     );
   }
+}
+
+/// Build 13 (point 6): the parts animation — every part drawn
+/// full-frame, rotating parts turning around their own
+/// centroid, all through [LogoPartsService.paintParts] (the
+/// exact painter the export frames use).
+class LogoPartsView extends StatefulWidget {
+  const LogoPartsView({
+    super.key,
+    required this.parts,
+    required this.size,
+    this.animate = true,
+  });
+
+  final List<LogoPart> parts;
+  final double size;
+  final bool animate;
+
+  @override
+  State<LogoPartsView> createState() => _LogoPartsViewState();
+}
+
+class _LogoPartsViewState extends State<LogoPartsView>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  Map<String, ui.Image> _textures = const {};
+  String _textureKey = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 12),
+    );
+    if (widget.animate) _controller.repeat();
+    unawaited(_loadTextures());
+  }
+
+  @override
+  void didUpdateWidget(LogoPartsView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.animate && !_controller.isAnimating) {
+      _controller.repeat();
+    } else if (!widget.animate && _controller.isAnimating) {
+      _controller.stop();
+    }
+    if (_keyOf(widget.parts) != _textureKey) {
+      unawaited(_loadTextures());
+    }
+  }
+
+  String _keyOf(List<LogoPart> parts) =>
+      parts.map((e) => '${e.id}:${e.imagePath}').join('|');
+
+  Future<void> _loadTextures() async {
+    final key = _keyOf(widget.parts);
+    final textures = await LogoPartsService.loadPartTextures(widget.parts);
+    if (!mounted) {
+      for (final img in textures.values) {
+        img.dispose();
+      }
+      return;
+    }
+    final old = _textures;
+    setState(() {
+      _textures = textures;
+      _textureKey = key;
+    });
+    for (final img in old.values) {
+      img.dispose();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    for (final img in _textures.values) {
+      img.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: widget.size,
+      height: widget.size,
+      child: AnimatedBuilder(
+        animation: _controller,
+        builder: (context, _) => CustomPaint(
+          painter: _LogoPartsPainter(
+            parts: widget.parts,
+            textures: _textures,
+            tSec: _controller.value * kLogoPartsLoopSec,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LogoPartsPainter extends CustomPainter {
+  _LogoPartsPainter({
+    required this.parts,
+    required this.textures,
+    required this.tSec,
+  });
+
+  final List<LogoPart> parts;
+  final Map<String, ui.Image> textures;
+  final double tSec;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    LogoPartsService.paintParts(canvas, size, parts, textures, tSec);
+  }
+
+  @override
+  bool shouldRepaint(_LogoPartsPainter old) =>
+      old.tSec != tSec || old.textures != textures || old.parts != parts;
 }
 
 /// The logo image itself (no animation): a picked file, or the
@@ -288,11 +535,29 @@ class LogoBug extends StatefulWidget {
     this.logoMediaKind = 'image',
     this.keyedFramesDir,
     this.videoStillPath,
+    this.cubeFacePaths = const {},
+    this.cubeTiltX = kLogoCubeTiltX,
+    this.cubeSpeedSec = 6,
+    this.cubeClockwise = true,
+    this.cubePedestal = false,
+    this.parts = const [],
   });
 
   final String? logoPath;
   final String initial;
   final double size;
+
+  /// Build 13 (point #19): the cube settings for the image
+  /// (cube) source; the video source ignores them.
+  final Map<String, String> cubeFacePaths;
+  final double cubeTiltX;
+  final double cubeSpeedSec;
+  final bool cubeClockwise;
+  final bool cubePedestal;
+
+  /// Build 13 (point 6): the Logo Parts working list for the
+  /// image source (see RotatingLogo.parts).
+  final List<LogoPart> parts;
 
   /// Build 12 (point #13): 'video' when the preset's logo
   /// source is a logo VIDEO — the bug then plays the keyed
@@ -355,6 +620,12 @@ class _LogoBugState extends State<LogoBug> {
       logoPath: widget.logoPath,
       initial: widget.initial,
       size: widget.size,
+      facePaths: widget.cubeFacePaths,
+      tiltX: widget.cubeTiltX,
+      speedSec: widget.cubeSpeedSec,
+      clockwise: widget.cubeClockwise,
+      pedestal: widget.cubePedestal,
+      parts: widget.parts,
     );
   }
 

@@ -340,21 +340,32 @@ class BreakingTemplatePreview extends StatelessWidget {
               child: Row(
                 children: [
                   if (hasBannerChip)
-                    Container(
-                      color: Colors.white,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      child: Text(
-                        chipText,
-                        style: TextStyle(
-                          color: Color(template.topColor),
-                          fontSize: chipFontSize,
-                          fontWeight: FontWeight.bold,
+                    // Build 13: the Maker preview can be
+                    // height-bound (narrower) now that the
+                    // timeline stays fully visible — the chip
+                    // scales down instead of overflowing the
+                    // banner row (same discipline as ribbonChip).
+                    Flexible(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Container(
+                          color: Colors.white,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          child: Text(
+                            chipText,
+                            style: TextStyle(
+                              color: Color(template.topColor),
+                              fontSize: chipFontSize,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            maxLines: 1,
+                            softWrap: false,
+                          ),
                         ),
-                        maxLines: 1,
-                        softWrap: false,
                       ),
                     ),
                   if (hasBannerChip && showHeadline)
@@ -432,6 +443,12 @@ class BreakingTemplatePreview extends StatelessWidget {
               logoMediaKind: template.logoMediaKind,
               keyedFramesDir: template.logoKeyedFramesDir,
               videoStillPath: template.logoVideoStillPath,
+              cubeFacePaths: template.logoCubeFacePaths,
+              cubeTiltX: template.logoCubeTilt,
+              cubeSpeedSec: template.logoCubeSpeedSec,
+              cubeClockwise: template.logoCubeDirection != 'ccw',
+              cubePedestal: template.logoCubePedestal,
+              parts: preset.logoParts,
             ),
           ),
           // Category chip + intro/outro markers (top-left).
@@ -989,6 +1006,12 @@ class ClassicPreview extends StatelessWidget {
               logoMediaKind: preset.logoMediaKind,
               keyedFramesDir: preset.logoKeyedFramesDir,
               videoStillPath: preset.logoVideoStillPath,
+              cubeFacePaths: preset.logoCubeFacePaths,
+              cubeTiltX: preset.logoCubeTilt,
+              cubeSpeedSec: preset.logoCubeSpeedSec,
+              cubeClockwise: preset.logoCubeDirection != 'ccw',
+              cubePedestal: preset.logoCubePedestal,
+              parts: preset.logoParts,
             ),
           ),
           Positioned(

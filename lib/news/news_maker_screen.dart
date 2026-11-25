@@ -53,6 +53,7 @@ import 'package:video_player/video_player.dart';
 
 import '../app_config.dart';
 import '../live/news_template.dart';
+import '../services/ai_tool_charge.dart';
 import '../services/asset_download_service.dart';
 import '../services/caption_styles.dart';
 import '../services/crash_guard.dart';
@@ -64,7 +65,11 @@ import '../services/font_registry.dart';
 import '../services/gemini_voice_service.dart';
 import '../services/library_service.dart';
 import '../services/logo_key_service.dart';
+import '../services/logo_loop_service.dart';
+import '../services/logo_parts_service.dart';
+import '../services/permanent_logo_service.dart';
 import '../services/pro_service.dart';
+import '../services/supabase_service.dart';
 import '../services/store_audio_preview.dart';
 import '../services/store_service.dart';
 import '../services/tts_processing.dart';
@@ -76,10 +81,13 @@ import 'breaking_templates.dart';
 import 'caption_studio_screen.dart';
 import 'channel_branding_screen.dart';
 import 'channel_preset.dart';
+import 'caption_alignment.dart';
 import 'karaoke_sync.dart';
+import 'logo_parts.dart';
 import 'news_analysis.dart';
 import 'element_override.dart';
 import 'news_project.dart';
+import 'teleprompter_screen.dart';
 import 'seo_screen.dart';
 import 'store_screen.dart';
 import 'widgets/breaking_preview.dart';
@@ -201,6 +209,75 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   /// keying in flight + its honest status line for the Logo
   /// panel.
   bool _logoVideoBusy = false;
+
+  /// Build 13 (point #16): the "Asal timings" (Whisper word
+  /// alignment) run state for the Captions panel.
+  bool _alignBusy = false;
+
+  /// Build 13 (point 6): Logo Parts + Permanent Logo run state.
+  bool _partsBusy = false;
+  int _partsCount = 6;
+  bool _permBusy = false;
+
+  /// Build 13 (point #19): the timeline transport — the media
+  /// preview's OWN video controller (reported through
+  /// TemplateMediaPreview.onPlayerController), the last heard
+  /// position, and the selected timeline tab. No second player
+  /// exists: the transport drives the preview's player.
+  VideoPlayerController? _transportController;
+  Duration _transportPosition = Duration.zero;
+  bool _transportPlaying = false;
+  String _timelineTab = 'clips';
+
+  void _onTransportController(VideoPlayerController? controller) {
+    if (identical(controller, _transportController)) return;
+    _transportController?.removeListener(_onTransportTick);
+    _transportController = controller;
+    _transportPosition = Duration.zero;
+    _transportPlaying = false;
+    controller?.addListener(_onTransportTick);
+  }
+
+  void _onTransportTick() {
+    final controller = _transportController;
+    if (controller == null || !mounted) return;
+    final value = controller.value;
+    final pos = value.position;
+    if (pos.inMilliseconds ~/ 250 != _transportPosition.inMilliseconds ~/ 250 ||
+        value.isPlaying != _transportPlaying) {
+      setState(() {
+        _transportPosition = pos;
+        _transportPlaying = value.isPlaying;
+      });
+    }
+  }
+
+  Future<void> _transportToggle() async {
+    final controller = _transportController;
+    if (controller == null || !controller.value.isInitialized) return;
+    try {
+      if (controller.value.isPlaying) {
+        await controller.pause();
+      } else {
+        if (controller.value.position >= controller.value.duration &&
+            controller.value.duration > Duration.zero) {
+          await controller.seekTo(Duration.zero);
+        }
+        await controller.play();
+      }
+    } catch (_) {
+      // A broken clip must never break the workspace.
+    }
+  }
+
+  Future<void> _transportStop() async {
+    final controller = _transportController;
+    if (controller == null || !controller.value.isInitialized) return;
+    try {
+      await controller.pause();
+      await controller.seekTo(Duration.zero);
+    } catch (_) {}
+  }
   String _logoVideoStatus = '';
 
   String _saveStatus = '';
@@ -230,6 +307,9 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   @override
   void initState() {
     super.initState();
+    // Build 13 (point 6): the Permanent Logo entitlement state
+    // (fail-soft; the Logo panel reads it).
+    unawaited(PermanentLogoService.instance.init());
     final preset = widget.initialPreset;
     final project = widget.initialProject;
     if (preset != null || project != null) {
@@ -310,6 +390,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       final project = await NewsProjectStore.loadLatest() ??
           NewsProject.create(presetId: preset.id);
       if (!mounted) return;
+      _restorePartsState(preset);
       setState(() {
         _preset = preset;
         _allPresets = presets;
@@ -473,6 +554,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   @override
   void dispose() {
     StoreService.instance.revision.removeListener(_onStoreRevision);
+    _transportController?.removeListener(_onTransportTick);
     _saveTimer?.cancel();
     unawaited(_recorder.dispose());
     _tehreerController.dispose();
@@ -523,6 +605,11 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     final text = _tehreerController.text.trim();
     if (durationSec != null && durationSec > 0 && text.isNotEmpty) {
       project.subtitles = syncSubtitlesToVoiceover(text, durationSec);
+      // Build 13: estimator timings — the timing source is
+      // stamped honestly (a later "Asal timings" run can upgrade
+      // them to real Whisper timings).
+      project.captionTimingSource = 'estimate';
+      project.captionAlignedHash = '';
       syncNote = ' Subtitles voiceover se sync ho gaye.';
     }
     setState(() {
@@ -1129,6 +1216,41 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     }
   }
 
+  /// Build 13 (point #16): the Captions panel's "Asal timings"
+  /// action — word-split Whisper transcription of the voiceover
+  /// + script alignment (caption_alignment.dart). On success the
+  /// project carries REAL word timings and the source stamp; on
+  /// any failure the estimator timings stay and the message says
+  /// why. Runs on-device; can take a while on weak phones, hence
+  /// the busy state on the button.
+  Future<void> _runCaptionAlignment(NewsProject project) async {
+    if (_alignBusy) return;
+    setState(() => _alignBusy = true);
+    try {
+      final temp = await getTemporaryDirectory();
+      final workDir = Directory(p.join(temp.path, 'caption_align'));
+      if (!await workDir.exists()) {
+        await workDir.create(recursive: true);
+      }
+      final outcome = await alignProjectCaptionsToVoiceover(
+        project,
+        workDir: workDir,
+      );
+      if (!mounted) return;
+      if (outcome.applied) {
+        setState(() {});
+        _scheduleSave();
+      }
+      _showMessage(outcome.message);
+    } catch (e) {
+      if (mounted) {
+        _showMessage('Asal timings nahi lag sakein: $e');
+      }
+    } finally {
+      if (mounted) setState(() => _alignBusy = false);
+    }
+  }
+
   /// Real voiceover build through the Gemini proxy (see the file
   /// header + GeminiVoiceService: chunked, cache-first, 5/day cap).
   /// [regenerate] ("Dobara") deletes the cached file first, so the
@@ -1203,6 +1325,8 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       var syncNote = '';
       if (duration != null && duration > 0) {
         project.subtitles = syncSubtitlesToVoiceover(text, duration);
+        project.captionTimingSource = 'estimate';
+        project.captionAlignedHash = '';
         syncNote = ' Subtitles voiceover se sync ho gaye.';
       }
       setState(() {
@@ -1263,11 +1387,35 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             orElse: () => presets.first,
           );
     if (!mounted) return;
+    _restorePartsState(preset);
     setState(() {
       _preset = preset;
       _allPresets = presets;
       _syncStudioControllers();
     });
+  }
+
+  /// Build 13 (point 6): restores a preset's WORKING logo parts
+  /// from its paid save while the save is active; an expired
+  /// save is cleared for good (the user's model: expiry = the
+  /// settings are gone, saving again costs another 300 coins).
+  void _restorePartsState(ChannelPreset preset) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    switch (logoPartsSaveState(preset.logoPartsSavedAtMs, now)) {
+      case LogoPartsSaveState.active:
+        if (preset.logoParts.isEmpty) {
+          preset.logoParts = decodeLogoParts(preset.logoPartsSavedJson);
+          preset.logoPartsSourcePath = preset.logoPath;
+        }
+      case LogoPartsSaveState.expired:
+        preset.logoPartsSavedJson = '';
+        preset.logoPartsSavedAtMs = 0;
+        preset.logoParts = const [];
+        preset.logoPartsSourcePath = null;
+        unawaited(persistPresetChange(preset));
+      case LogoPartsSaveState.never:
+        break;
+    }
   }
 
   /// Build 5 (v1.5.7): the Template panel's preset selector —
@@ -1278,6 +1426,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     if (_preset?.id == next.id) return;
     await ChannelPresetStore.saveAll(_allPresets, selectedId: next.id);
     if (!mounted) return;
+    _restorePartsState(next);
     setState(() {
       _preset = next;
       _syncStudioControllers();
@@ -1413,6 +1562,22 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       preset.topRibbon.direction =
           RibbonDirection.fromId(directionOverride);
     }
+    // Build 13 (point #19): the project's ticker speed + loop
+    // ride the clone as transient fields — the same rule
+    // effectivePresetFor applies at export, so preview and
+    // export agree.
+    final proj = _project;
+    if (proj != null) {
+      preset.tickerSpeedFactor = proj.tickerSpeed;
+      preset.tickerLoop = proj.tickerLoop;
+    }
+    // Build 13 (point 6): the working logo parts ride the
+    // preview clone too (transient — see ChannelPreset).
+    final src = _preset;
+    if (src != null) {
+      preset.logoParts = src.logoParts;
+      preset.logoPartsSourcePath = src.logoPartsSourcePath;
+    }
     return preset;
   }
 
@@ -1509,6 +1674,21 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     ('export', Icons.ios_share_outlined, 'Export'),
   ];
 
+  /// Build 13: the user's own tool icons (his artwork, supplied
+  /// 2026-11-25) for the tools he provided them for. Tools NOT
+  /// in this map (Ribbons, Audio, Voice, Export — he has not
+  /// sent theirs yet) keep their Material icons above.
+  static const _toolIconAssets = <String, String>{
+    'template': 'assets/ns_icons/template.png',
+    'media': 'assets/ns_icons/media.png',
+    'elements': 'assets/ns_icons/elements.png',
+    'tehreer': 'assets/ns_icons/tehreer.png',
+    'ticker': 'assets/ns_icons/ticker.png',
+    'logo': 'assets/ns_icons/logo.png',
+    'reporter': 'assets/ns_icons/reporter.png',
+    'captions': 'assets/ns_icons/captions.png',
+  };
+
   Widget _toolLine() {
     // Editors' tool-line item geometry (Photo Editor toolbar):
     // 64-wide icon-above-label items in one horizontal line.
@@ -1552,7 +1732,17 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(icon, size: 24, color: color),
+                  if (_toolIconAssets[id] != null)
+                    Image.asset(
+                      _toolIconAssets[id]!,
+                      key: Key('makerToolIcon-$id'),
+                      width: 26,
+                      height: 26,
+                      errorBuilder: (context, error, stack) =>
+                          Icon(icon, size: 24, color: color),
+                    )
+                  else
+                    Icon(icon, size: 24, color: color),
                   const SizedBox(height: 3),
                   Text(
                     label,
@@ -2358,29 +2548,75 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     );
   }
 
-  Widget _tlChip(String label, IconData icon, String tool) {
+  /// One timeline tab (Build 13, point #19): the reference's
+  /// CLIPS / VOICE / TICKER / RIBBONS tabs. Tapping selects the
+  /// tab (gold) AND opens its tool below — the pre-Build-13
+  /// behaviour of these chips, kept.
+  Widget _tlChip(
+    String label,
+    IconData icon,
+    String tool,
+    String tab, {
+    String? imageAsset,
+  }) {
+    final selected = _timelineTab == tab;
     return Padding(
       padding: const EdgeInsets.only(right: 6),
       child: InkWell(
-        onTap: () => setState(() => _activeTool = tool),
+        key: Key('tlTab-$tab'),
+        onTap: () => setState(() {
+          _activeTool = tool;
+          _timelineTab = tab;
+        }),
         borderRadius: BorderRadius.circular(6),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
           decoration: BoxDecoration(
-            color: const Color(0x0DFFFFFF),
+            color: selected
+                ? const Color(0x1AFFC800)
+                : const Color(0x0DFFFFFF),
             borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: const Color(0x1FFFFFFF)),
+            border: Border.all(
+              color: selected
+                  ? const Color(0xFFFFC800)
+                  : const Color(0x1FFFFFFF),
+            ),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 14, color: const Color(0xFFAEB4BD)),
+              if (imageAsset != null)
+                Image.asset(
+                  imageAsset,
+                  key: Key('tlTabIcon-$tab'),
+                  width: 16,
+                  height: 16,
+                  errorBuilder: (context, error, stack) => Icon(
+                    icon,
+                    size: 14,
+                    color: selected
+                        ? const Color(0xFFFFC800)
+                        : const Color(0xFFAEB4BD),
+                  ),
+                )
+              else
+                Icon(
+                  icon,
+                  size: 14,
+                  color: selected
+                      ? const Color(0xFFFFC800)
+                      : const Color(0xFFAEB4BD),
+                ),
               const SizedBox(width: 5),
               Text(
                 label,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 11.5,
-                  color: Color(0xFFC4C9D0),
+                  fontWeight:
+                      selected ? FontWeight.w700 : FontWeight.normal,
+                  color: selected
+                      ? const Color(0xFFFFC800)
+                      : const Color(0xFFC4C9D0),
                 ),
               ),
             ],
@@ -2390,11 +2626,17 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     );
   }
 
-  /// The project timeline: a visual map of the SAME project —
-  /// clip blocks flexed by probed durations (tap → Media), the
-  /// voiceover block (tap → Voice), the ticker text block
-  /// (tap → Ticker). Chips open their real panels.
-  Widget _timelineZone(NewsProject project, {bool collapsed = false}) {
+  /// The project timeline (Build 13, point #19 — upgraded to
+  /// the reference-style WORKING panel; this is the same single
+  /// timeline zone, not a second one): a transport row (play /
+  /// pause / stop + time, driving the media preview's own
+  /// player), the CLIPS / VOICE / TICKER / RIBBONS tabs, a time
+  /// ruler, and the V1 / A1 / A2 / TC lanes reflecting the real
+  /// project state, with a gold playhead at the transport
+  /// position. It stays fully visible while a tool panel is
+  /// open — the tool's parameters live in the ONE panel area
+  /// between the timeline and the tool dock.
+  Widget _timelineZone(NewsProject project) {
     final compact = MediaQuery.of(context).size.height < 700;
     var clipsTotal = 0.0;
     for (final d in _clipDurations.values) {
@@ -2407,6 +2649,12 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     final tickerText = project.tickerText.trim().isNotEmpty
         ? project.tickerText.trim()
         : project.englishTickerText.trim();
+    final posSec = _transportPosition.inMilliseconds / 1000.0;
+    final shownPos = totalAll > 0 && posSec > totalAll ? totalAll : posSec;
+    final playFraction =
+        totalAll > 0 ? (shownPos / totalAll).clamp(0.0, 1.0) : 0.0;
+    final hasTransport = _transportController != null &&
+        (_transportController?.value.isInitialized ?? false);
     return Container(
       decoration: const BoxDecoration(
         color: Color(0xFF0E1118),
@@ -2428,12 +2676,64 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                 ),
               ),
               const SizedBox(width: 8),
-              Text(
-                '${project.clipPaths.length} clips'
-                '${totalAll > 0 ? ' • ${_fmtDur(totalAll)}' : ''}',
-                style: const TextStyle(
-                  fontSize: 11,
-                  color: Color(0xFF5E646F),
+              Expanded(
+                child: Text(
+                  '${project.clipPaths.length} clips'
+                  '${totalAll > 0 ? ' \u2022 ${_fmtDur(totalAll)}' : ''}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: Color(0xFF5E646F),
+                  ),
+                ),
+              ),
+              // Transport: play/pause + stop + the time readout.
+              IconButton(
+                key: const Key('tlPlayPause'),
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                style: IconButton.styleFrom(
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                constraints:
+                    const BoxConstraints(minWidth: 30, minHeight: 30),
+                icon: Icon(
+                  _transportPlaying ? Icons.pause : Icons.play_arrow,
+                  size: 20,
+                ),
+                color: hasTransport
+                    ? const Color(0xFFFFC800)
+                    : const Color(0xFF5E646F),
+                onPressed: hasTransport ? _transportToggle : null,
+              ),
+              IconButton(
+                key: const Key('tlStop'),
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                style: IconButton.styleFrom(
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                constraints:
+                    const BoxConstraints(minWidth: 30, minHeight: 30),
+                icon: const Icon(Icons.stop, size: 18),
+                color: hasTransport
+                    ? const Color(0xFFC4C9D0)
+                    : const Color(0xFF5E646F),
+                onPressed: hasTransport ? _transportStop : null,
+              ),
+              Flexible(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerRight,
+                  child: Text(
+                    '${_fmtDur(shownPos)} / ${_fmtDur(totalAll)}',
+                    key: const Key('tlTimeText'),
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: Color(0xFFC4C9D0),
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -2443,113 +2743,182 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             scrollDirection: Axis.horizontal,
             child: Row(
               children: [
-                _tlChip('Clip', Icons.add, 'media'),
-                _tlChip('Voice', Icons.mic_none_outlined, 'voice'),
-                _tlChip('Ticker', Icons.short_text, 'ticker'),
-                _tlChip('Ribbons', Icons.view_agenda_outlined, 'ribbons'),
+                _tlChip(
+                  'Clips',
+                  Icons.movie_outlined,
+                  'media',
+                  'clips',
+                  imageAsset: 'assets/ns_icons/clips.png',
+                ),
+                _tlChip('Voice', Icons.mic_none_outlined, 'voice', 'voice'),
+                _tlChip('Ticker', Icons.short_text, 'ticker', 'ticker'),
+                _tlChip(
+                    'Ribbons', Icons.view_agenda_outlined, 'ribbons', 'ribbons'),
               ],
             ),
           ),
-          // While a tool panel is open the timeline collapses to
-          // its header + chips (the chips still switch tools) so
-          // the preview keeps its room; the lanes return when the
-          // panel closes.
-          if (collapsed) const SizedBox(height: 2),
-          if (!collapsed) ...[
-          if (!compact && totalAll > 0) ...[
-            const SizedBox(height: 4),
-            Row(
-              children: [
-                const Text(
-                  '0:00',
-                  style: TextStyle(
-                      fontSize: 9.5, color: Color(0xFF5E646F)),
-                ),
-                const Spacer(),
-                Text(
-                  _fmtDur(totalAll / 2),
-                  style: const TextStyle(
-                      fontSize: 9.5, color: Color(0xFF5E646F)),
-                ),
-                const Spacer(),
-                Text(
-                  _fmtDur(totalAll),
-                  style: const TextStyle(
-                      fontSize: 9.5, color: Color(0xFF5E646F)),
-                ),
-              ],
-            ),
-          ],
           const SizedBox(height: 6),
-          _videoLane(project, compact),
-          const SizedBox(height: 4),
-          _laneRow(
-            'Voice',
-            InkWell(
-              onTap: () => setState(() => _activeTool = 'voice'),
-              child: Container(
-                height: 24,
-                alignment: Alignment.centerLeft,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                decoration: BoxDecoration(
-                  color: hasVoice
-                      ? const Color(0x1AFFC800)
-                      : const Color(0x0DFFFFFF),
-                  borderRadius: BorderRadius.circular(5),
-                  border: Border.all(
-                    color: hasVoice
-                        ? const Color(0x40FFC800)
-                        : const Color(0x14FFFFFF),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              return Stack(
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (!compact && totalAll > 0) ...[
+                        Row(
+                          children: [
+                            const SizedBox(width: 52),
+                            const Text(
+                              '0:00',
+                              style: TextStyle(
+                                  fontSize: 9.5, color: Color(0xFF5E646F)),
+                            ),
+                            const Spacer(),
+                            Text(
+                              _fmtDur(totalAll / 2),
+                              style: const TextStyle(
+                                  fontSize: 9.5, color: Color(0xFF5E646F)),
+                            ),
+                            const Spacer(),
+                            Text(
+                              _fmtDur(totalAll),
+                              style: const TextStyle(
+                                  fontSize: 9.5, color: Color(0xFF5E646F)),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                      ],
+                      _laneRow('V1', _videoLane(project, compact)),
+                      const SizedBox(height: 4),
+                      _laneRow(
+                        'A1',
+                        InkWell(
+                          onTap: () => setState(() {
+                            _activeTool = 'voice';
+                            _timelineTab = 'voice';
+                          }),
+                          child: Container(
+                            height: 24,
+                            alignment: Alignment.centerLeft,
+                            padding:
+                                const EdgeInsets.symmetric(horizontal: 8),
+                            decoration: BoxDecoration(
+                              color: hasVoice
+                                  ? const Color(0x1AFFC800)
+                                  : const Color(0x0DFFFFFF),
+                              borderRadius: BorderRadius.circular(5),
+                              border: Border.all(
+                                color: hasVoice
+                                    ? const Color(0x40FFC800)
+                                    : const Color(0x14FFFFFF),
+                              ),
+                            ),
+                            child: Text(
+                              hasVoice
+                                  ? 'VO \u2022 Voiceover'
+                                      '${project.voiceoverDurationSec != null ? ' \u2022 ${_fmtDur(project.voiceoverDurationSec!)}' : ''}'
+                                  : 'Voiceover nahi \u2014 Voice tool se banayein',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: hasVoice
+                                    ? FontWeight.w600
+                                    : FontWeight.normal,
+                                color: hasVoice
+                                    ? const Color(0xFFFFC800)
+                                    : const Color(0xFF5E646F),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      _laneRow(
+                        'A2',
+                        InkWell(
+                          onTap: () => setState(() => _activeTool = 'audio'),
+                          child: Container(
+                            height: 24,
+                            alignment: Alignment.centerLeft,
+                            padding:
+                                const EdgeInsets.symmetric(horizontal: 8),
+                            decoration: BoxDecoration(
+                              color: const Color(0x0DFFFFFF),
+                              borderRadius: BorderRadius.circular(5),
+                              border: Border.all(
+                                  color: const Color(0x14FFFFFF)),
+                            ),
+                            child: Text(
+                              _selectedMusicLabel(project),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 10.5,
+                                color: Color(0xFFC4C9D0),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      _laneRow(
+                        'TC',
+                        InkWell(
+                          onTap: () => setState(() {
+                            _activeTool = 'ticker';
+                            _timelineTab = 'ticker';
+                          }),
+                          child: Container(
+                            height: 24,
+                            alignment: Alignment.centerLeft,
+                            padding:
+                                const EdgeInsets.symmetric(horizontal: 8),
+                            decoration: BoxDecoration(
+                              color: const Color(0x0DFFFFFF),
+                              borderRadius: BorderRadius.circular(5),
+                              border: Border.all(
+                                  color: const Color(0x14FFFFFF)),
+                            ),
+                            child: Text(
+                              tickerText.isEmpty
+                                  ? 'Ticker khaali hai'
+                                  : tickerText,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                color: tickerText.isEmpty
+                                    ? const Color(0xFF5E646F)
+                                    : const Color(0xFFC4C9D0),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-                child: Text(
-                  hasVoice
-                      ? 'VO • Voiceover'
-                          '${project.voiceoverDurationSec != null ? ' • ${_fmtDur(project.voiceoverDurationSec!)}' : ''}'
-                      : 'Voiceover nahi — Voice tool se banayein',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 10.5,
-                    fontWeight:
-                        hasVoice ? FontWeight.w600 : FontWeight.normal,
-                    color: hasVoice
-                        ? const Color(0xFFFFC800)
-                        : const Color(0xFF5E646F),
-                  ),
-                ),
-              ),
-            ),
+                  // The gold playhead at the transport position,
+                  // across the lanes (label column included — the
+                  // reference draws it across the whole panel).
+                  if (totalAll > 0)
+                    Positioned(
+                      left: (playFraction * constraints.maxWidth)
+                          .clamp(0.0, constraints.maxWidth - 2),
+                      top: 0,
+                      bottom: 0,
+                      child: Container(
+                        key: const Key('tlPlayhead'),
+                        width: 2,
+                        color: const Color(0xFFFFC800),
+                      ),
+                    ),
+                ],
+              );
+            },
           ),
-          const SizedBox(height: 4),
-          _laneRow(
-            'Ticker',
-            InkWell(
-              onTap: () => setState(() => _activeTool = 'ticker'),
-              child: Container(
-                height: 24,
-                alignment: Alignment.centerLeft,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                decoration: BoxDecoration(
-                  color: const Color(0x0DFFFFFF),
-                  borderRadius: BorderRadius.circular(5),
-                  border: Border.all(color: const Color(0x14FFFFFF)),
-                ),
-                child: Text(
-                  tickerText.isEmpty ? 'Ticker khaali hai' : tickerText,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 10.5,
-                    color: tickerText.isEmpty
-                        ? const Color(0xFF5E646F)
-                        : const Color(0xFFC4C9D0),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          ],
         ],
       ),
     );
@@ -2755,6 +3124,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                           // composite the export renders.
                           : TemplateMediaPreview(
                               key: const Key('makerMediaPreview'),
+                              onPlayerController: _onTransportController,
                               preset: previewPreset,
                               mediaPaths: project.clipPaths,
                               fontReady: _fontReady,
@@ -2823,17 +3193,14 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             ),
           ),
         ),
-        // Build 4 (News Studio workspace): the tool strip is
-        // always visible; the inspector (the open tool's panel,
-        // or the summary when none is open) sits under it, and
-        // the project timeline under that.
-        Container(
-          decoration: const BoxDecoration(
-            color: Color(0xFF12151C),
-            border: Border(top: BorderSide(color: Color(0x14FFFFFF))),
-          ),
-          child: _toolLine(),
-        ),
+        // Build 13 (point #19 — the user's reference layout):
+        // preview on top, the working TIMELINE directly under
+        // it, the open tool's parameters in the ONE panel area
+        // under the timeline, and the tool dock at the very
+        // bottom. (Build 4 had dock-over-panel-over-collapsed-
+        // timeline; the reference order supersedes it. Every
+        // control itself is unchanged — only the arrangement.)
+        _timelineZone(project),
         if (_activeTool == null)
           _summaryInspector(preset, project, templateLabel)
         else
@@ -2855,7 +3222,13 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             'export' => _exportPanel(preset, project),
             _ => const SizedBox.shrink(),
           },
-        _timelineZone(project, collapsed: _activeTool != null),
+        Container(
+          decoration: const BoxDecoration(
+            color: Color(0xFF12151C),
+            border: Border(top: BorderSide(color: Color(0x14FFFFFF))),
+          ),
+          child: _toolLine(),
+        ),
       ],
     );
   }
@@ -3576,6 +3949,110 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         },
         emptyNote: 'Abhi koi Library text style nahi.',
       ),
+      // Build 13 (point #19): the ticker's motion + geometry
+      // controls, in this same linear panel — project-level
+      // SPEED (new: it did not exist before), LOOP on/off, the
+      // text SIZE + POSITION (the ticker element's override —
+      // the same one the parity export consumes), and the
+      // bottom band's COLOUR (the preset's english ribbon; the
+      // Ribbons panel remains the full ribbon editor).
+      const SizedBox(height: 14),
+      const Text(
+        'Ticker speed',
+        style: TextStyle(fontWeight: FontWeight.bold),
+      ),
+      _elementSlider(
+        label: 'Speed (${project.tickerSpeed.toStringAsFixed(2)}x)',
+        value: project.tickerSpeed,
+        min: 0.25,
+        max: 3.0,
+        onChanged: (v) {
+          setState(() => project.tickerSpeed = v);
+          _scheduleSave();
+        },
+      ),
+      SwitchListTile(
+        key: const Key('tickerLoopSwitch'),
+        title: const Text('Ticker loop (lagatar ghumta rahe)'),
+        subtitle: const Text('Band = ticker ek dafa chal kar ruk jayega'),
+        value: project.tickerLoop,
+        onChanged: (v) {
+          setState(() => project.tickerLoop = v);
+          _scheduleSave();
+        },
+      ),
+      const Text(
+        'Ticker size / position',
+        style: TextStyle(fontWeight: FontWeight.bold),
+      ),
+      _elementSlider(
+        label: 'Text size',
+        value: _elementOv(project, NewsElement.tickerText).scale,
+        min: 0.5,
+        max: 2.0,
+        onChanged: (v) => _setElementOverride(
+          NewsElement.tickerText,
+          _elementOv(project, NewsElement.tickerText).copyWith(scale: v),
+        ),
+      ),
+      _elementSlider(
+        label: 'Left / Right',
+        value: _elementOv(project, NewsElement.tickerText).dx,
+        min: -0.3,
+        max: 0.3,
+        onChanged: (v) => _setElementOverride(
+          NewsElement.tickerText,
+          _elementOv(project, NewsElement.tickerText).copyWith(dx: v),
+        ),
+      ),
+      _elementSlider(
+        label: 'Up / Down',
+        value: _elementOv(project, NewsElement.tickerText).dy,
+        min: -0.3,
+        max: 0.3,
+        onChanged: (v) => _setElementOverride(
+          NewsElement.tickerText,
+          _elementOv(project, NewsElement.tickerText).copyWith(dy: v),
+        ),
+      ),
+      const Text(
+        'Ticker band colour (neeche wali patti)',
+        style: TextStyle(fontWeight: FontWeight.bold),
+      ),
+      const SizedBox(height: 6),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final c in _ribbonSwatches)
+            InkWell(
+              key: Key('tickerBandSwatch-$c'),
+              onTap: () {
+                final preset = _preset;
+                if (preset == null) return;
+                _updatePreset(() => preset.englishRibbon.color = c);
+              },
+              borderRadius: BorderRadius.circular(20),
+              child: Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  color: Color(c),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: _preset?.englishRibbon.color == c
+                        ? Colors.white
+                        : Colors.white24,
+                    width: _preset?.englishRibbon.color == c ? 3 : 1,
+                  ),
+                ),
+                child: _preset?.englishRibbon.color == c
+                    ? const Icon(Icons.check, size: 15, color: Colors.white)
+                    : null,
+              ),
+            ),
+        ],
+      ),
     ]);
   }
 
@@ -4026,6 +4503,104 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           if (mounted) setState(() {});
         },
       ),
+      // Build 13 (point #19): the cube's own controls — VIEW
+      // (Samne / Upar Se / Neeche Se + tilt), speed, direction,
+      // pedestal, and a picture per face. All of them write the
+      // preset, so preview and export render the same cube.
+      const Text(
+        'Cube View — cube kis tarah nazar aye',
+        style: TextStyle(fontWeight: FontWeight.bold),
+      ),
+      const SizedBox(height: 6),
+      SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (final (id, label, tilt) in const [
+              ('samne', 'Samne', 0.0),
+              ('upar', 'Upar Se', 0.85),
+              ('neeche', 'Neeche Se', -0.85),
+            ]) ...[
+              ChoiceChip(
+                key: Key('logoView-$id'),
+                label: Text(label),
+                selected: (preset.logoCubeTilt - tilt).abs() < 0.01,
+                onSelected: (_) =>
+                    _updatePreset(() => preset.logoCubeTilt = tilt),
+              ),
+              const SizedBox(width: 8),
+            ],
+          ],
+        ),
+      ),
+      _elementSlider(
+        label: 'Tilt (upar / neeche)',
+        value: preset.logoCubeTilt,
+        min: -1.2,
+        max: 1.2,
+        onChanged: (v) =>
+            _updatePreset(() => preset.logoCubeTilt = v),
+      ),
+      _elementSlider(
+        label:
+            'Rotate Speed (${preset.logoCubeSpeedSec.toStringAsFixed(1)}s / round)',
+        value: preset.logoCubeSpeedSec,
+        min: 2,
+        max: 12,
+        onChanged: (v) =>
+            _updatePreset(() => preset.logoCubeSpeedSec = v),
+      ),
+      const SizedBox(height: 4),
+      SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            ChoiceChip(
+              key: const Key('logoDir-cw'),
+              label: const Text('Clockwise'),
+              selected: preset.logoCubeDirection != 'ccw',
+              onSelected: (_) =>
+                  _updatePreset(() => preset.logoCubeDirection = 'cw'),
+            ),
+            const SizedBox(width: 8),
+            ChoiceChip(
+              key: const Key('logoDir-ccw'),
+              label: const Text('Anti-clockwise'),
+              selected: preset.logoCubeDirection == 'ccw',
+              onSelected: (_) =>
+                  _updatePreset(() => preset.logoCubeDirection = 'ccw'),
+            ),
+          ],
+        ),
+      ),
+      SwitchListTile(
+        key: const Key('logoPedestalSwitch'),
+        title: const Text('Pedestal (cube ke neeche base)'),
+        value: preset.logoCubePedestal,
+        onChanged: (v) =>
+            _updatePreset(() => preset.logoCubePedestal = v),
+      ),
+      const Text(
+        'Cube Faces — har side ki alag tasveer (khali = main logo)',
+        style: TextStyle(fontWeight: FontWeight.bold),
+      ),
+      const SizedBox(height: 6),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final face in const [
+            'front',
+            'back',
+            'left',
+            'right',
+            'top',
+            'bottom',
+          ])
+            _logoFaceTile(preset, face),
+        ],
+      ),
+      const SizedBox(height: 10),
       const Text(
         'Position / size',
         style: TextStyle(fontWeight: FontWeight.bold),
@@ -4060,7 +4635,584 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           logoOv.copyWith(scale: v),
         ),
       ),
+      const Divider(height: 26),
+      ..._logoPartsSection(preset),
+      const Divider(height: 26),
+      ..._permanentLogoSection(preset),
     ]);
+  }
+
+  /// Build 13 (point 6 — Logo Parts Engine): the parts section
+  /// of the Logo panel. Working settings are session-only; the
+  /// paid save (300 coins) keeps them usable for exactly 7
+  /// days, then they are gone (see logo_parts.dart).
+  List<Widget> _logoPartsSection(ChannelPreset preset) {
+    final parts = preset.logoParts;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final saveState = logoPartsSaveState(preset.logoPartsSavedAtMs, now);
+    final savedCurrent = saveState == LogoPartsSaveState.active &&
+        preset.logoPartsSavedJson == encodeLogoParts(parts);
+    return [
+      const Text(
+        'Logo Parts — har hisay ki alag rotation',
+        style: TextStyle(fontWeight: FontWeight.bold),
+      ),
+      const SizedBox(height: 4),
+      const Text(
+        'Logo ke hisay (parts) tor kar har hisay ko alag ghumayein — '
+        'kis hisay ko ghumana hai, kis direction mein, kitni speed se.',
+        style: TextStyle(fontSize: 12, color: Colors.grey),
+      ),
+      const SizedBox(height: 8),
+      if (preset.logoPath == null)
+        const Text(
+          'Pehle upar se logo select karein — parts usi logo ke banein ge.',
+          style: TextStyle(fontSize: 12, color: Colors.grey),
+        )
+      else if (parts.isEmpty)
+        OutlinedButton.icon(
+          key: const Key('logoPartsSplitButton'),
+          onPressed: _partsBusy ? null : _splitLogoParts,
+          icon: const Icon(Icons.call_split, size: 18),
+          label: Text(_partsBusy ? 'Parts ban rahe hain…' : 'Parts banao (auto split)'),
+        )
+      else ...[
+        if (preset.logoPartsSourcePath != null &&
+            preset.logoPartsSourcePath != preset.logoPath)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 6),
+            child: Text(
+              'Logo badal gaya hai — ye parts puranay logo ke hain. '
+              'Dobara split karein.',
+              style: TextStyle(fontSize: 12, color: Color(0xFFFFC800)),
+            ),
+          ),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              const Text('Parts:', style: TextStyle(fontSize: 12)),
+              const SizedBox(width: 8),
+              for (final n in const [4, 6, 8]) ...[
+                ChoiceChip(
+                  key: Key('logoPartsCount-$n'),
+                  label: Text('$n'),
+                  selected: _partsCount == n,
+                  onSelected: (_) => setState(() => _partsCount = n),
+                ),
+                const SizedBox(width: 6),
+              ],
+              TextButton.icon(
+                key: const Key('logoPartsResplitButton'),
+                onPressed: _partsBusy ? null : _splitLogoParts,
+                icon: const Icon(Icons.refresh, size: 16),
+                label: const Text('Dobara split'),
+              ),
+            ],
+          ),
+        ),
+        for (var i = 0; i < parts.length; i++) _logoPartRow(preset, i),
+        const SizedBox(height: 8),
+        Text(
+          saveState == LogoPartsSaveState.active
+              ? (savedCurrent
+                  ? 'Save shuda hai — ${logoPartsSaveDaysLeft(preset.logoPartsSavedAtMs, now)} din baqi hain.'
+                  : 'Save shuda settings se tabdeeli ho gayi hai — dobara save par 300 coins lagein ge.')
+              : 'Ye settings sirf is session ke liye hain. Save karein to 7 din tak mehfooz rahengi — us ke baad khatam, dobara banana hoga.',
+          style: const TextStyle(fontSize: 12, color: Colors.grey),
+        ),
+        const SizedBox(height: 6),
+        OutlinedButton.icon(
+          key: const Key('logoPartsSaveButton'),
+          onPressed: _partsBusy ? null : _saveLogoParts,
+          icon: const Icon(Icons.save_outlined, size: 18),
+          label: const Text('Save karein — $kLogoPartsSavePriceCoins coins (7 din)'),
+        ),
+      ],
+    ];
+  }
+
+  /// One part's controls row (point 6): thumbnail, rotate
+  /// switch, direction chips, speed chips, merge-up button.
+  Widget _logoPartRow(ChannelPreset preset, int i) {
+    final part = preset.logoParts[i];
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF12151C),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0x1FFFFFFF)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF181828),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: File(part.imagePath).existsSync()
+                    ? Image.file(File(part.imagePath), fit: BoxFit.contain)
+                    : const Icon(Icons.broken_image_outlined, size: 18),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  part.name,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+              if (i > 0)
+                TextButton(
+                  key: Key('logoPartMerge-$i'),
+                  onPressed: _partsBusy ? null : () => _mergeLogoPart(i),
+                  child: const Text('Upar walay mein merge'),
+                ),
+              Switch(
+                key: Key('logoPartRotate-$i'),
+                value: part.rotate,
+                onChanged: (v) => setState(() {
+                  preset.logoParts = [
+                    for (var j = 0; j < preset.logoParts.length; j++)
+                      j == i
+                          ? preset.logoParts[j].copyWith(rotate: v)
+                          : preset.logoParts[j],
+                  ];
+                }),
+              ),
+            ],
+          ),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                ChoiceChip(
+                  key: Key('logoPartDir-$i-cw'),
+                  label: const Text('Clockwise'),
+                  selected: part.direction != 'ccw',
+                  onSelected: (_) => setState(() {
+                    preset.logoParts = [
+                      for (var j = 0; j < preset.logoParts.length; j++)
+                        j == i
+                            ? preset.logoParts[j].copyWith(direction: 'cw')
+                            : preset.logoParts[j],
+                    ];
+                  }),
+                ),
+                const SizedBox(width: 6),
+                ChoiceChip(
+                  key: Key('logoPartDir-$i-ccw'),
+                  label: const Text('Anti'),
+                  selected: part.direction == 'ccw',
+                  onSelected: (_) => setState(() {
+                    preset.logoParts = [
+                      for (var j = 0; j < preset.logoParts.length; j++)
+                        j == i
+                            ? preset.logoParts[j].copyWith(direction: 'ccw')
+                            : preset.logoParts[j],
+                    ];
+                  }),
+                ),
+                const SizedBox(width: 10),
+                const Text('Speed:', style: TextStyle(fontSize: 12)),
+                const SizedBox(width: 6),
+                for (final s in kLogoPartSpeeds) ...[
+                  ChoiceChip(
+                    key: Key('logoPartSpeed-$i-${s.toInt()}'),
+                    label: Text('${s.toInt()}s'),
+                    selected: part.speedSec == s,
+                    onSelected: (_) => setState(() {
+                      preset.logoParts = [
+                        for (var j = 0; j < preset.logoParts.length; j++)
+                          j == i
+                              ? preset.logoParts[j].copyWith(speedSec: s)
+                              : preset.logoParts[j],
+                      ];
+                    }),
+                  ),
+                  const SizedBox(width: 6),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Point 6: run the automatic split on the preset's logo.
+  Future<void> _splitLogoParts() async {
+    final preset = _preset;
+    if (preset == null || preset.logoPath == null) return;
+    setState(() => _partsBusy = true);
+    try {
+      final parts = await LogoPartsService.splitLogoFile(
+        File(preset.logoPath!),
+        maxParts: _partsCount,
+      );
+      if (!mounted) return;
+      setState(() {
+        preset.logoParts = parts;
+        preset.logoPartsSourcePath = preset.logoPath;
+        _partsBusy = false;
+      });
+      _showMessage(
+        parts.isEmpty
+            ? 'Parts nahi ban sakay — logo ki tasveer se hisay saaf nahi mile.'
+            : '${parts.length} parts ban gaye — har hisay ki rotation set karein.',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _partsBusy = false);
+      _showMessage('Split fail ho gaya: $e');
+    }
+  }
+
+  /// Point 6: merge part [i] into part i−1 (the split
+  /// adjustment the user asked for).
+  Future<void> _mergeLogoPart(int i) async {
+    final preset = _preset;
+    if (preset == null || i <= 0 || i >= preset.logoParts.length) return;
+    setState(() => _partsBusy = true);
+    try {
+      final prev = preset.logoParts[i - 1];
+      final part = preset.logoParts[i];
+      final dir = File(prev.imagePath).parent;
+      final out = File(
+        p.join(
+          dir.path,
+          'merged_${DateTime.now().millisecondsSinceEpoch}.png',
+        ),
+      );
+      final ok = await LogoPartsService.mergePartFiles(
+        File(prev.imagePath),
+        File(part.imagePath),
+        out,
+      );
+      if (!mounted) return;
+      if (!ok) {
+        setState(() => _partsBusy = false);
+        _showMessage('Merge nahi ho saka — dobara try karein.');
+        return;
+      }
+      setState(() {
+        final merged = LogoPart(
+          id: prev.id,
+          name: '${prev.name} + ${part.name}',
+          imagePath: out.path,
+          rotate: prev.rotate,
+          direction: prev.direction,
+          speedSec: prev.speedSec,
+          centreX: (prev.centreX + part.centreX) / 2,
+          centreY: (prev.centreY + part.centreY) / 2,
+        );
+        preset.logoParts = [
+          for (var j = 0; j < preset.logoParts.length; j++)
+            if (j == i - 1) merged else if (j != i) preset.logoParts[j],
+        ];
+        _partsBusy = false;
+      });
+      _showMessage('Parts merge ho gaye.');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _partsBusy = false);
+      _showMessage('Merge fail ho gaya: $e');
+    }
+  }
+
+  /// Point 6: the paid save — confirm, charge 300 coins ONLY
+  /// on the success path, then persist the payload + timestamp
+  /// (usable exactly 7 days; expiry removes it — no renewal).
+  Future<void> _saveLogoParts() async {
+    final preset = _preset;
+    if (preset == null || preset.logoParts.isEmpty) return;
+    if (CoinService.instance.isAdminNow) {
+      _applyPartsSave(preset);
+      return;
+    }
+    final balance = CoinService.instance.balance.value;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Logo Parts Save'),
+        content: Text(
+          'Parts settings save karne ke $kLogoPartsSavePriceCoins coins '
+          'lagein ge.\nSave 7 din tak valid rahe ga — us ke baad settings '
+          'khatam ho jayengi.\nAap ka balance: $balance coins.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Later'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Save — $kLogoPartsSavePriceCoins coins'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final res = await CoinService.instance.spendAmount(
+      kLogoPartsSavePriceCoins,
+      reason: kLogoPartsSaveReason,
+      idempotencyKey: 'logo_parts_save:${preset.id}:$now',
+    );
+    if (!mounted) return;
+    if (!res.ok) {
+      _showMessage(
+        res.error == 'insufficient_balance'
+            ? AiToolCharge.insufficientMessage
+            : 'Payment nahi ho saka — dobara try karein.',
+      );
+      return;
+    }
+    _applyPartsSave(preset, nowMs: now);
+  }
+
+  void _applyPartsSave(ChannelPreset preset, {int? nowMs}) {
+    final now = nowMs ?? DateTime.now().millisecondsSinceEpoch;
+    setState(() {
+      preset.logoPartsSavedJson = encodeLogoParts(preset.logoParts);
+      preset.logoPartsSavedAtMs = now;
+    });
+    unawaited(persistPresetChange(preset));
+    _showMessage('Parts save ho gaye — 7 din tak valid hain.');
+  }
+
+  /// Build 13 (point 6): the Permanent Logo section — a
+  /// standalone green-screen export of the configured animated
+  /// logo, sold MANUALLY (Rs 200 Easypaisa, the Pro pattern)
+  /// and gated by the owner-granted entitlement.
+  List<Widget> _permanentLogoSection(ChannelPreset preset) {
+    final config = RemoteConfigService.instance.config;
+    final email = SupabaseService.currentUser?.email;
+    return [
+      const Text(
+        'Permanent Logo (Green Screen Export)',
+        style: TextStyle(fontWeight: FontWeight.bold),
+      ),
+      const SizedBox(height: 4),
+      ValueListenableBuilder<bool>(
+        valueListenable: PermanentLogoService.instance.entitled,
+        builder: (context, entitled, _) {
+          if (entitled) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Permanent Logo ON hai — aap ka animated logo akela '
+                  'green screen par export ho sakta hai.',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  key: const Key('permanentLogoExportButton'),
+                  onPressed: _permBusy ? null : _exportPermanentLogo,
+                  icon: const Icon(Icons.movie_creation_outlined, size: 18),
+                  label: Text(
+                    _permBusy
+                        ? 'Export ho raha hai…'
+                        : 'Green Screen Logo Export',
+                  ),
+                ),
+              ],
+            );
+          }
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Price: Rs ${PermanentLogoService.priceRupees} (one-time)\n'
+                'Easypaisa: ${config.easypaisaNumber} (${config.easypaisaTitle})\n'
+                'Aap ka login email: ${email ?? '— (pehle login karein)'}',
+                style: const TextStyle(fontSize: 12.5, height: 1.5),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Tareeqa: Rs 200 is Easypaisa number par bhejein aur '
+                'reference mein apna login email likhein. Phir payment '
+                'ka screenshot isi number par WhatsApp kar dein — owner '
+                'verify karke aap ka Permanent Logo on kar de ga.',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+              const SizedBox(height: 6),
+              TextButton.icon(
+                key: const Key('permanentLogoRecheckButton'),
+                onPressed: () =>
+                    unawaited(PermanentLogoService.instance.refresh()),
+                icon: const Icon(Icons.refresh, size: 16),
+                label: const Text('Dobara check karein'),
+              ),
+            ],
+          );
+        },
+      ),
+    ];
+  }
+
+  /// Point 6: renders the configured animated logo BY ITSELF on
+  /// a green screen (parts when configured, else the cube) and
+  /// saves the MP4 to the gallery.
+  Future<void> _exportPermanentLogo() async {
+    final preset = _preset;
+    if (preset == null) return;
+    if (preset.logoPath == null && preset.logoParts.isEmpty) {
+      _showMessage('Pehle logo select karein.');
+      return;
+    }
+    setState(() => _permBusy = true);
+    try {
+      final docs = await getApplicationDocumentsDirectory();
+      final dir = Directory(
+        p.join(
+          docs.path,
+          'permanent_logo_${DateTime.now().millisecondsSinceEpoch}',
+        ),
+      );
+      await dir.create(recursive: true);
+      final framesDir = Directory(p.join(dir.path, 'frames'));
+      final outFile = p.join(dir.path, 'permanent_logo.mp4');
+      final String command;
+      if (preset.logoParts.isNotEmpty) {
+        await LogoPartsService.generatePartsFrames(
+          parts: preset.logoParts,
+          outDir: framesDir,
+          greenScreen: true,
+        );
+        command = FfmpegService.logoGreenScreenCommand(
+          framesDir: framesDir.path,
+          output: outFile,
+          durationSec: kLogoPartsLoopSec,
+        );
+      } else {
+        await LogoLoopService.generateFrames(
+          logoFile: File(preset.logoPath!),
+          outDir: framesDir,
+          facePaths: preset.logoCubeFacePaths,
+          tiltX: preset.logoCubeTilt,
+          speedSec: preset.logoCubeSpeedSec,
+          clockwise: preset.logoCubeDirection != 'ccw',
+          pedestal: preset.logoCubePedestal,
+        );
+        command = FfmpegService.logoGreenCompositeCommand(
+          framesDir: framesDir.path,
+          output: outFile,
+          durationSec: preset.logoCubeSpeedSec,
+        );
+      }
+      final res = await FfmpegService.run(command);
+      if (!mounted) return;
+      if (!res.ok) {
+        setState(() => _permBusy = false);
+        _showMessage('Export fail ho gaya — dobara try karein.');
+        return;
+      }
+      await Gal.putVideo(outFile);
+      if (!mounted) return;
+      setState(() => _permBusy = false);
+      _showMessage('Permanent logo gallery mein save ho gaya.');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _permBusy = false);
+      _showMessage('Export fail ho gaya: $e');
+    }
+  }
+
+  /// Build 13 (point #19): one cube-face tile in the Logo
+  /// panel — shows the face's own image when one is picked,
+  /// otherwise the main logo (what the face will actually
+  /// carry). Tap = pick this face's image; the small x clears
+  /// it back to the main logo.
+  Widget _logoFaceTile(ChannelPreset preset, String face) {
+    final facePath = preset.logoCubeFacePaths[face];
+    final shown = facePath ?? preset.logoPath;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        InkWell(
+          key: Key('logoFace-$face'),
+          onTap: () => _pickCubeFace(face),
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              color: const Color(0xFF181828),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: facePath != null
+                    ? const Color(0xFFFFC800)
+                    : const Color(0x1FFFFFFF),
+              ),
+            ),
+            child: shown != null && File(shown).existsSync()
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.file(File(shown), fit: BoxFit.cover),
+                  )
+                : const Icon(Icons.image_outlined,
+                    color: Colors.grey, size: 20),
+          ),
+        ),
+        const SizedBox(height: 2),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              face.toUpperCase(),
+              style: const TextStyle(fontSize: 9.5, color: Color(0xFF8A919C)),
+            ),
+            if (facePath != null)
+              InkWell(
+                key: Key('logoFaceClear-$face'),
+                onTap: () => _updatePreset(() {
+                  final next =
+                      Map<String, String>.of(preset.logoCubeFacePaths);
+                  next.remove(face);
+                  preset.logoCubeFacePaths = next;
+                }),
+                child: const Icon(Icons.close, size: 12, color: Colors.grey),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// Build 13 (point #19): pick one cube face's image (copied
+  /// into the app's logo folder, like the main logo pick).
+  Future<void> _pickCubeFace(String face) async {
+    final preset = _preset;
+    if (preset == null) return;
+    final picked = await FilePicker.pickFiles(type: FileType.image);
+    if (picked.isEmpty || picked.first.path == null) return;
+    try {
+      final docs = await getApplicationDocumentsDirectory();
+      final dir = Directory(p.join(docs.path, 'news_logos'));
+      if (!await dir.exists()) await dir.create(recursive: true);
+      final ext = p.extension(picked.first.path!);
+      final dest = p.join(
+        dir.path,
+        'logo_face_${face}_${DateTime.now().millisecondsSinceEpoch}$ext',
+      );
+      await File(picked.first.path!).copy(dest);
+      _updatePreset(() {
+        preset.logoCubeFacePaths = {
+          ...preset.logoCubeFacePaths,
+          face: dest,
+        };
+      });
+      _showMessage('Cube ki $face side par tasveer lag gayi.');
+    } catch (e) {
+      _showMessage('Face ki tasveer nahi lagi: $e');
+    }
   }
 
   Future<void> _pickLogo() async {
@@ -4212,6 +5364,26 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           setState(() => project.reporterName = v);
           _scheduleSave();
         },
+      ),
+      const SizedBox(height: 10),
+      // Build 13 (point 4): Teleprompter — the project's script
+      // scrolls over the camera while the reporter records
+      // (front camera, the Live Studio camera stack). The
+      // finished recording joins the project's clips.
+      SizedBox(
+        width: double.infinity,
+        child: OutlinedButton.icon(
+          key: const Key('reporterTeleprompterButton'),
+          onPressed: _openTeleprompter,
+          icon: Image.asset(
+            'assets/ns_icons/teleprompter.png',
+            width: 22,
+            height: 22,
+            errorBuilder: (context, error, stack) =>
+                const Icon(Icons.subtitles_outlined, size: 20),
+          ),
+          label: const Text('Teleprompter — script parh kar record karein'),
+        ),
       ),
       const SizedBox(height: 14),
       Row(
@@ -4418,6 +5590,26 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         ),
       ],
     ]);
+  }
+
+  /// Build 13 (point 4): opens the teleprompter with the
+  /// project's tehreer as the scrolling script; a finished
+  /// recording is added to the project's clips.
+  Future<void> _openTeleprompter() async {
+    final project = _project;
+    if (project == null) return;
+    final path = await Navigator.of(context).push<String>(
+      MaterialPageRoute<String>(
+        builder: (_) =>
+            TeleprompterScreen(scriptText: project.tehreer),
+      ),
+    );
+    if (path == null || !mounted) return;
+    setState(() {
+      project.addClips([path]);
+    });
+    _scheduleSave();
+    _showMessage('Reporter recording clips mein shamil ho gayi.');
   }
 
   Future<void> _pickReporterPhoto() async {
@@ -4677,6 +5869,29 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             ],
           ],
         ),
+      ),
+      // Build 13 (point 5): Auto Ducking — the export ducks
+      // the music bed under the voiceover (sidechain) instead
+      // of holding it at a fixed level. Default ON; OFF keeps
+      // the pre-Build-13 fixed-level mix exactly.
+      SwitchListTile(
+        key: const Key('audioDuckingSwitch'),
+        secondary: Image.asset(
+          'assets/ns_icons/ducking.png',
+          width: 26,
+          height: 26,
+          errorBuilder: (context, error, stack) =>
+              const Icon(Icons.graphic_eq, size: 22),
+        ),
+        title: const Text('Auto Ducking (music awaz ke neeche)'),
+        subtitle: const Text(
+          'Voiceover ke neeche music khud halka ho jata hai',
+        ),
+        value: project.musicDucking,
+        onChanged: (v) {
+          setState(() => project.musicDucking = v);
+          _scheduleSave();
+        },
       ),
       const SizedBox(height: 14),
       const Text(
@@ -5072,6 +6287,72 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             key: const Key('captionsButton'),
             onPressed: _openCaptions,
             child: const Text('Captions →'),
+          ),
+        ],
+      ),
+      const SizedBox(height: 10),
+      // Build 13 (point #16): the timing-source line — honest
+      // labelling of WHERE the word timings came from, with the
+      // stale badge when the script/voiceover changed after a
+      // Whisper alignment.
+      Row(
+        children: [
+          Icon(
+            project.captionTimingSource == 'whisper'
+                ? Icons.verified_outlined
+                : Icons.timelapse_outlined,
+            size: 15,
+            color: project.captionTimingsStale
+                ? const Color(0xFFFFC800)
+                : const Color(0xFF8A919C),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              key: const Key('captionTimingStatus'),
+              project.captionTimingsStale
+                  ? 'Timings: ASAL (Whisper) thay — tehreer ya '
+                      'voiceover badal gaya hai, dobara Asal '
+                      'timings dabayein.'
+                  : project.captionTimingSource == 'whisper'
+                      ? 'Timings: ASAL (Whisper) — har lafz apne '
+                          'real waqt par hai.'
+                      : 'Timings: ESTIMATE — voiceover ki length '
+                          'se andaza lagaya gaya hai.',
+              style: TextStyle(
+                color: project.captionTimingsStale
+                    ? const Color(0xFFFFC800)
+                    : const Color(0xFF8A919C),
+                fontSize: 12,
+              ),
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 8),
+      Row(
+        children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              key: const Key('captionsAlignButton'),
+              onPressed: _alignBusy ||
+                      project.voiceoverPath == null ||
+                      project.subtitles.isEmpty
+                  ? null
+                  : () => _runCaptionAlignment(project),
+              icon: _alignBusy
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.hearing_outlined, size: 17),
+              label: Text(
+                _alignBusy
+                    ? 'Whisper sun raha hai…'
+                    : 'Asal timings (Whisper)',
+              ),
+            ),
           ),
         ],
       ),

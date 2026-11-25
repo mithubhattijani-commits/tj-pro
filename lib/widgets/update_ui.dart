@@ -152,6 +152,19 @@ class UpdateProgressBar extends StatelessWidget {
                               : null,
                           minHeight: 4,
                         ),
+                        // Build 13 (point #18): WHY the download
+                        // is paused, in the user's words — the
+                        // frozen-percent complaint's direct fix.
+                        if (state.statusNote != null) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            state.statusNote!,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -203,10 +216,13 @@ class UpdateProgressBar extends StatelessWidget {
                 children: [
                   const Icon(Icons.error_outline, size: 18),
                   const SizedBox(width: 8),
-                  const Expanded(
+                  Expanded(
                     child: Text(
-                      'Update download nahi ho saka.',
-                      style: TextStyle(fontSize: 12),
+                      state.statusNote == null
+                          ? 'Update download nahi ho saka.'
+                          : 'Update download nahi ho saka. '
+                              '${state.statusNote}',
+                      style: const TextStyle(fontSize: 12),
                     ),
                   ),
                   TextButton(

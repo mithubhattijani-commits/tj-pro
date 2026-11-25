@@ -817,6 +817,15 @@ class FileCaptionEngine {
   static const _modelUrl =
       'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin';
 
+  /// Build 13 (point #16): THE Whisper model config point — the
+  /// one place the transcription model is chosen for this
+  /// engine. Stock tiny today (its timestamps are trained by
+  /// construction); a later build can swap in stock small here
+  /// without touching any caller. Urdu fine-tunes were audited
+  /// and rejected — their timestamp training is disabled or
+  /// unproven (see NS-WHISPER-WIRING-AUDIT.md).
+  static const WhisperModel whisperModel = WhisperModel.tiny;
+
   /// Makes sure the tiny model exists at the plugin's model path.
   /// Downloads to a `.part` file first and renames on success, so an
   /// interrupted download never leaves a corrupt model behind.
@@ -825,7 +834,7 @@ class FileCaptionEngine {
     void Function(double progress)? onModelDownloadProgress,
   }) async {
     final controller = WhisperController();
-    final modelPath = await controller.getPath(WhisperModel.tiny);
+    final modelPath = await controller.getPath(whisperModel);
     final modelFile = File(modelPath);
     if (await modelFile.exists() && await modelFile.length() > 0) return;
     try {
@@ -859,7 +868,7 @@ class FileCaptionEngine {
       // Own download failed: fall back to the plugin's one-time
       // download instead of failing outright.
       try {
-        await controller.downloadModel(WhisperModel.tiny);
+        await controller.downloadModel(whisperModel);
       } catch (_) {
         // Transcribe below will surface the real error.
       }
@@ -923,7 +932,7 @@ class FileCaptionEngine {
     }
     final controller = WhisperController();
     final result = await controller.transcribe(
-      model: WhisperModel.tiny,
+      model: whisperModel,
       audioPath: wavPath,
       lang: lang,
       withTimestamps: true,
@@ -938,6 +947,66 @@ class FileCaptionEngine {
       final end = s.toTs.inMilliseconds / 1000.0;
       if (end <= start) continue;
       out.add(CaptionSegment(text, start, end));
+    }
+    return out;
+  }
+
+  /// Build 13 (point #16): WORD-timing transcription — the entry
+  /// point the News Studio caption engine was missing. With
+  /// `splitOnWord: true` the plugin's native side sets
+  /// whisper.cpp's `max_len = 1` (and disables VAD for stable
+  /// timestamps), so every returned segment is ONE word carrying
+  /// REAL spoken timings. The recognised TEXT is phonetic and is
+  /// never displayed — callers feed the words to the script
+  /// aligner (`lib/news/script_aligner.dart`), which keeps the
+  /// project's own script authoritative and borrows only these
+  /// timings.
+  ///
+  /// [audioPath] may be any FFmpeg-readable file (the voiceover
+  /// WAV/MP3); it is normalised to 16 kHz mono WAV first via
+  /// [extractAudio] over its full length. Returns timed words in
+  /// spoken order; an empty list means no usable speech timings
+  /// (callers fall back to the estimator, honestly labelled).
+  static Future<List<CaptionWord>> transcribeWords({
+    required String audioPath,
+    required Directory workDir,
+    String lang = 'ur',
+    void Function(double progress)? onModelDownloadProgress,
+  }) async {
+    try {
+      await _ensureModel(
+        onModelDownloadProgress: onModelDownloadProgress,
+      );
+    } catch (_) {
+      // Model prep failed: transcribe below surfaces the real error.
+    }
+    // Full-length extraction: -to far beyond any voiceover's
+    // real end simply stops at EOF (voiceovers are minutes, not
+    // hours); expectedMs inside extractAudio is only a progress
+    // hint.
+    final wav = await extractAudio(
+      inputPath: audioPath,
+      trimStart: 0,
+      trimEnd: 3600,
+      dir: workDir,
+    );
+    final controller = WhisperController();
+    final result = await controller.transcribe(
+      model: whisperModel,
+      audioPath: wav.path,
+      lang: lang,
+      withTimestamps: true,
+      splitOnWord: true,
+      convert: false,
+    );
+    final out = <CaptionWord>[];
+    for (final s in result?.transcription.segments ?? []) {
+      final text = s.text.trim();
+      if (text.isEmpty) continue;
+      final start = s.fromTs.inMilliseconds / 1000.0;
+      final end = s.toTs.inMilliseconds / 1000.0;
+      if (end < start) continue;
+      out.add(CaptionWord(word: text, start: start, end: end));
     }
     return out;
   }

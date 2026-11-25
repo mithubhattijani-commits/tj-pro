@@ -30,6 +30,7 @@ import '../../live/parity_template.dart';
 import '../../services/asset_download_service.dart';
 import '../channel_preset.dart';
 import '../element_override.dart';
+import '../logo_parts.dart';
 import '../watermark.dart';
 import 'keyed_logo_flipbook.dart';
 import 'pip_inset.dart';
@@ -50,12 +51,18 @@ class ScrollingTickerText extends StatefulWidget {
     required this.speed,
     required this.direction,
     required this.style,
+    this.loop = true,
   });
 
   final String text;
   final double speed;
   final RibbonDirection direction;
   final TextStyle style;
+
+  /// Build 13 (point #19): false = scroll ONE pass, then hold
+  /// (the project's ticker-loop setting). Default true = the
+  /// historic seamless loop.
+  final bool loop;
 
   @override
   State<ScrollingTickerText> createState() => _ScrollingTickerTextState();
@@ -82,7 +89,8 @@ class _ScrollingTickerTextState extends State<ScrollingTickerText>
     if (oldWidget.text != widget.text ||
         oldWidget.speed != widget.speed ||
         oldWidget.direction != widget.direction ||
-        oldWidget.style != widget.style) {
+        oldWidget.style != widget.style ||
+        oldWidget.loop != widget.loop) {
       WidgetsBinding.instance.addPostFrameCallback(
         (_) => _measureAndRestart(),
       );
@@ -116,7 +124,11 @@ class _ScrollingTickerTextState extends State<ScrollingTickerText>
     final seconds = (distance / pxPerSec).clamp(3.0, 180.0);
     _controller.duration =
         Duration(milliseconds: (seconds * 1000).round());
-    _controller.repeat();
+    if (widget.loop) {
+      _controller.repeat();
+    } else {
+      _controller.forward(from: 0);
+    }
   }
 
   @override
@@ -319,6 +331,8 @@ class NigraanFinalPreview extends StatelessWidget {
       1920,
       variant: isFinal3 ? ParityVariant.final3 : ParityVariant.classic2,
       overrides: elementOverrides,
+      tickerSpeedFactor: preset.tickerSpeedFactor,
+      tickerLoop: preset.tickerLoop,
     );
     // #33 helpers: per-element override + the manual offsets in
     // preview pixels (all zero when no override is set).
@@ -547,6 +561,7 @@ class NigraanFinalPreview extends StatelessWidget {
           rtl: true,
           speedPxPerSec: g.scrollSpeed * scaleW,
           style: style,
+          loop: g.tickerLoop,
         ),
       );
     }
@@ -598,9 +613,11 @@ class NigraanFinalPreview extends StatelessWidget {
                         padding: const EdgeInsets.symmetric(horizontal: 8),
                         child: ScrollingTickerText(
                           text: preset.topRibbon.text,
-                          speed: preset.topRibbon.speed,
+                          speed: preset.topRibbon.speed *
+                              preset.tickerSpeedFactor,
                           direction: preset.topRibbon.direction,
                           style: topStyle(preset.topRibbon, tickerH),
+                          loop: preset.tickerLoop,
                         ),
                       ),
                     ),
@@ -841,6 +858,7 @@ class NigraanFinalPreview extends StatelessWidget {
                                             rtl: true,
                                             speedPxPerSec:
                                                 g.scrollSpeed * scaleW,
+                                            loop: g.tickerLoop,
                                             style: TextStyle(
                                               color: headlineTextColor != null
                                                   ? Color(headlineTextColor!)
@@ -940,6 +958,7 @@ class NigraanFinalPreview extends StatelessWidget {
                                             rtl: false,
                                             speedPxPerSec:
                                                 g.scrollSpeed * scaleW,
+                                            loop: g.tickerLoop,
                                             style: TextStyle(
                                               color: tickerTextColor !=
                                                       null
@@ -967,6 +986,7 @@ class NigraanFinalPreview extends StatelessWidget {
                                       rtl: false,
                                       speedPxPerSec:
                                           g.scrollSpeed * scaleW,
+                                            loop: g.tickerLoop,
                                       style: TextStyle(
                                         color: tickerTextColor != null
                                             ? Color(tickerTextColor!)
@@ -1024,6 +1044,7 @@ class NigraanFinalPreview extends StatelessWidget {
                                             rtl: false,
                                             speedPxPerSec:
                                                 g.scrollSpeed * scaleW,
+                                            loop: g.tickerLoop,
                                             style: TextStyle(
                                               color: tickerTextColor !=
                                                       null
@@ -1096,6 +1117,12 @@ class NigraanFinalPreview extends StatelessWidget {
               logoMediaKind: preset.logoMediaKind,
               keyedFramesDir: preset.logoKeyedFramesDir,
               videoStillPath: preset.logoVideoStillPath,
+              cubeFacePaths: preset.logoCubeFacePaths,
+              cubeTiltX: preset.logoCubeTilt,
+              cubeSpeedSec: preset.logoCubeSpeedSec,
+              cubeClockwise: preset.logoCubeDirection != 'ccw',
+              cubePedestal: preset.logoCubePedestal,
+              parts: preset.logoParts,
             ),
           ),
           if (!capOv.hidden)
@@ -1192,6 +1219,12 @@ class _ParityLogoBox extends StatelessWidget {
     this.logoMediaKind = 'image',
     this.keyedFramesDir,
     this.videoStillPath,
+    this.cubeFacePaths = const {},
+    this.cubeTiltX = 0.0,
+    this.cubeSpeedSec = 6,
+    this.cubeClockwise = true,
+    this.cubePedestal = false,
+    this.parts = const [],
   });
 
   final String? logoPath;
@@ -1218,6 +1251,17 @@ class _ParityLogoBox extends StatelessWidget {
   final String logoMediaKind;
   final String? keyedFramesDir;
   final String? videoStillPath;
+
+  /// Build 13 (point #19): the preset's Logo Cube settings,
+  /// passed through to the cube (image source only).
+  final Map<String, String> cubeFacePaths;
+  final double cubeTiltX;
+  final double cubeSpeedSec;
+  final bool cubeClockwise;
+  final bool cubePedestal;
+
+  /// Build 13 (point 6): the preset's working logo parts.
+  final List<LogoPart> parts;
 
   @override
   Widget build(BuildContext context) {
@@ -1252,6 +1296,12 @@ class _ParityLogoBox extends StatelessWidget {
             initial: initial,
             size: width,
             animate: rotate,
+            facePaths: cubeFacePaths,
+            tiltX: cubeTiltX,
+            speedSec: cubeSpeedSec,
+            clockwise: cubeClockwise,
+            pedestal: cubePedestal,
+            parts: parts,
           ),
         ),
       );
@@ -1401,12 +1451,16 @@ class _ParityScrollText extends StatefulWidget {
     required this.rtl,
     required this.speedPxPerSec,
     required this.style,
+    this.loop = true,
   });
 
   final String text;
   final bool rtl;
   final double speedPxPerSec;
   final TextStyle style;
+
+  /// Build 13 (point #19): false = one pass, then hold.
+  final bool loop;
 
   @override
   State<_ParityScrollText> createState() => _ParityScrollTextState();
@@ -1427,7 +1481,10 @@ class _ParityScrollTextState extends State<_ParityScrollText>
   @override
   void didUpdateWidget(_ParityScrollText oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.text != widget.text || oldWidget.style != widget.style) {
+    if (oldWidget.text != widget.text ||
+        oldWidget.style != widget.style ||
+        oldWidget.loop != widget.loop ||
+        oldWidget.speedPxPerSec != widget.speedPxPerSec) {
       WidgetsBinding.instance
           .addPostFrameCallback((_) => _measureAndRestart());
     }
@@ -1451,7 +1508,11 @@ class _ParityScrollTextState extends State<_ParityScrollText>
     final speed = widget.speedPxPerSec <= 0 ? 20.0 : widget.speedPxPerSec;
     _controller.duration =
         Duration(milliseconds: (_seqW / speed * 1000).round());
-    _controller.repeat();
+    if (widget.loop) {
+      _controller.repeat();
+    } else {
+      _controller.forward(from: 0);
+    }
   }
 
   @override

@@ -28,6 +28,7 @@ import 'services/banner_booking_service.dart';
 import 'services/coin_service.dart';
 import 'services/crash_guard.dart';
 import 'services/crash_reporter.dart';
+import 'services/permanent_logo_service.dart';
 import 'services/pro_service.dart';
 import 'services/hero_banner_cache.dart';
 import 'services/performance_engine.dart';
@@ -102,6 +103,10 @@ Future<void> main() async {
       // Pro (v1.4.0): load the Pro entitlement next to the coin balance.
       // Fully fail-soft — no table / offline means free mode.
       await ProService.instance.init();
+      // Permanent Logo (Build 13, point 6): the owner-granted
+      // green-screen export entitlement, the Pro pattern.
+      // Fully fail-soft — no table / offline means not entitled.
+      await PermanentLogoService.instance.init();
       // Share & Earn (v1.3.0): referral capture (deep link / clipboard),
       // first-ad hook, and the on-open reward claim. Fully fail-soft and
       // backgrounded — it can never delay or break startup.

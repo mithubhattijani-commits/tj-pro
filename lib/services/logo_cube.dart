@@ -64,6 +64,28 @@ const int kCubeFaceLeft = 3; // -X
 const int kCubeFaceTop = 4; // +Y
 const int kCubeFaceBottom = 5; // -Y
 
+/// Build 13 (point #19): the per-face settings keys (the Logo
+/// panel's face names, in face-index order) — ChannelPreset
+/// .logoCubeFacePaths is keyed by these.
+const List<String> kLogoCubeFaceKeys = [
+  'front',
+  'right',
+  'back',
+  'left',
+  'top',
+  'bottom',
+];
+
+/// The face index for a [kLogoCubeFaceKeys] key, or -1.
+int logoCubeFaceIndex(String key) => kLogoCubeFaceKeys.indexOf(key);
+
+/// Build 13 (point #19): the signed rotation angle for a spin
+/// direction — clockwise keeps the historic positive sweep,
+/// counter-clockwise negates it. Preview and export both route
+/// through this so the direction can never drift apart.
+double logoCubeAngleFor(double progress, {required bool clockwise}) =>
+    logoCubeAngle(progress) * (clockwise ? 1 : -1);
+
 /// The continuous rotation angle (radians) at [progress]
 /// (0..1 of one revolution): a plain linear sweep 0 → 2π.
 /// Frame N of a loop and frame 0 are the same angle, so the
@@ -176,17 +198,19 @@ List<ui.Offset> _faceUvs(_FaceDef def, double texW, double texH) {
       .toList();
 }
 
-_Vec3 _rotate(_Vec3 p, double angleY) {
+_Vec3 _rotate(_Vec3 p, double angleY, double tiltX) {
   final cy = math.cos(angleY);
   final sy = math.sin(angleY);
-  // Rotate about Y first (the spin), then tilt about X (the
-  // fixed broadcast tilt — always around the screen's
-  // horizontal axis).
+  // Rotate about Y first (the spin), then tilt about X — always
+  // around the screen's horizontal axis. Build 13 (point #19):
+  // the tilt is the USER's view control now (default 0 =
+  // 'Samne'); callers that pass nothing get the historic fixed
+  // broadcast tilt [kLogoCubeTiltX].
   final x1 = p.x * cy + p.z * sy;
   final z1 = -p.x * sy + p.z * cy;
   final y1 = p.y;
-  final cx = math.cos(kLogoCubeTiltX);
-  final sx = math.sin(kLogoCubeTiltX);
+  final cx = math.cos(tiltX);
+  final sx = math.sin(tiltX);
   final y2 = y1 * cx - z1 * sx;
   final z2 = y1 * sx + z1 * cx;
   return _Vec3(x1, y2, z2);
@@ -202,10 +226,11 @@ List<LogoCubeFace> logoCubeFaces({
   required double size,
   required double textureWidth,
   required double textureHeight,
+  double tiltX = kLogoCubeTiltX,
 }) {
   final faces = <LogoCubeFace>[];
   for (final def in _faceDefs) {
-    final normal = _rotate(def.normal, angleY);
+    final normal = _rotate(def.normal, angleY, tiltX);
     // Camera looks down -Z from +Z: a face is visible when its
     // rotated outward normal points TOWARD the camera (+Z).
     if (normal.z <= 0.02) continue;
@@ -213,7 +238,7 @@ List<LogoCubeFace> logoCubeFaces({
     final projected = <ui.Offset>[];
     var depthSum = 0.0;
     for (final c in corners3) {
-      final r = _rotate(c, angleY);
+      final r = _rotate(c, angleY, tiltX);
       final d = kLogoCubeFocal - r.z;
       final px = r.x * kLogoCubeFocal / d;
       final py = r.y * kLogoCubeFocal / d;
@@ -249,23 +274,68 @@ void paintLogoCube(
   required double size,
   required double angleY,
   required ui.Image texture,
+  double tiltX = kLogoCubeTiltX,
+  Map<int, ui.Image>? faceTextures,
+  bool pedestal = false,
 }) {
+  // Build 13 (point #19): the optional pedestal — a dark base
+  // plate with a gold rim under the cube, drawn first so the
+  // cube sits ON it. Off by default (no pedestal existed
+  // before Build 13, so the default look is unchanged).
+  if (pedestal) {
+    final plateRect = ui.Rect.fromCenter(
+      center: ui.Offset(center.dx, center.dy + size * 0.66),
+      width: size * 1.25,
+      height: size * 0.26,
+    );
+    canvas.drawOval(
+      plateRect,
+      ui.Paint()
+        ..color = const ui.Color(0xE61A1D24)
+        ..isAntiAlias = true,
+    );
+    canvas.drawOval(
+      plateRect,
+      ui.Paint()
+        ..style = ui.PaintingStyle.stroke
+        ..strokeWidth = (size * 0.02).clamp(1.0, 4.0)
+        ..color = const ui.Color(0xFFFFC800)
+        ..isAntiAlias = true,
+    );
+  }
   final faces = logoCubeFaces(
     angleY: angleY,
     center: center,
     size: size,
     textureWidth: texture.width.toDouble(),
     textureHeight: texture.height.toDouble(),
+    tiltX: tiltX,
   );
-  final shader = ui.ImageShader(
-    texture,
-    ui.TileMode.clamp,
-    ui.TileMode.clamp,
-    _identityMatrix,
-  );
+  // Build 13 (point #19): per-face textures — a face with its
+  // own image uses it (with ITS dimensions as the UV space);
+  // every other face uses the main texture, exactly as before.
+  final shaders = <ui.Image, ui.ImageShader>{};
+  ui.ImageShader shaderFor(ui.Image img) => shaders.putIfAbsent(
+        img,
+        () => ui.ImageShader(
+          img,
+          ui.TileMode.clamp,
+          ui.TileMode.clamp,
+          _identityMatrix,
+        ),
+      );
   for (final face in faces) {
+    final faceTexture = faceTextures?[face.face] ?? texture;
+    // A face's own texture needs UVs in ITS pixel space; the
+    // projected corners/shading stay the main pass's.
+    final uv = faceTexture == texture
+        ? face.uvCorners
+        : _faceUvs(
+            _faceDefs[face.face],
+            faceTexture.width.toDouble(),
+            faceTexture.height.toDouble(),
+          );
     final c = face.corners;
-    final uv = face.uvCorners;
     final shade = (face.brightness * 255).round().clamp(0, 255);
     final color = ui.Color.fromARGB(255, shade, shade, shade);
     final vertices = ui.Vertices.raw(
@@ -287,7 +357,7 @@ void paintLogoCube(
       vertices,
       ui.BlendMode.modulate,
       ui.Paint()
-        ..shader = shader
+        ..shader = shaderFor(faceTexture)
         ..isAntiAlias = true,
     );
     // A hairline edge keeps the cube's faces readable against

@@ -257,5 +257,15 @@ ChannelPreset effectivePresetFor({
   }
   copy.templateKind = project.templateKind;
   copy.showBreakingBanner = project.breaking;
+  // Build 13 (point #19): the project's ticker speed + loop
+  // ride the copy as TRANSIENT fields (never serialised) — the
+  // parity geometry reads them from here, so preview (which
+  // applies the same rule in the Maker) and export agree.
+  copy.tickerSpeedFactor = project.tickerSpeed;
+  copy.tickerLoop = project.tickerLoop;
+  // Build 13 (point 6): the working logo parts ride the
+  // effective preset too (transient — see ChannelPreset).
+  copy.logoParts = preset.logoParts;
+  copy.logoPartsSourcePath = preset.logoPartsSourcePath;
   return copy;
 }

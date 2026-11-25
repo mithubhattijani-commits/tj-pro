@@ -25,16 +25,21 @@
 ///     absorbed there, never spread).
 ///
 /// This is line-level + word-level timing derived from the ACTUAL
-/// audio length. It is NOT per-word Whisper alignment: the voiceover
-/// is synthetic (Gemini), so there is no Whisper transcript of it to
-/// align against — the honest statement is "timings derived from the
-/// real WAV duration", and the code + screens say exactly that, never
-/// "Whisper word timings". (Whisper word timings DO exist for
-/// transcribed clips — see `CaptionService.wordStartOf` — and the ASS
-/// export prefers real `words` whenever a line carries them.)
+/// audio length. On its own it is NOT per-word Whisper alignment —
+/// the honest statement for estimator output is "timings derived
+/// from the real WAV duration", and the screens say exactly that.
+/// Build 13 (point #16) adds the REAL path alongside it: the
+/// voiceover is transcribed with word-split Whisper and the
+/// script is aligned onto those real timings by
+/// `script_aligner.dart` — see [resyncWithAlignedTimings] below
+/// and `caption_alignment.dart` for the orchestration. The
+/// project records which path produced its timings
+/// (NewsProject.captionTimingSource) and the UI labels them
+/// accordingly.
 library;
 
 import 'news_analysis.dart';
+import 'script_aligner.dart';
 
 /// Minimum readable duration of one subtitle line, when the total
 /// voiceover length allows every line to have it.
@@ -212,4 +217,70 @@ int subtitleLineAt(List<SubtitleLine> lines, double positionSeconds) {
     }
   }
   return -1;
+}
+
+/// Build 13 (point #16): re-times EXISTING lines from REAL aligned
+/// word timings. [aligned] is the flat result of
+/// [ScriptAligner.align] over the lines' own words, in the same
+/// order (the caller builds the flat script from these very lines,
+/// so the script — user edits included — stays authoritative and
+/// only timings change). Line boundaries follow the first/last
+/// word of each line; translations and texts are preserved
+/// verbatim. Returns [] when the inputs disagree in word count
+/// (the caller then keeps the old timings rather than guessing).
+List<SubtitleLine> resyncWithAlignedTimings(
+  List<SubtitleLine> lines,
+  List<AlignedScriptWord> aligned,
+  double totalDurationSec,
+) {
+  if (lines.isEmpty || totalDurationSec <= 0) return [];
+  final counts = <int>[];
+  var total = 0;
+  for (final line in lines) {
+    final words = line.words.isNotEmpty
+        ? line.words.map((w) => w.word).toList()
+        : line.text
+            .split(RegExp(r'\s+'))
+            .where((w) => w.isNotEmpty)
+            .toList();
+    counts.add(words.length);
+    total += words.length;
+  }
+  if (total != aligned.length) return [];
+  final out = <SubtitleLine>[];
+  var cursor = 0;
+  var prevEnd = 0.0;
+  for (var li = 0; li < lines.length; li++) {
+    final line = lines[li];
+    final count = counts[li];
+    if (count == 0) {
+      out.add(SubtitleLine(
+        text: line.text,
+        startSec: prevEnd,
+        endSec: prevEnd,
+        translation: line.translation,
+      ));
+      continue;
+    }
+    final slice = aligned.sublist(cursor, cursor + count);
+    cursor += count;
+    var start = slice.first.startSec;
+    if (start < prevEnd) start = prevEnd;
+    var end = slice.last.endSec;
+    if (end <= start) end = start + 0.1;
+    if (end > totalDurationSec) end = totalDurationSec;
+    if (start > end) start = end;
+    out.add(SubtitleLine(
+      text: line.text,
+      startSec: start,
+      endSec: end,
+      words: [
+        for (final w in slice)
+          SubtitleWord(word: w.word, startSec: w.startSec, endSec: w.endSec),
+      ],
+      translation: line.translation,
+    ));
+    prevEnd = end;
+  }
+  return out;
 }

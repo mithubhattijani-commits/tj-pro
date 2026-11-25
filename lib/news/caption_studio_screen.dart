@@ -45,6 +45,8 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 
 import '../services/caption_draft_service.dart';
@@ -56,6 +58,7 @@ import '../services/video_export_service.dart';
 import '../theme.dart';
 import 'caption_editor.dart';
 import 'caption_translator_screen.dart';
+import 'caption_alignment.dart';
 import 'karaoke_sync.dart';
 import 'news_project.dart';
 import 'widgets/styled_caption_preview.dart';
@@ -102,6 +105,10 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
   // Burn-in state.
   String? _burnVideoPath;
   bool _burnBusy = false;
+
+  /// Build 13 (point #16): the "Asal timings" (Whisper word
+  /// alignment) run state.
+  bool _alignBusy = false;
   double _burnProgress = 0;
   String _status = '';
 
@@ -252,11 +259,49 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
     }
     setState(() {
       _editor = CaptionEditor(resyncExistingLines(_e.lines, duration));
+      // Build 13: this re-time is the ESTIMATOR — stamp the
+      // source honestly (the "Asal timings" action upgrades).
+      _p.captionTimingSource = 'estimate';
+      _p.captionAlignedHash = '';
     });
     _scheduleSave();
     _showMessage(
       'Subtitles voiceover se sync ho gaye (${duration.toStringAsFixed(1)}s).',
     );
+  }
+
+  /// Build 13 (point #16): the "Asal timings" action — the same
+  /// shared alignment the News Maker's Captions panel runs
+  /// (caption_alignment.dart). On success the editor reloads
+  /// from the re-timed project lines; on failure nothing changes
+  /// and the message says why.
+  Future<void> _alignWithWhisper() async {
+    if (_alignBusy) return;
+    setState(() => _alignBusy = true);
+    try {
+      final temp = await getTemporaryDirectory();
+      final workDir = Directory(p.join(temp.path, 'caption_align'));
+      if (!await workDir.exists()) {
+        await workDir.create(recursive: true);
+      }
+      final outcome = await alignProjectCaptionsToVoiceover(
+        _p,
+        workDir: workDir,
+      );
+      if (!mounted) return;
+      if (outcome.applied) {
+        setState(() {
+          _editor = CaptionEditor(_p.subtitles);
+          _editingIndex = -1;
+        });
+        _scheduleSave();
+      }
+      _showMessage(outcome.message);
+    } catch (e) {
+      if (mounted) _showMessage('Asal timings nahi lag sakein: $e');
+    } finally {
+      if (mounted) setState(() => _alignBusy = false);
+    }
   }
 
   void _applyPreset(CaptionPreset preset) {
@@ -1153,7 +1198,42 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
                   : _syncWithVoiceover,
               child: const Text('Voiceover se sync'),
             ),
+            OutlinedButton.icon(
+              key: const Key('alignWhisperButton'),
+              onPressed: _alignBusy || project.voiceoverDurationSec == null
+                  ? null
+                  : _alignWithWhisper,
+              icon: _alignBusy
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.hearing_outlined, size: 16),
+              label: Text(
+                _alignBusy ? 'Whisper sun raha hai…' : 'Asal timings (Whisper)',
+              ),
+            ),
           ],
+        ),
+        const SizedBox(height: 6),
+        Text(
+          key: const Key('studioTimingStatus'),
+          project.captionTimingsStale
+              ? 'Timings: ASAL (Whisper) thay — tehreer ya voiceover '
+                  'badal gaya hai, dobara Asal timings dabayein.'
+              : project.captionTimingSource == 'whisper'
+                  ? 'Timings: ASAL (Whisper) — har lafz apne real '
+                      'waqt par hai.'
+                  : 'Timings: ESTIMATE — "Voiceover se sync" length '
+                      'se andaza lagata hai; "Asal timings" Whisper '
+                      'ke real word waqt lagata hai.',
+          style: TextStyle(
+            color: project.captionTimingsStale
+                ? const Color(0xFFFFC800)
+                : Colors.grey,
+            fontSize: 12,
+          ),
         ),
         const SizedBox(height: 8),
         if (_e.lines.isEmpty)

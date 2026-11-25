@@ -1,7 +1,7 @@
 name: tj_pro
 description: "TJ Pro — free offline photo and video editor for Android."
 publish_to: 'none'
-version: 1.9.0+27
+version: 1.10.0+28
 
 environment:
   sdk: ^3.13.7
@@ -122,6 +122,9 @@ flutter_native_splash:
 flutter:
   uses-material-design: true
   assets:
+    # Build 13: the user's own News Studio tool icons
+    # (192x192 downscales of his 512x512 originals).
+    - assets/ns_icons/
     - assets/luts/teal_orange.cube
     - assets/luts/vintage.cube
     - assets/luts/noir.cube

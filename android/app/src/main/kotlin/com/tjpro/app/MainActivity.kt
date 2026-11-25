@@ -26,7 +26,10 @@ import java.io.File
  *   Returns the system download ID.
  * - downloadStatus(downloadId): polls DownloadManager for status/progress.
  *   Returns map: {status: "running"|"success"|"failed"|"pending"|"paused",
- *   bytesDownloaded, bytesTotal, localUri}.
+ *   bytesDownloaded, bytesTotal, localUri, reason} — reason is the
+ *   DownloadManager COLUMN_REASON (PAUSED_*/ERROR_* code, -1 if none).
+ * - removeDownload(downloadId): removes the entry and its file
+ *   (Build 13 cleanup for the update-download reconciliation).
  */
 class MainActivity : FlutterActivity() {
     private val channelName = "tj_pro/updater"
@@ -97,6 +100,27 @@ class MainActivity : FlutterActivity() {
                         }
                         try {
                             val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+                            // Build 13 (point #18): destination
+                            // hygiene — a stale partial/complete
+                            // file at the fixed destination makes
+                            // DownloadManager fail the NEW enqueue
+                            // with ERROR_FILE_ALREADY_EXISTS. The
+                            // Dart side reconciles first (a live
+                            // download is never re-enqueued), so a
+                            // file found here is an orphan: delete
+                            // it before enqueueing.
+                            try {
+                                val destDir = getExternalFilesDir(
+                                    Environment.DIRECTORY_DOWNLOADS
+                                )
+                                if (destDir != null) {
+                                    val stale = File(destDir, fileName)
+                                    if (stale.exists()) stale.delete()
+                                }
+                            } catch (_: Exception) {
+                                // Hygiene is best-effort; the
+                                // enqueue below surfaces real errors.
+                            }
                             val request = DownloadManager.Request(Uri.parse(url)).apply {
                                 setTitle("TJ Pro Update")
                                 setDescription("Downloading update...")
@@ -148,6 +172,22 @@ class MainActivity : FlutterActivity() {
                                 val uriIdx = cursor.getColumnIndex(
                                     DownloadManager.COLUMN_LOCAL_URI
                                 )
+                                // Build 13 (point #18): the REASON
+                                // column — why a download is paused
+                                // (PAUSED_* codes) or failed
+                                // (ERROR_* codes / HTTP status). The
+                                // pre-Build-13 handler never read it,
+                                // so a silently paused download (e.g.
+                                // roaming disallowed) looked frozen
+                                // forever. -1 when unavailable.
+                                val reasonIdx = cursor.getColumnIndex(
+                                    DownloadManager.COLUMN_REASON
+                                )
+                                val reason = if (reasonIdx >= 0) {
+                                    cursor.getInt(reasonIdx)
+                                } else {
+                                    -1
+                                }
                                 val status = when (cursor.getInt(statusIdx)) {
                                     DownloadManager.STATUS_SUCCESSFUL -> "success"
                                     DownloadManager.STATUS_FAILED -> "failed"
@@ -161,6 +201,7 @@ class MainActivity : FlutterActivity() {
                                     "bytesDownloaded" to cursor.getLong(downloadedIdx),
                                     "bytesTotal" to cursor.getLong(totalIdx),
                                     "localUri" to (cursor.getString(uriIdx) ?: ""),
+                                    "reason" to reason,
                                 )
                                 cursor.close()
                                 result.success(map)
@@ -170,6 +211,27 @@ class MainActivity : FlutterActivity() {
                             }
                         } catch (e: Exception) {
                             result.error("QUERY_FAILED", e.message, null)
+                        }
+                    }
+                    "removeDownload" -> {
+                        // Build 13 (point #18): removes a
+                        // DownloadManager entry AND its (partial)
+                        // file — the cleanup half of the Dart
+                        // side's enqueue-time reconciliation.
+                        // Without it a failed entry + its file
+                        // stayed forever and poisoned retries.
+                        try {
+                            val downloadId =
+                                (call.argument<Any>("downloadId") as? Number)?.toLong()
+                            if (downloadId == null) {
+                                result.error("NO_ID", "Missing download ID", null)
+                                return@setMethodCallHandler
+                            }
+                            val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+                            val removed = dm.remove(downloadId)
+                            result.success(removed > 0)
+                        } catch (e: Exception) {
+                            result.error("REMOVE_FAILED", e.message, null)
                         }
                     }
                     else -> result.notImplemented()

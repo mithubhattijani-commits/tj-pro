@@ -39,6 +39,8 @@ import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'crash_guard.dart';
+
 /// One update entry parsed from the version manifest.
 class UpdateInfo {
   const UpdateInfo({
@@ -121,12 +123,20 @@ class UpdateState {
     this.bytesTotal = 0,
     this.update,
     this.downloadedApkPath,
+    this.statusNote,
   });
 
   final UpdatePhase phase;
   final int percent;
   final int bytesDownloaded;
   final int bytesTotal;
+
+  /// Build 13 (point #18): an honest, user-readable note about
+  /// the download's state — WHY it is paused (network, Wi-Fi
+  /// wait, roaming…) or why it failed — from the DownloadManager
+  /// reason code the native side now surfaces. Null = nothing
+  /// unusual to report.
+  final String? statusNote;
 
   /// The update this state belongs to, when one is known.
   final UpdateInfo? update;
@@ -171,6 +181,101 @@ class UpdateService {
   /// the UI state must carry 0 instead (#34 fix design 5) and only
   /// switch to real percent math when a positive total arrives.
   static int clampTotalBytes(int raw) => raw > 0 ? raw : 0;
+
+  /// Build 13 (point #18): how long a download may sit in the
+  /// DownloadManager PAUSED state before the user is told, with
+  /// the reason, instead of staring at a frozen percent forever.
+  static const Duration pausedWatchdog = Duration(minutes: 5);
+
+  /// User-readable text for a DownloadManager PAUSED reason code
+  /// (COLUMN_REASON while STATUS_PAUSED): 1 waiting-to-retry,
+  /// 2 waiting-for-network, 3 queued-for-Wi-Fi, 4 paused-by-app,
+  /// 5 unknown. -1/anything else = the generic line.
+  static String pausedReasonText(int reason) {
+    switch (reason) {
+      case 1:
+        return 'server se dobara koshish ka intezar hai';
+      case 2:
+        return 'network ka intezar hai — internet band ya kamzor hai';
+      case 3:
+        return 'Wi-Fi ka intezar hai — mobile data par download ruki hai';
+      case 4:
+        return 'download system ne roki hui hai';
+      case 5:
+        return 'wajah maloom nahi';
+      default:
+        return 'download ruki hui hai';
+    }
+  }
+
+  /// User-readable text for a DownloadManager FAILED reason code
+  /// (COLUMN_REASON while STATUS_FAILED): the ERROR_* range
+  /// (1000–1009) or a raw HTTP status code.
+  static String failedReasonText(int reason) {
+    switch (reason) {
+      case 1000:
+        return 'download fail ho gayi (wajah maloom nahi)';
+      case 1001:
+        return 'APK file save nahi ho saki (storage masla)';
+      case 1002:
+      case 1004:
+        return 'server se data nahi mila (network/server masla)';
+      case 1005:
+        return 'server ne bohat zyada redirects bheje';
+      case 1006:
+        return 'phone mein jagah khatam hai — storage khaali karein';
+      case 1007:
+        return 'download ki jagah (storage) nahi mili';
+      case 1008:
+        return 'download wahin se aage nahi badh saki';
+      case 1009:
+        return 'purani adhoori file ne rok lagayi thi — saaf kar di gayi hai, Retry karein';
+      default:
+        if (reason >= 400 && reason < 600) {
+          return 'server ne jawab diya: HTTP $reason';
+        }
+        return 'download fail ho gayi';
+    }
+  }
+
+  /// Build 13 (point #18): the download id a poll loop is
+  /// currently attached to (this session), so a second attach —
+  /// e.g. the user tapping Update while the launch-restore poll
+  /// is already watching the same download — never starts a
+  /// duplicate watcher.
+  static int? _pollingDownloadId;
+
+  /// Build 13 (point #18): true while a [downloadAndInstall]
+  /// flow (reconcile → enqueue → poll) is in flight in this
+  /// session. A second tap in that window is answered, not
+  /// executed — the pre-Build-13 double-enqueue bug.
+  static bool _downloadFlowActive = false;
+
+  /// One status query against the native channel; null when the
+  /// channel cannot answer (old build / test host).
+  static Future<Map?> _statusOf(int downloadId) async {
+    try {
+      return await _channel.invokeMethod<Map>(
+        'downloadStatus',
+        <String, Object>{'downloadId': downloadId},
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Removes a DownloadManager entry + its (partial) file via
+  /// the native removeDownload method. Fail-soft: an old native
+  /// side without the method simply leaves the entry, and the
+  /// enqueue-time destination hygiene still protects the retry.
+  static Future<void> _removeDownload(int downloadId) async {
+    try {
+      await _channel.invokeMethod<bool>(
+        'removeDownload',
+        <String, Object>{'downloadId': downloadId},
+      );
+    } catch (_) {}
+  }
 
   /// Live background-download progress. Null when idle.
   /// Drives the non-blocking progress UI (Jaani, 2 Nov 2026).
@@ -250,8 +355,11 @@ class UpdateService {
     _setUpdateState(UpdatePhase.downloaded);
   }
 
-  /// Restarts a failed/interrupted download cleanly through the
-  /// existing [downloadAndInstall] flow. A no-op when no update is
+  /// Restarts a failed/interrupted download through
+  /// [downloadAndInstall] — which since Build 13 RECONCILES
+  /// first: a download the system still holds (running, or even
+  /// completed while the UI showed "failed") is re-attached /
+  /// surfaced, never duplicated. A no-op when no update is
   /// known. Never shows a popup.
   static Future<void> retryDownload(BuildContext context) async {
     final UpdateInfo? update = _activeUpdate ?? updateState.value.update;
@@ -275,6 +383,8 @@ class UpdateService {
     int? percent,
     int? bytesDownloaded,
     int? bytesTotal,
+    String? statusNote,
+    bool replaceStatusNote = false,
   }) {
     final UpdateState prev = updateState.value;
     updateState.value = UpdateState(
@@ -284,6 +394,12 @@ class UpdateService {
       bytesTotal: bytesTotal ?? prev.bytesTotal,
       update: _activeUpdate ?? prev.update,
       downloadedApkPath: _downloadedApkPath,
+      // Build 13: the note is sticky (a failure keeps the reason
+      // it failed with) unless the caller replaces it outright —
+      // passing replaceStatusNote with no note clears it.
+      statusNote: replaceStatusNote
+          ? statusNote
+          : (statusNote ?? prev.statusNote),
     );
   }
 
@@ -539,6 +655,38 @@ class UpdateService {
     BuildContext context,
     UpdateInfo update,
   ) async {
+    // Build 13 (point #18): a second tap while a flow is already
+    // in flight is ANSWERED, never executed — the pre-Build-13
+    // code enqueued a second DownloadManager download here,
+    // overwrote the pending record and orphaned the first
+    // download (the user's "double download" report).
+    if (_downloadFlowActive) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Update download pehle se chal rahi hai — usi ko '
+              'aage badhne dein.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+    _downloadFlowActive = true;
+    try {
+      await _downloadAndInstallFlow(context, update);
+    } finally {
+      _downloadFlowActive = false;
+    }
+  }
+
+  /// The download flow proper (see [downloadAndInstall] for the
+  /// in-flight guard that wraps it).
+  static Future<void> _downloadAndInstallFlow(
+    BuildContext context,
+    UpdateInfo update,
+  ) async {
     // §7 state: this update is now the active one; any APK left over
     // from a previous download no longer counts as ready to install.
     _activeUpdate = update;
@@ -548,7 +696,20 @@ class UpdateService {
       percent: 0,
       bytesDownloaded: 0,
       bytesTotal: 0,
+      replaceStatusNote: true,
     );
+
+    // Build 13 (point #18): ENQUEUE-TIME RECONCILIATION — before
+    // any new enqueue, look at the download a previous tap /
+    // session left behind:
+    //   same version, still running/pending/paused -> attach the
+    //     poll to THAT download (no second enqueue);
+    //   same version, already successful -> surface Install for
+    //     the APK already on disk;
+    //   same version failed/not_found, or another version's
+    //     leftover -> remove the entry + its file, drop the
+    //     record, and only then fall through to ONE fresh enqueue.
+    if (await _reconcilePendingDownload(context, update)) return;
 
     // 1. The system installer needs the "install unknown apps" grant.
     bool canInstall = false;
@@ -639,6 +800,123 @@ class UpdateService {
     );
   }
 
+  /// Build 13 (point #18): enqueue-time reconciliation — see
+  /// the call site in [_downloadAndInstallFlow]. Returns true
+  /// when the existing download fully handles this tap (attached
+  /// poll or Install surfaced); false when the caller should
+  /// proceed to exactly ONE fresh enqueue (any stale entry has
+  /// already been removed at that point).
+  static Future<bool> _reconcilePendingDownload(
+    BuildContext context,
+    UpdateInfo update,
+  ) async {
+    int? pendingId;
+    var pendingCode = 0;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      pendingId = prefs.getInt(_pendingDownloadIdKey);
+      pendingCode = prefs.getInt(_pendingVersionCodeKey) ?? 0;
+    } catch (_) {
+      return false;
+    }
+    if (pendingId == null) return false;
+    final status = await _statusOf(pendingId);
+    if (status == null) {
+      // The channel cannot answer (degraded native side): fall
+      // through to the fresh enqueue — the native destination
+      // hygiene keeps the fixed file name from failing it.
+      return false;
+    }
+    final state = status['status'] as String?;
+    if (pendingCode != update.versionCode) {
+      // Another version's leftover: remove it so it can never
+      // block or confuse this update, then enqueue fresh.
+      await _removeDownload(pendingId);
+      await _clearPendingDownload();
+      return false;
+    }
+    if (state == 'running' || state == 'pending' || state == 'paused') {
+      final downloaded = (status['bytesDownloaded'] as int?) ?? 0;
+      final total = clampTotalBytes((status['bytesTotal'] as int?) ?? 0);
+      backgroundProgress.value =
+          total > 0 ? (downloaded / total).clamp(0.0, 1.0) : 0;
+      _setUpdateState(
+        UpdatePhase.downloading,
+        percent: total > 0
+            ? ((downloaded / total) * 100).round().clamp(0, 100)
+            : 0,
+        bytesDownloaded: downloaded,
+        bytesTotal: total,
+        statusNote: state == 'paused'
+            ? 'Download ruki hui hai — '
+                '${pausedReasonText((status['reason'] as int?) ?? -1)}.'
+            : null,
+        replaceStatusNote: true,
+      );
+      if (_pollingDownloadId == pendingId) {
+        // A poll (the launch-restore one) is already watching
+        // this exact download — attaching a second watcher would
+        // double-fire the install intent on success.
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Update download pehle se chal rahi hai — usi ko '
+                'aage badhne dein.',
+              ),
+            ),
+          );
+        }
+        return true;
+      }
+      await _pollDownload(
+        downloadId: pendingId,
+        showMessage: (String message) {
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(message)),
+            );
+          }
+        },
+      );
+      return true;
+    }
+    if (state == 'success') {
+      final uri = (status['localUri'] as String?) ?? '';
+      final path = _uriToPath(uri);
+      if (path != null && File(path).existsSync()) {
+        _downloadedApkPath = path;
+        final downloaded = (status['bytesDownloaded'] as int?) ?? 0;
+        final total = clampTotalBytes((status['bytesTotal'] as int?) ?? 0);
+        _setUpdateState(
+          UpdatePhase.downloaded,
+          percent: 100,
+          bytesDownloaded: total > 0 ? total : downloaded,
+          bytesTotal: total,
+          replaceStatusNote: true,
+        );
+        await _clearPendingDownload();
+        try {
+          await _channel.invokeMethod<void>(
+            'installApk',
+            <String, String>{'path': path},
+          );
+        } catch (_) {}
+        return true;
+      }
+      // Marked successful but the file is gone — clean up and
+      // let the caller enqueue fresh.
+      await _removeDownload(pendingId);
+      await _clearPendingDownload();
+      return false;
+    }
+    // failed / not_found / unrecognised: remove the entry + its
+    // partial file, drop the record, enqueue exactly once.
+    await _removeDownload(pendingId);
+    await _clearPendingDownload();
+    return false;
+  }
+
   /// Persists the in-flight system download (#34 fix design 3) so
   /// [restorePendingDownload] can re-attach after an app kill.
   /// Fail-soft: the live poll in this session is unaffected if the
@@ -700,6 +978,12 @@ class UpdateService {
     // 2 s interval; 10800 polls ≈ 6 h safety cap.
     const int maxPolls = 10800;
     var consecutiveChannelFailures = 0;
+    // Build 13 (point #18): paused tracking for the watchdog —
+    // when the download entered PAUSED and whether the user has
+    // already been told (with the reason) about this pause.
+    DateTime? pausedSince;
+    var pausedWatchdogFired = false;
+    _pollingDownloadId = downloadId;
     try {
       for (var i = 0; i < maxPolls; i++) {
         await Future.delayed(const Duration(seconds: 2));
@@ -720,11 +1004,19 @@ class UpdateService {
           }
           if (consecutiveChannelFailures >= 5) {
             // The status channel itself is broken — surface the
-            // quiet failed state (Retry re-enqueues cleanly). The
-            // persisted record is KEPT: the system download may
-            // still finish, and the next launch re-attaches.
+            // quiet failed state. Build 13: the persisted record
+            // is KEPT and Retry now RECONCILES first (see
+            // downloadAndInstall) — if the system download is in
+            // fact still running, Retry re-attaches to it instead
+            // of enqueueing a second copy (the pre-Build-13
+            // double-download path).
             backgroundProgress.value = null;
-            _setUpdateState(UpdatePhase.failed);
+            _setUpdateState(
+              UpdatePhase.failed,
+              statusNote: 'Download ki halat nahi mil rahi thi — '
+                  'Retry dabayein, pehle halat check hogi.',
+              replaceStatusNote: true,
+            );
             return;
           }
           continue;
@@ -751,6 +1043,39 @@ class UpdateService {
             bytesDownloaded: downloaded,
             bytesTotal: total,
           );
+        }
+        // Build 13 (point #18): PAUSED is no longer invisible.
+        // The reason (from COLUMN_REASON) goes into the state
+        // note at once, and a download paused for the whole
+        // watchdog window earns ONE explanatory message — the
+        // pre-Build-13 poll just kept looping while the percent
+        // sat frozen at 4/5/10/40%.
+        if (state == 'paused') {
+          final reason = (status?['reason'] as int?) ?? -1;
+          final since = pausedSince ??= DateTime.now();
+          _setUpdateState(
+            UpdatePhase.downloading,
+            statusNote: 'Download ruki hui hai — '
+                '${pausedReasonText(reason)}.',
+          );
+          if (!pausedWatchdogFired &&
+              DateTime.now().difference(since) >= pausedWatchdog) {
+            pausedWatchdogFired = true;
+            showMessage?.call(
+              'Update download kaafi der se ruki hai — '
+              '${pausedReasonText(reason)}. Internet / Wi-Fi check '
+              'karein; masla hal hote hi download khud aage badhegi.',
+            );
+          }
+        } else if (state == 'running' || state == 'pending') {
+          if (pausedSince != null) {
+            pausedSince = null;
+            pausedWatchdogFired = false;
+            _setUpdateState(
+              UpdatePhase.downloading,
+              replaceStatusNote: true,
+            );
+          }
         }
         if (state == 'success') {
           backgroundProgress.value = null;
@@ -785,13 +1110,34 @@ class UpdateService {
         }
         if (state == 'failed' || state == 'not_found') {
           backgroundProgress.value = null;
-          // §7: quiet failed state — retry restarts cleanly via
-          // [retryDownload]; no popup is ever shown for this.
+          // Build 13 (point #18): surface the DownloadManager
+          // reason (logged through CrashGuard so it lands in the
+          // diagnostics), remove the dead entry + its partial
+          // file so nothing poisons the retry, and let Retry
+          // reconcile-then-enqueue exactly once.
+          final reason = (status?['reason'] as int?) ?? -1;
+          final reasonText = state == 'failed'
+              ? failedReasonText(reason)
+              : 'download system mein nahi mili';
+          if (state == 'failed') {
+            CrashGuard.report(
+              Exception(
+                'Update download failed (reason $reason: $reasonText)',
+              ),
+              StackTrace.current,
+              source: 'update-download',
+            );
+          }
+          await _removeDownload(downloadId);
           await _clearPendingDownload();
-          _setUpdateState(UpdatePhase.failed);
+          _setUpdateState(
+            UpdatePhase.failed,
+            statusNote: 'Wajah: $reasonText.',
+            replaceStatusNote: true,
+          );
           showMessage?.call(
-            'Update download nahi ho saka. Internet check kar ke '
-            'dobara koshish karein.',
+            'Update download nahi ho saka — $reasonText. '
+            'Retry dabayein.',
           );
           return;
         }
@@ -810,6 +1156,8 @@ class UpdateService {
         'Update download nahi ho saka. Internet check kar ke '
         'dobara koshish karein.',
       );
+    } finally {
+      if (_pollingDownloadId == downloadId) _pollingDownloadId = null;
     }
   }
 
@@ -874,6 +1222,13 @@ class UpdateService {
               : 0,
           bytesDownloaded: downloaded,
           bytesTotal: total,
+          // Build 13: a re-attached PAUSED download explains
+          // itself immediately instead of looking frozen.
+          statusNote: state == 'paused'
+              ? 'Download ruki hui hai — '
+                  '${pausedReasonText((status?['reason'] as int?) ?? -1)}.'
+              : null,
+          replaceStatusNote: true,
         );
         await _pollDownload(downloadId: downloadId);
       } else if (state == 'success') {
