@@ -12,8 +12,8 @@ import '../widgets/help_whatsapp_button.dart';
 ///
 /// * "Continue with Google" (white button) — native Google sign-in.
 /// * Email + password — Login / Register switch + Forgot password.
-/// * "Coins kaise kamayein" card (1 rewarded ad = 50 coins, daily
-///   free 50, max 20 ads/day = 1000 coins/day).
+/// * "Coins kaise kamayein" card (1 rewarded ad = 25 coins since
+///   v1.8.0, daily free 50, max 50 ads/day = 1250 coins/day).
 /// * Note: guest coins are preserved on login (anon → linked).
 /// * "For Help" row with WhatsApp button (remote-config number).
 ///

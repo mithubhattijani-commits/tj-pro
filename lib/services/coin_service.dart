@@ -14,9 +14,10 @@ import 'unity_ads_service.dart';
 /// DISCOVERY-AND-PLAN.md §15).
 ///
 /// Earn:
-/// - 1 rewarded ad = 50 coins ([rewardPerAd]).
+/// - 1 rewarded ad = 25 coins ([rewardPerAd]; server value
+///   `tjpro_reward_coins` since 2026-11-25).
 /// - Daily free coins = 50 ([dailyFreeCoins]).
-/// - Max 50 rewarded ads/day = 2500 coins/day ([maxRewardedAdsPerDay]).
+/// - Max 50 rewarded ads/day = 1250 coins/day ([maxRewardedAdsPerDay]).
 ///
 /// Spend ([CoinCosts]):
 /// - One Click AI News Maker 100, voiceover 50/video, chroma key 50,
@@ -52,7 +53,11 @@ class CoinService {
   static final CoinService instance = CoinService._();
 
   /// Coins earned for one fully-watched rewarded ad.
-  static const int rewardPerAd = 50;
+  /// Build 10 (v1.8.0): 25 — matches the server-side
+  /// `tjpro_reward_coins` value the claim Edge Function pays
+  /// (user order 2026-11-25); this constant is display-only
+  /// (login / coins / advertise screens read it).
+  static const int rewardPerAd = 25;
 
   /// Free coins claimable once per calendar day.
   static const int dailyFreeCoins = 50;
@@ -60,7 +65,7 @@ class CoinService {
   /// Max rewarded ads per user per day (server-enforced too).
   static const int maxRewardedAdsPerDay = 50;
 
-  /// Max coins earnable from ads per day (50 x 50).
+  /// Max coins earnable from ads per day (50 ads x 25).
   static const int maxAdCoinsPerDay =
       maxRewardedAdsPerDay * rewardPerAd;
 

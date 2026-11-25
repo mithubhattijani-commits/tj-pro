@@ -39,6 +39,19 @@ class VideoEditorExportController {
   final VideoEditorController host;
   const VideoEditorExportController(this.host);
 
+  /// True when [e] reads like an encode/render failure (as
+  /// opposed to a state or picker error): the pipeline's own
+  /// exceptions say "FFmpeg failed" / "Final export failed" /
+  /// "… prepare failed", and native OOM deaths mention
+  /// memory/alloc. Only those earn the step-down retry.
+  static bool looksLikeEncodeFailure(Object e) {
+    final msg = e.toString().toLowerCase();
+    return msg.contains('ffmpeg') ||
+        msg.contains('failed') ||
+        msg.contains('memory') ||
+        msg.contains('alloc');
+  }
+
 
   Future<void> _exportInner() async {
     try {
@@ -1506,6 +1519,8 @@ class VideoEditorExportController {
       host.exportCancelRequested = false;
       host.status = 'Exporting…';
     });
+    // Build 10 (7D): this call's one quality step-down retry.
+    var stepDownUsed = false;
     try {
       // Phase 0 pre-run discipline: no zombie ffmpeg session from
       // an earlier abandoned run competes with this export.
@@ -1534,6 +1549,33 @@ class VideoEditorExportController {
           } else {
             host.setStatus('Export failed: $e2');
           }
+        }
+      } else if (!stepDownUsed &&
+          host.fxQuality > 0 &&
+          looksLikeEncodeFailure(e)) {
+        // Build 10 (7D): the fallback chain's editor rung —
+        // an encode that died (classically OOM at 1080p/4K on
+        // a weak phone) gets ONE automatic retry one quality
+        // notch lower instead of a dead end. The user's chosen
+        // quality is restored afterwards: the setting is not
+        // silently changed, only this render stepped down.
+        stepDownUsed = true;
+        final originalQuality = host.fxQuality;
+        host.fxQuality = originalQuality - 1;
+        host.setStatus(
+          'Export fail ho gaya — quality gira kar dobara koshish '
+          'ho rahi hai…',
+        );
+        try {
+          await _exportInner();
+        } catch (e2) {
+          if (host.exportCancelRequested || e2 is ExportCancelled) {
+            host.setStatus('Export cancel kar diya gaya.');
+          } else {
+            host.setStatus('Export failed: $e2');
+          }
+        } finally {
+          host.fxQuality = originalQuality;
         }
       } else {
         host.setStatus('Export failed: $e');

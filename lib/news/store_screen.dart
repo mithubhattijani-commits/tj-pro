@@ -5,7 +5,9 @@ import 'package:flutter/material.dart';
 
 import '../services/coin_service.dart';
 import '../services/feature_gate.dart';
+import '../services/performance_engine.dart';
 import '../services/remote_config_service.dart';
+import '../services/store_audio_preview.dart';
 import '../services/store_preview_cache.dart';
 import '../services/store_service.dart';
 import '../services/unity_ads_service.dart';
@@ -16,6 +18,14 @@ import 'coins_screen.dart';
 /// n-online-store): coins pill header, the 8 Drive category chips,
 /// and a scrollable grid of item cards with price / FREE badges and
 /// owned state.
+///
+/// Build 10 (v1.8.0, fix-list point #8 + the user's audio order):
+/// the grid is now COMPACT — 3 columns of small boxes, so 9–12
+/// items are on screen at once instead of the old 2-wide tall
+/// cards — and every AUDIO item carries a play/pause button so
+/// it can be heard before it is bought (the store's single
+/// preview player: one item sounds at a time, leaving the
+/// screen stops it).
 ///
 /// Cache-first by construction: the grid renders instantly from
 /// [StoreService.cachedListing] and the owned records on disk, then a
@@ -58,12 +68,40 @@ class _StoreScreenState extends State<StoreScreen> {
   String? _busyItemId;
   bool _entryGateAttempted = false;
 
+  /// The last audio-preview error already surfaced, so the
+  /// snackbar fires once per failure, not per rebuild.
+  String? _lastAudioErrorShown;
+
   @override
   void initState() {
     super.initState();
     unawaited(_coins.load());
     unawaited(_loadCategory(_category));
     _attemptEntryGate();
+    StoreAudioPreviewPlayer.instance.state.addListener(_onAudioState);
+  }
+
+  @override
+  void dispose() {
+    StoreAudioPreviewPlayer.instance.state
+        .removeListener(_onAudioState);
+    // Leaving the store stops any sounding preview.
+    unawaited(StoreAudioPreviewPlayer.instance.stop());
+    super.dispose();
+  }
+
+  /// Surfaces a preview-playback failure once (the failing
+  /// card itself returns to its play state on its own).
+  void _onAudioState() {
+    final s = StoreAudioPreviewPlayer.instance.state.value;
+    if (s.phase != StoreAudioPhase.error) {
+      _lastAudioErrorShown = null;
+      return;
+    }
+    final key = '${s.itemId}:${s.message}';
+    if (_lastAudioErrorShown == key || !mounted) return;
+    _lastAudioErrorShown = key;
+    if (s.message != null) _showMessage(s.message!);
   }
 
   /// One interstitial as the store entry gate — fire-and-forget.
@@ -116,6 +154,9 @@ class _StoreScreenState extends State<StoreScreen> {
 
   Future<void> _selectCategory(String category) async {
     if (category == _category) return;
+    // A preview from the old category must not keep sounding
+    // over the new one.
+    unawaited(StoreAudioPreviewPlayer.instance.stop());
     setState(() {
       _category = category;
       _items = const <StoreItem>[];
@@ -374,14 +415,15 @@ class _StoreScreenState extends State<StoreScreen> {
     return RefreshIndicator(
       onRefresh: () => _refresh(_category),
       child: GridView.builder(
-        padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
-        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-          maxCrossAxisExtent: 220,
-          mainAxisSpacing: 12,
-          crossAxisSpacing: 12,
-          // Build 8: cards are taller now — the preview area
-          // (16:10) sits above the name.
-          childAspectRatio: 0.70,
+        padding: const EdgeInsets.fromLTRB(10, 4, 10, 16),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 3,
+          mainAxisSpacing: 8,
+          crossAxisSpacing: 8,
+          // Build 10 (point #8): compact boxes — 3 columns, so
+          // a full screen holds 9–12 items (3–4 rows) instead
+          // of the old 2-wide tall cards.
+          childAspectRatio: 0.72,
         ),
         itemCount: _items.length,
         itemBuilder: (context, index) => _itemCard(_items[index]),
@@ -393,23 +435,26 @@ class _StoreScreenState extends State<StoreScreen> {
     final price = _store.priceFor(item);
     final owned = _ownedIds.contains(item.id);
     final busy = _busyItemId == item.id;
+    final isAudio = storeItemIsAudio(item);
     return Container(
       decoration: TjProTheme.glassCard(),
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(6),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Build 8 (fix-list point #3): the item's REAL preview
-          // on top of the card — what it is, how it looks, what
-          // colour — before the user spends coins on it. The
-          // category badge overlays the preview's top-left
-          // corner; the old category icon survives as the
-          // preview area's fallback (no preview / load failure
-          // = the card looks exactly as it did before).
+          // The item's REAL preview on top of the card (Build
+          // 8) — what it is, how it looks, what colour — before
+          // the user spends coins on it. The category badge
+          // overlays the preview's top-left corner; the old
+          // category icon survives as the preview area's
+          // fallback (no preview / load failure = the icon
+          // shows, exactly as before).
+          // Build 10: audio items also carry the play/pause
+          // button at the preview's bottom-right corner.
           AspectRatio(
             aspectRatio: 16 / 10,
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(8),
               child: Stack(
                 fit: StackFit.expand,
                 children: [
@@ -418,31 +463,37 @@ class _StoreScreenState extends State<StoreScreen> {
                     fallbackIcon: _iconFor(item),
                   ),
                   Positioned(
-                    top: 6,
-                    left: 6,
+                    top: 4,
+                    left: 4,
                     child: _categoryBadge(item.category),
                   ),
+                  if (isAudio)
+                    Positioned(
+                      right: 4,
+                      bottom: 4,
+                      child: _AudioPlayButton(item: item),
+                    ),
                 ],
               ),
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 6),
           Expanded(
             child: Text(
-              // Build 8: cleaned display name — the technical
-              // "(Transparent)" / "(Landscape)" / ... markers no
-              // longer clutter (or truncate) the card title.
-              // Pricing still reads the RAW name (priceFor).
+              // Cleaned display name (Build 8) — the technical
+              // "(Transparent)" / "(Landscape)" / ... markers
+              // no longer clutter the card title. Pricing still
+              // reads the RAW name (priceFor).
               item.displayTitle,
-              maxLines: 3,
+              maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
-                fontSize: 15,
+                fontSize: 12,
                 fontWeight: FontWeight.w600,
               ),
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 4),
           Row(
             children: [
               if (owned)
@@ -457,12 +508,13 @@ class _StoreScreenState extends State<StoreScreen> {
                 const Icon(
                   Icons.monetization_on,
                   color: TjProTheme.gold,
-                  size: 18,
+                  size: 14,
                 ),
-                const SizedBox(width: 4),
+                const SizedBox(width: 3),
                 Text(
                   '$price',
                   style: const TextStyle(
+                    fontSize: 12.5,
                     fontWeight: FontWeight.bold,
                     color: TjProTheme.gold,
                   ),
@@ -472,10 +524,17 @@ class _StoreScreenState extends State<StoreScreen> {
               IconButton(
                 onPressed: busy ? null : () => unawaited(_buy(item)),
                 tooltip: owned ? 'Owned — available offline' : 'Get item',
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(
+                  minWidth: 30,
+                  minHeight: 30,
+                ),
+                iconSize: 19,
                 icon: busy
                     ? const SizedBox(
-                        width: 20,
-                        height: 20,
+                        width: 16,
+                        height: 16,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : Icon(
@@ -491,17 +550,17 @@ class _StoreScreenState extends State<StoreScreen> {
 
   Widget _categoryBadge(String category) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
       decoration: BoxDecoration(
         color: Colors.black.withValues(alpha: 0.45),
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(5),
       ),
       child: Text(
         category.toUpperCase(),
         style: const TextStyle(
-          fontSize: 10,
+          fontSize: 8.5,
           fontWeight: FontWeight.bold,
-          letterSpacing: 0.6,
+          letterSpacing: 0.5,
         ),
       ),
     );
@@ -594,7 +653,7 @@ class _StorePreviewImageState extends State<_StorePreviewImage> {
       child: Icon(
         widget.fallbackIcon,
         color: TjProTheme.violetBright,
-        size: 40,
+        size: 30,
       ),
     );
   }
@@ -611,8 +670,66 @@ class _StorePreviewImageState extends State<_StorePreviewImage> {
               fit: BoxFit.cover,
               width: double.infinity,
               height: double.infinity,
+              // Build 10 (7B): decode at the engine's per-tier
+              // width for these small cards — a 1200 px preview
+              // decoded into a ~120 dp box is memory a weak
+              // phone cannot spare.
+              cacheWidth:
+                  PerformanceEngine.instance.config.value.previewThumbCacheWidth,
               errorBuilder: (context, error, stackTrace) => _fallback(),
             ),
+    );
+  }
+}
+
+/// Build 10 (v1.8.0): the play/pause button on an AUDIO item's
+/// card — hear it before you buy it. Driven entirely by the
+/// store's single preview player ([StoreAudioPreviewPlayer]):
+/// this item playing shows pause, this item loading shows a
+/// spinner, anything else shows play; starting this item
+/// stops whichever item was sounding.
+class _AudioPlayButton extends StatelessWidget {
+  const _AudioPlayButton({required this.item});
+
+  final StoreItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    final player = StoreAudioPreviewPlayer.instance;
+    return ValueListenableBuilder<StoreAudioPreviewState>(
+      valueListenable: player.state,
+      builder: (context, s, _) {
+        final mine = s.itemId == item.id;
+        final loading = mine && s.phase == StoreAudioPhase.loading;
+        final playing = mine && s.phase == StoreAudioPhase.playing;
+        return Material(
+          color: Colors.black.withValues(alpha: 0.55),
+          shape: const CircleBorder(),
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: loading
+                ? null
+                : () => unawaited(player.toggle(item)),
+            child: SizedBox(
+              width: 28,
+              height: 28,
+              child: loading
+                  ? const Padding(
+                      padding: EdgeInsets.all(7),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Icon(
+                      playing ? Icons.pause : Icons.play_arrow,
+                      size: 17,
+                      color: Colors.white,
+                    ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -631,12 +748,13 @@ class _Badge extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         if (icon != null) ...[
-          Icon(icon, color: color, size: 16),
-          const SizedBox(width: 4),
+          Icon(icon, color: color, size: 13),
+          const SizedBox(width: 3),
         ],
         Text(
           label,
           style: TextStyle(
+            fontSize: 11.5,
             fontWeight: FontWeight.bold,
             color: color,
           ),

@@ -210,6 +210,16 @@ class HeroBannerCache {
     return false;
   }
 
+  /// Build 10 (7E): memory-pressure eviction — forgets the
+  /// in-memory file handles so the decoded images can be
+  /// released. The DISK copies stay: the next [warm] reloads
+  /// them via [_loadFromDisk] (hence the flag reset), so the
+  /// banners come back without a re-download.
+  void evictMemory() {
+    _files.clear();
+    _diskLoaded = false;
+  }
+
   /// Test seam: forgets the in-memory state (disk untouched).
   static void resetForTest() {
     instance._files.clear();

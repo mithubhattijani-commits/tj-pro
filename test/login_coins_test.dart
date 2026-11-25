@@ -15,13 +15,18 @@ import 'package:tj_pro/widgets/help_whatsapp_button.dart';
 void main() {
   group('CoinCosts (§15 pricing table)', () {
     test('earn constants', () {
-      expect(CoinService.rewardPerAd, 50);
+      // Build 10 (v1.8.0): the per-ad reward dropped to 25
+      // (user order 2026-11-25; the server-side
+      // tjpro_reward_coins value the claim function pays).
+      // The 50/day cap counts ADS, not coins, and the daily
+      // free claim is a separate 50 — both unchanged.
+      expect(CoinService.rewardPerAd, 25);
       expect(CoinService.dailyFreeCoins, 50);
       // The cap is 50 ads/day (the user's ads spec, also the
       // server-side tjpro_reward_daily_cap) — this expectation
       // still said 20/1000 from the first draft of the plan.
       expect(CoinService.maxRewardedAdsPerDay, 50);
-      expect(CoinService.maxAdCoinsPerDay, 2500);
+      expect(CoinService.maxAdCoinsPerDay, 1250);
     });
 
     test('spend costs match the plan', () {

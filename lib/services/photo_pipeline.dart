@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 
 import 'ai_service.dart';
+import 'performance_engine.dart';
 
 /// Photo filter presets (CapCut-style quick looks).
 enum PhotoFilter { normal, warm, cool, blackWhite, vivid, sepia }
@@ -977,14 +978,23 @@ Future<img.Image> denoiseImage(img.Image src, {double strength = 0.6}) async {
 
 /// Remini-style Enlarge: 2x upscale with cubic interpolation.
 /// [scale] 1.0..4.0, default 2.0. Algorithmic, on-device, FREE.
-Future<img.Image> enlargeImage(img.Image src, {double scale = 2.0}) async {
+Future<img.Image> enlargeImage(
+  img.Image src, {
+  double scale = 2.0,
+  int? maxOutPixelsOverride,
+}) async {
   var s = scale.clamp(1.0, 4.0);
-  // Phase 7 memory bound: cap the OUTPUT at ~40 MP. A 24 MP photo
-  // at 4x would ask for ~384 MP (~1.5 GB of pixels) — not an edit,
-  // a guaranteed OOM kill on a phone. The scale is reduced to fit
-  // the budget instead of crashing; photos up to 10 MP keep the
-  // full requested scale at 2x, and every input still enlarges.
-  const maxOutPixels = 40000000;
+  // Phase 7 memory bound: cap the OUTPUT (historically ~40 MP).
+  // A 24 MP photo at 4x would ask for ~384 MP (~1.5 GB of
+  // pixels) — not an edit, a guaranteed OOM kill on a phone.
+  // The scale is reduced to fit the budget instead of
+  // crashing; photos up to 10 MP keep the full requested scale
+  // at 2x, and every input still enlarges.
+  // Build 10 (7B): the budget is the engine's per-tier cap —
+  // HIGH/FLAGSHIP keep the historical 40 MP; weaker phones cap
+  // lower so the enlarge fits their memory instead of dying.
+  final maxOutPixels = maxOutPixelsOverride ??
+      PerformanceEngine.instance.config.value.photoEnlargeMaxPixels;
   final srcPixels = src.width * src.height;
   var capped = false;
   if (srcPixels * s * s > maxOutPixels) {

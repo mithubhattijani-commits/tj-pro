@@ -10,9 +10,10 @@
 ///   - landscape 1280×720 (YouTube / Facebook thumbnail)
 ///
 /// The render is BOUNDED: the portrait poster never exceeds
-/// 720×1280 even for a 4K project (see [ExportLimits] — preview
-/// renders are capped; the file written IS the poster at that size,
-/// no upscaling).
+/// 720×1280 even for a 4K project (preview renders are capped —
+/// since Build 10 the cap is the engine's per-tier bound, see
+/// [PerformanceConfig]; the file written IS the poster at that
+/// size, no upscaling).
 ///
 /// The returned file is a real PNG on disk (decoded + dimension
 /// checked in tests). Saving to the gallery (`Gal.putImage`) and
@@ -30,7 +31,7 @@ import '../live/news_template.dart';
 import '../news/breaking_templates.dart';
 import '../news/channel_preset.dart';
 import '../news/news_project.dart';
-import 'export_settings.dart';
+import 'performance_engine.dart';
 
 /// Poster size. The file written is exactly this many pixels —
 /// verified in tests by decoding the PNG.
@@ -78,9 +79,13 @@ class PosterExportService {
     try {
       // Portrait posters are capped at the preview bound; landscape
       // is the same pixel count rotated (1280×720).
+      // Build 10 (7B): the bound is the engine's per-tier
+      // preview cap; on MID/HIGH it equals the historical
+      // ExportLimits bound exactly.
+      final engineCap = PerformanceEngine.instance.config.value;
       assert(
-        size.width <= ExportLimits.previewMaxWidth ||
-            size.height <= ExportLimits.previewMaxHeight,
+        size.width <= engineCap.previewMaxWidth ||
+            size.height <= engineCap.previewMaxHeight,
         'Poster size exceeds the preview render bound',
       );
       final dir = dirOverride ?? await getApplicationDocumentsDirectory();

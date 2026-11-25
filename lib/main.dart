@@ -30,6 +30,7 @@ import 'services/crash_guard.dart';
 import 'services/crash_reporter.dart';
 import 'services/pro_service.dart';
 import 'services/hero_banner_cache.dart';
+import 'services/performance_engine.dart';
 import 'services/referral_service.dart';
 import 'services/remote_config_service.dart';
 import 'services/unity_ads_service.dart';
@@ -86,6 +87,13 @@ Future<void> main() async {
       // settles any refunds owed. Fail-soft: without the SQL
       // the hero simply keeps the owner's own banners.
       unawaited(BannerBookingService.instance.init());
+      // Build 10 (v1.8.0, point #7): the Core Engine — measure
+      // the phone (7A), adopt its tier's adaptive config (7B)
+      // and register the memory-pressure responder (7E).
+      // Backgrounded and fail-soft: until it lands, the engine
+      // serves the pre-engine HIGH defaults, so startup never
+      // waits on it.
+      unawaited(PerformanceEngine.instance.init());
       // Build 7 (v1.5.9): warm the splash poster's decode BEFORE
       // the first frame, so the SplashGate paints the poster on
       // its very first frame instead of a plain-colour flash.
@@ -920,6 +928,16 @@ class _HomeScreenState extends State<HomeScreen> {
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 6),
+              // Build 10 (v1.8.0, point #7A): the Core Engine's
+              // device line — model, RAM and the measured tier
+              // (plus the pressure note while a step-down is
+              // active). Read at open time; the profiler runs at
+              // startup, so this is the launch measurement.
+              Text(
+                PerformanceEngine.instance.diagnosticsLine,
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+              const SizedBox(height: 10),
               FutureBuilder<String?>(
                 future: CrashGuard.loadStoredDiagnostic(),
                 builder: (context, snap) {

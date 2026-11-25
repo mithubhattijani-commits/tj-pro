@@ -250,7 +250,11 @@ void main() {
       );
       await _frames(tester);
       expect(find.byKey(const Key('coinsWatchAdButton')), findsOneWidget);
-      expect(find.text('Watch Ads, Earn Coins  •  +50 coins'),
+      // Build 10 (v1.8.0): the per-ad reward is 25 now (user
+      // order 2026-11-25; CoinService.rewardPerAd — the label
+      // interpolates the constant, so this pins the NEW honest
+      // price exactly as the 50 pin did before).
+      expect(find.text('Watch Ads, Earn Coins  •  +25 coins'),
           findsOneWidget);
       // Export carries NO coin price anymore.
       expect(find.text('Export 1080p'), findsOneWidget);

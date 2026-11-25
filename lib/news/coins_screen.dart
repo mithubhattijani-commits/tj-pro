@@ -11,7 +11,8 @@ import '../theme.dart';
 /// * Balance (updates immediately — [CoinService.balance] is a
 ///   [ValueNotifier] fed on every earn/spend).
 /// * "Watch Ads, Earn Coins" button: one tap → one Unity rewarded ad
-///   on the coins placement → 50 coins on full watch, up to 50 ads/day.
+///   on the coins placement → 25 coins on full watch (v1.8.0),
+///   up to 50 ads/day.
 ///   v1.5.2 (fix #66): shown for EVERYONE, admins included — it used
 ///   to be hidden for admins, which on the owner's own phone read
 ///   as "the earning button does not exist". (Admin spends stay

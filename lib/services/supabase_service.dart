@@ -299,10 +299,13 @@ class SupabaseService {
     }
   }
 
-  /// Claim 50 coins for completing ONE Unity rewarded ad
-  /// (server-side). Call ONLY after the ad completed fully. Returns
-  /// the granted amount, or null when not available (e.g. daily cap
-  /// of 20 ads reached — the function answers 409 then).
+  /// Claim the per-ad reward for completing ONE Unity rewarded
+  /// ad (server-side; the amount is the server's
+  /// `tjpro_reward_coins` value — 25 since 2026-11-25 — the
+  /// client sends no amount). Call ONLY after the ad completed
+  /// fully. Returns the granted amount, or null when not
+  /// available (e.g. the daily ad cap reached — the function
+  /// answers 409 then).
   static Future<int?> claimAdReward() async {
     if (!isReady) return null;
     try {

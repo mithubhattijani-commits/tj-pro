@@ -151,6 +151,14 @@ class StorePreviewCache {
     }
   }
 
+  /// Build 10 (7E): memory-pressure eviction — forgets the
+  /// in-memory file handles (disk copies stay and re-warm on
+  /// the next card build via [warm]).
+  void evictMemory() {
+    _files.clear();
+    _diskChecked.clear();
+  }
+
   /// Test seam: forgets the in-memory state (disk untouched).
   static void resetForTest() {
     instance._files.clear();

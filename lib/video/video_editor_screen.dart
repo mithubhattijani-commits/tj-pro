@@ -37,7 +37,9 @@ import '../services/pro_editor.dart';
 import '../services/fx_pack.dart';
 import '../services/pro_vision.dart';
 import '../services/audio_enhance_service.dart';
+import '../services/safe_ops.dart';
 import '../services/urdu_caption_service.dart';
+import 'video_editor_recovery.dart';
 import '../services/video_export_service.dart';
 import 'editor_stage.dart';
 import 'editor_models.dart';
@@ -476,6 +478,14 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
   // permanent line: it flashes for a few seconds per message.
   bool _statusVisible = false;
   Timer? _statusTimer;
+
+  // Build 10 (7F): session autosave / recovery — a periodic
+  // snapshot of the timeline + panel state (see
+  // video_editor_recovery.dart). _lastSessionJson dedupes
+  // writes; _restoreOffered keeps the offer to once per open.
+  Timer? _sessionTimer;
+  String _lastSessionJson = '';
+  bool _restoreOffered = false;
 
   // ---- PRO tools (v2.1.0) state. Defaults = today's behaviour: every
   // pro switch/dropdown off or neutral, so an untouched export is
@@ -1317,6 +1327,124 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       _loadProject(widget.project!, widget.preset);
     } else if (widget.initialVideoPath != null) {
       unawaited(_loadInitialVideo());
+    } else {
+      // Build 10 (7F): a plain open may have a crashed/killed
+      // session to offer back. Project / hub opens bring their
+      // own content and are never offered a draft over it.
+      unawaited(_offerSessionRestore());
+    }
+    _sessionTimer = Timer.periodic(
+      const Duration(seconds: 20),
+      (_) => unawaited(_saveSessionSnapshot()),
+    );
+  }
+
+  /// Build 10 (7F): persist the current timeline + panel
+  /// state as the rolling recovery draft. An emptied timeline
+  /// clears a draft WE wrote this session (the work is done /
+  /// discarded); a stored draft from BEFORE this session is
+  /// left alone here — it is the restore offer's business.
+  Future<void> _saveSessionSnapshot() async {
+    await SafeOps.guard('editor.session_save', () async {
+      if (_clips.isEmpty) {
+        if (_lastSessionJson.isNotEmpty) {
+          _lastSessionJson = '';
+          await VideoEditorRecoveryStore.clear();
+        }
+        return;
+      }
+      final session = VideoEditorSession(
+        clips: _clips.map(VideoEditorSession.clipToMap).toList(),
+        panel: _panelSnapshot(),
+        selected: _selected,
+        savedAtMs: DateTime.now().millisecondsSinceEpoch,
+      );
+      final json = session.encode();
+      if (json == _lastSessionJson) return;
+      _lastSessionJson = json;
+      await VideoEditorRecoveryStore.save(json);
+    });
+  }
+
+  /// Build 10 (7F): when a fresh-enough stored session exists
+  /// and at least one of its clip files survives, offer it —
+  /// once — via a SnackBar action. Ignoring the offer keeps
+  /// the draft stored (it is offered again next open, until
+  /// new work overwrites it or it ages out).
+  Future<void> _offerSessionRestore() async {
+    if (_restoreOffered) return;
+    _restoreOffered = true;
+    final raw = await VideoEditorRecoveryStore.load();
+    if (raw == null || !mounted) return;
+    final session = VideoEditorSession.decode(raw);
+    if (session == null || session.clips.isEmpty) return;
+    if (!session.isFresh(DateTime.now())) {
+      await VideoEditorRecoveryStore.clear();
+      return;
+    }
+    var anyExists = false;
+    for (final m in session.clips) {
+      final path = m['path'];
+      if (path is String && await File(path).exists()) {
+        anyExists = true;
+        break;
+      }
+    }
+    if (!anyExists || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 10),
+        content: const Text('Pichhla adhoora kaam mila hai.'),
+        action: SnackBarAction(
+          label: 'Wapas layen',
+          onPressed: () => unawaited(_restoreSession(session)),
+        ),
+      ),
+    );
+  }
+
+  /// Build 10 (7F): rebuild the timeline from a stored
+  /// session — clips whose files survive (stored duration /
+  /// aspect, no re-probe needed), then the panel snapshot,
+  /// then the preview. Runs through SafeOps (7C): a corrupt
+  /// snapshot fails alone with a status line.
+  Future<void> _restoreSession(VideoEditorSession session) async {
+    final result = await SafeOps.run<int>(
+      'editor.session_restore',
+      () async {
+        var count = 0;
+        final restored = <VideoClip>[];
+        for (final m in session.clips) {
+          final clip = VideoEditorSession.clipFromMap(m);
+          if (clip == null) continue;
+          if (!await clip.file.exists()) continue;
+          restored.add(clip);
+          count++;
+        }
+        if (count == 0) return 0;
+        if (!mounted) return 0;
+        setState(() {
+          _clips
+            ..clear()
+            ..addAll(restored);
+          _selected = session.selected.clamp(0, _clips.length - 1);
+        });
+        _restorePanelSnapshot(session.panel);
+        return count;
+      },
+    );
+    if (!mounted) return;
+    if (result.ok && (result.value ?? 0) > 0) {
+      // The restored state becomes the live draft again.
+      _lastSessionJson = '';
+      await _loadPreview();
+      setState(
+        () => _status = 'Pichhla kaam wapas aa gaya (${result.value} clip).',
+      );
+      _flashStatus();
+    } else {
+      setState(() => _status = 'Pichhla kaam wapas nahi aa saka.');
+      _flashStatus();
     }
   }
 
@@ -1426,6 +1554,11 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
 
   @override
   void dispose() {
+    _sessionTimer?.cancel();
+    // Build 10 (7F): one last draft save on the way out — the
+    // latest work is always the stored draft (CapCut-style);
+    // the restore offer on the next plain open is opt-in.
+    unawaited(_saveSessionSnapshot());
     _clock.removeListener(_onClockTick);
     _clock.dispose();
     _scrubSeekTimer?.cancel();

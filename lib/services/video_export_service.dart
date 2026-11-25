@@ -3,15 +3,33 @@
 /// v1.0.13 — adapted: Magic Box's per-feature ad gate is NOT ported.
 /// TJ Pro's unlock economy is coins only (v1.3.0 §8) and the burn-in
 /// itself was never gated; it runs with no gate. The
-/// rest — probe, subtitles attempt, drawtext fallback, Download
-/// folder output, progress — is the same.
+/// rest — probe, Download folder output, progress — is the same.
 ///
-/// Attempt 1: `subtitles` filter with the styled ASS file (full
-/// style: colours, karaoke, outline, position).
-/// Attempt 2 (fallback): per-line `drawtext` (parses Dialogue lines
-/// back out of the ASS; plain white/border, no karaoke). Urdu in the
-/// fallback still cannot shape (drawtext limitation) — the ASS
-/// attempt is what carries Urdu.
+/// Build 10 (v1.8.0, point #7D): the attempts are now an explicit
+/// fallback chain ([ExportChain]), in the user's spec order:
+///   1. `hardware` — styled ASS burn-in via the MediaCodec
+///      hardware encoder (skipped on LOW-tier phones, see
+///      [PerformanceConfig.tryHardwareEncoder]). When the build
+///      or the device lacks the encoder, ffmpeg fails fast and
+///      the chain moves on — trying costs seconds, never the
+///      export.
+///   2. `chunked` — the same styled burn-in in short segments
+///      (output-side seeking keeps the ASS timing absolute;
+///      the shape was verified against a real ffmpeg before it
+///      shipped), concatenated at the end. Peak memory per pass
+///      is a fraction of the full-length render. Only for
+///      videos at least [VideoExportService.chunkMinDurationSeconds]
+///      long — below that, chunking saves nothing.
+///   3. `software` — the original full-length libx264 ASS
+///      burn-in (full style: colours, karaoke, outline,
+///      position), byte-identical arguments to the pre-chain
+///      Attempt 1.
+///   4. `software-plain` — the original drawtext fallback
+///      (per-line `drawtext`; plain white/border, no karaoke).
+///      Urdu in this fallback still cannot shape (drawtext
+///      limitation) — the ASS attempts are what carry Urdu.
+/// A user cancel stops the chain immediately (never falls
+/// through), exactly as before.
 ///
 /// Quality 720p/1080p; scale `scale=<target>:-2` (vertical) or
 /// `scale=-2:<target>` (horizontal); progress 0–1 from ffmpeg stats
@@ -21,6 +39,7 @@ library;
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
@@ -32,9 +51,11 @@ import 'package:onnxruntime/onnxruntime.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import 'export_chain.dart';
 import 'ffmpeg_service.dart';
 import 'model_pack_service.dart';
 import 'onnx_image_service.dart';
+import 'performance_engine.dart';
 
 /// Burn-in quality.
 enum VideoExportQuality {
@@ -87,6 +108,7 @@ class VideoExportResult {
     this.outputPath,
     this.error,
     this.cancelled = false,
+    this.strategy,
   });
 
   final bool success;
@@ -97,6 +119,22 @@ class VideoExportResult {
   /// [VideoExportService.cancelCurrentExport] (Phase 0) — the UI
   /// then says "cancelled" instead of showing an ffmpeg failure.
   final bool cancelled;
+
+  /// Build 10 (7D): which fallback-chain strategy produced the
+  /// file ('hardware' / 'chunked' / 'software' /
+  /// 'software-plain'); null on failure / cancel.
+  final String? strategy;
+}
+
+/// One chain attempt's outcome inside [VideoExportService]:
+/// success, user-cancel, or failure with the ffmpeg logs that
+/// explain it.
+class _BurnOutcome {
+  const _BurnOutcome({required this.ok, this.cancelled = false, this.logs = ''});
+
+  final bool ok;
+  final bool cancelled;
+  final String logs;
 }
 
 class VideoExportService {
@@ -200,6 +238,114 @@ class VideoExportService {
     ];
   }
 
+  /// Videos shorter than this never take the chain's chunked
+  /// attempt — segmenting them saves no memory worth having.
+  static const double chunkMinDurationSeconds = 60;
+
+  /// Bitrate ladder (kbps) for the hardware attempt — the
+  /// MediaCodec encoder takes a target bitrate, not CRF. Same
+  /// YouTube-recommended ladder [ExportSettings] uses.
+  static int hardwareBitrateKbpsFor(VideoExportQuality quality) =>
+      switch (quality) {
+        VideoExportQuality.p720 => 2500,
+        VideoExportQuality.p1080 => 5000,
+        VideoExportQuality.p2160 => 12000,
+      };
+
+  /// Chain attempt `hardware`: styled ASS burn-in encoded by
+  /// the device's MediaCodec H.264 encoder. Pure builder —
+  /// unit-tested like [burnInArgs].
+  static List<String> burnInHardwareArgs({
+    required String inputPath,
+    required String assPath,
+    required String outputPath,
+    required VideoExportQuality quality,
+    required bool vertical,
+  }) {
+    return [
+      '-y',
+      '-i',
+      inputPath,
+      '-vf',
+      '${scaleFor(quality, vertical)},subtitles=${escapeFilterPath(assPath)}',
+      '-c:v',
+      'h264_mediacodec',
+      '-b:v',
+      '${hardwareBitrateKbpsFor(quality)}k',
+      '-c:a',
+      'copy',
+      '-movflags',
+      '+faststart',
+      outputPath,
+    ];
+  }
+
+  /// Chain attempt `chunked`: ONE segment of the styled ASS
+  /// burn-in. `-ss`/`-t` sit AFTER `-i` (output seeking):
+  /// ffmpeg decodes from the start and drops frames before
+  /// [startSeconds], so the frames reaching the subtitles
+  /// filter keep their ORIGINAL timestamps and the ASS events
+  /// land at the right absolute times (verified against a
+  /// real ffmpeg — see BUILD10-TOOL-TESTS). Audio is
+  /// re-encoded to a fixed AAC profile so every segment
+  /// shares one codec configuration and the concat step can
+  /// stream-copy.
+  static List<String> burnInSegmentArgs({
+    required String inputPath,
+    required String assPath,
+    required String outputPath,
+    required VideoExportQuality quality,
+    required bool vertical,
+    required double startSeconds,
+    required double lengthSeconds,
+  }) {
+    return [
+      '-y',
+      '-i',
+      inputPath,
+      '-ss',
+      startSeconds.toStringAsFixed(3),
+      '-t',
+      lengthSeconds.toStringAsFixed(3),
+      '-vf',
+      '${scaleFor(quality, vertical)},subtitles=${escapeFilterPath(assPath)}',
+      '-c:v',
+      'libx264',
+      '-preset',
+      'veryfast',
+      '-crf',
+      '23',
+      '-c:a',
+      'aac',
+      '-b:a',
+      '128k',
+      outputPath,
+    ];
+  }
+
+  /// Chain attempt `chunked`, final step: join the segments
+  /// (same codec configuration throughout) with the concat
+  /// demuxer, stream copy, faststart for instant playback.
+  static List<String> burnInConcatArgs({
+    required String listPath,
+    required String outputPath,
+  }) {
+    return [
+      '-y',
+      '-f',
+      'concat',
+      '-safe',
+      '0',
+      '-i',
+      listPath,
+      '-c',
+      'copy',
+      '-movflags',
+      '+faststart',
+      outputPath,
+    ];
+  }
+
   /// The FFmpeg session this service is currently running, if
   /// any (Phase 0 registry for THIS service's direct FFmpegKit
   /// calls — runs through [FfmpegService.run] register there
@@ -295,67 +441,156 @@ class VideoExportService {
 
       final size = await probeVideoSize(inputVideo);
       final vertical = size?.isVertical ?? false;
+      final duration = size?.durationSeconds;
+      final engineConfig = PerformanceEngine.instance.config.value;
 
-      // Attempt 1: styled ASS burn-in (subtitles filter).
-      var session = await _execute(
-        burnInArgs(
-          inputPath: inputVideo.path,
-          assPath: assFile.path,
-          outputPath: outPath,
-          quality: quality,
-          vertical: vertical,
+      // Runs one ffmpeg attempt and folds its return code into
+      // a _BurnOutcome. A user cancel surfaces as
+      // `cancelled: true` and stops the whole chain (Phase 0
+      // rule — a cancel never falls through to a retry).
+      Future<_BurnOutcome> runAttempt(
+        List<String> args, {
+        double? progressDuration,
+        void Function(double progress)? progress,
+      }) async {
+        final session = await _execute(
+          args,
+          onProgress: progress ?? onProgress,
+          durationSeconds: progressDuration ?? duration,
+        );
+        final rc = await session.getReturnCode();
+        if (ReturnCode.isCancel(rc)) {
+          return const _BurnOutcome(ok: false, cancelled: true);
+        }
+        if (ReturnCode.isSuccess(rc)) {
+          return const _BurnOutcome(ok: true);
+        }
+        return _BurnOutcome(
+          ok: false,
+          logs: await session.getAllLogsAsString() ?? '',
+        );
+      }
+
+      final attemptLogs = <String, String>{};
+      ExportAttempt<_BurnOutcome> tracked(
+        String name,
+        Future<_BurnOutcome> Function() body,
+      ) {
+        return ExportAttempt<_BurnOutcome>(
+          name: name,
+          run: () async {
+            final outcome = await body();
+            if (outcome.logs.isNotEmpty) attemptLogs[name] = outcome.logs;
+            return outcome;
+          },
+        );
+      }
+
+      // Build 10 (7D): the fallback chain, in spec order —
+      // hardware → chunked → software → software-plain. The
+      // last two are the pre-chain attempts 1 and 2 with
+      // byte-identical arguments.
+      final attempts = <ExportAttempt<_BurnOutcome>>[
+        if (engineConfig.tryHardwareEncoder)
+          tracked(
+            'hardware',
+            () => runAttempt(
+              burnInHardwareArgs(
+                inputPath: inputVideo.path,
+                assPath: assFile.path,
+                outputPath: outPath,
+                quality: quality,
+                vertical: vertical,
+              ),
+            ),
+          ),
+        if (duration != null && duration >= chunkMinDurationSeconds)
+          tracked(
+            'chunked',
+            () => _chunkedBurnIn(
+              inputPath: inputVideo.path,
+              assPath: assFile.path,
+              outputPath: outPath,
+              quality: quality,
+              vertical: vertical,
+              durationSeconds: duration,
+              chunkSeconds: engineConfig.exportChunkSeconds,
+              tmp: tmp,
+              stamp: stamp,
+              onProgress: onProgress,
+              runAttempt: runAttempt,
+            ),
+          ),
+        tracked(
+          'software',
+          () => runAttempt(
+            burnInArgs(
+              inputPath: inputVideo.path,
+              assPath: assFile.path,
+              outputPath: outPath,
+              quality: quality,
+              vertical: vertical,
+            ),
+          ),
         ),
-        onProgress: onProgress,
-        durationSeconds: size?.durationSeconds,
+        tracked(
+          'software-plain',
+          () async {
+            // Drawtext fallback (one drawtext per line). The
+            // style is plainer (no karaoke), but the captions
+            // still land in the video instead of failing
+            // outright. The filter is built lazily, only when
+            // the chain actually reaches this attempt — the
+            // same laziness the pre-chain code had.
+            final drawtextFilter = await buildDrawtextFilter(
+              assContent: assContent,
+              scale: scaleFor(quality, vertical),
+              quality: quality,
+              vertical: vertical,
+            );
+            if (drawtextFilter == null) {
+              return const _BurnOutcome(
+                ok: false,
+                logs: 'drawtext: no caption lines parsed',
+              );
+            }
+            return runAttempt(
+              burnInDrawtextArgs(
+                inputPath: inputVideo.path,
+                drawtextFilter: drawtextFilter,
+                outputPath: outPath,
+              ),
+            );
+          },
+        ),
+      ];
+
+      final outcome = await ExportChain.run<_BurnOutcome>(
+        attempts: attempts,
+        isSuccess: (r) => r.ok,
+        isCancelled: (r) => r.cancelled,
       );
-      var rc = await session.getReturnCode();
-      if (ReturnCode.isCancel(rc)) {
-        // Phase 0: a user cancel must NOT fall through to the
-        // drawtext retry below — the export stops here.
+      if (outcome.cancelled) {
         return const VideoExportResult(
           success: false,
           cancelled: true,
           error: 'Export cancel kar diya gaya.',
         );
       }
-      if (ReturnCode.isSuccess(rc)) {
-        return VideoExportResult(success: true, outputPath: outPath);
-      }
-      final assLogs = await session.getAllLogsAsString() ?? '';
-
-      // Attempt 2: drawtext fallback (one drawtext per line). The
-      // style is plainer (no karaoke), but the captions still land
-      // in the video instead of failing outright.
-      final drawtextFilter = await buildDrawtextFilter(
-        assContent: assContent,
-        scale: scaleFor(quality, vertical),
-        quality: quality,
-        vertical: vertical,
-      );
-      if (drawtextFilter != null) {
-        session = await _execute(
-          burnInDrawtextArgs(
-            inputPath: inputVideo.path,
-            drawtextFilter: drawtextFilter,
-            outputPath: outPath,
-          ),
-          onProgress: onProgress,
-          durationSeconds: size?.durationSeconds,
+      if (outcome.succeeded) {
+        return VideoExportResult(
+          success: true,
+          outputPath: outPath,
+          strategy: outcome.attemptName,
         );
-        rc = await session.getReturnCode();
-        if (ReturnCode.isCancel(rc)) {
-          return const VideoExportResult(
-            success: false,
-            cancelled: true,
-            error: 'Export cancel kar diya gaya.',
-          );
-        }
-        if (ReturnCode.isSuccess(rc)) {
-          return VideoExportResult(success: true, outputPath: outPath);
-        }
       }
-      final logs = await session.getAllLogsAsString() ?? '';
-      final tail = (assLogs.isNotEmpty ? assLogs : logs).trim();
+      // Every strategy failed: the reason shown is the styled
+      // (software) attempt's logs when there are any — the
+      // pre-chain preference — else the last attempt's.
+      final tail = (attemptLogs['software'] ??
+              attemptLogs[outcome.triedAttempts.last] ??
+              '')
+          .trim();
       final shown = tail.length > 600
           ? tail.substring(tail.length - 600)
           : tail;
@@ -367,6 +602,91 @@ class VideoExportService {
       );
     } catch (e) {
       return VideoExportResult(success: false, error: e.toString());
+    }
+  }
+
+  /// Chain attempt `chunked`: render the styled burn-in in
+  /// [chunkSeconds]-long segments (see [burnInSegmentArgs] for
+  /// why the timing stays correct), then concat them into
+  /// [outputPath]. Any segment failing abandons the attempt —
+  /// the chain moves on to the full-length software render.
+  /// Segment files are always cleaned up; a crashed run's
+  /// leftovers are swept by the `caption_burn_` stale-file
+  /// pass at the start of [exportVideo].
+  static Future<_BurnOutcome> _chunkedBurnIn({
+    required String inputPath,
+    required String assPath,
+    required String outputPath,
+    required VideoExportQuality quality,
+    required bool vertical,
+    required double durationSeconds,
+    required int chunkSeconds,
+    required Directory tmp,
+    required int stamp,
+    required void Function(double progress)? onProgress,
+    required Future<_BurnOutcome> Function(
+      List<String> args, {
+      double? progressDuration,
+      void Function(double progress)? progress,
+    }) runAttempt,
+  }) async {
+    final count = (durationSeconds / chunkSeconds).ceil();
+    final segments = <File>[];
+    final listFile = File('${tmp.path}/caption_burn_seg_$stamp.txt');
+    try {
+      for (var i = 0; i < count; i++) {
+        final start = i * chunkSeconds.toDouble();
+        final length = math.min(
+          chunkSeconds.toDouble(),
+          durationSeconds - start,
+        );
+        if (length <= 0) break;
+        final segPath = '${tmp.path}/caption_burn_seg_${stamp}_$i.mp4';
+        final outcome = await runAttempt(
+          burnInSegmentArgs(
+            inputPath: inputPath,
+            assPath: assPath,
+            outputPath: segPath,
+            quality: quality,
+            vertical: vertical,
+            startSeconds: start,
+            lengthSeconds: length,
+          ),
+          progressDuration: length,
+          // Segment-local progress re-mapped onto the whole
+          // video: segment i covers [i/count, (i+1)/count].
+          progress: onProgress == null
+              ? null
+              : (p) => onProgress((i + p) / count),
+        );
+        if (outcome.cancelled || !outcome.ok) return outcome;
+        segments.add(File(segPath));
+      }
+      if (segments.isEmpty) {
+        return const _BurnOutcome(ok: false, logs: 'chunked: no segments');
+      }
+      final buf = StringBuffer();
+      for (final seg in segments) {
+        buf.writeln("file '${seg.path.replaceAll("'", r"'\''")}'");
+      }
+      await listFile.writeAsString(buf.toString());
+      return await runAttempt(
+        burnInConcatArgs(listPath: listFile.path, outputPath: outputPath),
+        progressDuration: durationSeconds,
+      );
+    } finally {
+      for (final seg in segments) {
+        try {
+          await seg.delete();
+        } catch (_) {
+          // Swept by the next run's stale-file pass.
+        }
+      }
+      try {
+        await listFile.delete();
+      } catch (_) {
+        // Same sweep.
+      }
     }
   }
 
