@@ -219,31 +219,56 @@ void main() {
     });
   });
 
-  group('logoLoopOverlayCommand — ping-pong mov vs generated frames', () {
-    test('mov source: crop + reverse + concat, bug at 590:86', () {
+  group('logoLoopOverlayCommand — ping-pong cycle vs generated frames', () {
+    test('cycle source: finite cycle looped, NO in-graph reverse', () {
       final cmd = FfmpegService.logoLoopOverlayCommand(
         input: '/tmp/main.mp4',
         output: '/tmp/logo.mp4',
         width: 720,
         height: 1280,
         topRibbonEnabled: true,
-        movPath: '/tmp/logo-rotating-alpha.mov',
+        pingPongPath: '/tmp/logo-cycle.mov',
       );
       expect(
         cmd,
-        "-y -stream_loop -1 -i '/tmp/logo-rotating-alpha.mov' "
+        "-y -stream_loop -1 -i '/tmp/logo-cycle.mov' "
         "-i '/tmp/main.mp4' "
-        '-filter_complex "[0:v]crop=396:316:235:86,format=yuva420p,'
-        'split[f][r];[r]reverse[rr];[f][rr]concat=n=2:v=1:a=0,'
-        'format=yuva420p,scale=110:-1[bug];'
+        '-filter_complex "[0:v]format=yuva420p,scale=110:-1[bug];'
         '[1:v][bug]overlay=590:86:shortest=1[vout]" '
         '-map "[vout]" -map 1:a? -c:v libx264 -preset veryfast -crf 23 '
         // Build 12: -shortest bounds the infinitely looped
         // logo input to the base video's duration.
         "-c:a copy -shortest -movflags +faststart '/tmp/logo.mp4'",
       );
+      // Hotfix (audit C3): the reverse filter must NEVER run
+      // on a -stream_loop -1 input again — it buffers the
+      // endless stream until the process dies. The ping-pong
+      // now lives in the finite cycle file (next test).
+      expect(cmd, isNot(contains('reverse')));
       // No perspective filter anywhere (rejected in the decision doc).
       expect(cmd, isNot(contains('perspective')));
+    });
+
+    test('logoPingPongCycleCommand: reverse on the FINITE mov only', () {
+      final cmd = FfmpegService.logoPingPongCycleCommand(
+        movPath: '/tmp/logo-rotating-alpha.mov',
+        output: '/tmp/logo-cycle.mov',
+        cropW: FfmpegService.logoMovCropW,
+        cropH: FfmpegService.logoMovCropH,
+        cropX: FfmpegService.logoMovCropX,
+        cropY: FfmpegService.logoMovCropY,
+      );
+      expect(
+        cmd,
+        "-y -i '/tmp/logo-rotating-alpha.mov' "
+        '-filter_complex "[0:v]crop=396:316:235:86,format=yuva420p,'
+        'split[f][r];[r]reverse[rr];[f][rr]concat=n=2:v=1:a=0,'
+        'format=yuva420p[cyc]" '
+        "-map \"[cyc]\" -c:v qtrle '/tmp/logo-cycle.mov'",
+      );
+      // The input is the finite .mov — no loop flags anywhere,
+      // so reverse buffers exactly one 10 s cycle, once.
+      expect(cmd, isNot(contains('-stream_loop')));
     });
 
     test('frames source: image2 loop at 12 fps', () {
@@ -285,7 +310,7 @@ void main() {
           width: 720,
           height: 1280,
           topRibbonEnabled: true,
-          movPath: '/tmp/a.mov',
+          pingPongPath: '/tmp/a.mov',
           framesDir: '/tmp/loop',
         ),
         throwsAssertionError,
