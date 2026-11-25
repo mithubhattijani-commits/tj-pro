@@ -65,9 +65,9 @@ import 'news_project.dart';
 ///
 /// v1.2.0: export resolution is NO LONGER charged in coins — Unity
 /// interstitials play for the export instead (see
-/// [UnityAdsService.showExportAds]; since the export-crash
-/// hotfix they complete BEFORE the encode starts, never
-/// alongside it). This mapping is retained only
+/// [UnityAdsService.showExportAds]; since v1.13.0 they run AFTER
+/// the export has completed successfully — a failed or cancelled
+/// export shows no ad). This mapping is retained only
 /// for legacy compatibility; the export flow does not spend it.
 CoinFeature coinFeatureForQuality(int quality) {
   switch (quality) {
@@ -177,8 +177,9 @@ class _ExportScreenState extends State<ExportScreen> {
     }
     // COINS (v1.2.0): export resolution costs NO coins any more —
     // the old 720p 50 / 1080p 100 / 4K 200 charge is abolished;
-    // Unity interstitials play alongside the export instead (fired
-    // unawaited below). The ONLY charge left here is chroma key
+    // Unity interstitials play for the export instead — since
+    // v1.13.0 ONLY after it completes successfully (see the end of
+    // this method). The ONLY charge left here is chroma key
     // when the preset has chroma on — the chroma feature's own
     // price (plan §15), not a resolution price; the chroma pass runs
     // inside this export. A failed export does NOT auto-refund —
@@ -228,22 +229,14 @@ class _ExportScreenState extends State<ExportScreen> {
       _savedPath = null;
       _savedSizeBytes = null;
     });
-    // ADS BEFORE EXPORT (v1.2.0 counts, hotfix resequencing):
-    // 720p → 1 interstitial, 1080p / 4K → 2 back-to-back — the
-    // counts are unchanged, but the ads no longer run ALONGSIDE
-    // the encode. They used to fire UNAWAITED at export start;
-    // the ad's video decode then spiked memory in the SAME
-    // process the ffmpeg encode was running in, mid-encode —
-    // the export-crash audit's C2, a direct contributor to the
-    // app dying at 50–60%. Now the sequence is awaited to
-    // completion BEFORE the encode begins (the Video Editor's
-    // gate pattern: ads first, then render). showExportAds
-    // still swallows every failure (offline / no fill
-    // included), so a failed ad never fails the export — it
-    // just starts after the attempt ends.
-    setState(() => _status = 'Ads chal rahe hain — phir export shuru hoga…');
-    await UnityAdsService.showExportAds(_settings.quality == 0 ? 1 : 2);
-    if (!mounted) return;
+    // EXPORT ADS (v1.13.0, user order 2026-11-25): NO ads here
+    // any more. The sequence used to run before the encode (the
+    // export-crash hotfix's resequencing — before that it fired
+    // alongside the encode, whose memory spike mid-encode was
+    // audit item C2). The rule now: an ad is owed ONLY for a
+    // completed export, so the sequence runs at the END of this
+    // method, on the success branch only — a failed or cancelled
+    // export shows no ad at all.
     final ReelExportResult result;
     try {
       result = await ReelExportService.exportReel(
@@ -303,6 +296,23 @@ class _ExportScreenState extends State<ExportScreen> {
               : result.error;
       _failedStep = _cancelRequested ? 'Export (cancel)' : result.failedStep;
     });
+    // EXPORT ADS AFTER COMPLETION (v1.13.0, user order
+    // 2026-11-25): the ONLY ad call in this flow, reached solely
+    // on a completed, saved export. A failed result returns
+    // above without reaching it; a throw lands in the catch
+    // above; a user cancel sets _cancelRequested (and a
+    // cancelled result is never success) — none of them shows
+    // an ad. Counts are the v1.2.0 ones via the shared mapping
+    // (720p → 1, 1080p / 4K → 2 back-to-back); Pro users are
+    // suppressed inside showExportAds (point #10). Awaited so
+    // the sequence finishes while this screen is still up;
+    // showExportAds swallows every failure, so a failed ad can
+    // never mark a finished export as failed.
+    if (result.success && !_cancelRequested) {
+      await UnityAdsService.showExportAds(
+        UnityAdsService.exportAdCountForQuality(_settings.quality),
+      );
+    }
   }
 
   void _cancel() {

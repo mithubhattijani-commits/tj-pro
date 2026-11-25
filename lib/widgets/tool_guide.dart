@@ -505,10 +505,12 @@ const Map<String, ToolGuideEntry> _veGuides = {
       'Filters tab: koi filter chunein aur us ki miqdar (intensity) set karein.',
       'Adjust tab: brightness, contrast, saturation waghera sliders se theek karein.',
       'Preview mein asar sath sath nazar ata hai — ✓ se pakka karein.',
+      'My Looks: jo settings pasand ayen, Adjust ke neeche "Save look" se naam de kar save kar lein — agli dafa wo look aik tap se lag jayega.',
     ],
     tips: [
       'LUT, Sharpen aur Clarity ka asar sirf export ki hui video mein ata hai — preview mein nahi dikhta, ye normal hai.',
       'Hold-to-compare se pehle/bag ki halat dekh sakte hain.',
+      'Saved looks sirf is phone par rehte hain; kisi look ke dustbin (delete) icon se wo hat jata hai, aur usi naam se dobara Save karne se look update ho jata hai.',
     ],
   ),
   've.effects': ToolGuideEntry(
@@ -980,6 +982,7 @@ const Map<String, ToolGuideEntry> _nsGuides = {
     tips: [
       'Export hamesha wahi hisa leta hai jo trim ke andar hai — poori asal file mehfooz rehti hai.',
       'Clip par tap karne se Media panel khulta hai — yahi is ki settings ki jagah hai.',
+      'Preview ke upar dayein konay mein grid wala button hai — us se safe-area guides (thirds + mehfooz hisay ke nishan) nazar ate hain taake headline/ticker kinaron se takraye nahi. Ye sirf preview ke liye hain, export mein kabhi nahi ate.',
     ],
   ),
   'ns.elements': ToolGuideEntry(

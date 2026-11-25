@@ -54,6 +54,7 @@ import 'package:video_player/video_player.dart';
 import '../app_config.dart';
 import '../live/news_template.dart';
 import '../motion/motion_gallery_screen.dart';
+import '../video/widgets/editor_stage.dart';
 import '../widgets/tool_guide.dart';
 import '../services/ai_tool_charge.dart';
 import '../services/asset_download_service.dart';
@@ -169,6 +170,14 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   /// v1.5.1 (News Studio step, NS2): the open tool of the tool
   /// line (null = the summary card shows).
   String? _activeTool;
+
+  /// v1.13.0 (G4): safe-area guides over the big preview — the
+  /// Video Editor's [StageGridPainter] (thirds + action/title
+  /// safe rects), toggled from the preview's corner, default OFF
+  /// exactly like the Video Editor's grid. Preview-only state:
+  /// it lives on this State, never on the project/preset, so it
+  /// cannot reach the export by construction.
+  bool _nsShowGuides = false;
 
   /// v1.5.1 (#52): Library listings (cache-first; refreshed by
   /// _initFontsAndLibrary on entry).
@@ -3393,6 +3402,60 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                           );
                         },
                       ),
+                    ),
+                  ),
+                  // v1.13.0 (G4): safe-area guides over the
+                  // preview frame — the Video Editor's
+                  // StageGridPainter reused as-is (thirds +
+                  // 90% action-safe + 80% title-safe), fitted to
+                  // the same centred 9:16 box the preview renders
+                  // into (the captions overlay's fit). Painted
+                  // ONLY here in the preview stack; the export
+                  // renders from the project/preset via ffmpeg
+                  // and never receives this flag.
+                  if (_nsShowGuides)
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            var boxH = constraints.maxHeight;
+                            if (boxH * 9 / 16 > constraints.maxWidth) {
+                              boxH = constraints.maxWidth * 16 / 9;
+                            }
+                            final boxW = boxH * 9 / 16;
+                            return Center(
+                              child: SizedBox(
+                                key: const Key('nsSafeGuides'),
+                                width: boxW,
+                                height: boxH,
+                                child: const CustomPaint(
+                                  painter: StageGridPainter(),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  // v1.13.0 (G4): the guides toggle — the Video
+                  // Editor's stage-corner pattern (grid_on /
+                  // grid_off, gold while on), top-right corner;
+                  // the top-left belongs to the PREVIEW chip.
+                  Positioned(
+                    top: 2,
+                    right: 2,
+                    child: IconButton(
+                      key: const Key('nsGuidesToggle'),
+                      tooltip: 'Grid / safe zones',
+                      icon: Icon(
+                        _nsShowGuides ? Icons.grid_on : Icons.grid_off,
+                        color: _nsShowGuides
+                            ? const Color(0xFFF5C542)
+                            : Colors.white54,
+                        size: 20,
+                      ),
+                      onPressed: () =>
+                          setState(() => _nsShowGuides = !_nsShowGuides),
                     ),
                   ),
                   // Stage chips (display only, gesture-transparent):

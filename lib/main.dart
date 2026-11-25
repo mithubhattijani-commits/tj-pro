@@ -2019,12 +2019,21 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: const Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      'Open',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
+                    // v1.13.0 (G3, extra proven find): Flexible +
+                    // ellipsis — this 'Open' pill row overflowed
+                    // by 10px at 360dp under wide font metrics
+                    // (proven in the same widget probe as the two
+                    // assigned rows); identical at normal widths.
+                    Flexible(
+                      child: Text(
+                        'Open',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                     SizedBox(width: 4),
@@ -2131,12 +2140,23 @@ class _HomeScreenState extends State<HomeScreen> {
                           children: [
                             Icon(Icons.sensors, size: 14, color: Colors.white),
                             SizedBox(width: 6),
-                            Text(
-                              'Join Now',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 12.5,
-                                fontWeight: FontWeight.bold,
+                            // v1.13.0 (G3): Flexible + ellipsis —
+                            // at narrow widths / wide font metrics
+                            // this pill's row overflowed by 18px
+                            // (proven in the 393dp widget test);
+                            // the label now shrinks instead of
+                            // overflowing. Identical at normal
+                            // widths.
+                            Flexible(
+                              child: Text(
+                                'Join Now',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
                             ),
                             SizedBox(width: 4),
@@ -2441,12 +2461,23 @@ class AdvertisingBanner extends StatelessWidget {
                       children: [
                         Icon(Icons.chat, color: Color(0xFF25D366), size: 15),
                         SizedBox(width: 5),
-                        Text(
-                          AppConfig.supportWhatsAppNumber,
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 14.5,
-                            fontWeight: FontWeight.w800,
+                        // v1.13.0 (G3): Flexible + ellipsis — the
+                        // WhatsApp number at 14.5/w800 overflowed
+                        // this row by 41px at 393dp under wide
+                        // font metrics (proven in the widget
+                        // test); it now ellipsizes at pathological
+                        // widths instead. Identical at normal
+                        // widths.
+                        Flexible(
+                          child: Text(
+                            AppConfig.supportWhatsAppNumber,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 14.5,
+                              fontWeight: FontWeight.w800,
+                            ),
                           ),
                         ),
                       ],

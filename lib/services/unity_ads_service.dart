@@ -282,20 +282,38 @@ class UnityAdsService {
 
   static bool _exportAdsInFlight = false;
 
-  /// Show [count] interstitial ads back-to-back alongside a video
-  /// export (v1.2.0 export rule: 720p → 1 ad, 1080p / 4K → 2 ads;
-  /// export resolution no longer costs coins).
+  /// The export-ad count for an export quality index (0 = 720p,
+  /// 1 = 1080p, 2 = 4K) — the v1.2.0 counts, unchanged: 720p → 1
+  /// interstitial, 1080p / 4K → 2 back-to-back. ONE mapping for
+  /// every export path (News Studio, Video Editor), so the counts
+  /// can never drift apart between editors.
+  static int exportAdCountForQuality(int quality) => quality <= 0 ? 1 : 2;
+
+  /// Show [count] interstitial ads back-to-back for a video export
+  /// (v1.2.0 export rule: 720p → 1 ad, 1080p / 4K → 2 ads — see
+  /// [exportAdCountForQuality]; export resolution no longer costs
+  /// coins).
   ///
-  /// BEST-EFFORT ONLY: callers must fire this unawaited — the export
-  /// starts immediately and never waits for, or fails because of,
-  /// these ads. Every failure (SDK not initialized, offline, no fill,
-  /// load/show timeout) is swallowed; when one ad closes OR fails the
-  /// next one is attempted, and a failure simply ends that attempt.
-  /// The regular interstitial frequency cap is bypassed here because
-  /// the second ad must follow the first immediately, but each show
-  /// still updates [_lastInterstitialShown] so ordinary interstitials
-  /// stay capped afterwards. Re-entrant calls while a sequence is
-  /// already running are ignored.
+  /// v1.13.0 (user order 2026-11-25): TIMING — callers invoke this
+  /// ONLY after the export has COMPLETED successfully (file
+  /// rendered AND saved). A failed, cancelled or incomplete export
+  /// must never call it: no finished video, no ad. This replaces
+  /// both older timings — the original fire-alongside-the-encode
+  /// (an export-crash contributor: the ad's decode spiked memory
+  /// in the encoding process) and the hotfix's ads-before-encode
+  /// gate.
+  ///
+  /// BEST-EFFORT ONLY: the export is already done when this runs,
+  /// and nothing waits on the result. Every failure (SDK not
+  /// initialized, offline, no fill, load/show timeout) is
+  /// swallowed; when one ad closes OR fails the next one is
+  /// attempted, and a failure simply ends that attempt. The
+  /// regular interstitial frequency cap is bypassed here because
+  /// the second ad must follow the first immediately, but each
+  /// show still updates [_lastInterstitialShown] so ordinary
+  /// interstitials stay capped afterwards. Re-entrant calls while
+  /// a sequence is already running are ignored. Pro users are
+  /// suppressed centrally (point #10) before any plugin call.
   static Future<void> showExportAds(int count) async {
     if (count <= 0 || _exportAdsInFlight) return;
     if (_proNoAds) return; // Point #10: Pro = no ads, exports included.

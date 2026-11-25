@@ -23,7 +23,6 @@ import '../services/caption_service.dart';
 import '../services/pro_editor.dart';
 import '../services/fx_pack.dart';
 import '../services/pro_vision.dart';
-import '../services/pro_service.dart';
 import '../services/reel_export_service.dart';
 import '../services/video_export_service.dart';
 import 'editor_models.dart';
@@ -1525,7 +1524,24 @@ class VideoEditorExportController {
       }
       await Gal.putVideo(out);
       host.setStatus('Saved to gallery: ${p.basename(out)}');
-      UnityAdsService.showInterstitialAd();
+      // v1.13.0 (user order 2026-11-25): export ads AFTER the
+      // completed export — this is the export's ONLY ad call,
+      // and it sits after the gallery save inside the try that
+      // rethrows on any failure, so a failed / cancelled export
+      // never reaches it. (The old code fired one interstitial
+      // here for every quality AND, since v1.4.0, two more
+      // before the render at 1080p+; both timings are replaced
+      // by this single post-completion sequence.) Counts via
+      // the shared mapping: 720p → 1, 1080p / 4K → 2
+      // back-to-back. Pro users are suppressed inside
+      // showExportAds (point #10). Fired unawaited — the export
+      // is done; the completion snackbar below must not wait on
+      // an ad.
+      unawaited(
+        UnityAdsService.showExportAds(
+          UnityAdsService.exportAdCountForQuality(host.fxQuality),
+        ),
+      );
       final exportCtx = host.context;
       if (exportCtx.mounted) {
         // Build 3 (Phase 3, PRO-SPEC point 22): the saved video
@@ -1565,18 +1581,13 @@ class VideoEditorExportController {
       final ok = await host.pickExportSettings();
       if (ok != true || !host.mounted) return;
     }
-    final quality = host.fxQuality;
-    // v1.4.0 PRO: 1080p / 4K exports carry the double-ad gate for
-    // free users (two back-to-back interstitials before the render
-    // starts — the ad service's own 120 s interval may suppress
-    // the second when one was just shown). Pro subscribers
-    // (ProService.proActive) skip the gate entirely.
-    if (quality >= 1 && !ProService.instance.proActive) {
-      host.setStatus('Ads chal rahe hain — phir export shuru hoga…');
-      await UnityAdsService.showInterstitialAd();
-      await UnityAdsService.showInterstitialAd();
-      if (!host.mounted) return;
-    }
+    // v1.13.0 (user order 2026-11-25): the v1.4.0 pre-render
+    // double-ad gate is GONE. Export ads now run ONLY after a
+    // completed export (see the post-save call in _exportInner):
+    // 720p → 1 interstitial, 1080p / 4K → 2 back-to-back, and a
+    // failed / cancelled export shows no ad at all. Pro users
+    // are suppressed centrally in the ad service (point #10), so
+    // no Pro check is needed here either.
     host.update(() {
       host.busy = true;
       host.exporting = true;

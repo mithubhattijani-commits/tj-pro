@@ -1705,6 +1705,24 @@ const int kParityLogoCropY = 57;
 ///   0.22/0.08), despilled, cropped to the keyed union, scaled to
 ///   the logo block and alpha-hardened so it reads SOLID, looped
 ///   for the export duration. Takes precedence over the cycle.
+///
+/// INFINITE-INPUT BOUND (v1.13.0, fix-list #15 audit): every logo
+/// source except the still is a `-stream_loop -1` (endless) input.
+/// Endless inputs are safe ONLY where a bound cuts them — this
+/// graph originally had NONE (no `shortest=1` on the logo
+/// overlays, no `-shortest` / `-t` on the output), and the
+/// pattern is proven to run away: measured on host ffmpeg 8.1.2,
+/// a 2 s base + looped GS input through this graph's chromakey →
+/// overlay chain did not terminate in 25 s (the same unbounded
+/// class as the v1.10.1 export deaths — the graph keeps pulling
+/// the endless stream and the encode never ends / the process
+/// is killed). The fix is the house pattern proven in
+/// [FfmpegService.logoLoopOverlayCommand]: `shortest=1` on each
+/// logo overlay step (the graph ends with the finite base video)
+/// PLUS `-shortest` on the output as the second bound. With both,
+/// the same measurement finishes with exactly the base duration.
+/// The ribbon / capsule overlays keep plain `overlay` — their
+/// inputs are finite single images, never looped.
 /// * [logoPingPongPath]: a FINITE pre-rendered ping-pong cycle
 ///   of the alpha .mov (see
 ///   [FfmpegService.logoPingPongCycleCommand]; hotfix audit C3 —
@@ -1833,7 +1851,10 @@ String buildParityTemplateCommand({
         'gblur=sigma=0.6[gsah];'
         '[gsrgb][gsah]alphamerge[gsout];',
       );
-      step('[gsout]overlay=${_n(g.logoVisible.left)}:${_n(g.logoVisible.top)}');
+      // v1.13.0 (#15): shortest=1 — the GS input loops forever
+      // (-stream_loop -1); the overlay must end with the finite
+      // base chain, never pull the endless stream past it.
+      step('[gsout]overlay=${_n(g.logoVisible.left)}:${_n(g.logoVisible.top)}:shortest=1');
     } else if (logoPingPongPath != null) {
       // Hotfix (audit C3): the cycle file already carries the
       // reference crop (488:382:195:57) AND the forward+reverse
@@ -1847,14 +1868,18 @@ String buildParityTemplateCommand({
       );
       final lx = _n(g.logoCropX);
       final ly = _n(g.logoCropY);
-      step('[logoa]overlay=$lx:$ly');
-      step('[logob]overlay=$lx:$ly');
+      // v1.13.0 (#15): shortest=1 on both overlays — the cycle
+      // file is looped with -stream_loop -1 (endless input).
+      step('[logoa]overlay=$lx:$ly:shortest=1');
+      step('[logob]overlay=$lx:$ly:shortest=1');
     } else if (logoFramesDir != null) {
       fc.write(
         '[$iLogo:v]format=yuva420p,scale=${g.logoVisibleW.round()}:-1[logof];',
       );
+      // v1.13.0 (#15): shortest=1 — the frames input is an
+      // endless -stream_loop -1 image2 stream.
       step(
-        '[logof]overlay=${_n(g.logoVisible.left)}:${_n(g.capsule.top - g.logoVisibleW)}',
+        '[logof]overlay=${_n(g.logoVisible.left)}:${_n(g.capsule.top - g.logoVisibleW)}:shortest=1',
       );
     } else {
       fc.write('[$iLogo:v]scale=${g.logoVisibleW.round()}:-1[logof];');
@@ -1896,8 +1921,13 @@ String buildParityTemplateCommand({
           '-b:v ${videoBitrateKbps}k '
           '-maxrate ${(videoBitrateKbps * 3 / 2).round()}k '
           '-bufsize ${videoBitrateKbps * 2}k';
+  // v1.13.0 (#15): -shortest is the output-level second bound
+  // for the endless logo inputs (the house pattern from
+  // logoLoopOverlayCommand); the graph's video already ends
+  // with the finite base input, so this only ever trims an
+  // over-long audio tail, never picture.
   buf.write(
-    '$videoArgs -c:a copy -movflags +faststart ${q(output)}',
+    '$videoArgs -c:a copy -shortest -movflags +faststart ${q(output)}',
   );
   return buf.toString();
 }
