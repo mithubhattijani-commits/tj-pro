@@ -5313,7 +5313,6 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             ToolPanelHeader(this, _activeTool!),
-                            PanelTabRow(this),
                             Expanded(
                               // Point #29 (v1.15.0 G2): a body with
                               // 2+ sections drills — section chips
@@ -5323,32 +5322,75 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
                               //
                               // Point #33 (v1.17.0 G2): EXACTLY ONE
                               // chip line per open panel. When the
-                              // tool has sub-tabs (the PanelTabRow
-                              // above), the tab rail IS that line —
-                              // the body renders FLAT and no second
-                              // drill rail stacks under it (the
-                              // double rail was the user's Effects
-                              // screenshot: tabs + section chips =
-                              // a 2-up grid eating the panel).
+                              // tool has sub-tabs (the PanelTabRow),
+                              // the tab rail IS that line — the body
+                              // renders FLAT and no second drill
+                              // rail stacks under it.
+                              //
+                              // Point #41 (v1.24.0): the PIP tab is
+                              // the named exception. Its body was
+                              // ~800px of controls in a ~108px
+                              // viewport — the scattered scroll
+                              // the user flagged by name. On the
+                              // PIP tab the SECTION rail takes the
+                              // tab rail's place (still exactly one
+                              // chip line): PIP video / position /
+                              // size / timing / style / blend /
+                              // mask, one at a time, in the same
+                              // place — with a leading "Tabs" item
+                              // as the Point #29 back step to the
+                              // overlay tabs. Other tabs keep the
+                              // Point #33 pattern untouched.
                               child: Builder(
                                 builder: (context) {
                                   final children =
                                       toolPanelChildren(this, context);
-                                  if (panelTabs(this).length < 2 &&
+                                  if (_activeTool == 'overlay' &&
+                                      currentTab(this) == 'pip' &&
                                       PanelDrillDown.appliesTo(
                                           children)) {
                                     return PanelDrillDown(
                                       this,
-                                      key: ValueKey<String>(
-                                          'drill-${_activeTool!}-'
-                                          '${_panelTab ?? ''}'),
+                                      key: const ValueKey<String>(
+                                          'drill-overlay-pip'),
+                                      leadingRailItems: [
+                                        iconChoiceItem(
+                                          this,
+                                          icon: Icons.arrow_back,
+                                          label: 'Tabs',
+                                          selected: false,
+                                          onTap: () => update(() =>
+                                              panelTab = 'sticker'),
+                                        ),
+                                      ],
                                       children: children,
                                     );
                                   }
-                                  return ListView(
-                                    padding:
-                                        const EdgeInsets.only(top: 4),
-                                    children: children,
+                                  return Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      PanelTabRow(this),
+                                      Expanded(
+                                        child: panelTabs(this).length <
+                                                    2 &&
+                                                PanelDrillDown.appliesTo(
+                                                    children)
+                                            ? PanelDrillDown(
+                                                this,
+                                                key: ValueKey<String>(
+                                                    'drill-${_activeTool!}-'
+                                                    '${_panelTab ?? ''}'),
+                                                children: children,
+                                              )
+                                            : ListView(
+                                                padding:
+                                                    const EdgeInsets.only(
+                                                        top: 4),
+                                                children: children,
+                                              ),
+                                      ),
+                                    ],
                                   );
                                 },
                               ),

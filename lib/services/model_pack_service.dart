@@ -273,6 +273,12 @@ class ModelPackService {
   /// right after a false return and show [describeFailure].
   PackFailure? lastFailure;
 
+  /// Test hook (v1.24.0, G4): when set, [ensurePack] downloads
+  /// through this client instead of creating (and closing) its
+  /// own — the AssetDownloadService.httpClient precedent.
+  /// Production never sets it.
+  http.Client? httpClientOverride;
+
   /// The honest user-facing line for a [PackFailure] — each reason
   /// names its TRUE cause; only [PackFailure.network] mentions the
   /// internet, because only that one is the user's connection.
@@ -330,7 +336,8 @@ class ModelPackService {
       final int totalBytes =
           pack.files.fold<int>(0, (sum, f) => sum + f.expectedBytes);
       int doneBytes = 0;
-      final client = http.Client();
+      final client = httpClientOverride ?? http.Client();
+      final ownsClient = httpClientOverride == null;
       try {
         for (final spec in pack.files) {
           final target = File(p.join(dir.path, spec.name));
@@ -366,7 +373,7 @@ class ModelPackService {
           doneBytes += spec.expectedBytes;
         }
       } finally {
-        client.close();
+        if (ownsClient) client.close();
       }
       onProgress?.call(1.0);
       final ready = await isReady(packId);
@@ -391,13 +398,34 @@ class ModelPackService {
   }) async {
     final File part = File('${target.path}.part');
     try {
+      final http.Request request = http.Request('GET', Uri.parse(url));
+      // v1.24.0 (G4) — the RNNoise fix, part (a): ask for the
+      // bytes as they are. dart:io otherwise negotiates gzip
+      // and silently decompresses the body, while
+      // Content-Length keeps the COMPRESSED count — for a
+      // text-served file (cb.rnnn is the one pack file served
+      // text/plain) the byte check below then fails a perfect
+      // download every single time: 299,741 received against
+      // a 109,908 length (RNNOISE-DIAGNOSIS-2026-11-26.md).
+      request.headers['Accept-Encoding'] = 'identity';
       final http.StreamedResponse response = await client
-          .send(http.Request('GET', Uri.parse(url)))
+          .send(request)
           .timeout(const Duration(minutes: 15));
       if (response.statusCode != 200) {
         return PackFailure.httpError;
       }
       final int total = response.contentLength ?? -1;
+      // Part (b), defense in depth: if a server or proxy
+      // encodes anyway, the decompressed byte count can NEVER
+      // equal the compressed Content-Length — comparing them
+      // is meaningless, so the incomplete check applies only
+      // to unencoded responses. An encoded stream cut short
+      // still fails safely: decompression throws mid-stream
+      // (→ PackFailure.network, part deleted), and _fileOk's
+      // size sanity below runs regardless.
+      final String? encoding = response.headers['content-encoding'];
+      final bool encoded =
+          encoding != null && encoding.toLowerCase() != 'identity';
       final IOSink sink = part.openWrite();
       int received = 0;
       try {
@@ -411,7 +439,7 @@ class ModelPackService {
       } finally {
         await sink.close();
       }
-      if (total > 0 && received != total) {
+      if (total > 0 && !encoded && received != total) {
         await _deleteQuiet(part);
         return PackFailure.incomplete;
       }

@@ -26,7 +26,10 @@ class PipPanel extends StatelessWidget {
           width: double.infinity,
           child: ElevatedButton.icon(
             onPressed: file == null || host.busy ? null : host.addPipOverlay,
-            icon: const Icon(Icons.photo_library),
+            // Point #41 (v1.24.0): the add affordance is a
+            // plain + — the user's standing rule for add
+            // actions, here and in the toolbar.
+            icon: const Icon(Icons.add),
             label: const Text('Add photo overlay (gallery)'),
           ),
         ),

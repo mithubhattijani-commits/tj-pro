@@ -605,8 +605,18 @@ class PanelDrillDown extends StatefulWidget {
   /// zone renders the drill directly in its Expanded) pins the
   /// rail and scrolls only the section body.
   final bool embedded;
+
+  /// Extra items pinned at the START of the section rail
+  /// (v1.24.0, Point #41): the VE PIP tab drills INSTEAD of
+  /// showing its overlay tab rail, so it carries one leading
+  /// "Tabs" item — the Point #29 back step that restores the
+  /// tab rail it replaced.
+  final List<Widget> leadingRailItems;
   const PanelDrillDown(this.host,
-      {super.key, required this.children, this.embedded = false});
+      {super.key,
+      required this.children,
+      this.embedded = false,
+      this.leadingRailItems = const []});
 
   /// Whether [children] would drill (2+ sections).
   static bool appliesTo(List<Widget> children) =>
@@ -627,6 +637,7 @@ class _PanelDrillDownState extends State<PanelDrillDown> {
     }
     final sel = _sel.clamp(0, sections.length - 1);
     final rail = iconChoiceRail(widget.host, [
+      ...widget.leadingRailItems,
       for (var i = 0; i < sections.length; i++)
         KeyedSubtree(
           key: Key('panelSection-$i'),

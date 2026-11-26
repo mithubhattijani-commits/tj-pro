@@ -8,6 +8,7 @@ library;
 
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../theme.dart';
 import '../../motion/motion_gallery_screen.dart';
 import '../../news/store_screen.dart';
@@ -63,6 +64,36 @@ class ToolRows {
     'disable': 've.disable',
     'label': 've.label',
   };
+
+  /// Point #41 (v1.24.0): the rail's + PIP tap. With no PIP
+  /// set up it performs the ADD right there — PIP on, straight
+  /// to the gallery, then the PIP options open in the panel
+  /// zone (the Point #29 swap: the rail gives way to the
+  /// tool's own controls in the same place). With a PIP
+  /// already set up it simply opens those options. The
+  /// panel's own switch and Choose button stay for changing
+  /// or removing the video — nothing was removed.
+  Future<void> _addPipFromRail() async {
+    if (host.fxPip && host.fxPipVideo.isNotEmpty) {
+      host.openToolTab('overlay', 'pip');
+      return;
+    }
+    host.update(() => host.fxPip = true);
+    host.ensurePipPreview();
+    try {
+      final picked = await host.picker.pickVideo(
+        source: ImageSource.gallery,
+      );
+      if (picked != null && host.mounted) {
+        host.update(() => host.fxPipVideo = picked.path);
+        host.ensurePipPreview();
+      }
+    } catch (_) {
+      // No gallery route on this device — the PIP tab still
+      // opens below; its Choose button is the same action.
+    }
+    if (host.mounted) host.openToolTab('overlay', 'pip');
+  }
 
   /// Wraps a rail item so a long-press opens its guide. The
   /// item's own tap behaviour is untouched.
@@ -135,9 +166,13 @@ class ToolRows {
       (
         'pip',
         _toolRowItem(
-          icon: Icons.picture_in_picture_alt,
+          // Point #41 (v1.24.0): the rail's PIP item IS the
+          // add button — a plain + in the front row. Its tap
+          // adds a PIP (see _addPipFromRail); once a PIP
+          // exists it opens the PIP options like any tool.
+          icon: Icons.add,
           label: 'PIP',
-          onTap: () => host.openToolTab('overlay', 'pip'),
+          onTap: () => unawaited(_addPipFromRail()),
         ),
       ),
       (

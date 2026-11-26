@@ -95,6 +95,15 @@ Future<void> _pumpVe(WidgetTester tester, Size size) async {
 void main() {
   setUpAll(() {
     _mockPathProvider('/tmp/tj_pro_v1150');
+    // v1.24.0 (Point #41): the VE rail's PIP item now calls
+    // the gallery picker itself — answer "cancelled" (null),
+    // like the panel audit harness; an unmocked picker call
+    // never resolves inside the test zone.
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+      const MethodChannel('plugins.flutter.io/image_picker'),
+      (MethodCall call) async => null,
+    );
     Directory('/tmp/tj_pro_v1150').createSync(recursive: true);
     Directory('/tmp/tj_pro_v1150_tmp').createSync(recursive: true);
     // Tiny real PNGs: the Photo Editor image + the Maker's two
@@ -301,29 +310,40 @@ void main() {
         (tester) async {
       await _pumpVe(tester, const Size(393, 852));
       await _openVeTool(tester, 'PIP');
-      // Sub-tabs in ONE line: Sticker / Keyframes / PIP (scoped
-      // to the tab row — the panel header may carry the same
-      // word).
+      // v1.24.0 (Point #41 — the user's newer word, supersedes
+      // the v1.17.0 flat body FOR THE PIP TAB ONLY): the rail
+      // item is the + ADD button — tapping it turned PIP on,
+      // offered the gallery (unmocked here, fail-soft) and
+      // landed on the PIP options. The body DRILLS by section
+      // in the same place; Point #33's principle still holds —
+      // EXACTLY ONE chip line: the overlay tab rail gives way
+      // on this tab, and the drill's leading 'Tabs' item is
+      // the Point #29 back step that restores it.
+      expect(find.byKey(const Key('panelDrillDown')), findsOneWidget);
+      expect(find.byType(PanelTabRow), findsNothing);
+      expect(find.text('Tabs'), findsOneWidget);
+      expect(find.text('PIP timing'), findsOneWidget,
+          reason: 'timing is a chip in the one line, not a '
+              'section buried in a scroll');
+      // First section open: the PIP video switch row.
+      expect(find.text('PIP video overlay'), findsOneWidget);
+      _noError(tester, 'PIP drill swap');
+      // Back step: 'Tabs' restores the tab rail (Sticker /
+      // Keyframes / PIP in ONE line) and the drill leaves.
+      final tabsInk = find.ancestor(
+        of: find.text('Tabs'),
+        matching: find.byType(InkWell),
+      );
+      expect(tabsInk, findsWidgets);
+      tester.widget<InkWell>(tabsInk.first).onTap!.call();
+      await _frames(tester);
       final pipTab = find.descendant(
         of: find.byType(PanelTabRow),
         matching: find.text('PIP'),
       );
       expect(pipTab, findsOneWidget);
-      await tester.tap(pipTab);
-      await _frames(tester);
-      // Turn the PIP overlay on — its body gains sections.
-      final sw = find.widgetWithText(SwitchListTile, 'PIP video overlay');
-      expect(sw, findsOneWidget);
-      await tester.tap(sw);
-      await _frames(tester);
-      // v1.17.0 (Point #33): EXACTLY ONE chip line per panel —
-      // the tab rail above is that line, so the tab body now
-      // renders FLAT and no second drill rail stacks under the
-      // tabs (v1.15.0 drilled here; the user's #33 screenshot
-      // rejected the double rail as a 2-up grid).
       expect(find.byKey(const Key('panelDrillDown')), findsNothing);
-      expect(find.text('PIP video overlay'), findsOneWidget);
-      _noError(tester, 'PIP drill swap');
+      _noError(tester, 'PIP tabs restore');
       await tester.pump(const Duration(seconds: 10));
     });
   });

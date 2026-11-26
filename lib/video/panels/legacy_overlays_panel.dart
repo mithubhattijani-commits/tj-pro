@@ -22,7 +22,7 @@ class LegacyOverlaysPanel extends StatelessWidget {
         return [
           // v1.15.0 G2: section headers are SectionTitles so the
           // panel drill-down (Point #29) can split this body.
-          SectionTitle('Overlay — PIP video'),
+          SectionTitle('PIP video'),
           const SizedBox(height: 8),
           SwitchListTile(
             title: const Text('PIP video overlay'),

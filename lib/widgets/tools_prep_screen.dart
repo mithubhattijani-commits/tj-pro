@@ -15,10 +15,38 @@ import '../services/first_run_prep_service.dart';
 /// again on the next launch (readiness is verified on disk,
 /// never assumed). Failures are listed by name at the end;
 /// the owning tools keep their own honest at-use errors.
+///
+/// Point #38 (v1.24.0): the user's recording showed the
+/// failure text and the progress UI alternating frame by
+/// frame after Retry. Three root causes, all fixed here and
+/// in the service: (1) _start had no re-entrancy guard, so a
+/// fast double-tap ran two passes whose completions landed
+/// interleaved state; (2) the service answered a concurrent
+/// call with a fake failure label, which this screen rendered
+/// as a real failed download while the true run was still
+/// going; (3) a (re)start never cleared the previous run's
+/// progress, so its label and percentage flashed inside the
+/// new run, and every already-ready item re-emitted within a
+/// few frames — a burst of label changes that read as
+/// flicker. Now: one run at a time, a restart clears the old
+/// run's state in the SAME setState that enters the running
+/// state, and progress rebuilds only when the visible label
+/// or percentage actually changes. The three visual states
+/// stay mutually exclusive by construction.
+typedef ToolsPrepRunner = Future<List<String>> Function({
+  required String kasheedaUrl,
+  void Function(PrepProgress progress)? onProgress,
+});
+
 class ToolsPrepScreen extends StatefulWidget {
-  const ToolsPrepScreen({super.key, required this.kasheedaUrl});
+  const ToolsPrepScreen({super.key, required this.kasheedaUrl, this.runner});
 
   final String kasheedaUrl;
+
+  /// Test seam: replaces [FirstRunPrepService.run] so widget
+  /// tests can drive the screen's states deterministically.
+  /// Production passes nothing and gets the real service.
+  final ToolsPrepRunner? runner;
 
   @override
   State<ToolsPrepScreen> createState() => _ToolsPrepScreenState();
@@ -27,6 +55,7 @@ class ToolsPrepScreen extends StatefulWidget {
 class _ToolsPrepScreenState extends State<ToolsPrepScreen> {
   PrepProgress? _progress;
   bool _running = true;
+  bool _starting = false;
   List<String> _failed = const [];
 
   @override
@@ -36,23 +65,47 @@ class _ToolsPrepScreenState extends State<ToolsPrepScreen> {
   }
 
   Future<void> _start() async {
-    if (mounted) {
+    // Single-flight: a second tap while a run is live (or
+    // while its first frame has not rebuilt yet) is ignored —
+    // the live run's own completion lands the end state.
+    if (_starting) return;
+    _starting = true;
+    try {
+      // Atomic transition: entering the running state clears
+      // the previous run's failures AND its progress in one
+      // setState, so no frame ever mixes the two runs.
       setState(() {
         _running = true;
         _failed = const [];
+        _progress = null;
       });
+      final run = widget.runner ?? FirstRunPrepService.run;
+      final failed = await run(
+        kasheedaUrl: widget.kasheedaUrl,
+        onProgress: (p) {
+          if (!mounted) return;
+          // Coalesce: a retry re-checks a dozen ready items
+          // within a few frames; rebuild only when what the
+          // user can see (the label, the rounded percentage)
+          // actually changed.
+          final last = _progress;
+          if (last != null &&
+              last.label == p.label &&
+              (last.overall * 100).round() ==
+                  (p.overall * 100).round()) {
+            return;
+          }
+          setState(() => _progress = p);
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        _running = false;
+        _failed = failed;
+      });
+    } finally {
+      _starting = false;
     }
-    final failed = await FirstRunPrepService.run(
-      kasheedaUrl: widget.kasheedaUrl,
-      onProgress: (p) {
-        if (mounted) setState(() => _progress = p);
-      },
-    );
-    if (!mounted) return;
-    setState(() {
-      _running = false;
-      _failed = failed;
-    });
   }
 
   @override

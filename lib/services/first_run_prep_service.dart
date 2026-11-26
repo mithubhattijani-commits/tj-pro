@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'asset_download_service.dart';
 import 'caption_service.dart';
 import 'caption_translator_service.dart';
+import 'crash_reporter.dart';
 import 'engine_vault.dart';
 import 'engine_vault_service.dart';
 import 'model_pack_service.dart';
@@ -75,8 +76,13 @@ class FirstRunPrepService {
   /// screen is offered at most once per app launch.
   static bool offeredThisProcess = false;
 
-  /// Process-level guard against two runs racing.
-  static bool _running = false;
+  /// The one run currently in flight, if any (v1.24.0,
+  /// Point #38). A concurrent [run] call JOINS this future
+  /// instead of racing a second pass — and instead of the old
+  /// behaviour, which returned a fake failure label
+  /// ('Preparation already running') that the screen went on
+  /// to render as a failed download.
+  static Future<List<String>>? _inFlight;
 
   static const Map<String, String> _packLabels = {
     'shruti_ur': 'Urdu speech model (Shruti)',
@@ -247,12 +253,35 @@ class FirstRunPrepService {
   /// Runs the preparation once, sequentially, fail-soft per
   /// item. Returns the labels of the items that did NOT become
   /// ready (empty = fully prepared). Never throws.
+  ///
+  /// Single-flight (v1.24.0, Point #38): while a run is in
+  /// flight, further calls return the SAME future — the
+  /// second caller's [onProgress] is not wired (the run
+  /// already reports to its first caller), but its result is
+  /// the run's real result, never a fabricated failure.
   static Future<List<String>> run({
     required String kasheedaUrl,
     void Function(PrepProgress progress)? onProgress,
+  }) {
+    final running = _inFlight;
+    if (running != null) return running;
+    final future = _run(kasheedaUrl: kasheedaUrl, onProgress: onProgress);
+    _inFlight = future;
+    future.then<void>(
+      (_) {
+        if (identical(_inFlight, future)) _inFlight = null;
+      },
+      onError: (_) {
+        if (identical(_inFlight, future)) _inFlight = null;
+      },
+    );
+    return future;
+  }
+
+  static Future<List<String>> _run({
+    required String kasheedaUrl,
+    void Function(PrepProgress progress)? onProgress,
   }) async {
-    if (_running) return const ['Preparation already running'];
-    _running = true;
     final failed = <String>[];
     try {
       // Engine Vault (v1.23.0): ONE plan for all packs, computed
@@ -320,6 +349,27 @@ class FirstRunPrepService {
         if (ok) {
           fractions[i] = 1;
         } else {
+          if (item.id.startsWith('pack:')) {
+            // v1.24.0 (G4, Fix 3): the typed reason leaves the
+            // device. Until now a failed pack's PackFailure
+            // stayed on the phone — the prep screen shows only
+            // the pack's name — which is why the RNNoise
+            // diagnosis needed a screen recording and a manual
+            // replication. enqueue() only RECORDS: queued,
+            // persisted, flushed to the crash inbox, deduped
+            // hourly; it never throws and shows no UI (the
+            // prep screen is already telling the user, and
+            // CrashGuard.report would add a banner on top).
+            CrashReporter.instance.enqueue(
+              StateError(
+                'Pack ${item.id.substring(5)} failed during tools '
+                'prep: '
+                '${ModelPackService.instance.lastFailure?.name ?? 'unknown'}',
+              ),
+              StackTrace.current,
+              source: 'tools_prep.pack',
+            );
+          }
           failed.add(item.label);
         }
         emit(i);
@@ -340,7 +390,7 @@ class FirstRunPrepService {
       }
       return failed;
     } finally {
-      _running = false;
+      // _inFlight is cleared by run()'s completion hook.
     }
   }
 }

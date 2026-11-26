@@ -1,9 +1,16 @@
+import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
+import '../services/logo_clip_export_service.dart';
 import '../widgets/tool_guide.dart';
+import 'logo_clip.dart';
 import 'logo_reveal_backdrops.dart';
 import 'logo_text_shapes.dart';
 
@@ -918,10 +925,29 @@ class _LogoMakerSectionState extends State<LogoMakerSection>
   final LogoDepthImageCache _depthCache = LogoDepthImageCache();
   bool _staticScheduled = false;
 
+  /// v1.24.0 (G1): the Logo Clip view and its export state.
+  /// The clip settings seed from the maker settings when the
+  /// section opens (below) and then live their own life here —
+  /// the clip view's own chips edit them, the maker's tabs are
+  /// untouched by them.
+  bool _clipOpen = false;
+  late LogoClipSettings _clipSettings;
+
+  /// The styled logo rendered ONCE at clip-open, square — the
+  /// one image the clip preview animates and the export
+  /// encodes (the reveal painter does the fitting into each
+  /// aspect, so one square static serves all three).
+  ui.Image? _clipLogoImage;
+  bool _clipLogoLoading = false;
+  bool _clipExporting = false;
+  double _clipProgress = 0;
+  String? _clipStatus;
+
   @override
   void initState() {
     super.initState();
     _settings = widget.initialSettings ?? const LogoMakerSettings();
+    _clipSettings = _seedClipSettings(_settings);
     _currentImage = widget.logoImage;
     _spinController = AnimationController(
       vsync: this,
@@ -939,12 +965,29 @@ class _LogoMakerSectionState extends State<LogoMakerSection>
   @override
   void dispose() {
     _depthCache.clear();
+    _clipLogoImage?.dispose();
+    _clipLogoImage = null;
     if (_ownsCurrentImage) {
       _currentImage.dispose();
     }
     _revealController.dispose();
     _spinController.dispose();
     super.dispose();
+  }
+
+  /// The clip's starting point from the maker's settings: the
+  /// same reveal style (the maker's '' — no style — becomes
+  /// the clip's 'none'), the same backdrop and glow, and the
+  /// maker's spin switch + speed as the clip's post-reveal
+  /// spin.
+  LogoClipSettings _seedClipSettings(LogoMakerSettings s) {
+    return LogoClipSettings(
+      revealStyleId: s.revealStyleId.isEmpty ? 'none' : s.revealStyleId,
+      backdropId: s.backdropId,
+      backdropGlow: s.backdropGlow,
+      spinAfterReveal: s.spinOn,
+      spinSpeed: s.spinSpeed,
+    );
   }
 
   /// The reveal style the settings name (the first style
@@ -1075,10 +1118,6 @@ class _LogoMakerSectionState extends State<LogoMakerSection>
   }
 
   void _handleDockTap(_DockTool tool) {
-    if (tool == _DockTool.save) {
-      widget.onSave(_settings);
-      return;
-    }
     setState(() {
       _selectedTool = tool;
     });
@@ -1091,6 +1130,9 @@ class _LogoMakerSectionState extends State<LogoMakerSection>
 
   @override
   Widget build(BuildContext context) {
+    if (_clipOpen) {
+      return _buildClipScaffold();
+    }
     final double screenHeight = MediaQuery.sizeOf(context).height;
 
     return Scaffold(
@@ -1306,8 +1348,331 @@ class _LogoMakerSectionState extends State<LogoMakerSection>
       case _DockTool.reveal:
         return _buildRevealPanel();
       case _DockTool.save:
-        // Save is an action, never a panel.
-        return _buildLogoPanel();
+        return _buildSavePanel();
+    }
+  }
+
+  /// v1.24.0 (G1): the Save panel. Until now the dock's Save
+  /// fired the save immediately and had no panel at all; the
+  /// panel now carries that same Save action (the top bar's
+  /// Save still fires at once, exactly as before) AND the
+  /// Logo Clip export the integration note assigns to this
+  /// place: a standalone MP4 of the styled logo — backdrop,
+  /// reveal and spin included.
+  Widget _buildSavePanel() {
+    return Container(
+      decoration: BoxDecoration(
+        color: _kCardFillColor,
+        borderRadius: BorderRadius.circular(_kCardRadius),
+        border: Border.all(color: _kCardBorderColor, width: 1.0),
+      ),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(14.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            const Text(
+              'Save',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 13.0,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 6.0),
+            const Text(
+              'Keep these settings with the channel. The news '
+              'export then uses this styled logo — depth, '
+              'material and spin included — in the logo\u2019s '
+              'usual place.',
+              style: TextStyle(color: Colors.white54, fontSize: 12.0),
+            ),
+            const SizedBox(height: 12.0),
+            GestureDetector(
+              key: const Key('logoMakerPanelSaveButton'),
+              onTap: () => widget.onSave(_settings),
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 13.0),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  gradient: _kAccentGradient,
+                  borderRadius: BorderRadius.circular(16.0),
+                ),
+                child: const Text(
+                  'Save logo',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 18.0),
+            const Text(
+              'Logo Clip',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 13.0,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 6.0),
+            const Text(
+              'A standalone video of this logo on its backdrop '
+              'scene: the reveal plays, then the logo spins — '
+              'ready to share, or to use as an intro anywhere.',
+              style: TextStyle(color: Colors.white54, fontSize: 12.0),
+            ),
+            const SizedBox(height: 12.0),
+            OutlinedButton.icon(
+              key: const Key('logoMakerExportClipButton'),
+              onPressed: () => unawaited(_openClip()),
+              icon: const Icon(
+                Icons.movie_creation_outlined,
+                size: 18.0,
+                color: _kAccentCyan,
+              ),
+              label: const Text(
+                'Export Logo Clip',
+                style: TextStyle(color: Colors.white, fontSize: 13.0),
+              ),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 12.0),
+                side: const BorderSide(color: _kCardBorderColor),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16.0),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Opens the Logo Clip view: the styled logo is rendered
+  /// ONCE (square static, the export's own pattern) and the
+  /// clip preview + export both work from that one image.
+  Future<void> _openClip() async {
+    setState(() {
+      _clipOpen = true;
+      _clipLogoLoading = true;
+      _clipStatus = null;
+      _clipProgress = 0;
+    });
+    final ui.Image styled = await renderLogoDepthStatic(
+      image: _currentImage,
+      settings: _settings,
+      backFacing: false,
+      size: const Size(1024, 1024),
+    );
+    if (!mounted) {
+      styled.dispose();
+      return;
+    }
+    final ui.Image? old = _clipLogoImage;
+    setState(() {
+      _clipLogoImage = styled;
+      _clipLogoLoading = false;
+    });
+    if (old != null && !identical(old, styled)) {
+      old.dispose();
+    }
+  }
+
+  void _closeClip() {
+    final ui.Image? img = _clipLogoImage;
+    setState(() {
+      _clipOpen = false;
+      _clipLogoImage = null;
+      _clipExporting = false;
+      _clipStatus = null;
+    });
+    if (img != null) {
+      // The outgoing frame may still reference the image —
+      // dispose it once that frame is done.
+      WidgetsBinding.instance.addPostFrameCallback((_) => img.dispose());
+    }
+  }
+
+  /// The Logo Clip view: the checked [LogoClipPreview]
+  /// embedded in the section (its own chips edit duration,
+  /// aspect, reveal, backdrop, glow and spin) with the
+  /// section's export bar under it. The maker's preview/panel
+  /// space rules are untouched — this view replaces the whole
+  /// section body only while it is open, and Back returns to
+  /// the maker exactly as it was.
+  Widget _buildClipScaffold() {
+    final ui.Image? logo = _clipLogoImage;
+    return Scaffold(
+      backgroundColor: _kBackgroundColor,
+      body: SafeArea(
+        child: Column(
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12.0, 8.0, 16.0, 8.0),
+              child: Row(
+                children: <Widget>[
+                  IconButton(
+                    onPressed: _clipExporting ? null : _closeClip,
+                    icon: const Icon(
+                      Icons.arrow_back_ios_new_rounded,
+                      color: Colors.white,
+                      size: 20.0,
+                    ),
+                    tooltip: 'Back',
+                  ),
+                  const SizedBox(width: 4.0),
+                  const Expanded(
+                    child: Text(
+                      'Logo Clip',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 20.0,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.2,
+                      ),
+                    ),
+                  ),
+                  const ToolGuideButton(
+                    guideId: 'ns.logo_maker',
+                    compact: true,
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: _clipLogoLoading || logo == null
+                  ? const Center(
+                      child: CircularProgressIndicator(
+                        color: _kAccentCyan,
+                      ),
+                    )
+                  : LogoClipPreview(
+                      logoImage: logo,
+                      backdropPainterFor: logoClipBackdropPainter,
+                      revealPainterFor:
+                          logoClipRevealBuilder(_clipSettings.revealStyleId),
+                      initialSettings: _clipSettings,
+                      onSettingsChanged: (LogoClipSettings next) {
+                        setState(() {
+                          _clipSettings = next;
+                        });
+                      },
+                    ),
+            ),
+            _buildClipActionBar(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildClipActionBar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16.0, 8.0, 16.0, 12.0),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          if (_clipExporting) ...<Widget>[
+            LinearProgressIndicator(
+              value: _clipProgress,
+              color: _kAccentCyan,
+              backgroundColor: _kCardFillColor,
+            ),
+            const SizedBox(height: 8.0),
+          ],
+          if (_clipStatus != null) ...<Widget>[
+            Text(
+              _clipStatus!,
+              style: const TextStyle(color: Colors.white70, fontSize: 12.0),
+            ),
+            const SizedBox(height: 8.0),
+          ],
+          GestureDetector(
+            key: const Key('logoMakerClipExportButton'),
+            onTap: (_clipExporting || _clipLogoLoading)
+                ? null
+                : () => unawaited(_exportClip()),
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 13.0),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                gradient: _clipExporting ? null : _kAccentGradient,
+                color: _clipExporting ? _kCardFillColor : null,
+                borderRadius: BorderRadius.circular(16.0),
+              ),
+              child: Text(
+                _clipExporting ? 'Exporting\u2026' : 'Export MP4',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Renders the clip's frames and encodes the MP4 through
+  /// [LogoClipExportService] (frames streamed to disk, never
+  /// held in memory), then hands the file to the system share
+  /// sheet — the app's established way of giving the user an
+  /// exported video. Any failure lands in the status line
+  /// with the encoder's own words; nothing fails silently.
+  Future<void> _exportClip() async {
+    final ui.Image? logo = _clipLogoImage;
+    if (logo == null || _clipExporting) return;
+    setState(() {
+      _clipExporting = true;
+      _clipProgress = 0;
+      _clipStatus = 'Rendering frames\u2026';
+    });
+    try {
+      final Directory tmp = await getTemporaryDirectory();
+      final Directory dir = Directory(
+        p.join(
+          tmp.path,
+          'logo_clip_${DateTime.now().millisecondsSinceEpoch}',
+        ),
+      );
+      await dir.create(recursive: true);
+      final File file = await LogoClipExportService.exportClip(
+        logoImage: logo,
+        settings: _clipSettings,
+        workDir: dir,
+        onProgress: (double f) {
+          if (!mounted) return;
+          setState(() {
+            _clipProgress = f;
+            _clipStatus =
+                f < 0.85 ? 'Rendering frames\u2026' : 'Encoding video\u2026';
+          });
+        },
+      );
+      await SharePlus.instance.share(
+        ShareParams(files: <XFile>[XFile(file.path)]),
+      );
+      if (!mounted) return;
+      setState(() {
+        _clipStatus = 'Logo clip ready — logo_clip.mp4';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _clipStatus = 'Clip export failed: $e';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _clipExporting = false;
+        });
+      }
     }
   }
 
@@ -1415,9 +1780,10 @@ class _LogoMakerSectionState extends State<LogoMakerSection>
             const Text(
               'The reveal plays over the backdrop in the preview '
               'above, animating the same styled logo (depth and '
-              'material included). In the video export the logo '
-              'keeps its styled look and spin — the reveal and '
-              'the backdrop are preview-only for now.',
+              'material included). In the news video export the '
+              'logo keeps its styled look and spin; the reveal '
+              'and the backdrop reach a video through the Logo '
+              'Clip export in the Save tab.',
               style: TextStyle(color: Colors.white54, fontSize: 12.0),
             ),
           ],
@@ -2053,8 +2419,7 @@ class _LogoMakerSectionState extends State<LogoMakerSection>
           scrollDirection: Axis.horizontal,
           child: Row(
             children: _DockTool.values.map((_DockTool tool) {
-              final bool isSelected =
-                  tool != _DockTool.save && _selectedTool == tool;
+              final bool isSelected = _selectedTool == tool;
               return Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 3.0),
                 child: GestureDetector(

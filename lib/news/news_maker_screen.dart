@@ -5838,44 +5838,66 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       // Logo Maker — presets/material/depth styling plus text
       // and shape logo sources, on THIS panel's logo. The cube
       // and parts controls below stay exactly as they were.
-      FilledButton.icon(
-        key: const Key('logoMakerOpenButton'),
-        onPressed: _openLogoMaker,
-        icon: const Icon(Icons.view_in_ar_rounded, size: 18),
-        label: const Text('Open Logo Maker'),
-        style: FilledButton.styleFrom(
-          backgroundColor: const Color(0xFFFFC800),
-          foregroundColor: Colors.black,
-          padding: const EdgeInsets.symmetric(vertical: 12),
+      //
+      // Point #40 (v1.24.0): this header used to scatter — the
+      // maker button sized to its content, so at the user's
+      // font scale its icon touched the pill's left edge and
+      // the button ended short of the panel's right edge,
+      // while Remove floated at mid-column height beside the
+      // status text. Every primary control here now spans the
+      // panel's full content width (one left edge, one right
+      // edge) and Remove sits in the status row it belongs to.
+      SizedBox(
+        width: double.infinity,
+        child: FilledButton.icon(
+          key: const Key('logoMakerOpenButton'),
+          onPressed: _openLogoMaker,
+          icon: const Icon(Icons.view_in_ar_rounded, size: 18),
+          label: const FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text('Open Logo Maker'),
+          ),
+          style: FilledButton.styleFrom(
+            backgroundColor: const Color(0xFFFFC800),
+            foregroundColor: Colors.black,
+            padding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 12,
+            ),
+          ),
         ),
       ),
       const SizedBox(height: 8),
       // Build 12 (points #12/#13): the logo SOURCE — a picked
       // image becomes the rotating 3D CUBE logo; a picked
       // VIDEO is auto-keyed (background removed).
-      SegmentedButton<String>(
-        key: const Key('logoSourceToggle'),
-        segments: const [
-          ButtonSegment(
-            value: 'image',
-            icon: Icon(Icons.view_in_ar_outlined, size: 17),
-            label: Text('3D Cube'),
-          ),
-          ButtonSegment(
-            value: 'video',
-            icon: Icon(Icons.movie_outlined, size: 17),
-            label: Text('Video logo'),
-          ),
-        ],
-        selected: {isVideo ? 'video' : 'image'},
-        // The editors' shared pattern (_updatePreset):
-        // synchronous setState, persistence unawaited — the
-        // toggle responds instantly.
-        onSelectionChanged: (s) =>
-            _updatePreset(() => preset.logoMediaKind = s.first),
+      SizedBox(
+        width: double.infinity,
+        child: SegmentedButton<String>(
+          key: const Key('logoSourceToggle'),
+          segments: const [
+            ButtonSegment(
+              value: 'image',
+              icon: Icon(Icons.view_in_ar_outlined, size: 17),
+              label: Text('3D Cube'),
+            ),
+            ButtonSegment(
+              value: 'video',
+              icon: Icon(Icons.movie_outlined, size: 17),
+              label: Text('Video logo'),
+            ),
+          ],
+          selected: {isVideo ? 'video' : 'image'},
+          // The editors' shared pattern (_updatePreset):
+          // synchronous setState, persistence unawaited — the
+          // toggle responds instantly.
+          onSelectionChanged: (s) =>
+              _updatePreset(() => preset.logoMediaKind = s.first),
+        ),
       ),
       const SizedBox(height: 10),
       Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
             width: 56,
@@ -5954,29 +5976,36 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                     ),
                   ),
                 const SizedBox(height: 4),
-                Text(
-                  statusText,
-                  key: const Key('logoStatusText'),
-                  style: const TextStyle(
-                    color: Colors.grey,
-                    fontSize: 12,
-                  ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        statusText,
+                        key: const Key('logoStatusText'),
+                        style: const TextStyle(
+                          color: Colors.grey,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                    if (logoPath != null ||
+                        preset.logoVideoPath != null) ...[
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        key: const Key('logoRemoveButton'),
+                        onPressed: _removeLogo,
+                        icon: const Icon(Icons.delete_outline, size: 18),
+                        label: const FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text('Remove'),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ],
             ),
           ),
-          if (logoPath != null || preset.logoVideoPath != null) ...[
-            const SizedBox(width: 8),
-            OutlinedButton.icon(
-              key: const Key('logoRemoveButton'),
-              onPressed: _removeLogo,
-              icon: const Icon(Icons.delete_outline, size: 18),
-              label: const FittedBox(
-                fit: BoxFit.scaleDown,
-                child: Text('Remove'),
-              ),
-            ),
-          ],
         ],
       ),
       const SizedBox(height: 6),

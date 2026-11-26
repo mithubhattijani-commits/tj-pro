@@ -2197,7 +2197,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen>
     ('portrait', 'Portrait', Icons.face),
     ('sticker', 'Sticker', Icons.emoji_emotions),
     ('text', 'Text', Icons.text_fields),
-    ('pip', 'PIP', Icons.picture_in_picture_alt),
+    ('pip', 'PIP', Icons.add),
     ('remove', 'Remove', Icons.auto_fix_off),
     ('enhance', 'Enhance', Icons.auto_fix_high),
     ('cutout', 'Cutout', Icons.content_cut),

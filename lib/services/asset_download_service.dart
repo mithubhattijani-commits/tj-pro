@@ -121,6 +121,15 @@ class AssetDownloadService {
     final ownsClient = httpClient == null;
     try {
       final request = http.Request('GET', Uri.parse(url));
+      // v1.24.0 (G4): the same latent pattern the RNNoise
+      // diagnosis proved in ModelPackService — dart:io would
+      // negotiate gzip and decompress silently while
+      // Content-Length kept the compressed count, failing a
+      // perfect download of any text-served asset. Ask for
+      // identity, and compare lengths only when the response
+      // is unencoded (an encoded stream cut short throws
+      // during decompression and lands in the catch below).
+      request.headers['Accept-Encoding'] = 'identity';
       final response = await client
           .send(request)
           .timeout(const Duration(seconds: 120));
@@ -130,6 +139,9 @@ class AssetDownloadService {
         );
       }
       final total = response.contentLength ?? -1;
+      final encoding = response.headers['content-encoding'];
+      final encoded =
+          encoding != null && encoding.toLowerCase() != 'identity';
       final sink = file.openWrite();
       var received = 0;
       try {
@@ -143,7 +155,7 @@ class AssetDownloadService {
       } finally {
         await sink.close();
       }
-      if (total > 0 && received != total) {
+      if (total > 0 && !encoded && received != total) {
         await file.delete().catchError((_) => file);
         throw AssetDownloadException(
           'Download incomplete for $fileName: got $received of $total bytes.',
