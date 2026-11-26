@@ -282,7 +282,7 @@ class _StoreScreenState extends State<StoreScreen> {
                   label: Text(category),
                   selected: selected,
                   onSelected: (_) => unawaited(_selectCategory(category)),
-                  selectedColor: TjProTheme.violet,
+                  selectedColor: TjProTheme.motionBlue,
                   labelStyle: TextStyle(
                     color: selected ? Colors.white : null,
                     fontWeight:

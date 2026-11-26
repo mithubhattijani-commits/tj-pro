@@ -495,10 +495,17 @@ void main() {
     test('theme tokens: dark theme is the seed scheme; splash + '
         'Urdu rules single-sourced', () {
       final scheme = ColorScheme.fromSeed(
-        seedColor: TjProTheme.gold,
+        // v1.18.0 (Motion reskin): the app theme is now seeded
+        // from the Motion electric blue (was gold in the Phase 8
+        // era) — this assertion was updated with that change,
+        // the same way the splash assertion below was updated
+        // in Build 8. The theme's primary is pinned explicitly
+        // to the seed family's primary accent.
+        seedColor: TjProTheme.motionBlue,
         brightness: Brightness.dark,
       );
-      expect(TjProTheme.dark.colorScheme.primary, scheme.primary);
+      expect(TjProTheme.dark.colorScheme.primary, TjProTheme.motionBlue);
+      expect(scheme.brightness, Brightness.dark);
       // Build 8 (v1.6.0, fix-list point #1): the splash colour
       // is now the canonical poster's own sampled edge colour
       // (#030E3F), replacing the hand-picked #040F30 — this

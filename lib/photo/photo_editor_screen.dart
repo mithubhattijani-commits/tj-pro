@@ -28,6 +28,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import '../theme.dart';
 import 'package:flutter/services.dart';
 import 'package:gal/gal.dart';
 import 'package:image/image.dart' as img;
@@ -2213,14 +2214,14 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen>
     final file = _workingFile;
     return Theme(
       // P13: violet identity, same as the rest of the app.
-      data: ThemeData.dark().copyWith(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: kPhotoAccent,
-          brightness: Brightness.dark,
-        ),
-      ),
+      // v1.18.0 (Motion reskin): the subtree wears the app-wide
+      // Motion theme (navy/glass chrome, electric accents); the
+      // panels' own violet accent (kPhotoAccent) belongs to the
+      // same electric family and stays where panels pin it.
+      // Skin only — every control and layout is unchanged.
+      data: TjProTheme.dark,
       child: Scaffold(
-        backgroundColor: const Color(0xFF121212),
+        backgroundColor: TjProTheme.motionBgBottom,
         body: SafeArea(
           child: Column(
             children: [
@@ -2421,7 +2422,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen>
                   // their panel hosts the same way).
                   key: const ValueKey('photo-panel-text'),
                   height: 272,
-                  color: const Color(0xFF1B1B1B),
+                  color: TjProTheme.motionPanel,
                   padding: const EdgeInsets.fromLTRB(10, 2, 10, 6),
                   child: TextZone(this),
                 )
@@ -2429,7 +2430,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen>
                 Container(
                   key: ValueKey('photo-panel-$_activePhotoTool'),
                   height: 258,
-                  color: const Color(0xFF1B1B1B),
+                  color: TjProTheme.motionPanel,
                   padding: const EdgeInsets.fromLTRB(12, 4, 12, 6),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -2446,7 +2447,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen>
               else
                 Container(
                   height: 84,
-                  color: const Color(0xFF1B1B1B),
+                  color: TjProTheme.motionPanel,
                   child: ListView(
                     scrollDirection: Axis.horizontal,
                     padding: const EdgeInsets.symmetric(horizontal: 6),

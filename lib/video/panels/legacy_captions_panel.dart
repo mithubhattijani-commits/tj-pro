@@ -7,6 +7,7 @@ library;
 
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../../theme.dart';
 import '../../services/caption_service.dart';
 import '../video_editor_controller.dart';
 import '../widgets/panel_controls.dart';
@@ -139,7 +140,7 @@ SectionTitle('Auto Captions (CapCut-style)'),
   void _shareSheet(BuildContext context) {
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: const Color(0xFF1E1E1E),
+      backgroundColor: TjProTheme.motionPanel,
       builder: (sheetCtx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,

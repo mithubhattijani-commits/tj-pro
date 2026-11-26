@@ -42,7 +42,7 @@ class TimelineBar extends StatelessWidget {
     }
     final wavePath = mp == null ? null : host.musicWaveCache[mp];
     return Container(
-      color: const Color(0xFF161616),
+      color: TjProTheme.surfaceDeep,
       padding: const EdgeInsets.fromLTRB(10, 4, 10, 6),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1680,7 +1680,7 @@ class TimelineBar extends StatelessWidget {
   void showAddMediaSheet(VideoEditorController host) {
     showModalBottomSheet<void>(
       context: host.context,
-      backgroundColor: const Color(0xFF1E1E1E),
+      backgroundColor: TjProTheme.motionPanel,
       builder: (sheetCtx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1719,7 +1719,7 @@ class TimelineBar extends StatelessWidget {
   void showSwapSheet(VideoEditorController host, int i) {
     showModalBottomSheet<void>(
       context: host.context,
-      backgroundColor: const Color(0xFF1E1E1E),
+      backgroundColor: TjProTheme.motionPanel,
       builder: (sheetCtx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,

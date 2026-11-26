@@ -32,13 +32,13 @@ import 'motion_unlock.dart';
 
 // The reference palette (kept local to the Studio: the rest of
 // the app keeps its own design system).
-const Color _kBgTop = Color(0xFF060B1F);
-const Color _kBgBottom = Color(0xFF03040A);
+const Color _kBgTop = Color(0xFF060A1C);
+const Color _kBgBottom = Color(0xFF04060F);
 const Color _kCard = Color(0xFF0C1428);
 const Color _kCardBorder = Color(0xFF1E3A6E);
-const Color _kBlue = Color(0xFF2979FF);
-const Color _kCyan = Color(0xFF00E5FF);
-const Color _kPurple = Color(0xFF7C4DFF);
+const Color _kBlue = Color(0xFF2F7BFF);
+const Color _kCyan = Color(0xFF00C6FF);
+const Color _kPurple = Color(0xFF7B2FFF);
 const Color _kGold = Color(0xFFFFC800);
 const Color _kGreen = Color(0xFF2ECC71);
 
@@ -260,7 +260,7 @@ class _MotionGalleryScreenState extends State<MotionGalleryScreen> {
           hintStyle: const TextStyle(color: Colors.white38),
           prefixIcon: const Icon(Icons.search, color: _kCyan, size: 20),
           filled: true,
-          fillColor: const Color(0xFF0D1830),
+          fillColor: const Color(0xFF101B38),
           contentPadding:
               const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
           border: OutlineInputBorder(
@@ -312,7 +312,7 @@ class _MotionGalleryScreenState extends State<MotionGalleryScreen> {
                 gradient: selected
                     ? const LinearGradient(colors: [_kBlue, _kPurple])
                     : null,
-                color: selected ? null : const Color(0xFF0D1830),
+                color: selected ? null : const Color(0xFF101B38),
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(
                   color: selected ? Colors.transparent : _kCardBorder,

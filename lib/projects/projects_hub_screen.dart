@@ -15,6 +15,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import '../theme.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../news/news_maker_screen.dart';
@@ -524,12 +525,12 @@ class _ProjectTile extends StatelessWidget {
                             StackTrace? stackTrace,
                           ) =>
                               ColoredBox(
-                            color: const Color(0xFF263238),
+                            color: TjProTheme.motionPanelRaised,
                             child: Icon(_kindIcon, color: Colors.white70),
                           ),
                         )
                       : ColoredBox(
-                          color: const Color(0xFF263238),
+                          color: TjProTheme.motionPanelRaised,
                           child: Icon(_kindIcon, color: Colors.white70),
                         ),
                 ),

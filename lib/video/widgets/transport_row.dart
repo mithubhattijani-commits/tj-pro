@@ -38,7 +38,7 @@ class TransportRow extends StatelessWidget {
         final playing = host.clock.isPlaying;
         return Container(
           height: 46,
-          color: const Color(0xFF121212),
+          color: TjProTheme.motionBgBottom,
           padding: const EdgeInsets.symmetric(horizontal: 8),
           child: Row(
             children: [

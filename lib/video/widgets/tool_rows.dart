@@ -467,7 +467,7 @@ class ToolRows {
   Widget _toolRowShell(String key, List<Widget> items) {
     return Container(
       key: ValueKey<String>(key),
-      color: const Color(0xFF1B1B1B),
+      color: TjProTheme.motionPanel,
       child: ListView(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),

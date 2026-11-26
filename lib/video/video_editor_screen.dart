@@ -5054,7 +5054,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
   Widget _topBar() {
     final topPad = MediaQuery.of(context).padding.top;
     return Container(
-      color: const Color(0xFF1E1E1E),
+      color: TjProTheme.motionPanel,
       padding: EdgeInsets.fromLTRB(4, topPad + 2, 8, 2),
       child: Row(
         children: [
@@ -5117,14 +5117,13 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     // read-once-per-build pattern).
 
     return Theme(
-      data: ThemeData.dark().copyWith(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: TjProTheme.gold,
-          brightness: Brightness.dark,
-        ),
-      ),
+      // v1.18.0 (Motion reskin): the editor subtree wears the
+      // app-wide Motion theme (navy/glass chrome, electric
+      // blue/cyan accents) instead of its old private gold-seeded
+      // theme. Skin only — every control and layout is unchanged.
+      data: TjProTheme.dark,
       child: Scaffold(
-        backgroundColor: const Color(0xFF121212),
+        backgroundColor: TjProTheme.motionBgBottom,
         // LAYOUT v1.5.0 (InShot copy, mockups V1/V2): NO AppBar —
         // the custom top bar (back / help / quality / plain-text
         // Export) → handoff banner → stage (60% in row mode) →
@@ -5137,7 +5136,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
             if (_handoffProject != null)
               Container(
                 width: double.infinity,
-                color: const Color(0xFF1E1E2E),
+                color: TjProTheme.motionPanelRaised,
                 padding: const EdgeInsets.symmetric(
                   horizontal: 12,
                   vertical: 6,
@@ -5303,7 +5302,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
               child: _activeTool != null
                   ? Material(
                       key: ValueKey<String>('video-panel-${_activeTool!}'),
-                      color: const Color(0xFF121212),
+                      color: TjProTheme.motionPanel,
                       // Material, not a coloured Container
                       // (v1.5.2, #69): panels contain ListTiles /
                       // SwitchListTiles, which lose their

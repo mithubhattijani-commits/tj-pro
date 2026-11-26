@@ -18,6 +18,7 @@ import '../photo_editor_controller.dart';
 import '../photo_models.dart';
 import '../../services/font_registry.dart';
 import '../../widgets/tool_guide.dart';
+import '../../theme.dart';
 import 'photo_widgets.dart';
 
 const _ratioTiles = <(String, int, int)>[
@@ -60,8 +61,17 @@ extension PhotoPanelHelpers on PhotoEditorController {
             width: 62,
             padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 3),
             decoration: BoxDecoration(
-              color: selected ? kPhotoAccent : const Color(0xFF232323),
+              // v1.18.0 (Motion reskin): same selected-tile
+              // grammar as the Video Editor — gradient + cyan
+              // edge when selected, glass chip fill when not.
+              gradient: selected ? TjProTheme.motionGradient : null,
+              color: selected ? null : TjProTheme.motionChipFill,
               borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: selected
+                    ? TjProTheme.motionCyan
+                    : TjProTheme.motionBorder,
+              ),
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -280,7 +290,7 @@ extension PhotoPanelHelpers on PhotoEditorController {
                 child: thumb != null
                     ? Image.memory(thumb, fit: BoxFit.cover)
                     : Container(
-                        color: const Color(0xFF2A2A2A),
+                        color: TjProTheme.motionPanelRaised,
                         child: const Icon(Icons.image, color: Colors.grey),
                       ),
               ),
@@ -635,7 +645,7 @@ extension PhotoPanelHelpers on PhotoEditorController {
       onTap: onTap,
       child: Container(
         decoration: BoxDecoration(
-          color: const Color(0xFF232323),
+          color: TjProTheme.motionChipFill,
           borderRadius: BorderRadius.circular(10),
         ),
         padding: const EdgeInsets.all(6),

@@ -52,6 +52,7 @@ import 'package:record/record.dart';
 import 'package:video_player/video_player.dart';
 
 import '../app_config.dart';
+import '../theme.dart';
 import '../live/news_template.dart';
 import '../motion/motion_gallery_screen.dart';
 import '../video/widgets/editor_stage.dart';
@@ -1923,48 +1924,54 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       // Build 4 (News Studio workspace, approved mockup): deep
       // navy/charcoal palette, gold as the single accent, thin
       // sliders with white thumbs, dark switch/chip grammar.
+      // v1.18.0 (Motion reskin): the CHROME half of that grammar
+      // now wears the approved Motion skin — navy/glass surfaces,
+      // electric blue sliders/switches/chips (the mockup's blue
+      // switch), while the template's own yellow (0xFFFFC800 in
+      // the body: ribbons, template rendering) is content and is
+      // deliberately untouched. Skin only; no control changed.
       data: ThemeData.dark().copyWith(
         colorScheme: const ColorScheme.dark(
-          primary: Color(0xFFFFC800),
-          secondary: Color(0xFFFFC800),
-          surface: Color(0xFF12151C),
+          primary: TjProTheme.motionBlue,
+          secondary: TjProTheme.motionCyan,
+          surface: TjProTheme.motionPanel,
         ),
-        scaffoldBackgroundColor: const Color(0xFF0A0D12),
-        cardColor: const Color(0xFF12151C),
+        scaffoldBackgroundColor: TjProTheme.motionBgBottom,
+        cardColor: TjProTheme.motionPanel,
         sliderTheme: const SliderThemeData(
           trackHeight: 2.5,
-          activeTrackColor: Color(0xFFFFC800),
+          activeTrackColor: TjProTheme.motionBlue,
           inactiveTrackColor: Color(0x21FFFFFF),
           thumbColor: Colors.white,
           thumbShape: RoundSliderThumbShape(enabledThumbRadius: 7),
           overlayShape: RoundSliderOverlayShape(overlayRadius: 14),
-          valueIndicatorColor: Color(0xFFFFC800),
-          valueIndicatorTextStyle: TextStyle(color: Colors.black),
+          valueIndicatorColor: TjProTheme.motionBlue,
+          valueIndicatorTextStyle: TextStyle(color: Colors.white),
         ),
         switchTheme: SwitchThemeData(
           thumbColor: WidgetStateProperty.resolveWith(
             (st) => st.contains(WidgetState.selected)
-                ? const Color(0xFFFFC800)
+                ? Colors.white
                 : const Color(0xFF9AA1AB),
           ),
           trackColor: WidgetStateProperty.resolveWith(
             (st) => st.contains(WidgetState.selected)
-                ? const Color(0xFF232833)
-                : const Color(0xFF171B24),
+                ? TjProTheme.motionBlue
+                : const Color(0xFF1B2A4D),
           ),
           trackOutlineColor: WidgetStateProperty.resolveWith(
             (st) => st.contains(WidgetState.selected)
-                ? const Color(0x73FFC800)
+                ? const Color(0x7300C6FF)
                 : const Color(0x1FFFFFFF),
           ),
         ),
         chipTheme: const ChipThemeData(
-          backgroundColor: Color(0xFF171B24),
-          selectedColor: Color(0xFFFFC800),
-          checkmarkColor: Colors.black,
+          backgroundColor: TjProTheme.motionChipFill,
+          selectedColor: TjProTheme.motionBlue,
+          checkmarkColor: Colors.white,
           labelStyle: TextStyle(color: Color(0xFFC4C9D0), fontSize: 12.5),
           secondaryLabelStyle:
-              TextStyle(color: Colors.black, fontSize: 12.5),
+              TextStyle(color: Colors.white, fontSize: 12.5),
           side: BorderSide(color: Color(0x1FFFFFFF)),
         ),
       ),
@@ -2038,8 +2045,10 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         itemBuilder: (ctx, i) {
           final (id, icon, label) = _toolDefs[i];
           final active = _activeTool == id;
+          // v1.18.0 (Motion reskin): the active dock tool wears
+          // the Motion cyan accent (was Home gold 0xFFF5C542).
           final color =
-              active ? const Color(0xFFF5C542) : Colors.white70;
+              active ? TjProTheme.motionCyan : Colors.white70;
           return InkWell(
             key: Key('makerTool-$id'),
             onTap: () {
@@ -2062,12 +2071,14 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               width: 64,
               padding: const EdgeInsets.symmetric(vertical: 8),
               decoration: BoxDecoration(
-                color: Colors.transparent,
+                color: active
+                    ? TjProTheme.motionPanelRaised
+                    : Colors.transparent,
                 borderRadius: BorderRadius.circular(10),
                 border: Border(
                   bottom: BorderSide(
                     color: active
-                        ? const Color(0xFFF5C542)
+                        ? TjProTheme.motionCyan
                         : Colors.transparent,
                     width: 2,
                   ),
@@ -2115,7 +2126,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     // assertion in debug, invisible tile states in release).
     return Material(
       key: Key('makerPanel-$_activeTool'),
-      color: const Color(0xFF12151C),
+      color: TjProTheme.motionPanel,
       child: Container(
         height: _lowerZoneHeight,
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
@@ -2630,7 +2641,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               ),
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(maxWidth: 260),
-              color: const Color(0xFF171B24),
+              color: TjProTheme.motionPanel,
               onSelected: _onMakerMenu,
               itemBuilder: (ctx) => const [
                 PopupMenuItem(
@@ -2739,7 +2750,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: const Color(0xFF12151C),
+      backgroundColor: TjProTheme.motionPanel,
       builder: (ctx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -2915,7 +2926,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     String templateLabel,
   ) {
     return Material(
-      color: const Color(0xFF12151C),
+      color: TjProTheme.motionPanel,
       child: Container(
         // Build 5 (v1.5.7, error-banner fix): NO fixed height —
         // the old fixed 84px box overflowed by ~11px at textScale
@@ -3855,7 +3866,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                                     errorBuilder: (_, _, _) =>
                                         Container(
                                             color:
-                                                const Color(0xFF171B24)),
+                                                TjProTheme.motionPanel),
                                   ),
                                 ),
                             ],
@@ -3865,10 +3876,10 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                             File(_clipThumbs[project.clipPaths[i]]!),
                             fit: BoxFit.cover,
                             errorBuilder: (_, _, _) =>
-                                Container(color: const Color(0xFF171B24)),
+                                Container(color: TjProTheme.motionPanel),
                           )
                         else
-                          Container(color: const Color(0xFF171B24)),
+                          Container(color: TjProTheme.motionPanel),
                         Positioned(
                           left: 5,
                           bottom: 3,
@@ -4303,7 +4314,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         ),
         Container(
           decoration: const BoxDecoration(
-            color: Color(0xFF12151C),
+            color: TjProTheme.motionPanel,
             border: Border(top: BorderSide(color: Color(0x14FFFFFF))),
           ),
           child: _toolLine(),
@@ -5852,7 +5863,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             width: 56,
             height: 56,
             decoration: BoxDecoration(
-              color: const Color(0xFF181828),
+              color: TjProTheme.motionPanel,
               borderRadius: BorderRadius.circular(8),
             ),
             child: isVideo
@@ -6157,7 +6168,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                   color: switch (_partsPreviewBg) {
                     'green' => const Color(0xFF00B140),
                     'checker' => const Color(0xFF2A2A35),
-                    _ => const Color(0xFF181828),
+                    _ => TjProTheme.motionPanel,
                   },
                   borderRadius: BorderRadius.circular(10),
                 ),
@@ -6277,7 +6288,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                 width: 44,
                 height: 44,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF181828),
+                  color: TjProTheme.motionPanel,
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: LogoPartPreview(
@@ -6379,7 +6390,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               width: 48,
               height: 48,
               decoration: BoxDecoration(
-                color: const Color(0xFF181828),
+                color: TjProTheme.motionPanel,
                 borderRadius: BorderRadius.circular(6),
               ),
               child: ClipRRect(
@@ -6604,7 +6615,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       key: Key('logoPartRow-$i'),
       margin: const EdgeInsets.only(bottom: 6),
       decoration: BoxDecoration(
-        color: const Color(0xFF12151C),
+        color: TjProTheme.motionPanel,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
           color: selected ? const Color(0xFFFFC800) : const Color(0x1FFFFFFF),
@@ -6624,7 +6635,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               height: 52,
               margin: const EdgeInsets.all(6),
               decoration: BoxDecoration(
-                color: const Color(0xFF181828),
+                color: TjProTheme.motionPanel,
                 borderRadius: BorderRadius.circular(6),
               ),
               child: LogoPartPreview(part: part, size: 52),
@@ -6920,7 +6931,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                     width: boxSide,
                     height: boxSide,
                     decoration: BoxDecoration(
-                      color: const Color(0xFF181828),
+                      color: TjProTheme.motionPanel,
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(color: const Color(0xFFFFC800)),
                     ),
@@ -8042,7 +8053,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             width: 52,
             height: 52,
             decoration: BoxDecoration(
-              color: const Color(0xFF181828),
+              color: TjProTheme.motionPanel,
               borderRadius: BorderRadius.circular(8),
               border: Border.all(
                 color: facePath != null
@@ -8291,7 +8302,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             width: 64,
             height: 72,
             decoration: BoxDecoration(
-              color: const Color(0xFF181828),
+              color: TjProTheme.motionPanel,
               borderRadius: BorderRadius.circular(8),
             ),
             child: photo != null && File(photo).existsSync()
@@ -9531,7 +9542,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           // selection fill is gone from the Maker.
           color: selected
               ? const Color(0xFFFFC800)
-              : const Color(0xFF181828),
+              : TjProTheme.motionPanel,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: selected ? const Color(0xFFFFC800) : Colors.white24,

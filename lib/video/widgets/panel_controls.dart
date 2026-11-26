@@ -34,8 +34,17 @@ import '../video_editor_controller.dart';
             width: 62,
             padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 3),
             decoration: BoxDecoration(
-              color: selected ? TjProTheme.violet : const Color(0xFF232323),
+              // v1.18.0 (Motion reskin): selected tile = the
+              // mockups' glowing gradient + cyan edge; unselected
+              // = glass chip fill. Same 62px tile, same layout.
+              gradient: selected ? TjProTheme.motionGradient : null,
+              color: selected ? null : TjProTheme.motionChipFill,
               borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: selected
+                    ? TjProTheme.motionCyan
+                    : TjProTheme.motionBorder,
+              ),
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -680,7 +689,7 @@ void showClipLabelPicker(VideoEditorController host) {
   );
   showModalBottomSheet<void>(
     context: host.context,
-    backgroundColor: const Color(0xFF1B1B1B),
+    backgroundColor: TjProTheme.motionPanel,
     builder: (ctx) => SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 18),

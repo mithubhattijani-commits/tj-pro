@@ -8,6 +8,7 @@ library;
 
 
 import 'package:flutter/material.dart';
+import '../../theme.dart';
 
 import '../photo_editor_controller.dart';
 import '../photo_models.dart';
@@ -34,7 +35,7 @@ class StickerPanel extends StatelessWidget {
                   width: 46,
                   height: 46,
                   decoration: BoxDecoration(
-                    color: const Color(0xFF232323),
+                    color: TjProTheme.motionChipFill,
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Center(

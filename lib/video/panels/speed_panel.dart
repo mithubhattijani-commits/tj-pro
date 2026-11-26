@@ -6,6 +6,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import '../../theme.dart';
 import '../editor_stage.dart';
 import '../video_editor_controller.dart';
 import '../video_editor_panels.dart';
@@ -166,7 +167,7 @@ class SpeedPanel extends StatelessWidget {
         height: 72,
         margin: const EdgeInsets.symmetric(vertical: 4),
         decoration: BoxDecoration(
-          color: const Color(0xFF1B1B1B),
+          color: TjProTheme.motionPanelRaised,
           borderRadius: BorderRadius.circular(8),
         ),
         child: LayoutBuilder(

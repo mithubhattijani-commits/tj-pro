@@ -27,6 +27,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../app_config.dart';
+import '../theme.dart';
 import '../services/pro_service.dart';
 import '../services/remote_config_service.dart';
 import '../widgets/help_whatsapp_button.dart';
@@ -149,7 +150,9 @@ class _ProScreenState extends State<ProScreen> {
         clipBehavior: Clip.none,
         children: [
           Material(
-            color: selected ? const Color(0xFFFFF3D6) : Colors.white,
+            color: selected
+                ? TjProTheme.motionPanelRaised
+                : TjProTheme.motionPanel,
             borderRadius: BorderRadius.circular(16),
             child: InkWell(
               borderRadius: BorderRadius.circular(16),
@@ -158,7 +161,7 @@ class _ProScreenState extends State<ProScreen> {
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(
-                    color: selected ? _gold : Colors.black12,
+                    color: selected ? _gold : TjProTheme.motionBorder,
                     width: selected ? 1.6 : 1,
                   ),
                 ),
@@ -175,7 +178,7 @@ class _ProScreenState extends State<ProScreen> {
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         border: Border.all(
-                          color: selected ? _gold : Colors.black26,
+                          color: selected ? _gold : Colors.white38,
                           width: 2,
                         ),
                       ),
@@ -208,7 +211,7 @@ class _ProScreenState extends State<ProScreen> {
                           Text(
                             pkg.subtitle,
                             style: const TextStyle(
-                              color: Colors.grey,
+                              color: TjProTheme.motionTextSecondary,
                               fontSize: 13,
                             ),
                           ),
@@ -229,7 +232,7 @@ class _ProScreenState extends State<ProScreen> {
                         Text(
                           pkg.perDay,
                           style: const TextStyle(
-                            color: Colors.grey,
+                            color: TjProTheme.motionTextSecondary,
                             fontSize: 12,
                           ),
                         ),
@@ -291,7 +294,10 @@ class _ProScreenState extends State<ProScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFFFF6E9),
+      // v1.18.0 (Motion reskin): the old light-cream page (an
+      // older era's design) joins the app-wide navy/glass skin;
+      // gold stays as Pro's own accent (crown, selection, CTA).
+      backgroundColor: TjProTheme.motionBgBottom,
       body: SafeArea(
         child: ValueListenableBuilder<RemoteConfig>(
           valueListenable: RemoteConfigService.instance.notifier,
@@ -344,7 +350,7 @@ class _ProScreenState extends State<ProScreen> {
                       children: <TextSpan>[
                         TextSpan(
                           text: 'TJ Pro ',
-                          style: TextStyle(color: Colors.black87),
+                          style: TextStyle(color: Colors.white),
                         ),
                         TextSpan(
                           text: 'PRO',
@@ -362,7 +368,7 @@ class _ProScreenState extends State<ProScreen> {
                   const Text(
                     'Everything — with higher limits, without interruption',
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.grey, fontSize: 14),
+                    style: TextStyle(color: TjProTheme.motionTextSecondary, fontSize: 14),
                   ),
                   const SizedBox(height: 22),
                   // Active state (when Pro is already granted).
@@ -379,10 +385,10 @@ class _ProScreenState extends State<ProScreen> {
                         child: Container(
                           padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(
-                            color: const Color(0xFFE8F5E9),
+                            color: const Color(0xFF0E2A18),
                             borderRadius: BorderRadius.circular(16),
                             border: Border.all(
-                              color: const Color(0xFF66BB6A),
+                              color: const Color(0xFF2E7D32),
                             ),
                           ),
                           child: Column(
@@ -392,7 +398,7 @@ class _ProScreenState extends State<ProScreen> {
                                 style: TextStyle(
                                   fontSize: 16,
                                   fontWeight: FontWeight.bold,
-                                  color: Color(0xFF2E7D32),
+                                  color: Color(0xFF81C784),
                                 ),
                               ),
                               const SizedBox(height: 4),
@@ -400,7 +406,7 @@ class _ProScreenState extends State<ProScreen> {
                                 'Expiry: ${until.day}/${until.month}/'
                                 '${until.year}',
                                 style: const TextStyle(
-                                  color: Color(0xFF2E7D32),
+                                  color: Color(0xFF81C784),
                                   fontSize: 13,
                                 ),
                               ),
@@ -418,8 +424,9 @@ class _ProScreenState extends State<ProScreen> {
                   Container(
                     padding: const EdgeInsets.all(18),
                     decoration: BoxDecoration(
-                      color: Colors.white,
+                      color: TjProTheme.motionPanel,
                       borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: TjProTheme.motionBorder),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -427,7 +434,7 @@ class _ProScreenState extends State<ProScreen> {
                         const Text(
                           'PRO KE FAYDE',
                           style: TextStyle(
-                            color: _goldDark,
+                            color: _gold,
                             fontSize: 13,
                             fontWeight: FontWeight.bold,
                             letterSpacing: 1.2,
@@ -474,9 +481,9 @@ class _ProScreenState extends State<ProScreen> {
                   Container(
                     padding: const EdgeInsets.all(18),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFF7F9F7),
+                      color: TjProTheme.motionPanel,
                       borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: Colors.black12),
+                      border: Border.all(color: TjProTheme.motionBorder),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -504,7 +511,7 @@ class _ProScreenState extends State<ProScreen> {
                           'Send the screenshot after payment — your '
                           'Pro will be activated immediately.',
                           style: TextStyle(
-                            color: Colors.grey,
+                            color: TjProTheme.motionTextSecondary,
                             fontSize: 13,
                           ),
                         ),
@@ -546,7 +553,7 @@ class _ProScreenState extends State<ProScreen> {
                   const Text(
                     'The admin can also gift Pro to a user',
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.grey, fontSize: 12),
+                    style: TextStyle(color: TjProTheme.motionTextSecondary, fontSize: 12),
                   ),
                 ],
               ),

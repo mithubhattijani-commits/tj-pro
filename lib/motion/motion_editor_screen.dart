@@ -33,11 +33,11 @@ import 'motion_render.dart';
 import 'motion_scene.dart';
 import 'motion_templates.dart';
 
-const Color _kBg = Color(0xFF03040A);
-const Color _kCyan = Color(0xFF00E5FF);
-const Color _kBlue = Color(0xFF2979FF);
-const Color _kPurple = Color(0xFF7C4DFF);
-const Color _kCard = Color(0xFF0D1830);
+const Color _kBg = Color(0xFF04060F);
+const Color _kCyan = Color(0xFF00C6FF);
+const Color _kBlue = Color(0xFF2F7BFF);
+const Color _kPurple = Color(0xFF7B2FFF);
+const Color _kCard = Color(0xFF0C1428);
 
 /// Colour palette offered by every colour control.
 const List<int> _kPalette = [
