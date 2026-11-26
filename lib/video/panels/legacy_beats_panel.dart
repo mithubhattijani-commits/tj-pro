@@ -17,8 +17,7 @@ class LegacyBeatsPanel extends StatelessWidget {
   List<Widget> buildChildren(BuildContext context) {
         return [
 // Beat sync.
-              const Text('Beat sync',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
+              SectionTitle('Beat sync'),
               Row(
                 children: [
                   Expanded(
@@ -58,8 +57,7 @@ class LegacyBeatsPanel extends StatelessWidget {
                 ),
               const Divider(height: 32),
               // A1 (v1.12): manual timeline markers.
-              const Text('Timeline markers',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
+              SectionTitle('Timeline markers'),
               const SizedBox(height: 4),
               const Text(
                 'Beats aur markers timeline par dikhte hain — playhead, '

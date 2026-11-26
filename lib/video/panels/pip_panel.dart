@@ -16,21 +16,32 @@ class PipPanel extends StatelessWidget {
 
   /// The PIP style slice of [_pipExtras] (opacity + blend) — the
   /// Opacity panel's element half.
+  /// Where the Mask section starts inside [extrasChildren] —
+  /// the anchor is the 'Mask' SectionTitle (v1.15.0 G2 made the
+  /// section headers SectionTitles for the drill-down).
+  static int _maskAnchor(List<Widget> extras) => anchorIndex(
+        extras,
+        (w) =>
+            isTextStarting(w, 'Mask') ||
+            (w is SectionTitle && w.title.startsWith('Mask')),
+      );
+
   List<Widget> styleChildren(BuildContext context) {
     final extras = extrasChildren(context);
-    final maskIdx = anchorIndex(extras, (w) => isTextStarting(w, 'Mask'));
+    final maskIdx = _maskAnchor(extras);
     return maskIdx < 0 ? extras : extras.sublist(0, maskIdx);
   }
 
   /// The PIP mask slice of [_pipExtras] — the Mask panel's content.
   List<Widget> maskChildren(BuildContext context) {
     final extras = extrasChildren(context);
-    final maskIdx = anchorIndex(extras, (w) => isTextStarting(w, 'Mask'));
+    final maskIdx = _maskAnchor(extras);
     if (maskIdx < 0) return const [];
-    return [
-      SectionTitle('Mask — PIP element'),
-      ...extras.sublist(maskIdx),
-    ];
+    // The anchor IS the Mask SectionTitle now — keep it as the
+    // slice's own header (before v1.15 a fresh 'Mask — PIP
+    // element' title was added above the plain label; same
+    // result, one title).
+    return extras.sublist(maskIdx);
   }
 
   /// Overlay › PIP extras (§6.11 + completion fix, user order
@@ -51,7 +62,7 @@ class PipPanel extends StatelessWidget {
         divisions: 18,
         onChanged: (v) => host.update(() => host.pipOpacity = v),
       ),
-      const Text('Blend mode'),
+      SectionTitle('Blend mode'),
       const SizedBox(height: 4),
       iconChoiceRail(host, [
         for (final e in const [
@@ -75,7 +86,7 @@ class PipPanel extends StatelessWidget {
           ),
       ]),
       const SizedBox(height: 8),
-      const Text('Mask'),
+      SectionTitle('Mask'),
       const SizedBox(height: 4),
       iconChoiceRail(host, [
         for (final e in const [
@@ -127,5 +138,6 @@ class PipPanel extends StatelessWidget {
     ];
   }
   @override
-  Widget build(BuildContext context) => PanelColumn(children: styleChildren(context));
+  Widget build(BuildContext context) =>
+      panelDrillOrColumn(host, styleChildren(context));
 }

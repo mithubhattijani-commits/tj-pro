@@ -16,8 +16,7 @@ class LegacyStickersPanel extends StatelessWidget {
 
   List<Widget> buildChildren(BuildContext context) {
         return [
-          const Text('Stickers / emoji overlay',
-              style: TextStyle(fontWeight: FontWeight.bold)),
+          SectionTitle('Stickers / emoji overlay'),
           const SizedBox(height: 8),
 TextField(
                 decoration: const InputDecoration(
@@ -75,8 +74,7 @@ TextField(
                 // + a curve graph at the top of the Keyframes
                 // sub-tab (same _kfEasing state — presentation only).
                 const SizedBox(height: 8),
-                const Text('Start keyframe',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
+                SectionTitle('Start keyframe'),
                 ProSlider(
                   label: 'Start X',
                   value: host.kfStartX,
@@ -118,8 +116,7 @@ TextField(
                   digits: 0,
                   onChanged: (v) => host.update(() => host.kfStartRotation = v),
                 ),
-                const Text('End keyframe',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
+                SectionTitle('End keyframe'),
                 ProSlider(
                   label: 'End X',
                   value: host.kfEndX,

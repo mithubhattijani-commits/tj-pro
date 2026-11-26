@@ -16,11 +16,10 @@ class LegacySpeedPanel extends StatelessWidget {
 
   List<Widget> buildChildren(BuildContext context) {
         return [
-          const Text('Speed — fixed speed + speed ramps',
-              style: TextStyle(fontWeight: FontWeight.bold)),
+          SectionTitle('Speed — fixed speed + speed ramps'),
           const SizedBox(height: 8),
 // Speed / filter / aspect
-          const Text('Speed'),
+          SectionTitle('Speed'),
           const SizedBox(height: 4),
           iconChoiceRail(host, [
             for (final e in const [
@@ -43,8 +42,7 @@ class LegacySpeedPanel extends StatelessWidget {
               ),
           ]),
 // Speed ramp.
-              const Text('Speed ramp',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
+              SectionTitle('Speed ramp'),
               const SizedBox(height: 4),
               const Text('Ramp preset'),
               const SizedBox(height: 4),

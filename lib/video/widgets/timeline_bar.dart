@@ -302,7 +302,12 @@ class TimelineBar extends StatelessWidget {
             ),
           LayoutBuilder(
             builder: (context, constraints) {
-              final halfPad = constraints.maxWidth / 2 - 52;
+              // v1.15.0 G1: halfPad MUST equal the centre line's
+              // x (TimelineMath.stripLineX) — the old
+              // `maxWidth/2 - 52` was 26px short, so Split (and
+              // every centre-based action) landed ~0.65s early.
+              final halfPad =
+                  TimelineMath.stripHalfPad(constraints.maxWidth);
               final contentW = halfPad * 2 + total * host.tlPxPerSec;
               return Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -648,7 +653,8 @@ class TimelineBar extends StatelessWidget {
                         ),
                         // FIXED centre playhead.
                         Positioned(
-                          left: (constraints.maxWidth - 52) / 2,
+                          left: TimelineMath.stripLineX(
+                              constraints.maxWidth),
                           top: 0,
                           bottom: 0,
                           child: Container(
@@ -872,8 +878,14 @@ class TimelineBar extends StatelessWidget {
           const SizedBox(height: 4),
           // Times row — current centred, total right, both from
           // the ONE clock/model (#5).
+          // v1.15.0 G1.6: the CENTRE label shows the second that
+          // is actually under the fixed centre line (strip scroll
+          // offset / pxPerSec) — the old label showed the preview
+          // CLOCK position while claiming to be the centred one,
+          // so the user could not verify where a Split would land.
+          // It now also rebuilds on scroll, not just on the clock.
           AnimatedBuilder(
-            animation: host.clock,
+            animation: Listenable.merge([host.clock, host.tlScroll]),
             builder: (context, _) {
               String fmtT(double sec) {
                 // v1.14 T1 (A14): timecode mode shows
@@ -886,13 +898,20 @@ class TimelineBar extends StatelessWidget {
                 return '$m:$s';
               }
 
+              final centreSec = host.tlScroll.hasClients &&
+                      host.tlPxPerSec > 0
+                  ? (host.tlScroll.offset / host.tlPxPerSec)
+                      .clamp(0.0, total)
+                      .toDouble()
+                  : host.globalPositionSec;
+
               return SizedBox(
                 height: 16,
                 child: Stack(
                   children: [
                     Center(
                       child: Text(
-                        fmtT(host.globalPositionSec),
+                        fmtT(centreSec),
                         key: const Key('tlTimeCentre'),
                         style: const TextStyle(
                           color: Colors.white,

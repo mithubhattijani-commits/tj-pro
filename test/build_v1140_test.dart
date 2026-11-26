@@ -519,6 +519,19 @@ void main() {
       expect(target, findsWidgets);
       await tester.tap(target.first);
       await _frames(tester);
+      // v1.15.0 G2 (Point #29): the Trim body now DRILLS — its
+      // sections are chips in one line and only the chosen
+      // section shows. The mode controls live in the 'Trim mode'
+      // section, so select it first.
+      Future<void> tapSection(String title) async {
+        final chip = find.text(title);
+        await tester.ensureVisible(chip);
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(chip);
+        await _frames(tester);
+      }
+
+      await tapSection('Trim mode');
       expect(find.byKey(const Key('trimModeRoll')), findsOneWidget);
       // Default mode = Trim: trim-to-playhead visible, roll not.
       expect(find.byKey(const Key('trimToPlayheadStart')), findsOneWidget);
@@ -540,12 +553,16 @@ void main() {
       await tapChip(const Key('trimModeSlip'));
       await _frames(tester);
       expect(find.byKey(const Key('slipNudgeBack')), findsOneWidget);
-      // Timeline settings live here too: snap switch starts ON.
+      // Timeline settings live in their own drill section now:
+      // snap switch starts ON.
+      await tapSection('Timeline');
       await tester.ensureVisible(find.byKey(const Key('tlSnapSwitch')));
       final snap = tester.widget<Switch>(
           find.byKey(const Key('tlSnapSwitch')));
       expect(snap.value, isTrue);
-      // Range buttons render; In is disabled while there are no clips.
+      // Range buttons render (their own section); In is disabled
+      // while there are no clips.
+      await tapSection('Range (In / Out)');
       await tester.ensureVisible(find.byKey(const Key('rangeSetIn')));
       final inBtn = tester.widget<TextButton>(
           find.byKey(const Key('rangeSetIn')));

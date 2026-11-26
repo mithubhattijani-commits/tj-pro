@@ -17,12 +17,10 @@ class LegacyEffectsPanel extends StatelessWidget {
 
   List<Widget> buildChildren(BuildContext context) {
         return [
-          const Text('Effects',
-              style: TextStyle(fontWeight: FontWeight.bold)),
+          SectionTitle('Effects'),
           const SizedBox(height: 8),
           const Divider(height: 32),
-          const Text('Shake effect',
-              style: TextStyle(fontWeight: FontWeight.bold)),
+          SectionTitle('Shake effect'),
           const SizedBox(height: 4),
           const Text('Shake intensity'),
           const SizedBox(height: 4),

@@ -91,21 +91,28 @@ class TransportRow extends StatelessWidget {
                     color: Colors.white, size: 22),
               ),
               const SizedBox(width: 8),
-              // Flexible: on narrow screens (or long durations)
-              // the time readout shrinks/ellipsizes instead of
-              // overflowing the transport row (v1.5.2, #67/#69).
+              // v1.15.0 G1.6: the readout must NEVER truncate
+              // ("0:2…" hid the exact position the user was about
+              // to cut at). FittedBox scales the full text down a
+              // touch on narrow screens instead of ellipsizing —
+              // the whole "position / total" always stays visible.
+              // v1.14.0 T1 (A14): Timecode mode (timeline header ka
+              // TC chip) renders H:MM:SS:FF at the export fps;
+              // plain mode keeps the old m:ss.s.
               Flexible(
-                // v1.14.0 T1 (A14): Timecode mode (timeline
-                // header ka TC chip) renders H:MM:SS:FF at the
-                // export fps; plain mode keeps the old m:ss.s.
-                child: Text(
-                  host.timecodeOn
-                      ? '${TimelineMath.formatTimecode(host.globalPositionSec, host.exportFps)} / ${TimelineMath.formatTimecode(host.totalDurationSec, host.exportFps)}'
-                      : '${fmt(host.globalPositionSec)} / ${fmt(host.totalDurationSec)}',
-                  key: const Key('tpTimeText'),
-                  style: const TextStyle(color: Colors.white, fontSize: 12),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    host.timecodeOn
+                        ? '${TimelineMath.formatTimecode(host.globalPositionSec, host.exportFps)} / ${TimelineMath.formatTimecode(host.totalDurationSec, host.exportFps)}'
+                        : '${fmt(host.globalPositionSec)} / ${fmt(host.totalDurationSec)}',
+                    key: const Key('tpTimeText'),
+                    style:
+                        const TextStyle(color: Colors.white, fontSize: 12),
+                    maxLines: 1,
+                    softWrap: false,
+                  ),
                 ),
               ),
               const Spacer(),

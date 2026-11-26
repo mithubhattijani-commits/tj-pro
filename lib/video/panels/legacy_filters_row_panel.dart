@@ -20,8 +20,7 @@ class LegacyFiltersRowPanel extends StatelessWidget {
         // slider. The stage preview updates LIVE via the colour
         // matrix; the export scales the same ffmpeg filter.
         return [
-          const Text('Filters — LIVE preview stage par',
-              style: TextStyle(fontWeight: FontWeight.bold)),
+          SectionTitle('Filters — LIVE preview stage par'),
           const SizedBox(height: 8),
           iconChoiceRail(host, [
             for (final e in const [

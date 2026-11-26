@@ -66,11 +66,12 @@ void main() {
       );
     });
 
-    test('centre over ANOTHER clip: the preview clock decides', () {
-      // The strip was never scrolled after the tap selected
-      // clip 2 — the centre still points into clip 1. The cut
-      // must follow the clock inside the selected clip, not the
-      // stale centre (the old silent-wrong-split path).
+    test('centre over ANOTHER clip: THAT clip is cut (v1.15 G1.3)',
+        () {
+      // v1.15 behaviour change (user order + diagnosis): Split
+      // cuts the clip UNDER the line — the selection follows the
+      // line. The old code cut the stale selection by the clock
+      // and could even claim "playhead par kata" falsely.
       final res = resolveSplit(
         effectiveDurations: const [10, 20],
         trimStarts: const [0, 0],
@@ -78,28 +79,73 @@ void main() {
         clockInsideSelected: 8,
         centreSec: 5,
       );
-      expect(res!.atPlayhead, isTrue);
-      expect(res.cutFileSec, 8);
+      expect(res!.index, 0);
+      expect(res.atPlayhead, isTrue);
+      expect(res.cutFileSec, 5);
     });
 
-    test('edge position falls back to a DISCLOSED midpoint', () {
+    test('edge position is REFUSED — no midpoint fallback (G1.2)',
+        () {
+      // The old disclosed-midpoint fallback was the cascade: after
+      // a split the line sits exactly on the new boundary, so each
+      // extra tap halved the remainder. Now it refuses honestly.
       final res = resolveSplit(
         effectiveDurations: const [20],
         trimStarts: const [0],
         selected: 0,
         clockInsideSelected: 0.05,
       );
-      expect(res!.atPlayhead, isFalse);
+      expect(res!.refusal, SplitRefusal.atEdge);
+    });
+
+    test('line exactly on a boundary refuses instead of cascading',
+        () {
+      // Two clips; the line sits exactly on their boundary (10s).
+      // indexAtSec puts it at the START of clip 2 → inside = 0 →
+      // atEdge refusal. Before the fix this cut clip 2's midpoint.
+      final res = resolveSplit(
+        effectiveDurations: const [10, 20],
+        trimStarts: const [0, 0],
+        selected: 0,
+        clockInsideSelected: 0,
+        centreSec: 10,
+      );
+      expect(res!.index, 1);
+      expect(res.refusal, SplitRefusal.atEdge);
+    });
+
+    test('midpoint mode cuts the SELECTED clip in half (G1.5)',
+        () {
+      final res = resolveSplit(
+        effectiveDurations: const [10, 20],
+        trimStarts: const [0, 0],
+        selected: 1,
+        clockInsideSelected: 3,
+        centreSec: 5, // ignored in midpoint mode
+        playheadMode: false,
+      );
+      expect(res!.index, 1);
+      expect(res.atPlayhead, isFalse);
       expect(res.cutFileSec, 10);
     });
 
     test('a sub-0.3 s clip cannot split', () {
+      final res = resolveSplit(
+        effectiveDurations: const [0.2],
+        trimStarts: const [0],
+        selected: 0,
+        clockInsideSelected: 0.1,
+      );
+      expect(res!.refusal, SplitRefusal.tooSmall);
+    });
+
+    test('invalid inputs return null', () {
       expect(
         resolveSplit(
-          effectiveDurations: const [0.2],
-          trimStarts: const [0],
+          effectiveDurations: const [],
+          trimStarts: const [],
           selected: 0,
-          clockInsideSelected: 0.1,
+          clockInsideSelected: 0,
         ),
         isNull,
       );

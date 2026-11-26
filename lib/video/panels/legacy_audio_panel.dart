@@ -19,8 +19,7 @@ class LegacyAudioPanel extends StatelessWidget {
 
   List<Widget> buildChildren(BuildContext context) {
         return [
-          const Text('Audio — music + waveform',
-              style: TextStyle(fontWeight: FontWeight.bold)),
+          SectionTitle('Audio — music + waveform'),
           const SizedBox(height: 8),
 // Music
           Row(
@@ -60,8 +59,7 @@ class LegacyAudioPanel extends StatelessWidget {
             ),
           const SizedBox(height: 12),
 // Waveform.
-              const Text('Waveform',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
+              SectionTitle('Waveform'),
               Row(
                 children: [
                   Expanded(
@@ -88,8 +86,7 @@ class LegacyAudioPanel extends StatelessWidget {
               ],
               const SizedBox(height: 8),
           const Divider(height: 32),
-          const Text('Voice changer',
-              style: TextStyle(fontWeight: FontWeight.bold)),
+          SectionTitle('Voice changer'),
           const SizedBox(height: 4),
           const Text('Voice effect'),
           const SizedBox(height: 4),
@@ -145,8 +142,7 @@ class LegacyAudioPanel extends StatelessWidget {
             },
           ),
           const Divider(height: 32),
-          const Text('Cleanup',
-              style: TextStyle(fontWeight: FontWeight.bold)),
+          SectionTitle('Cleanup'),
           const SizedBox(height: 8),
           SwitchListTile(
             title: const Text('Silence remover'),

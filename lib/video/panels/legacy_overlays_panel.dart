@@ -19,8 +19,9 @@ class LegacyOverlaysPanel extends StatelessWidget {
 
   List<Widget> buildChildren(BuildContext context) {
         return [
-          const Text('Overlay — PIP video',
-              style: TextStyle(fontWeight: FontWeight.bold)),
+          // v1.15.0 G2: section headers are SectionTitles so the
+          // panel drill-down (Point #29) can split this body.
+          SectionTitle('Overlay — PIP video'),
           const SizedBox(height: 8),
           SwitchListTile(
             title: const Text('PIP video overlay'),
@@ -51,7 +52,7 @@ class LegacyOverlaysPanel extends StatelessWidget {
             ),
           if (host.fxPip) ...[
             const SizedBox(height: 8),
-            const Text('PIP position'),
+            SectionTitle('PIP position'),
             const SizedBox(height: 4),
             iconChoiceRail(host, [
               for (final pos in PipPosition.values)
@@ -68,9 +69,9 @@ class LegacyOverlaysPanel extends StatelessWidget {
                 ),
             ]),
             const SizedBox(height: 8),
+            SectionTitle('PIP size'),
             Row(
               children: [
-                const Text('PIP size'),
                 Expanded(
                   child: Slider(
                     key: const Key('pipScaleSlider'),

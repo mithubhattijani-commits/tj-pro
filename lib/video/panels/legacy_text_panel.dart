@@ -16,8 +16,7 @@ class LegacyTextPanel extends StatelessWidget {
 
   List<Widget> buildChildren(BuildContext context) {
         return [
-          const Text('Text overlay',
-              style: TextStyle(fontWeight: FontWeight.bold)),
+          SectionTitle('Text overlay'),
           const SizedBox(height: 8),
 // Text overlay
           TextField(

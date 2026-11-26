@@ -145,6 +145,32 @@ class CanvasGeometry {
 class TimelineMath {
   TimelineMath._();
 
+  // ---- Strip geometry (v1.15.0 G1 — the 26px Split bug). ----
+  /// Width of the timeline strip's fixed left column (the lane
+  /// label / + tile column). The scrollable strip viewport is the
+  /// bar's width minus this.
+  static const double stripLeftColumnWidth = 52;
+
+  /// Leading content padding inside the strip. It MUST be exactly
+  /// half the strip viewport: the fixed centre playhead line stands
+  /// at [stripLineX], so with halfPad == lineX the time under the
+  /// line is exactly `scrollOffset / pxPerSec` at every zoom.
+  /// (The pre-v1.15 formula `maxWidth/2 - 52` was 26px short, so
+  /// every centre-based action — Split above all — landed early.)
+  static double stripHalfPad(double barWidth) =>
+      (barWidth - stripLeftColumnWidth) / 2;
+
+  /// X of the fixed centre playhead line, measured from the strip
+  /// viewport's left edge (i.e. inside the Expanded next to the
+  /// left column).
+  static double stripLineX(double barWidth) =>
+      (barWidth - stripLeftColumnWidth) / 2;
+
+  /// Content X (inside the scrollable content) where [sec] is
+  /// drawn at [pps] px/sec.
+  static double stripContentX(double barWidth, double sec, double pps) =>
+      stripHalfPad(barWidth) + sec * pps;
+
   /// Total timeline length: the sum of every clip's effective
   /// (trimmed) duration, in order.
   static double totalSec(List<double> durations) =>
@@ -616,65 +642,116 @@ class RangeClipAction {
 
 enum RangeActionKind { keep, remove, trimLeft, trimRight, split }
 
-/// P0-2 (tools-fix wave): the outcome of resolving a Split tap —
-/// which clip is cut and at what FILE second, and whether the
-/// cut is exactly where the user is looking ([atPlayhead]) or a
-/// disclosed midpoint fallback.
+/// Why a Split was refused (v1.15.0 G1): the screen turns each
+/// into a clear status message instead of silently cutting
+/// somewhere else.
+enum SplitRefusal {
+  /// The target clip is under 0.3 s — nothing sensible to cut.
+  tooSmall,
+
+  /// Playhead mode: the line sits (almost) exactly on the target
+  /// clip's edge — cutting there would only shave a sliver. The
+  /// old code fell back to the midpoint here, which is what made
+  /// repeated Split taps halve the clip again and again (the
+  /// "kai dafa dabana parta hai" cascade).
+  atEdge,
+}
+
+/// The outcome of resolving a Split tap — which clip is cut and
+/// at what FILE second, whether the cut is exactly where the user
+/// is looking ([atPlayhead]), or a [refusal] explaining why no
+/// cut happened.
 class SplitResolution {
   const SplitResolution({
     required this.index,
     required this.cutFileSec,
     required this.atPlayhead,
+    this.refusal,
   });
 
   final int index;
   final double cutFileSec;
   final bool atPlayhead;
+  final SplitRefusal? refusal;
 }
 
-/// Resolves a Split against the GLOBAL timeline playhead (the
-/// timeline strip's centre second, [centreSec]) with the preview
-/// clock as the fallback source. Pure — the editor screen calls
-/// this and the regression tests pin it.
+/// Resolves a Split (v1.15.0 G1 — the full diagnosis fix). Pure —
+/// the editor screen calls this and the regression tests pin it.
 ///
-/// The cut targets the SELECTED clip (Split is a per-selection
-/// op — its button lives in the selected clip's tool row):
-/// * when the strip centre sits over the selected clip, the cut
-///   is the centre's position inside it (the playhead the user
-///   SEES);
-/// * otherwise the preview clock's position inside the selected
-///   clip is used (the strip may not have been scrolled since
-///   the clip was tapped);
-/// * a clip under 0.3 s cannot split (null); a position within
-///   0.15 s of either edge falls back to the midpoint and says
-///   so via [SplitResolution.atPlayhead] = false.
+/// Two modes, chosen by the Split panel's "Playhead par /
+/// Darmiyan se" toggle ([playheadMode]):
+///
+/// * Playhead mode (the default): the cut targets the clip UNDER
+///   the strip's centre line ([centreSec]) — not the stale
+///   selection — at exactly the line's position inside it. When
+///   the strip has not been laid out ([centreSec] null) the
+///   preview clock's position inside the selected clip is used.
+///   A position within 0.15 s of either edge of the target clip
+///   is REFUSED ([SplitRefusal.atEdge]) — never a silent midpoint
+///   fallback.
+/// * Midpoint mode: the SELECTED clip is cut at its midpoint and
+///   [SplitResolution.atPlayhead] is false, so the status can say
+///   "darmiyan se kata" truthfully.
+///
+/// A target clip under 0.3 s is refused ([SplitRefusal.tooSmall])
+/// in both modes. Invalid inputs return null.
 SplitResolution? resolveSplit({
   required List<double> effectiveDurations,
   required List<double> trimStarts,
   required int selected,
   required double clockInsideSelected,
   double? centreSec,
+  bool playheadMode = true,
 }) {
   if (effectiveDurations.isEmpty ||
       selected < 0 ||
       selected >= effectiveDurations.length) {
     return null;
   }
-  var inside = clockInsideSelected;
-  if (centreSec != null) {
-    final ci = TimelineMath.indexAtSec(effectiveDurations, centreSec);
-    if (ci == selected) {
-      inside = centreSec - TimelineMath.startSec(effectiveDurations, ci);
+  final int target;
+  final double inside;
+  if (playheadMode) {
+    if (centreSec != null) {
+      target = TimelineMath.indexAtSec(effectiveDurations, centreSec);
+      inside =
+          centreSec - TimelineMath.startSec(effectiveDurations, target);
+    } else {
+      target = selected;
+      inside = clockInsideSelected;
     }
+  } else {
+    target = selected;
+    inside = effectiveDurations[selected] / 2;
   }
-  final eff = effectiveDurations[selected];
-  if (eff < 0.3) return null;
+  final eff = effectiveDurations[target];
+  if (eff < 0.3) {
+    return SplitResolution(
+      index: target,
+      cutFileSec: trimStarts[target] + eff / 2,
+      atPlayhead: playheadMode,
+      refusal: SplitRefusal.tooSmall,
+    );
+  }
+  if (!playheadMode) {
+    return SplitResolution(
+      index: target,
+      cutFileSec: trimStarts[target] + eff / 2,
+      atPlayhead: false,
+    );
+  }
   final clamped = inside.clamp(0.0, eff).toDouble();
-  final atPlayhead = clamped > 0.15 && clamped < eff - 0.15;
+  if (clamped <= 0.15 || clamped >= eff - 0.15) {
+    return SplitResolution(
+      index: target,
+      cutFileSec: trimStarts[target] + clamped,
+      atPlayhead: true,
+      refusal: SplitRefusal.atEdge,
+    );
+  }
   return SplitResolution(
-    index: selected,
-    cutFileSec: trimStarts[selected] + (atPlayhead ? clamped : eff / 2),
-    atPlayhead: atPlayhead,
+    index: target,
+    cutFileSec: trimStarts[target] + clamped,
+    atPlayhead: true,
   );
 }
 

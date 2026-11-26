@@ -1334,16 +1334,9 @@ class _HomeScreenState extends State<HomeScreen> {
                             ],
                           ),
                           const SizedBox(height: 18),
-                          const Text(
-                            'Works offline. No account, no uploads — '
-                            'everything is processed on your phone. '
-                            'Basic editing is free; Premium AI tools unlock '
-                            'with coins — earn coins by watching ads in the '
-                            'Coins section.',
-                            style: TextStyle(color: Colors.white70),
-                            textAlign: TextAlign.center,
-                          ),
-                          const SizedBox(height: 14),
+                          // Point #30 (user order, v1.15.0): the
+                          // "Works offline…" paragraph that used to
+                          // sit here is REMOVED for good.
                           // Remote Config sponsored ad card (only
                           // when the config enables it).
                           ValueListenableBuilder<RemoteConfig>(

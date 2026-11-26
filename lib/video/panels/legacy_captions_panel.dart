@@ -18,8 +18,7 @@ class LegacyCaptionsPanel extends StatelessWidget {
 
   List<Widget> buildChildren(BuildContext context) {
         return [
-const Text('Auto Captions (CapCut-style)',
-              style: TextStyle(fontWeight: FontWeight.bold)),
+SectionTitle('Auto Captions (CapCut-style)'),
           const SizedBox(height: 8),
           Row(
             children: [
@@ -65,7 +64,7 @@ const Text('Auto Captions (CapCut-style)',
             ),
           ],
           const SizedBox(height: 8),
-          const Text('Caption style'),
+          SectionTitle('Caption style'),
           const SizedBox(height: 4),
           iconChoiceRail(host, [
             for (final e in const [

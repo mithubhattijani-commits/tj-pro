@@ -17,8 +17,7 @@ class LegacyTrackingPanel extends StatelessWidget {
   List<Widget> buildChildren(BuildContext context) {
         return [
 // Motion tracking.
-              const Text('Motion tracking (ML)',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
+              SectionTitle('Motion tracking (ML)'),
               const Text(
                 'Preview video par object ko tap karein, phir Track '
                 'dabayein. (Tap point ab asal video frame par exact '

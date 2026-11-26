@@ -169,6 +169,7 @@ class NewsProject {
     this.voiceoverDurationSec,
     List<String>? clipPaths,
     List<ClipTrim>? clipTrims,
+    List<double>? timelineMarkers,
     this.pipVideoPath,
     this.presetId = 'nigraan-tv',
     this.templateKind = 'nigraanFinal',
@@ -220,6 +221,7 @@ class NewsProject {
   })  : elementOverrides = elementOverrides ?? {},
         clipPaths = clipPaths ?? [],
         clipTrims = normaliseClipTrims(clipPaths ?? [], clipTrims),
+        timelineMarkers = normaliseTimelineMarkers(timelineMarkers),
         subtitles = subtitles ?? [],
         sources = sources ?? [],
         seo = seo ?? SeoData(),
@@ -268,6 +270,40 @@ class NewsProject {
   /// go through [setClipPaths] (or set both lists together, as
   /// the Maker's split does) so the two never drift apart.
   List<ClipTrim> clipTrims;
+
+  /// Timeline markers (v1.15.0 G5 / B9): user-placed seconds on
+  /// the Maker timeline (gold flags — "yahan se cut", "yahan
+  /// naam strip" jaisi jaghein nishan karna). Sorted, deduped
+  /// (0.05 s), never negative — [normaliseTimelineMarkers] keeps
+  /// the invariant. Absent in pre-v1.15 project JSON (loads as
+  /// an empty list — backward compatible).
+  List<double> timelineMarkers;
+
+  /// Keeps the marker invariant: finite, >= 0, sorted, and no
+  /// two markers within 0.05 s of each other.
+  static List<double> normaliseTimelineMarkers(List<double>? markers) {
+    if (markers == null || markers.isEmpty) return <double>[];
+    final sorted = markers.where((m) => m.isFinite && m >= 0).toList()
+      ..sort();
+    final out = <double>[];
+    for (final m in sorted) {
+      if (out.isEmpty || m - out.last > 0.05) out.add(m);
+    }
+    return out;
+  }
+
+  /// Marker toggle (B9): removes the nearest marker within
+  /// 0.1 s of [sec] when one exists, else adds a marker at
+  /// [sec]. Pure — returns the NEW list; the caller assigns it.
+  static List<double> toggledTimelineMarkers(
+      List<double> markers, double sec) {
+    for (final m in markers) {
+      if ((m - sec).abs() <= 0.1) {
+        return markers.where((x) => x != m).toList();
+      }
+    }
+    return normaliseTimelineMarkers([...markers, sec]);
+  }
 
   /// Tools-fix wave (P0-3): the PIP inset's video source — a
   /// video file the user picked in the Template panel's PIP
@@ -615,6 +651,7 @@ class NewsProject {
     double? voiceoverDurationSec,
     List<String>? clipPaths,
     List<ClipTrim>? clipTrims,
+    List<double>? timelineMarkers,
     String? pipVideoPath,
     bool clearPipVideo = false,
     String? presetId,
@@ -683,6 +720,8 @@ class NewsProject {
                   oldTrims: this.clipTrims,
                   newPaths: clipPaths,
                 )),
+      timelineMarkers: timelineMarkers ??
+          List<double>.from(this.timelineMarkers),
       pipVideoPath:
           clearPipVideo ? null : (pipVideoPath ?? this.pipVideoPath),
       presetId: presetId ?? this.presetId,
@@ -753,6 +792,7 @@ class NewsProject {
         'voiceoverDurationSec': voiceoverDurationSec,
         'clipPaths': clipPaths,
         'clipTrims': clipTrims.map((t) => t.toJson()).toList(),
+        'timelineMarkers': timelineMarkers,
         'pipVideoPath': pipVideoPath,
         'presetId': presetId,
         'templateKind': templateKind,
@@ -827,6 +867,15 @@ class NewsProject {
         );
       }
     }
+    // B9 (v1.15.0): timeline markers — absent on pre-v1.15 saves
+    // (loads empty); malformed entries are skipped, never fatal.
+    final rawMarkers = json['timelineMarkers'];
+    final markers = <double>[];
+    if (rawMarkers is List) {
+      for (final m in rawMarkers) {
+        if (m is num) markers.add(m.toDouble());
+      }
+    }
     final rawSubs = json['subtitles'];
     final subs = <SubtitleLine>[];
     if (rawSubs is List) {
@@ -877,6 +926,7 @@ class NewsProject {
           (json['voiceoverDurationSec'] as num?)?.toDouble(),
       clipPaths: clips,
       clipTrims: trims,
+      timelineMarkers: markers,
       pipVideoPath: json['pipVideoPath'] as String?,
       presetId: (json['presetId'] as String?) ?? 'nigraan-tv',
       templateKind: (json['templateKind'] as String?) ?? 'nigraanFinal',

@@ -337,16 +337,19 @@ const Map<String, ToolGuideEntry> _veGuides = {
   've.split': ToolGuideEntry(
     title: 'Split',
     what:
-        'Select ki hui clip ko playhead (peeli line) wali jagah se do hison '
-        'mein kaat deta hai — phir har hissa alag handle hota hai.',
+        'Playhead (peeli line) ke NEECHE wali clip ko bilkul line wali '
+        'jagah se do hison mein kaat deta hai — phir har hissa alag '
+        'handle hota hai.',
     steps: [
-      'Timeline mein clip select karein.',
-      'Video chalayein ya timeline kheench kar peeli line katne wali jagah par layein.',
+      'Timeline kheench kar peeli line katne wali jagah par layein — line jis clip ke upar hai, wahi kategi (select ki hui purani clip nahi).',
       'Split dabayein — clip wahin se do ho jayegi, screen par tasdeeq bhi ayegi.',
+      'Panel ke upar "Playhead par / Darmiyan se" wala intekhab hai: Playhead par = line wali jagah; Darmiyan se = select ki hui clip bilkul darmiyan se kategi.',
     ],
     tips: [
-      'Line clip ke bilkul kinare par ho to split nahi hota — thora andar layein.',
-      'Split ke baad dusra hissa select ho jata hai; dobara dabane se wahi aur katega.',
+      'Line clip ke bilkul kinare par ho to split NAHI hota aur wajah screen par likhi ati hai — pehle ki tarah chup chaap darmiyan se nahi kat ta. Line ko thora andar layein.',
+      'Split ke baad pehla (baen wala) hissa select rehta hai — dobara dabane se ghalat jagah nahi kategi.',
+      'Timeline ke darmiyan mein jo waqt likha ata hai wo line ke neeche wala asal second hai — katne se pehle wahin se tasdeeq kar lein.',
+      'Split bhi timeline wali snap setting ka paband hai (Trim panel ke Timeline hisay mein) — snap band ho to line bilkul free hoti hai.',
     ],
   ),
   've.timeline': ToolGuideEntry(
@@ -360,10 +363,13 @@ const Map<String, ToolGuideEntry> _veGuides = {
       'Snap: anchor wala chip snap on/off karta hai; chip ko daba kar rakhein (long press) to taqat badalti hai — Halki, Normal, Mazboot. Mukammal setting Trim panel ke Timeline hisay mein hai.',
       'Multi-select: checklist wala chip on karke kai clips chunein — phir aik sath delete, duplicate ya aage/peechay karein.',
       'Range: Trim panel ke Range hisay se playhead par In/Out lagayein — gold band ban jayega; phir range loop chalana ya range delete karna aik tap hai.',
+      'Koi tool khula ho to timeline khud chhup jati hai taake preview bara rahe aur sirf us tool ke options nazar ayen — tool band karte hi timeline wapas a jati hai.',
     ],
     tips: [
       'Snap band ho to playhead/trim bilkul free hote hain — koi point unhen kheenchta nahi.',
       'Range delete mein jo clip aadha range mein aye wo wahin kat jata hai — kuch ghayab nahi hota.',
+      'Timeline ke darmiyan wala waqt hamesha line ke neeche wala second hai — playhead aur label kabhi alag nahi hote.',
+      'Panel ke andar hisay (sections) upar aik line mein chips ki surat mein ate hain — chip dabayein, sirf usi hisay ke options neeche ayenge; poora panel scroll nahi karna parta.',
     ],
   ),
   've.trim': ToolGuideEntry(
@@ -575,6 +581,7 @@ const Map<String, ToolGuideEntry> _veGuides = {
     ],
     tips: [
       'PIP select karne par neeche element wali line ati hai — wahan se Edit/Delete asan hai.',
+      'PIP ke hisay (Position, Size, Style, Blend, Mask) panel ke upar aik line mein chips ki surat mein hain — chip dabayein, sirf usi hisay ke options ayenge.',
     ],
   ),
   've.aicut': ToolGuideEntry(
@@ -1025,6 +1032,10 @@ const Map<String, ToolGuideEntry> _nsGuides = {
       'Timeline ab asal time-scale par hai: clips apni lambai ke hisab se jagah lete hain, upar ruler (scale) hai. Header ke − / fit / + se zoom karein; zoom ho to lanes ko left/right ghaseet kar scroll karein.',
       'Ruler par tap ya drag karne se playhead wahan chala jata hai (scrub). Pehli clip ke andar ho to preview bhi wahin se nazar aye ga; aage ki clips par playhead/readout wahan jata hai lekin preview pehli clip hi dikhata hai — asal video export mein poori chalti hai.',
       'Split ab playhead ki asal jagah par lagta hai — playhead ko kisi bhi clip par scrub karke Split dabayein, wahi clip wahin kategi.',
+      'Clip ko ghaseet kar trim (B3): timeline mein clip select karein — us ke dono kinaron par sunehray handle ayenge; kinara pakad kar andar/bahar ghaseetein, trim wahin badal jayega.',
+      'Clip ki tartib ghaseet kar (B4): clip ko daba kar rakhein (long press) phir left/right ghaseetein — clip apni jagah badal lega, trim us ke sath hi jayega.',
+      'Marker (B9): header ke bookmark button se playhead wali jagah nishan lagayein; marker sunehri line ki surat mein har lane par dikhega. Usi jagah dobara dabane ya marker par tap karne se hat jata hai.',
+      'Lane controls (B10): har lane ke naam ke sath ankh wala button lane chhupata/dikhata hai (sirf nazar ke liye). A2 ke sath awaz wala button music band/on karta hai — band ho to export mein bhi music nahi ayega.',
     ],
   ),
   'ns.elements': ToolGuideEntry(

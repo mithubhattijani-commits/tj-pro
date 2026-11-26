@@ -106,6 +106,31 @@ import 'widgets/styled_caption_preview.dart';
 import 'widgets/template_media_preview.dart';
 import 'widgets/voice_preview_player.dart';
 
+/// B3 drag-trim math (v1.15.0 G5, pure — the regression tests
+/// pin it): dragging clip edge by [dSec] seconds (file seconds
+/// == timeline seconds inside the used range). Clamps: the
+/// start never goes below 0 or past (end − 0.3); the end never
+/// passes the file duration or (start + 0.3); an end dragged to
+/// the file's end becomes the full range again (endSec null),
+/// exactly like the Media panel's End slider.
+ClipTrim nsDragTrimmed(
+    ClipTrim trim, double fileDur, bool leftEdge, double dSec) {
+  if (leftEdge) {
+    final end = trim.endSec ?? fileDur;
+    var newStart = trim.startSec + dSec;
+    if (newStart < 0) newStart = 0;
+    if (newStart > end - 0.3) newStart = end - 0.3;
+    return trim.copyWith(startSec: newStart);
+  }
+  final cur = trim.endSec ?? fileDur;
+  var newEnd = cur + dSec;
+  if (newEnd > fileDur) newEnd = fileDur;
+  if (newEnd < trim.startSec + 0.3) newEnd = trim.startSec + 0.3;
+  return newEnd >= fileDur
+      ? trim.copyWith(clearEnd: true)
+      : trim.copyWith(endSec: newEnd);
+}
+
 class NewsMakerScreen extends StatefulWidget {
   /// Test/deep-link seams: when given, the screen edits that preset /
   /// project directly instead of loading from the stores first.
@@ -285,6 +310,20 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   double? _scrubSec;
   double _nsViewportW = 0;
   double _nsLayoutTotal = 0;
+
+  /// v1.15.0 G5 (B10): lanes the user has hidden from the
+  /// timeline (view-only — the project and the export are
+  /// untouched). Ids: 'v1', 'a1', 'a2', 'tc'.
+  final Set<String> _nsLaneHidden = {};
+
+  /// v1.15.0 G5 (B4): the clip being drag-reordered (long-press),
+  /// and the drag's reference geometry: the global X where the
+  /// current reference was taken + the dragged clip's start
+  /// second at that moment. Both reset at every live swap, so
+  /// the math never depends on a stale build.
+  int? _nsDragIndex;
+  double _nsDragRefGlobalX = 0;
+  double _nsDragRefStartSec = 0;
 
   /// Tools-fix wave (P2): debounce for the bare-rebuild text
   /// fields (Tehreer / tickers / voice script) — typing used to
@@ -3006,6 +3045,35 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                 tooltip: 'Timeline bara',
                 onPressed: layoutTotal > 0 ? () => _nsZoomBy(1.5) : null,
               ),
+              // v1.15.0 G5 (B9): marker at the playhead position.
+              // Toggle: dabane se marker lagta hai; usi jagah
+              // dobara dabane se hat jata hai. Marker par tap
+              // karne se bhi hat jata hai.
+              IconButton(
+                key: const Key('nsMarkerAdd'),
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                style: IconButton.styleFrom(
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                constraints:
+                    const BoxConstraints(minWidth: 26, minHeight: 26),
+                icon: const Icon(Icons.bookmark_add_outlined, size: 16),
+                color: const Color(0xFFFFC800),
+                tooltip: 'Marker lagayein / hatayein',
+                onPressed: layoutTotal > 0
+                    ? () {
+                        setState(() {
+                          project.timelineMarkers =
+                              NewsProject.toggledTimelineMarkers(
+                            project.timelineMarkers,
+                            shownPos.clamp(0.0, layoutTotal).toDouble(),
+                          );
+                        });
+                        _scheduleSave();
+                      }
+                    : null,
+              ),
             ],
           ),
           const SizedBox(height: 6),
@@ -3064,6 +3132,11 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               }
 
               final playheadLeft = 52 + shownPos * pps - scrollX;
+              // B10: hidden lanes collapse to a slim strip.
+              final v1Hidden = _nsLaneHidden.contains('v1');
+              final a1Hidden = _nsLaneHidden.contains('a1');
+              final a2Hidden = _nsLaneHidden.contains('a2');
+              final tcHidden = _nsLaneHidden.contains('tc');
               return GestureDetector(
                 // Dragging the lanes scrolls a zoomed timeline;
                 // lane/block taps are unaffected (a drag only
@@ -3123,15 +3196,21 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                       ],
                       _laneRow(
                         'V1',
-                        laneViewport(compact ? 38.0 : 50.0,
-                            _videoLane(project, compact, pps)),
+                        laneViewport(
+                            v1Hidden ? 12.0 : (compact ? 38.0 : 50.0),
+                            v1Hidden
+                                ? _nsLaneHiddenStrip()
+                                : _videoLane(project, compact, pps)),
+                        laneId: 'v1',
                       ),
                       const SizedBox(height: 4),
                       _laneRow(
                         'A1',
                         laneViewport(
-                          24,
-                          InkWell(
+                          a1Hidden ? 12 : 24,
+                          a1Hidden
+                              ? _nsLaneHiddenStrip()
+                              : InkWell(
                           onTap: () => setState(() {
                             _activeTool = 'voice';
                             _timelineTab = 'voice';
@@ -3172,13 +3251,16 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                           ),
                           ),
                         ),
+                        laneId: 'a1',
                       ),
                       const SizedBox(height: 4),
                       _laneRow(
                         'A2',
                         laneViewport(
-                          24,
-                          InkWell(
+                          a2Hidden ? 12 : 24,
+                          a2Hidden
+                              ? _nsLaneHiddenStrip()
+                              : InkWell(
                           onTap: () => setState(() => _activeTool = 'audio'),
                           child: Container(
                             height: 24,
@@ -3203,13 +3285,22 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                           ),
                           ),
                         ),
+                        laneId: 'a2',
+                        musicMuted: !project.voiceMusicEnabled,
+                        onToggleMusic: () {
+                          setState(() => project.voiceMusicEnabled =
+                              !project.voiceMusicEnabled);
+                          _scheduleSave();
+                        },
                       ),
                       const SizedBox(height: 4),
                       _laneRow(
                         'TC',
                         laneViewport(
-                          24,
-                          InkWell(
+                          tcHidden ? 12 : 24,
+                          tcHidden
+                              ? _nsLaneHiddenStrip()
+                              : InkWell(
                           onTap: () => setState(() {
                             _activeTool = 'ticker';
                             _timelineTab = 'ticker';
@@ -3241,6 +3332,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                           ),
                           ),
                         ),
+                        laneId: 'tc',
                       ),
                     ],
                   ),
@@ -3262,6 +3354,61 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                         color: const Color(0xFFFFC800),
                       ),
                     ),
+                  // v1.15.0 G5 (B9): timeline markers — gold flag
+                  // lines across the lanes at their saved seconds
+                  // (same pixel math as the playhead). Tap a
+                  // marker to remove it.
+                  for (var mi = 0;
+                      mi < project.timelineMarkers.length;
+                      mi++)
+                    if (52 + project.timelineMarkers[mi] * pps - scrollX >=
+                            46 &&
+                        52 + project.timelineMarkers[mi] * pps - scrollX <=
+                            constraints.maxWidth - 4)
+                      Positioned(
+                        left: 52 +
+                            project.timelineMarkers[mi] * pps -
+                            scrollX -
+                            5,
+                        top: 0,
+                        bottom: 0,
+                        child: GestureDetector(
+                          key: Key('nsMarker-$mi'),
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () {
+                            setState(() {
+                              project.timelineMarkers =
+                                  NewsProject.toggledTimelineMarkers(
+                                project.timelineMarkers,
+                                project.timelineMarkers[mi],
+                              );
+                            });
+                            _scheduleSave();
+                          },
+                          child: SizedBox(
+                            width: 12,
+                            child: Stack(
+                              children: [
+                                Center(
+                                  child: Container(
+                                    width: 2,
+                                    color: const Color(0xFFFFC800),
+                                  ),
+                                ),
+                                const Positioned(
+                                  top: 0,
+                                  left: 1,
+                                  child: Icon(
+                                    Icons.bookmark,
+                                    size: 11,
+                                    color: Color(0xFFFFC800),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
                 ],
                 ),
               );
@@ -3272,24 +3419,99 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     );
   }
 
-  Widget _laneRow(String label, Widget child) {
+  /// One timeline lane row: the fixed 52 px label column + the
+  /// lane viewport. v1.15.0 G5 (B10): the label cell also carries
+  /// the lane's own controls — an eye (show/hide this lane;
+  /// view-only, the project and export are untouched) and, for
+  /// A2, the music mute: the project's own [NewsProject]
+  /// voiceMusicEnabled switch — the same one the Voice panel
+  /// owns and the export honours (OFF = no music bed in the
+  /// export). No fake controls: A1/V1/TC get the eye only,
+  /// because no real per-lane lever exists for them.
+  Widget _laneRow(
+    String label,
+    Widget child, {
+    String? laneId,
+    bool? musicMuted,
+    VoidCallback? onToggleMusic,
+  }) {
+    final hidden = laneId != null && _nsLaneHidden.contains(laneId);
     return Row(
       children: [
         SizedBox(
           width: 52,
-          child: Text(
-            label,
-            style: const TextStyle(
-              fontSize: 10,
-              color: Color(0xFF8A919C),
-              fontWeight: FontWeight.w600,
-            ),
+          child: Row(
+            children: [
+              Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 10,
+                  color: Color(0xFF8A919C),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              if (laneId != null)
+                IconButton(
+                  key: Key('nsLaneEye-$laneId'),
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  style: IconButton.styleFrom(
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  constraints:
+                      const BoxConstraints(minWidth: 15, minHeight: 15),
+                  icon: Icon(
+                    hidden ? Icons.visibility_off : Icons.visibility,
+                    size: 12,
+                  ),
+                  color: const Color(0xFF8A919C),
+                  tooltip: hidden ? 'Lane dikhayein' : 'Lane chhupayein',
+                  onPressed: () => setState(() {
+                    if (hidden) {
+                      _nsLaneHidden.remove(laneId);
+                    } else {
+                      _nsLaneHidden.add(laneId);
+                    }
+                  }),
+                ),
+              if (onToggleMusic != null)
+                IconButton(
+                  key: const Key('nsLaneMute-a2'),
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  style: IconButton.styleFrom(
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  constraints:
+                      const BoxConstraints(minWidth: 15, minHeight: 15),
+                  icon: Icon(
+                    musicMuted! ? Icons.volume_off : Icons.volume_up,
+                    size: 12,
+                  ),
+                  color: musicMuted
+                      ? const Color(0xFFE5484D)
+                      : const Color(0xFF8A919C),
+                  tooltip: musicMuted
+                      ? 'Music band hai — export mein bhi nahi ayega'
+                      : 'Music on hai',
+                  onPressed: onToggleMusic,
+                ),
+            ],
           ),
         ),
         Expanded(child: child),
       ],
     );
   }
+
+  /// The slim strip shown in place of a hidden lane (B10).
+  Widget _nsLaneHiddenStrip() => Container(
+        height: 12,
+        decoration: BoxDecoration(
+          border: Border.all(color: const Color(0x14FFFFFF)),
+          borderRadius: BorderRadius.circular(4),
+        ),
+      );
 
   Widget _videoLane(NewsProject project, bool compact, double pps) {
     final h = compact ? 38.0 : 50.0;
@@ -3315,12 +3537,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     // ruler ticks and the playhead line up with the clips
     // exactly. An unprobed clip takes the nominal 3 s the
     // scale total also uses.
-    final starts = <double>[];
-    var acc = 0.0;
-    for (var i = 0; i < project.clipPaths.length; i++) {
-      starts.add(acc);
-      acc += _entryDurationSec(project, i) ?? 3.0;
-    }
+    final starts = _nsClipStarts(project);
     return SizedBox(
       height: h,
       child: Stack(
@@ -3332,7 +3549,18 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               height: h,
               width: ((_entryDurationSec(project, i) ?? 3.0) * pps)
                   .clamp(24.0, double.infinity),
-              child: InkWell(
+              child: GestureDetector(
+                // v1.15.0 G5 (B4): long-press + drag reorders the
+                // clip (live pair swap in the model).
+                onLongPressStart: (d) => _nsReorderStart(project, i, d),
+                onLongPressMoveUpdate: (d) =>
+                    _nsReorderMove(project, d, pps),
+                onLongPressEnd: (_) => _nsReorderEnd(),
+                onLongPressCancel: () => _nsReorderEnd(),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    InkWell(
                 key: Key('tlClip-$i'),
                 // P1-3: tapping a clip SELECTS it (gold border)
                 // and opens the Media panel, whose Trim & Split
@@ -3349,7 +3577,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                       color: _selectedClipIndex == i
                           ? const Color(0xFFFFC800)
                           : const Color(0x00000000),
-                      width: 1.5,
+                      width: _nsDragIndex == i ? 2.5 : 1.5,
                     ),
                   ),
                   child: ClipRRect(
@@ -3387,6 +3615,48 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                       ],
                     ),
                   ),
+                ),
+                    ),
+                    // v1.15.0 G5 (B3): drag-trim handles on the
+                    // SELECTED clip's two edges (file seconds ==
+                    // timeline seconds inside the used range).
+                    if (_selectedClipIndex == i) ...[
+                      Positioned(
+                        left: 0,
+                        top: 0,
+                        bottom: 0,
+                        width: 16,
+                        child: GestureDetector(
+                          key: Key('nsTrimL-$i'),
+                          behavior: HitTestBehavior.opaque,
+                          onHorizontalDragUpdate: (d) => _nsDragTrim(
+                              project, i, true, d.delta.dx, pps),
+                          child: Container(
+                            color: const Color(0x40FFC800),
+                            child: const Icon(Icons.drag_indicator,
+                                size: 11, color: Color(0xFFFFC800)),
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        right: 0,
+                        top: 0,
+                        bottom: 0,
+                        width: 16,
+                        child: GestureDetector(
+                          key: Key('nsTrimR-$i'),
+                          behavior: HitTestBehavior.opaque,
+                          onHorizontalDragUpdate: (d) => _nsDragTrim(
+                              project, i, false, d.delta.dx, pps),
+                          child: Container(
+                            color: const Color(0x40FFC800),
+                            child: const Icon(Icons.drag_indicator,
+                                size: 11, color: Color(0xFFFFC800)),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
             ),
@@ -4474,6 +4744,100 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         ],
       ],
     );
+  }
+
+  /// Cumulative start seconds of the timeline clips (the same
+  /// math [_videoLane] draws with: an unprobed clip counts the
+  /// nominal 3 s). Computed fresh from the model so the drag
+  /// handlers never read a stale build's geometry.
+  List<double> _nsClipStarts(NewsProject project) {
+    final starts = <double>[];
+    var acc = 0.0;
+    for (var i = 0; i < project.clipPaths.length; i++) {
+      starts.add(acc);
+      acc += _entryDurationSec(project, i) ?? 3.0;
+    }
+    return starts;
+  }
+
+  /// B3 (v1.15.0 G5): drag-trim one edge of clip [i] by [dxPx]
+  /// screen pixels at [pps] — the math is the pure
+  /// [nsDragTrimmed]; this only wires it to the probed duration
+  /// and the project. Without a probed file duration there is
+  /// nothing honest to clamp against, so the handles do nothing
+  /// (the Media panel's sliders need it too).
+  void _nsDragTrim(
+      NewsProject project, int i, bool leftEdge, double dxPx, double pps) {
+    if (pps <= 0) return;
+    final fileDur = _clipDurations[project.clipPaths[i]];
+    if (fileDur == null) return;
+    final trim = project.trimAt(i);
+    final next = nsDragTrimmed(trim, fileDur, leftEdge, dxPx / pps);
+    if (next.startSec == trim.startSec && next.endSec == trim.endSec) {
+      return;
+    }
+    _setNsClipTrim(project, i, next);
+  }
+
+  /// B4 (v1.15.0 G5): long-press reorder — drag start.
+  void _nsReorderStart(NewsProject project, int i, LongPressStartDetails d) {
+    setState(() {
+      _nsDragIndex = i;
+      _selectedClipIndex = i;
+      _nsDragRefGlobalX = d.globalPosition.dx;
+      _nsDragRefStartSec = _nsClipStarts(project)[i];
+    });
+  }
+
+  /// B4: the live swap — when the dragged clip's proposed centre
+  /// crosses into a neighbour's span, the (path, trim) PAIR moves
+  /// in the model immediately. Pairs move together, NOT via
+  /// setClipPaths: its occurrence matching would mis-attach the
+  /// trims of split halves (same path, different trims).
+  void _nsReorderMove(
+      NewsProject project, LongPressMoveUpdateDetails d, double pps) {
+    final cur = _nsDragIndex;
+    if (cur == null || pps <= 0) return;
+    final starts = _nsClipStarts(project);
+    if (cur >= starts.length || starts.isEmpty) return;
+    final effs = [
+      for (var j = 0; j < project.clipPaths.length; j++)
+        _entryDurationSec(project, j) ?? 3.0
+    ];
+    final centre = _nsDragRefStartSec +
+        (d.globalPosition.dx - _nsDragRefGlobalX) / pps +
+        effs[cur] / 2;
+    var target = cur;
+    for (var j = 0; j < starts.length; j++) {
+      if (centre >= starts[j] && centre < starts[j] + effs[j]) {
+        target = j;
+        break;
+      }
+    }
+    if (centre < 0) target = 0;
+    if (centre >= starts.last + effs.last) target = starts.length - 1;
+    if (target == cur) return;
+    setState(() {
+      final paths = List<String>.from(project.clipPaths);
+      final trims = List<ClipTrim>.from(project.clipTrims);
+      final p = paths.removeAt(cur);
+      final t = trims.removeAt(cur);
+      paths.insert(target, p);
+      trims.insert(target, t);
+      project.clipPaths = paths;
+      project.clipTrims = trims;
+      _selectedClipIndex = target;
+      _nsDragIndex = target;
+      _nsDragRefStartSec = _nsClipStarts(project)[target];
+      _nsDragRefGlobalX = d.globalPosition.dx;
+    });
+  }
+
+  /// B4: drag end — persist the new order.
+  void _nsReorderEnd() {
+    if (_nsDragIndex == null) return;
+    setState(() => _nsDragIndex = null);
+    _scheduleSave();
   }
 
   void _setNsClipTrim(NewsProject project, int i, ClipTrim trim) {

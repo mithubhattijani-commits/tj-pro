@@ -18,8 +18,7 @@ class LegacyGradingPanel extends StatelessWidget {
   List<Widget> buildChildren(BuildContext context) {
         return [
 // Grading.
-              const Text('Grading',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
+              SectionTitle('Grading'),
               const SizedBox(height: 8),
               const Text('LUT look'),
               const SizedBox(height: 4),

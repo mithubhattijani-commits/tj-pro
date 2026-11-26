@@ -16,8 +16,7 @@ class LegacyTitlesPanel extends StatelessWidget {
 
   List<Widget> buildChildren(BuildContext context) {
         return [
-          const Text('Motion titles',
-              style: TextStyle(fontWeight: FontWeight.bold)),
+          SectionTitle('Motion titles'),
           const SizedBox(height: 8),
 // Motion titles + sticker.
               TextField(
@@ -28,7 +27,7 @@ class LegacyTitlesPanel extends StatelessWidget {
                 onChanged: (v) => host.update(() => host.proTitle = v),
               ),
               const SizedBox(height: 8),
-              const Text('Title preset'),
+              SectionTitle('Title preset'),
               const SizedBox(height: 4),
               iconChoiceRail(host, [
                 for (final e in const [
@@ -46,7 +45,7 @@ class LegacyTitlesPanel extends StatelessWidget {
                   ),
               ]),
               const SizedBox(height: 8),
-              const Text('Title position'),
+              SectionTitle('Title position'),
               const SizedBox(height: 4),
               iconChoiceRail(host, [
                 for (final e in const [

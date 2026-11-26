@@ -485,3 +485,186 @@ class EasingCurvePainter extends CustomPainter {
   @override
   bool shouldRepaint(EasingCurvePainter old) => old.easing != easing;
 }
+
+/// One drill-down section of a panel body (v1.15.0 G2, Point
+/// #29): the widgets that follow a [SectionTitle], up to the
+/// next one. The title itself is NOT in [children] — it becomes
+/// the section's chip in the rail.
+class PanelSection {
+  const PanelSection(this.title, this.children);
+  final String title;
+  final List<Widget> children;
+}
+
+/// Splits a flat panel body into its [SectionTitle] sections
+/// (Point #29). A lone [PanelColumn] is unwrapped first. Content
+/// before the first title forms a section titled 'Main'. Pure —
+/// the tests pin the splitting.
+List<PanelSection> splitPanelSections(List<Widget> children) {
+  var list = children;
+  if (list.length == 1 && list.single is PanelColumn) {
+    list = (list.single as PanelColumn).children;
+  }
+  final sections = <PanelSection>[];
+  var current = <Widget>[];
+  var title = 'Main';
+  var titled = false;
+  void flush() {
+    if (current.isEmpty) return;
+    sections.add(PanelSection(title, List<Widget>.of(current)));
+    current = <Widget>[];
+  }
+
+  for (final w in list) {
+    if (w is SectionTitle) {
+      flush();
+      title = w.title;
+      titled = true;
+      continue;
+    }
+    current.add(w);
+  }
+  flush();
+  if (!titled) {
+    return [PanelSection('Main', list)];
+  }
+  return sections;
+}
+
+/// A sensible small icon for a section chip, from its title.
+IconData panelSectionIcon(String title) {
+  final t = title.toLowerCase();
+  if (t.contains('mask')) return Icons.crop_square;
+  if (t.contains('blend')) return Icons.contrast;
+  if (t.contains('style') || t.contains('font')) return Icons.text_format;
+  if (t.contains('position') || t.contains('jagah')) return Icons.open_with;
+  if (t.contains('size') || t.contains('scale')) return Icons.aspect_ratio;
+  if (t.contains('colour') || t.contains('color') || t.contains('rang')) {
+    return Icons.palette;
+  }
+  if (t.contains('speed') || t.contains('raftaar')) return Icons.speed;
+  if (t.contains('ramp')) return Icons.show_chart;
+  if (t.contains('audio') || t.contains('music') || t.contains('awaz')) {
+    return Icons.music_note;
+  }
+  if (t.contains('voice')) return Icons.record_voice_over;
+  if (t.contains('waveform')) return Icons.graphic_eq;
+  if (t.contains('cleanup') || t.contains('clean')) return Icons.cleaning_services;
+  if (t.contains('caption')) return Icons.subtitles;
+  if (t.contains('urdu')) return Icons.translate;
+  if (t.contains('title') && !t.contains('subtitle')) return Icons.title;
+  if (t.contains('preset')) return Icons.view_carousel;
+  if (t.contains('marker')) return Icons.bookmark;
+  if (t.contains('beat')) return Icons.music_note;
+  if (t.contains('background') || t.contains('pas-e-manzar')) {
+    return Icons.image;
+  }
+  if (t.contains('key')) return Icons.colorize;
+  if (t.contains('trim')) return Icons.content_cut;
+  if (t.contains('split')) return Icons.call_split;
+  if (t.contains('range')) return Icons.swap_horiz;
+  if (t.contains('timeline')) return Icons.timeline;
+  if (t.contains('canvas')) return Icons.crop;
+  if (t.contains('intro') || t.contains('outro')) return Icons.movie;
+  if (t.contains('mode')) return Icons.tune;
+  if (t.contains('volume')) return Icons.volume_up;
+  if (t.contains('transition')) return Icons.animation;
+  if (t.contains('transform')) return Icons.transform;
+  if (t.contains('keyframe')) return Icons.diamond;
+  if (t.contains('pip') || t.contains('overlay')) {
+    return Icons.picture_in_picture_alt;
+  }
+  if (t.contains('text')) return Icons.text_fields;
+  return Icons.tune;
+}
+
+/// Point #29 drill-down body (v1.15.0 G2): when a panel body has
+/// two or more [SectionTitle] sections, the section names show
+/// as chips in ONE line (the same icon-choice rail style as the
+/// panel tabs) and only the chosen section's controls show
+/// below — the user never scrolls through the whole panel to
+/// reach a sub-tool. With fewer than two sections the body is
+/// exactly the old [PanelColumn].
+class PanelDrillDown extends StatefulWidget {
+  final VideoEditorController host;
+  final List<Widget> children;
+
+  /// Embedded mode: the drill sits inside the panel zone's own
+  /// scrolling ListView (a single-widget panel's build), so it
+  /// must size to its content — rail + the chosen section in one
+  /// plain column, the outer list scrolls. Standalone mode (the
+  /// zone renders the drill directly in its Expanded) pins the
+  /// rail and scrolls only the section body.
+  final bool embedded;
+  const PanelDrillDown(this.host,
+      {super.key, required this.children, this.embedded = false});
+
+  /// Whether [children] would drill (2+ sections).
+  static bool appliesTo(List<Widget> children) =>
+      splitPanelSections(children).length >= 2;
+
+  @override
+  State<PanelDrillDown> createState() => _PanelDrillDownState();
+}
+
+class _PanelDrillDownState extends State<PanelDrillDown> {
+  int _sel = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final sections = splitPanelSections(widget.children);
+    if (sections.length < 2) {
+      return PanelColumn(children: widget.children);
+    }
+    final sel = _sel.clamp(0, sections.length - 1);
+    final rail = iconChoiceRail(widget.host, [
+      for (var i = 0; i < sections.length; i++)
+        KeyedSubtree(
+          key: Key('panelSection-$i'),
+          child: iconChoiceItem(
+            widget.host,
+            icon: panelSectionIcon(sections[i].title),
+            label: sections[i].title,
+            selected: i == sel,
+            onTap: () => setState(() => _sel = i),
+          ),
+        ),
+    ]);
+    if (widget.embedded) {
+      return Column(
+        key: const Key('panelDrillDown'),
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          rail,
+          const SizedBox(height: 4),
+          ...sections[sel].children,
+        ],
+      );
+    }
+    return Column(
+      key: const Key('panelDrillDown'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        rail,
+        Expanded(
+          child: ListView(
+            key: Key('panelSectionBody-$sel'),
+            padding: const EdgeInsets.fromLTRB(14, 2, 14, 14),
+            children: sections[sel].children,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Panel build helper: drill when the body has 2+ sections,
+/// the plain column otherwise. Used by the single-widget panels
+/// (Split, Trim, Volume, …) whose build used to be a bare
+/// [PanelColumn].
+Widget panelDrillOrColumn(
+        VideoEditorController host, List<Widget> children) =>
+    PanelDrillDown.appliesTo(children)
+        ? PanelDrillDown(host, embedded: true, children: children)
+        : PanelColumn(children: children);

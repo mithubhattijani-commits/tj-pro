@@ -55,6 +55,7 @@ import 'widgets/transport_row.dart';
 export 'editor_models.dart';
 
 import 'video_editor_panels.dart';
+import 'widgets/panel_controls.dart';
 
 class VideoEditorScreen extends StatefulWidget {
   /// Plain editor: opens empty, clips come from the gallery picker.
@@ -177,8 +178,10 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
   bool _qualityPicked = false;
 
   // ---- v1.4.0 CapCut shell state. ----
-  /// Transport snap toggle: ON = Split cuts at the playhead,
-  /// OFF = Split cuts at the clip midpoint (the v1.3.0 behaviour).
+  /// The Split panel's mode toggle: ON = Split cuts at the
+  /// playhead, OFF = Split cuts at the clip midpoint. (Named
+  /// _snapOn since v1.3.0; it was silently unread by the split
+  /// path until v1.15.0 G1 wired it for real.)
   bool _snapOn = true;
 
   // ---- v1.14.0 timeline state (T1 / T2 / T3). ----
@@ -4554,44 +4557,55 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     }
   }
 
-  /// P0-2 (tools-fix wave): Split cuts at the GLOBAL TIMELINE
-  /// PLAYHEAD on the clip under it — the old version read the
-  /// preview player's FILE position of the selected clip only,
-  /// and the player looped the whole file unbound by the trim
-  /// range, so the position was usually outside the range and
-  /// the split silently fell back to the midpoint (no status,
-  /// no confirmation — the user's "kitni dafa dabaya, split
-  /// kaam nahi kiya").
+  /// Split (v1.15.0 G1 — the full diagnosis fix; P0-2's earlier
+  /// pass left six roots, see SPLIT-DIAGNOSIS-2026-11-26):
   ///
-  /// Playhead resolution: the timeline strip's FIXED CENTRE is
-  /// the drawn playhead, and the codebase's own convention is
-  /// centreSec = scrollOffset / pxPerSec (scroll-end seek, live
-  /// scrub and zoom all use it). When the strip's centre sits
-  /// over the selected clip, that centre is the playhead. When
-  /// it sits over a DIFFERENT clip, the centre is stale (a clip
-  /// tap selects + reloads the preview without scrolling the
-  /// strip) and the clock's position inside the selected clip —
-  /// what the user is actually looking at — wins. Either way,
-  /// the cut needs a 0.15 s margin from both ends of the clip's
-  /// used range; without one the split falls back to the
-  /// midpoint AND says so. The split math itself (second half =
-  /// same file, trims split at the cut) is unchanged.
+  /// * The strip geometry is exact now (halfPad == the centre
+  ///   line's x), so centreSec = scrollOffset / pxPerSec IS the
+  ///   second under the yellow line at every zoom.
+  /// * Playhead mode (the Split panel toggle, [_snapOn] ON): the
+  ///   clip UNDER the line is cut at the line — the selection
+  ///   moves to it. The centre is snapped with the TIMELINE's own
+  ///   snap setting (A20: on/off + strength, [tlSnapThreshold]) —
+  ///   and if the snap would move the cut into a DIFFERENT clip,
+  ///   the snap is cancelled (the old hardcoded-0.15 snap dragged
+  ///   near-boundary playheads ONTO the boundary, where the edge
+  ///   rule then misfired). A line resting within 0.15 s of the
+  ///   target clip's edge is REFUSED with a clear status — never
+  ///   a silent midpoint fallback (that fallback was the "press
+  ///   again and again" cascade: after a split the centre sits
+  ///   exactly on the new boundary, so every extra tap halved
+  ///   the remainder).
+  /// * Midpoint mode (toggle OFF): the SELECTED clip is cut at
+  ///   its midpoint and the status says exactly that.
+  /// * After a successful split the selection stays on the FIRST
+  ///   (left) part, so the centre — still on the boundary — can
+  ///   never cascade.
   void _splitSelectedClip() {
     if (_busy) {
       explainToolTap();
       return;
     }
     if (_clips.isEmpty) return;
-    final target = _selected;
+    final playheadMode = _snapOn;
     final selectedClip = _clips[_selected];
     double? centreSec;
-    if (_tlScroll.hasClients && _tlPxPerSec > 0) {
-      centreSec = (_tlScroll.offset / _tlPxPerSec)
+    if (playheadMode && _tlScroll.hasClients && _tlPxPerSec > 0) {
+      var c = (_tlScroll.offset / _tlPxPerSec)
           .clamp(0.0, _totalDurationSec)
           .toDouble();
-      // A1 (v1.12): a playhead resting within the snap threshold
-      // of a beat / marker / boundary cuts EXACTLY on it.
-      centreSec = TimelineMath.snapSec(centreSec, _snapPoints, 0.15);
+      // G1.4: snap per the A20 setting (off = no snap at all);
+      // cancel the snap if it would change the target clip.
+      final thresh = tlSnapThreshold(false);
+      if (thresh > 0) {
+        final snapped = TimelineMath.snapSec(c, _snapPoints, thresh);
+        if (snapped != c &&
+            TimelineMath.indexAtSec(_effectiveDurations, snapped) ==
+                TimelineMath.indexAtSec(_effectiveDurations, c)) {
+          c = snapped;
+        }
+      }
+      centreSec = c;
     }
     // The cut decision is the pure resolveSplit (editor_stage)
     // — the functional tests pin it; this method only applies
@@ -4599,19 +4613,29 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     final res = resolveSplit(
       effectiveDurations: _effectiveDurations,
       trimStarts: [for (final c in _clips) c.trimStart],
-      selected: target,
+      selected: _selected,
       clockInsideSelected:
           !selectedClip.isPhoto && _clock.isInitialized
               ? _clock.filePositionSec - selectedClip.trimStart
               : 0.0,
       centreSec: centreSec,
+      playheadMode: playheadMode,
     );
-    if (res == null) {
+    if (res == null) return; // unreachable: inputs guarded above
+    if (res.refusal == SplitRefusal.tooSmall) {
       _setStatus('Clip bohat chhota hai — split nahi ho sakta.');
       return;
     }
+    if (res.refusal == SplitRefusal.atEdge) {
+      _setStatus(
+        'Playhead clip ke bilkul kinare par hai — split nahi kata. '
+        'Line ko thora andar le jayen, ya Split panel se '
+        '"Darmiyan se" chunein.',
+      );
+      return;
+    }
+    final target = res.index;
     final clip = _clips[target];
-    final atPlayhead = res.atPlayhead;
     final mid = res.cutFileSec;
     final second = VideoClip(clip.file, clip.duration, clip.aspectRatio);
     second.volume = clip.volume;
@@ -4625,14 +4649,14 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     clip.trimEnd = mid;
     setState(() {
       _clips.insert(target + 1, second);
-      _selected = target + 1;
+      // Selection stays on the FIRST part (G1.2 anti-cascade).
+      _selected = target;
     });
     HapticFeedback.selectionClick();
     _setStatus(
-      atPlayhead
+      playheadMode
           ? 'Split ho gaya — playhead par kata, 2 clips ban gaye.'
-          : 'Split ho gaya — playhead clip ke kinare par tha, is '
-              'liye darmiyan (midpoint) se kata.',
+          : 'Split ho gaya — darmiyan se kata, 2 clips ban gaye.',
     );
     unawaited(_loadPreview());
   }
@@ -5031,7 +5055,13 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
             // ---- TRANSPORT (below the stage, #10) ----
             TransportRow(this),
             // ---- TIMELINE (directly under the transport) ----
-            TimelineBar(this),
+            // Point #32 (v1.15.0 G2): while any tool panel is
+            // open the TIMELINE HIDES — the freed height goes to
+            // the stage, so the preview stays BIG (Point #27's
+            // law, now in VE too) and only the open tool's
+            // options show. The transport row stays: it is
+            // preview chrome, not timeline.
+            if (_activeTool == null) TimelineBar(this),
             // ---- TOOL ZONE: row ⇄ the one open panel ----
             // v1.5.2 (#69): NO AnimatedSwitcher here anymore —
             // its cross-fade kept the outgoing panel alive while
@@ -5058,9 +5088,31 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
                             ToolPanelHeader(this, _activeTool!),
                             PanelTabRow(this),
                             Expanded(
-                              child: ListView(
-                                padding: const EdgeInsets.only(top: 4),
-                                children: toolPanelChildren(this, context),
+                              // Point #29 (v1.15.0 G2): a body with
+                              // 2+ sections drills — section chips
+                              // in ONE line, only the chosen
+                              // section below — instead of one long
+                              // scrolling panel.
+                              child: Builder(
+                                builder: (context) {
+                                  final children =
+                                      toolPanelChildren(this, context);
+                                  if (PanelDrillDown.appliesTo(
+                                      children)) {
+                                    return PanelDrillDown(
+                                      this,
+                                      key: ValueKey<String>(
+                                          'drill-${_activeTool!}-'
+                                          '${_panelTab ?? ''}'),
+                                      children: children,
+                                    );
+                                  }
+                                  return ListView(
+                                    padding:
+                                        const EdgeInsets.only(top: 4),
+                                    children: children,
+                                  );
+                                },
                               ),
                             ),
                           ],

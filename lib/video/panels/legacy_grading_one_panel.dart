@@ -20,8 +20,7 @@ class LegacyGradingOnePanel extends StatelessWidget {
         // top; below it ONE grade slider at a time, picked by
         // chips (same state as the old all-sliders list).
         return [
-          const Text('Adjust — ek waqt mein ek slider',
-              style: TextStyle(fontWeight: FontWeight.bold)),
+          SectionTitle('Adjust — ek waqt mein ek slider'),
           const SizedBox(height: 8),
           const Text('LUT look'),
           const SizedBox(height: 4),

@@ -205,5 +205,6 @@ class KeyframesPanel extends StatelessWidget {
     ];
   }
   @override
-  Widget build(BuildContext context) => PanelColumn(children: buildChildren(context));
+  Widget build(BuildContext context) =>
+      panelDrillOrColumn(host, buildChildren(context));
 }

@@ -16,8 +16,7 @@ class LegacyFiltersPanel extends StatelessWidget {
 
   List<Widget> buildChildren(BuildContext context) {
         return [
-          const Text('Filters',
-              style: TextStyle(fontWeight: FontWeight.bold)),
+          SectionTitle('Filters'),
           const SizedBox(height: 8),
 // Speed / filter / aspect
           const Text('Filter'),

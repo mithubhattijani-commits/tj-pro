@@ -18,8 +18,7 @@ class LegacyChromaPanel extends StatelessWidget {
 
   List<Widget> buildChildren(BuildContext context) {
         return [
-          const Text('Chromakey / BG remover',
-              style: TextStyle(fontWeight: FontWeight.bold)),
+          SectionTitle('Chromakey / BG remover'),
           const SizedBox(height: 8),
 // Chromakey.
               SwitchListTile(
@@ -137,7 +136,7 @@ class LegacyChromaPanel extends StatelessWidget {
                     host.scheduleChromaPreview();
                   },
                 ),
-                const Text('Background kind'),
+                SectionTitle('Background kind'),
                 const SizedBox(height: 4),
                 iconChoiceRail(host, [
                   iconChoiceItem(host, 
@@ -211,8 +210,7 @@ class LegacyChromaPanel extends StatelessWidget {
               ],
                 if (host.proChroma) ...[
                   const Divider(height: 32),
-                  const Text('Backdrop shortcuts',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  SectionTitle('Backdrop shortcuts'),
                   const SizedBox(height: 8),
                   iconChoiceRail(host, [
                     iconChoiceItem(host, 
@@ -237,8 +235,7 @@ class LegacyChromaPanel extends StatelessWidget {
                     ),
                   ]),
                   const SizedBox(height: 12),
-                  const Text('Live preview (export jesa result)',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  SectionTitle('Live preview (export jesa result)'),
                   const SizedBox(height: 8),
                   if (host.chromaPreviewPath != null)
                     Image.file(
@@ -287,7 +284,7 @@ class LegacyChromaPanel extends StatelessWidget {
                 onChanged: host.onBgRemoverChanged,
               ),
               if (host.proBgRemove) ...[
-                const Text('Background kind'),
+                SectionTitle('Background kind'),
                 const SizedBox(height: 4),
                 iconChoiceRail(host, [
                   iconChoiceItem(host, 
