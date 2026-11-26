@@ -76,7 +76,7 @@ class _ToolsPrepScreenState extends State<ToolsPrepScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              'TJ Pro is downloading the AI models and assets its '
+              'Jaani Studio is downloading the AI models and assets its '
               'tools need (about $totalMb MB). This happens only '
               'once — afterwards every tool opens instantly, with '
               'no waiting in the middle of your work. Wi-Fi is '
@@ -109,7 +109,7 @@ class _ToolsPrepScreenState extends State<ToolsPrepScreen> {
               const Spacer(),
               FilledButton(
                 onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Start using TJ Pro'),
+                child: const Text('Start using Jaani Studio'),
               ),
             ] else ...[
               const Text(

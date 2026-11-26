@@ -175,7 +175,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 16),
                 const Text(
-                  'TJ Pro — News Studio',
+                  'Jaani Studio — News Studio',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
                 ),
@@ -379,7 +379,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 const HelpWhatsAppRow(),
                 const SizedBox(height: 16),
                 const Text(
-                  'Nigraan TV  •  TJ Pro News Studio',
+                  'Nigraan TV  •  Jaani Studio News Studio',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: Colors.grey),
                 ),

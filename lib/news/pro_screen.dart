@@ -125,7 +125,7 @@ class _ProScreenState extends State<ProScreen> {
   /// payment screenshot in that chat.
   Future<void> _getPro() async {
     final _ProPackage pkg = _packages[_selected];
-    final String text = 'Assalam-o-Alaikum, I want TJ Pro PRO '
+    final String text = 'Assalam-o-Alaikum, I want Jaani Studio PRO '
         '— ${pkg.days} (${_rs(pkg.price)}). I have made the payment, '
         'I am sending the screenshot.';
     final Uri uri = Uri.parse(
@@ -349,7 +349,7 @@ class _ProScreenState extends State<ProScreen> {
                     TextSpan(
                       children: <TextSpan>[
                         TextSpan(
-                          text: 'TJ Pro ',
+                          text: 'Jaani Studio ',
                           style: TextStyle(color: Colors.white),
                         ),
                         TextSpan(

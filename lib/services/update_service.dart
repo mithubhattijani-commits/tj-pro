@@ -727,7 +727,7 @@ class UpdateService {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'First, in Settings, for TJ Pro, allow "Install unknown apps" '
+              'First, in Settings, for Jaani Studio, allow "Install unknown apps" '
               'then tap Update again.',
             ),
           ),

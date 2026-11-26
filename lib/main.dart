@@ -969,7 +969,7 @@ class _HomeScreenState extends State<HomeScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'TJ Pro by Nigraan TV — photo & video editor that works '
+                'Jaani Studio by Nigraan TV — photo & video editor that works '
                 'fully offline on your phone. No account, no uploads.',
               ),
               const SizedBox(height: 16),
@@ -1352,7 +1352,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   icon: Icons.info,
                                   tint: const Color(0xFF7C4DFF),
                                   title: 'About',
-                                  subtitle: 'TJ Pro & Nigraan TV',
+                                  subtitle: 'Jaani Studio & Nigraan TV',
                                   onTap: _showAbout,
                                 ),
                               ),

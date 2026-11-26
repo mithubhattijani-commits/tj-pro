@@ -22,7 +22,7 @@ library;
 
 class AppConfig {
   // App name shown on the home screen.
-  static const String appName = 'TJ Pro';
+  static const String appName = 'Jaani Studio';
 
   // Heading shown on the home screen.
   static const String homeHeading = 'What do you want to edit?';

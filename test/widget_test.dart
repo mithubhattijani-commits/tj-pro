@@ -74,13 +74,13 @@ Future<void> _openWorkspaceInRealTime(
 }
 
 void main() {
-  testWidgets('Home shows TJ Pro with both editors', (tester) async {
+  testWidgets('Home shows Jaani Studio with both editors', (tester) async {
     await tester.pumpWidget(const PhotoVideoEditorApp());
     // Build 6 (v1.5.8): past the in-app splash gate (1.8 s).
     await tester.pump(const Duration(milliseconds: 1900));
     await tester.pump();
 
-    expect(find.text('TJ Pro'), findsOneWidget);
+    expect(find.text('Jaani Studio'), findsOneWidget);
     // v1.5.6 (Build 4, user reference home): the editors are
     // the reference's three big cards — 'VIDEO EDITOR' /
     // 'PHOTO EDITOR' — which open the project hubs that start

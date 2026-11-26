@@ -741,7 +741,7 @@ class CaptionService {
     final borderStyle = useBackground ? 3 : 1;
     final buf = StringBuffer();
     buf.writeln('[Script Info]');
-    buf.writeln('Title: TJ Pro Captions');
+    buf.writeln('Title: Jaani Studio Captions');
     buf.writeln('ScriptType: v4.00+');
     buf.writeln('WrapStyle: 0');
     buf.writeln('ScaledBorderAndShadow: yes');

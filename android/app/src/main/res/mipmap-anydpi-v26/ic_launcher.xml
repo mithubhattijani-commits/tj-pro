@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Build 5 (v1.5.7): adaptive launcher icon from the user's own
-     TJ Pro artwork. Background = the deep blue sampled from the
-     artwork itself; foreground = the full artwork inside the
+     Jaani Studio artwork. Background = the deep indigo sampled
+     from the artwork itself; foreground = the full artwork inside the
      adaptive safe zone (see ic_launcher_foreground.png). -->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@color/ic_launcher_background" />

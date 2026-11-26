@@ -107,9 +107,9 @@ class _AdvertiseScreenState extends State<AdvertiseScreen> {
     final price = config.advertisingBannerPriceCoins;
     final hours = config.advertisingBannerDurationHours;
     final text = report
-        ? 'Assalam-o-Alaikum, about the banner placed on TJ Pro\'s Advertise page '
+        ? 'Assalam-o-Alaikum, about the banner placed on Jaani Studio\'s Advertise page '
             'to report about: '
-        : 'Assalam-o-Alaikum, I want to place my advertising banner on TJ Pro '
+        : 'Assalam-o-Alaikum, I want to place my advertising banner on Jaani Studio '
             'to be placed ($price coins / $hours hours). '
             'The banner details are: ';
     final uri = Uri.parse(
@@ -146,7 +146,7 @@ class _AdvertiseScreenState extends State<AdvertiseScreen> {
                 ),
                 const SizedBox(height: 4),
                 const Text(
-                  'Place your banner here — TJ Pro users will see it.',
+                  'Place your banner here — Jaani Studio users will see it.',
                   style: TextStyle(color: Colors.grey),
                 ),
                 const SizedBox(height: 12),

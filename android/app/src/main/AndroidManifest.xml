@@ -11,7 +11,7 @@
          silent install is never attempted. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <application
-        android:label="TJ Pro"
+        android:label="Jaani Studio"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:largeHeap="true">

@@ -128,7 +128,7 @@ class MainActivity : FlutterActivity() {
                                 // enqueue below surfaces real errors.
                             }
                             val request = DownloadManager.Request(Uri.parse(url)).apply {
-                                setTitle("TJ Pro Update")
+                                setTitle("Jaani Studio Update")
                                 setDescription("Downloading update...")
                                 setNotificationVisibility(
                                     DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
