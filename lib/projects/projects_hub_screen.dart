@@ -147,8 +147,8 @@ class _ProjectsHubScreenState extends State<ProjectsHubScreen> {
         final bool? wantVideo = await showDialog<bool>(
           context: context,
           builder: (BuildContext ctx) => AlertDialog(
-            title: const Text('Gallery se chunein'),
-            content: const Text('News project kis media se start karein?'),
+            title: const Text('Choose from gallery'),
+            content: const Text('With which media should the news project start?'),
             actions: <Widget>[
               TextButton(
                 onPressed: () => Navigator.of(ctx).pop(false),
@@ -194,8 +194,8 @@ class _ProjectsHubScreenState extends State<ProjectsHubScreen> {
     final bool? ok = await showDialog<bool>(
       context: context,
       builder: (BuildContext ctx) => AlertDialog(
-        title: const Text('Project delete karein?'),
-        content: Text('“${entry.title}” hub se hata diya jayega.'),
+        title: const Text('Delete project?'),
+        content: Text('“${entry.title}” will be removed from the hub.'),
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
@@ -281,7 +281,7 @@ class _ProjectsHubScreenState extends State<ProjectsHubScreen> {
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          'Naya $_kindLabel project — bilkul scratch se',
+                          'New $_kindLabel project — completely from scratch',
                           style: const TextStyle(
                             color: Colors.white70,
                             fontSize: 13,
@@ -349,7 +349,7 @@ class _ProjectsHubScreenState extends State<ProjectsHubScreen> {
                   icon: Icons.image_outlined,
                   iconColor: const Color(0xFFF43F5E),
                   title: widget.kind == 'photo' ? 'Image' : 'Image / Video',
-                  subtitle: 'Gallery se chunein',
+                  subtitle: 'Choose from gallery',
                   onTap: _busy ? null : () => unawaited(_pickAndStart()),
                 ),
               ),
@@ -358,7 +358,7 @@ class _ProjectsHubScreenState extends State<ProjectsHubScreen> {
                 child: _StartCard(
                   icon: Icons.add_box_outlined,
                   iconColor: const Color(0xFF3B82F6),
-                  title: 'Khali Background',
+                  title: 'Empty Background',
                   subtitle: 'Blank canvas se start',
                   onTap: _busy ? null : () => unawaited(_startProject(null)),
                 ),
@@ -381,7 +381,7 @@ class _ProjectsHubScreenState extends State<ProjectsHubScreen> {
               padding: EdgeInsets.symmetric(vertical: 24),
               child: Center(
                 child: Text(
-                  'Abhi koi project nahi — upar se naya project start karein.',
+                  'No project yet — start a new project from above.',
                   style: TextStyle(color: Colors.grey),
                   textAlign: TextAlign.center,
                 ),

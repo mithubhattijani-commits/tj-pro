@@ -26,7 +26,7 @@ class EnhancePanel extends StatelessWidget {
       children: [
         const Text(
           'One-tap photo improvements — on-device. AI Enhance HD '
-          'ke ilawa sab FREE hain.',
+          'everything else is FREE.',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
         PhotoSliderRow(
@@ -82,9 +82,9 @@ class EnhancePanel extends StatelessWidget {
         ),
         const SizedBox(height: 6),
         const Text(
-          'Tip: Denoise pehle, phir Sharpen. AI Enhance HD '
-          'Real-ESRGAN pack hai — photos ke liye best, text distort '
-          'ho sakta hai.',
+          'Tip: Denoise first, then Sharpen. AI Enhance HD '
+          'is the Real-ESRGAN pack — best for photos, text can distort '
+          'can happen.',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
       ],

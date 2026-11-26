@@ -22,9 +22,9 @@ class ExpandPanel extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
-          'Canvas ko naye ratio tak barhayein — kinare blur ya '
-          'mirror fill se bharte hain. Ye AI outpainting NAHI hai, '
-          'saada compositing hai.',
+          'Expand the canvas to the new ratio — the edges fill with blur or '
+          'fill with mirror. This is NOT AI outpainting, '
+          'it is simple compositing.',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
         const SizedBox(height: 8),

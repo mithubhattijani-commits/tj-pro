@@ -222,11 +222,11 @@ class AudioToolsService {
       final tail = logs.length > 400
           ? logs.substring(logs.length - 400)
           : logs;
-      throw Exception('Convert fail ho gaya: $tail');
+      throw Exception('Convert failed: $tail');
     }
     final file = File(out);
     if (!await file.exists()) {
-      throw Exception('Convert ne koi file nahi banayi.');
+      throw Exception('Convert did not create any file.');
     }
     return AudioToolsResult(
       outputPath: out,
@@ -249,11 +249,11 @@ class AudioToolsService {
     final session = await FFmpegKit.executeWithArguments(args);
     final rc = await session.getReturnCode();
     if (!ReturnCode.isSuccess(rc)) {
-      throw Exception('Audio nikalna fail ho gaya.');
+      throw Exception('Audio extraction failed.');
     }
     final file = File(out);
     if (!await file.exists()) {
-      throw Exception('Audio file nahi bani.');
+      throw Exception('Audio file was not created.');
     }
     return AudioToolsResult(outputPath: out, bytes: await file.length());
   }

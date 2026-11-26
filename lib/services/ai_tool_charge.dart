@@ -101,8 +101,8 @@ class AiToolCharge {
   /// The existing earn-path message for a short balance — the
   /// same wording the editors already used before this build.
   static const String insufficientMessage =
-      'Coins kam hain — Earn tab mein rewarded ads dekh kar '
-      'coins kamayein, phir dobara try karein.';
+      'Not enough coins — watch rewarded ads in the Earn tab to '
+      'earn coins, then try again.';
 
   /// Resolves the tool's price kind and runs the matching gate:
   /// confirm-dialog + coin charge for a coin price, a Pro
@@ -128,13 +128,13 @@ class AiToolCharge {
           builder: (ctx) => AlertDialog(
             title: Text(toolLabel),
             content: const Text(
-              'Ye tool sirf Pro users ke liye hai. Pro lene ke '
-              'liye Pro screen par payment details maujood hain.',
+              'This tool is for Pro users only. To get Pro, '
+              'payment details are available on the Pro screen.',
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(ctx),
-                child: const Text('Theek hai'),
+                child: const Text('OK'),
               ),
             ],
           ),
@@ -147,8 +147,8 @@ class AiToolCharge {
           builder: (ctx) => AlertDialog(
             title: Text(toolLabel),
             content: const Text(
-              'Is istemal ke liye aik rewarded ad dekhein — ad '
-              'mukammal dekhne par tool khul jayega.',
+              'Watch a rewarded ad for this use — the ad '
+              'will open after you watch it fully.',
             ),
             actions: [
               TextButton(
@@ -157,7 +157,7 @@ class AiToolCharge {
               ),
               TextButton(
                 onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('Ad Dekhein'),
+                child: const Text('Watch Ad'),
               ),
             ],
           ),
@@ -171,13 +171,13 @@ class AiToolCharge {
           builder: (ctx) => AlertDialog(
             title: Text(toolLabel),
             content: const Text(
-              'Ad mukammal nahi hua — tool nahi khula. Dobara '
-              'try karein.',
+              'The ad did not complete — the tool did not open. '
+              'try again.',
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(ctx),
-                child: const Text('Theek hai'),
+                child: const Text('OK'),
               ),
             ],
           ),
@@ -208,7 +208,7 @@ class AiToolCharge {
       builder: (ctx) => AlertDialog(
         title: Text(toolLabel),
         content: Text(
-          'Ye AI tool har istemal par $price coins ka hai.\n'
+          'This AI tool costs $price coins per use.\n'
           'Aap ka balance: $balance coins.',
         ),
         actions: [

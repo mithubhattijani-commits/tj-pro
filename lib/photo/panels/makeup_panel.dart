@@ -77,7 +77,7 @@ class MakeupPanel extends StatelessWidget {
         ),
         const Text(
           'Face bounds se lips/cheeks ke oval regions par feathered '
-          'tint lagta hai.',
+          'tint applies.',
           style: TextStyle(color: Colors.grey, fontSize: 11),
         ),
       ],

@@ -144,7 +144,7 @@ class BannerModeration {
       if (_containsWord(normalized, word)) {
         return ModerationResult(
           ModerationVerdict.reject,
-          <String>['$label mein gaali/ghalat lafz mila — booking refuse.'],
+          <String>['Abusive/invalid word found in $label — booking refused.'],
         );
       }
     }
@@ -152,7 +152,7 @@ class BannerModeration {
       if (_containsWord(normalized, word)) {
         return ModerationResult(
           ModerationVerdict.reject,
-          <String>['$label mein gaali/ghalat lafz mila — booking refuse.'],
+          <String>['Abusive/invalid word found in $label — booking refused.'],
         );
       }
     }
@@ -160,7 +160,7 @@ class BannerModeration {
       if (_containsWord(text, word) || _containsWord(normalized, word)) {
         return ModerationResult(
           ModerationVerdict.reject,
-          <String>['$label mein gaali/ghalat lafz mila — booking refuse.'],
+          <String>['Abusive/invalid word found in $label — booking refused.'],
         );
       }
     }
@@ -170,8 +170,8 @@ class BannerModeration {
         return ModerationResult(
           ModerationVerdict.review,
           <String>[
-            '$label mein mashkook category ka lafz hai — '
-                'owner review ke baad hi faisla hoga.',
+            'A doubtful-category word was found in $label — '
+                'the decision will be made after owner review.',
           ],
         );
       }
@@ -190,7 +190,7 @@ class BannerModeration {
         uri.host.isEmpty) {
       return const ModerationResult(
         ModerationVerdict.reject,
-        <String>['Link durust nahi hai — sirf http/https link chalega.'],
+        <String>['The link is not valid — only an http/https link works.'],
       );
     }
     return checkText(trimmed, label: 'Link');
@@ -205,35 +205,35 @@ class BannerModeration {
       if (!allowedExtensions.contains(ext)) {
         return const ModerationResult(
           ModerationVerdict.reject,
-          <String>['Image ki qisam durust nahi — jpg, png ya webp dein.'],
+          <String>['Invalid image type — provide a jpg, png or webp.'],
         );
       }
       final bytes = await file.readAsBytes();
       if (bytes.isEmpty) {
         return const ModerationResult(
           ModerationVerdict.reject,
-          <String>['Image file khaali hai.'],
+          <String>['The image file is empty.'],
         );
       }
       if (bytes.length > maxImageBytes) {
         return const ModerationResult(
           ModerationVerdict.reject,
-          <String>['Image bohat bari hai — 5 MB se chhoti dein.'],
+          <String>['The image is too large — provide one smaller than 5 MB.'],
         );
       }
       final decoded = img.decodeImage(bytes);
       if (decoded == null) {
         return const ModerationResult(
           ModerationVerdict.reject,
-          <String>['Image khul nahi rahi — file kharab lagti hai.'],
+          <String>['The image cannot be opened — the file seems corrupt.'],
         );
       }
       if (decoded.width < minImageWidth || decoded.height < minImageHeight) {
         return const ModerationResult(
           ModerationVerdict.review,
           <String>[
-            'Image bohat chhoti hai — banner par saaf nahi dikhegi, '
-                'is liye owner review hoga.',
+            'The image is too small — it will not look clear on the banner, '
+                'so it will go to owner review.',
           ],
         );
       }
@@ -242,8 +242,8 @@ class BannerModeration {
         return const ModerationResult(
           ModerationVerdict.review,
           <String>[
-            'Image ki lambai/chauRai ghair mamooli hai — '
-                'owner review hoga.',
+            'The image dimensions are unusual — '
+                'it will go to owner review.',
           ],
         );
       }
@@ -251,7 +251,7 @@ class BannerModeration {
     } catch (_) {
       return const ModerationResult(
         ModerationVerdict.reject,
-        <String>['Image check nahi ho saki — dobara try karein.'],
+        <String>['The image could not be checked — try again.'],
       );
     }
   }

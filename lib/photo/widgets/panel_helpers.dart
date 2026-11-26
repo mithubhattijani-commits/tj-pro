@@ -503,7 +503,7 @@ extension PhotoPanelHelpers on PhotoEditorController {
           },
         ),
         const Text(
-          'Graph par drag karke curve banayein — preview live hai.',
+          'Drag on the graph to shape the curve — the preview is live.',
           style: TextStyle(color: Colors.grey, fontSize: 11),
         ),
       ],
@@ -717,7 +717,7 @@ extension PhotoPanelHelpers on PhotoEditorController {
   Widget overlayControls() {
     if (activeOverlay < 0 || activeOverlay >= overlays.length) {
       return const Text(
-        'Overlay select karein — preview par drag karke position '
+        'Select an overlay — drag on the preview to set the position '
         'badlein.',
         style: TextStyle(color: Colors.grey, fontSize: 12),
       );

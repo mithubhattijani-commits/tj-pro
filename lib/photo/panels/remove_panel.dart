@@ -23,9 +23,9 @@ class RemovePanel extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
-          'Jo cheez hatani hai us par brush se paint karein — '
-          'Mi-GAN (ONNX pack) gap bhar dega. Chhoti cheezon '
-          '(wires, spots, date stamp) par sab se saaf result.',
+          'Paint with the brush over what you want to remove — '
+          'Mi-GAN (ONNX pack) will fill the gap. For small things '
+          '(wires, spots, date stamp) gives the cleanest result.',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
         const SizedBox(height: 8),

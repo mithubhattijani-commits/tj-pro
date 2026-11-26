@@ -906,7 +906,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen>
         _fail(AiToolCharge.insufficientMessage);
         return false;
       case AiChargeOutcome.failed:
-        _fail('Charge nahi hua — dobara try karein.');
+        _fail('Charge failed — try again.');
         return false;
     }
     setState(() {
@@ -975,7 +975,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen>
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
-        title: const Text('AI pack download ho raha hai'),
+        title: const Text('AI pack is downloading'),
         content: ValueListenableBuilder<double>(
           valueListenable: progress,
           builder: (_, v, _) => Column(
@@ -984,8 +984,8 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen>
               LinearProgressIndicator(value: v > 0 ? v : null),
               const SizedBox(height: 10),
               Text(
-                '${(v * 100).round()}% — pehli dafa hi download '
-                'hota hai, phir offline chalta hai.',
+                '${(v * 100).round()}% — downloads only the first time, '
+                'then it works offline.',
               ),
             ],
           ),
@@ -1031,7 +1031,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen>
       final image = await _decodeWorking();
       final out = await run(image);
       if (out == null) {
-        throw Exception('AI model se result nahi mila.');
+        throw Exception('No result from the AI model.');
       }
       await _replaceWorking(out);
     });
@@ -1214,8 +1214,8 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen>
       builder: (ctx) => AlertDialog(
         title: const Text('AI Enhance HD'),
         content: const Text(
-          'Ye enhancer photos ke liye hai — photo mein maujood '
-          'TEXT distort ho sakta hai. Continue karein?',
+          'This enhancer is for photos — the TEXT present in the photo '
+          'TEXT may distort. Continue?',
         ),
         actions: [
           TextButton(
@@ -1340,8 +1340,8 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen>
   Future<void> _applyOutline() async {
     if (!_hasTransparency) {
       _fail(
-        'Pehle Cutout karein — outline transparent edge par '
-        'lagta hai.',
+        'Do Cutout first — the outline applies on the transparent edge '
+        'applies.',
       );
       return;
     }
@@ -1363,7 +1363,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen>
   /// model's convention) and inpaint via ONNX.
   Future<void> _applyRemove() async {
     if (_strokes.isEmpty) {
-      _fail('Pehle object par brush se paint karein.');
+      _fail('Paint over the object with the brush first.');
       return;
     }
     final strokes = List<StrokePath>.from(_strokes);
@@ -1464,7 +1464,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen>
       _overlays.add(OverlayData(glyph: glyph));
       _activeOverlay = _overlays.length - 1;
     });
-    _setStatus('Sticker lag gaya — preview par drag karein.');
+    _setStatus('Sticker applied — drag it on the preview.');
   }
 
   Future<void> _export() async {
@@ -1640,7 +1640,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen>
                     ShareParams(files: [XFile(path)]),
                   );
                 } catch (e) {
-                  _fail('Share nahi hua: $e');
+                  _fail('Could not share: $e');
                 }
               },
             ),
@@ -1956,8 +1956,8 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen>
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Text box ke dono taraf white dots drag karke width '
-            'adjust karein — box ko drag karke kahin bhi le jayein.',
+            'Drag the white dots on both sides of the text box to adjust the width '
+            'adjust — drag the box to move it anywhere.',
           ),
           duration: Duration(seconds: 4),
         ),

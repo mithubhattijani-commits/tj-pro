@@ -38,8 +38,8 @@ class EffectPanel extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
-          'Effect chunein — preview live hai, Apply par full '
-          'quality bake hota hai.',
+          'Choose an effect — the preview is live, on Apply the full '
+          'quality is baked.',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
         const SizedBox(height: 8),
@@ -91,7 +91,7 @@ class EffectPanel extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         const Text(
-          'ONNX painterly styles (pack download hota hai, phir '
+          'ONNX painterly styles (the pack downloads, then '
           'offline).',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),

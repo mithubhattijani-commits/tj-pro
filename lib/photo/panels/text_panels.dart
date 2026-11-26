@@ -168,7 +168,7 @@ class TextTypePanel extends StatelessWidget {
                   controller: host.textCtrl,
                   focusNode: host.textFocus,
                   decoration: const InputDecoration(
-                    hintText: 'Yahan likhein — canvas par live ayega',
+                    hintText: 'Type here — it appears live on the canvas',
                     border: OutlineInputBorder(),
                     isDense: true,
                   ),
@@ -705,7 +705,7 @@ class TextColourPanel extends StatelessWidget {
                   ),
                   const SizedBox(height: 6),
                   const Text(
-                    'Custom rang (rainbow):',
+                    'Custom colour (rainbow):',
                     style: TextStyle(color: Colors.grey, fontSize: 12),
                   ),
                   Slider(
