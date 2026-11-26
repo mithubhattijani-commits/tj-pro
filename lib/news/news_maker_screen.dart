@@ -41,6 +41,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -54,6 +55,7 @@ import 'package:video_player/video_player.dart';
 import '../app_config.dart';
 import '../theme.dart';
 import '../live/news_template.dart';
+import '../logo/logo_maker_section.dart';
 import '../motion/motion_gallery_screen.dart';
 import '../video/widgets/editor_stage.dart';
 import '../widgets/tool_guide.dart';
@@ -5832,6 +5834,22 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               'to wohi cube banegi.';
     }
     return _panelShell('Logo', [
+      // v1.19.0 (Logo Maker integration, G1): the full-screen
+      // Logo Maker — presets/material/depth styling plus text
+      // and shape logo sources, on THIS panel's logo. The cube
+      // and parts controls below stay exactly as they were.
+      FilledButton.icon(
+        key: const Key('logoMakerOpenButton'),
+        onPressed: _openLogoMaker,
+        icon: const Icon(Icons.view_in_ar_rounded, size: 18),
+        label: const Text('Open Logo Maker'),
+        style: FilledButton.styleFrom(
+          backgroundColor: const Color(0xFFFFC800),
+          foregroundColor: Colors.black,
+          padding: const EdgeInsets.symmetric(vertical: 12),
+        ),
+      ),
+      const SizedBox(height: 8),
       // Build 12 (points #12/#13): the logo SOURCE — a picked
       // image becomes the rotating 3D CUBE logo; a picked
       // VIDEO is auto-keyed (background removed).
@@ -8121,6 +8139,113 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       _showMessage('The picture was placed on the cube\'s $face side.');
     } catch (e) {
       _showMessage('The face picture was not placed: $e');
+    }
+  }
+
+  /// v1.19.0 (Logo Maker integration, G1/G2): opens the
+  /// full-screen Logo Maker section on THIS preset's logo.
+  /// The maker's settings live in the preset's own JSON
+  /// ([ChannelPreset.logoMakerSettingsJson]) — the same store
+  /// as every other logo setting — and a logo created inside
+  /// the maker (text/shape) is written into the same
+  /// news_logos folder a picked logo goes to, so the whole
+  /// existing logo system (cube, parts, export) uses it
+  /// unchanged.
+  Future<void> _openLogoMaker() async {
+    final preset = _preset;
+    if (preset == null) return;
+    ui.Image? image;
+    // The maker's canvas is the current logo picture: the
+    // picked image, or the video logo's still frame, or —
+    // when the channel still runs the default logo — the same
+    // initial tile the preview/export render (fail-soft, the
+    // rotating logo's own pattern).
+    final String? stillOrLogo = preset.logoMediaKind == 'video'
+        ? preset.logoVideoStillPath
+        : preset.logoPath;
+    if (stillOrLogo != null && File(stillOrLogo).existsSync()) {
+      try {
+        final bytes = await File(stillOrLogo).readAsBytes();
+        final codec = await ui.instantiateImageCodec(bytes);
+        final frame = await codec.getNextFrame();
+        image = frame.image;
+        codec.dispose();
+      } catch (_) {
+        image = null;
+      }
+    }
+    image ??= await LogoLoopService.renderLogoTileTexture(
+      initial: preset.name,
+      size: 512,
+    );
+    if (!mounted) return;
+    await pushLogoMakerSection(
+      context,
+      logoImage: image,
+      initialSettings: _logoMakerSettingsFor(preset),
+      onSettingsChanged: (settings) {
+        preset.logoMakerSettingsJson = jsonEncode(settings.toJson());
+        unawaited(persistPresetChange(preset));
+      },
+      onSave: (settings) {
+        preset.logoMakerSettingsJson = jsonEncode(settings.toJson());
+        unawaited(persistPresetChange(preset));
+        _showMessage('Logo Maker settings saved with the channel.');
+      },
+      onLogoImageChanged: (newImage) {
+        unawaited(_applyLogoMakerImage(preset, newImage));
+      },
+    );
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  /// Parses the preset's saved Logo Maker settings; a missing
+  /// or corrupt payload falls back to the defaults
+  /// (LogoMakerSettings.fromJson itself clamps + validates).
+  LogoMakerSettings _logoMakerSettingsFor(ChannelPreset preset) {
+    final raw = preset.logoMakerSettingsJson.trim();
+    if (raw.isEmpty) return const LogoMakerSettings();
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) {
+        return LogoMakerSettings.fromJson(decoded);
+      }
+    } catch (_) {
+      // Corrupt payload — the defaults stand.
+    }
+    return const LogoMakerSettings();
+  }
+
+  /// A logo created inside the Logo Maker (text/shape)
+  /// becomes the channel logo through the SAME path as a
+  /// picked logo: a PNG in news_logos + logoPath/logoMediaKind
+  /// on the preset, persisted at once.
+  Future<void> _applyLogoMakerImage(
+    ChannelPreset preset,
+    ui.Image image,
+  ) async {
+    try {
+      final byteData =
+          await image.toByteData(format: ui.ImageByteFormat.png);
+      if (byteData == null) return;
+      final docs = await getApplicationDocumentsDirectory();
+      final dir = Directory(p.join(docs.path, 'news_logos'));
+      if (!await dir.exists()) await dir.create(recursive: true);
+      final dest = p.join(
+        dir.path,
+        'logo_${DateTime.now().millisecondsSinceEpoch}.png',
+      );
+      await File(dest).writeAsBytes(byteData.buffer.asUint8List());
+      preset.logoPath = dest;
+      preset.logoMediaKind = 'image';
+      await persistPresetChange(preset);
+      if (!mounted) return;
+      setState(() {});
+      _showMessage('New logo placed — see it in the preview.');
+    } catch (e) {
+      if (!mounted) return;
+      _showMessage('The new logo was not placed: $e');
     }
   }
 

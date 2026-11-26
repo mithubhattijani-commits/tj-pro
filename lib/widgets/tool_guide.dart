@@ -1179,6 +1179,27 @@ const Map<String, ToolGuideEntry> _nsGuides = {
       'If you do not save the settings, they are only for this session — they end when the app closes.',
     ],
   ),
+  'ns.logo_maker': ToolGuideEntry(
+    title: 'Logo Maker',
+    what:
+        'A full-screen maker for the channel logo: it gives a flat logo '
+        'a 3D look — thickness (depth), an edge (bevel), materials like '
+        'gold and chrome, a shadow and a glow — with a big live preview '
+        'that moves as you work. You can also make a brand-new logo '
+        'from text or from a shape here.',
+    steps: [
+      'Open it from the Logo tool in News Studio — tap "Open Logo Maker" at the top of the panel. The logo you see is the channel logo from that tool.',
+      'In the Logo tab, the current logo is shown. Tap "Create from Text" to type a name, pick one of the 8 text styles and a size, then tap "Use This Logo" — it becomes the channel logo right away. Tap "Pick a Shape / Badge" to choose one of the 12 shapes and a colour scheme, then "Use This Shape" — that becomes the channel logo too.',
+      'In the Style tab, tap a preset (Gold Spin, Chrome Flip, Neon Pulse and more) to apply a full ready-made look in one tap. Below it, set the Material (gold, chrome, silver, neon, glass, fire, ocean, sunset, mono or none), the Depth (thickness), Bevel (edge light), Shadow Blur, and the Shadow and Glow switches with the Glow Intensity slider.',
+      'In the Spin tab, turn the flat spin on or off and set its speed. The preview above always shows the current settings moving.',
+      'Tap Save (top right or in the dock) to keep the settings. They are saved with the channel preset, so they are still there when you come back — and the back arrow returns you to News Studio with the logo in place.',
+    ],
+    tips: [
+      'The 3D Cube and the Parts (elements) controls are not in this maker — they stay in the News Studio Logo tool, exactly as before. Nothing was removed.',
+      'Honest note: the preset, material, depth and spin settings style the preview inside this maker and are saved with the channel. The video export still renders the logo with the Logo tool\'s cube/parts engines — the maker\'s own 3D look reaches the export in a later build.',
+      'A very high Depth on a weak phone can make the preview heavy — the maker now renders the still look once and only spins that picture, so normal use stays smooth.',
+    ],
+  ),
   'ns.reporter': ToolGuideEntry(
     title: 'Reporter',
     what:

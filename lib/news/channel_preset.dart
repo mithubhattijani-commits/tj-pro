@@ -300,6 +300,7 @@ class ChannelPreset {
     this.logoCubePedestal = false,
     this.logoPartsSavedJson = '',
     this.logoPartsSavedAtMs = 0,
+    this.logoMakerSettingsJson = '',
     RibbonConfig? topRibbon,
     RibbonConfig? urduRibbon,
     RibbonConfig? englishRibbon,
@@ -445,6 +446,15 @@ class ChannelPreset {
   /// (the user's model — no renewal path).
   String logoPartsSavedJson;
   int logoPartsSavedAtMs;
+
+  /// v1.19.0 (Logo Maker integration): the full-screen Logo
+  /// Maker section's settings (presets / material / depth /
+  /// bevel / shadow / glow / spin) as a JSON string in
+  /// LogoMakerSettings' own format. Empty = the maker's
+  /// defaults. Rides the same preset JSON as every other logo
+  /// setting (cube speed/tilt/pedestal above), so it survives
+  /// restarts with the channel preset.
+  String logoMakerSettingsJson;
 
   /// Transient (never serialised): the WORKING parts list —
   /// session-only until paid-saved. Preview/export clones copy
@@ -795,6 +805,7 @@ class ChannelPreset {
         'logoCubePedestal': logoCubePedestal,
         'logoPartsSavedJson': logoPartsSavedJson,
         'logoPartsSavedAtMs': logoPartsSavedAtMs,
+        'logoMakerSettingsJson': logoMakerSettingsJson,
         'topRibbon': topRibbon.toJson(),
         'urduRibbon': urduRibbon.toJson(),
         'englishRibbon': englishRibbon.toJson(),
@@ -871,6 +882,8 @@ class ChannelPreset {
           (json['logoPartsSavedJson'] as String?) ?? '',
       logoPartsSavedAtMs:
           ((json['logoPartsSavedAtMs'] as num?) ?? 0).toInt(),
+      logoMakerSettingsJson:
+          (json['logoMakerSettingsJson'] as String?) ?? '',
       topRibbon: ribbon('topRibbon', RibbonConfig()),
       urduRibbon: ribbon(
         'urduRibbon',
