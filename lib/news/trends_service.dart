@@ -113,25 +113,25 @@ class TrendsService {
           .timeout(const Duration(seconds: 15));
       if (response.statusCode == 404) {
         return TrendsResult.unavailable(
-          'Trends endpoint abhi live nahi — manually likhein',
+          'The Trends endpoint is not live yet — write manually',
         );
       }
       if (response.statusCode != 200) {
         return TrendsResult.unavailable(
-          'Suggestions nahi mil saki (server ${response.statusCode}) — '
-          'manually likhein',
+          'Suggestions could not be fetched (server ${response.statusCode}) — '
+          'write manually',
         );
       }
       final data = jsonDecode(response.body);
       if (data is! Map<String, dynamic>) {
         return TrendsResult.unavailable(
-          'Suggestions ka jawab samajh nahi aaya — manually likhein',
+          'The suggestions response was not understood — write manually',
         );
       }
       return TrendsResult.available(TrendsSuggestion.fromJson(data));
     } catch (_) {
       return TrendsResult.unavailable(
-        'Suggestions nahi mil saki (network) — manually likhein',
+        'Suggestions could not be fetched (network) — write manually',
       );
     } finally {
       if (owned) httpClient.close();

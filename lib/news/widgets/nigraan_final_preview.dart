@@ -141,7 +141,7 @@ class _ScrollingTickerTextState extends State<ScrollingTickerText>
   Widget build(BuildContext context) {
     if (widget.text.isEmpty) {
       return Text(
-        'Ticker text yahan paste karein…',
+        'Paste the ticker text here…',
         style: widget.style.copyWith(color: Colors.white70),
         maxLines: 1,
         overflow: TextOverflow.ellipsis,

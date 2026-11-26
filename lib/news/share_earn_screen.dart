@@ -51,7 +51,7 @@ class _ShareEarnScreenState extends State<ShareEarnScreen> {
     await Clipboard.setData(ClipboardData(text: text));
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$label copy ho gaya.')),
+      SnackBar(content: Text('$label copied.')),
     );
   }
 
@@ -74,10 +74,10 @@ class _ShareEarnScreenState extends State<ShareEarnScreen> {
       SnackBar(
         content: Text(
           coins > 0
-              ? 'Mubarak! Aap ko $coins referral coins mil gaye.'
-              : 'Abhi koi naya reward nahi — jab aap ke link se koi '
-                  'naya user login karke pehla ad dekhe ga, 100 coins '
-                  'yahan aa jayenge.',
+              ? 'Congratulations! You received $coins referral coins.'
+              : 'No new reward yet — when someone from your link '
+                  'a new user logs in and watches the first ad, 100 coins '
+                  'will come here.',
         ),
       ),
     );
@@ -90,10 +90,10 @@ class _ShareEarnScreenState extends State<ShareEarnScreen> {
       SnackBar(
         content: Text(
           ok
-              ? 'Code lag gaya — login karke pehla ad dekhein, '
-                  'share karne wale ko 100 coins mil jayenge.'
-              : 'Ye code nahi lag saka (ghalat code, ya is phone par '
-                  'pehle se ek code laga hua hai).',
+              ? 'Code applied — log in and watch the first ad; '
+                  'the sharer will get 100 coins.'
+              : 'This code could not be applied (wrong code, or a code is already '
+                  'a code is already applied on this phone).',
         ),
       ),
     );
@@ -125,15 +125,15 @@ class _ShareEarnScreenState extends State<ShareEarnScreen> {
           ),
           const SizedBox(height: 12),
           const Text(
-            'Aap ke link se jo naya user ayega, login karke pehla ad '
-            'dekhe ga to aap ko 100 coins milenge.',
+            'A new user who comes from your link and, after logging in, '
+            'watches it, you will get 100 coins.',
             style: TextStyle(fontSize: 15, height: 1.4),
           ),
           const SizedBox(height: 8),
           const Text(
-            'Link ke andar aap ka code khud shamil hai — naye user '
-            'ko kuch bhi likhne ki zaroorat nahi. Har naye user par '
-            'reward sirf ek dafa milta hai.',
+            'Your code is included inside the link itself — the new user '
+            'does not need to write anything. On each new user, '
+            'the reward is given only once.',
             style: TextStyle(color: Colors.grey, height: 1.4),
           ),
           const SizedBox(height: 20),
@@ -165,7 +165,7 @@ class _ShareEarnScreenState extends State<ShareEarnScreen> {
                       ),
                       IconButton(
                         icon: const Icon(Icons.copy),
-                        tooltip: 'Code copy karein',
+                        tooltip: 'Copy code',
                         onPressed: () {
                           final code = _ref.myCode.value;
                           if (code != null) {
@@ -194,7 +194,7 @@ class _ShareEarnScreenState extends State<ShareEarnScreen> {
                       ),
                       IconButton(
                         icon: const Icon(Icons.link),
-                        tooltip: 'Link copy karein',
+                        tooltip: 'Copy link',
                         onPressed: () =>
                             unawaited(_copy(_ref.shareLink, 'Link')),
                       ),
@@ -205,7 +205,7 @@ class _ShareEarnScreenState extends State<ShareEarnScreen> {
                     width: double.infinity,
                     child: ElevatedButton.icon(
                       icon: const Icon(Icons.share),
-                      label: const Text('Share karein'),
+                      label: const Text('Share'),
                       onPressed: () => unawaited(_share()),
                     ),
                   ),
@@ -221,7 +221,7 @@ class _ShareEarnScreenState extends State<ShareEarnScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'Aap ki kamai',
+                    'Your earnings',
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
@@ -236,7 +236,7 @@ class _ShareEarnScreenState extends State<ShareEarnScreen> {
                           builder: (context, n, _) => _StatBox(
                             icon: Icons.people,
                             value: '$n',
-                            label: 'Log join hue',
+                            label: 'People joined',
                           ),
                         ),
                       ),
@@ -247,7 +247,7 @@ class _ShareEarnScreenState extends State<ShareEarnScreen> {
                           builder: (context, n, _) => _StatBox(
                             icon: Icons.monetization_on,
                             value: '$n',
-                            label: 'Coins mile',
+                            label: 'Coins received',
                           ),
                         ),
                       ),
@@ -277,15 +277,15 @@ class _ShareEarnScreenState extends State<ShareEarnScreen> {
                               ),
                             )
                           : const Icon(Icons.redeem),
-                      label: const Text('Rewards check karein'),
+                      label: const Text('Check rewards'),
                       onPressed: _busy ? null : _checkRewards,
                     ),
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    'Rewards app khulne par khud bhi check ho jate '
-                    'hain — coins seedha aap ke balance mein jurte '
-                    'hain.',
+                    'Rewards are also checked automatically when the app opens '
+                    'they are — the coins join your balance directly '
+                    'are.',
                     style: TextStyle(color: Colors.grey, fontSize: 12),
                   ),
                 ],
@@ -298,9 +298,9 @@ class _ShareEarnScreenState extends State<ShareEarnScreen> {
           // and refuses to override an already-captured code.
           ExpansionTile(
             leading: const Icon(Icons.keyboard),
-            title: const Text('Code haath se darj karein'),
+            title: const Text('Enter the code by hand'),
             subtitle: const Text(
-              'Sirf tab, jab kisi dost ne sirf code bheja ho.',
+              'Only when a friend sent just the code.',
             ),
             children: [
               Padding(
@@ -320,7 +320,7 @@ class _ShareEarnScreenState extends State<ShareEarnScreen> {
                     const SizedBox(width: 8),
                     ElevatedButton(
                       onPressed: () => unawaited(_applyManualCode()),
-                      child: const Text('Lagayein'),
+                      child: const Text('Apply'),
                     ),
                   ],
                 ),

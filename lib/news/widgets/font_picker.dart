@@ -1,7 +1,7 @@
 /// Font picker for News Studio text surfaces (v1.5.1, fix #51):
 /// a chip wrap over the shared registry — built-ins PLUS the
 /// user's own uploaded fonts ([UrduFonts.allWithUser]) — with an
-/// "Apna Font lagayen" chip that picks a .ttf/.otf from the phone
+/// "Apply your font" chip that picks a .ttf/.otf from the phone
 /// and registers it through [UserFontService] (copied into app
 /// documents, FontLoader-registered, persisted across restarts).
 ///
@@ -56,7 +56,7 @@ class NewsFontPicker extends StatelessWidget {
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Font add nahi hua: $e')),
+          SnackBar(content: Text('Font could not be added: $e')),
         );
       }
     }
@@ -123,7 +123,7 @@ class NewsFontPicker extends StatelessWidget {
           ActionChip(
             key: const Key('fontDeleteChip'),
             avatar: const Icon(Icons.delete_outline, size: 16),
-            label: const Text('Font hatayein'),
+            label: const Text('Remove font'),
             onPressed: () {
               for (final font in fonts) {
                 if (font.id == selectedId) {
@@ -138,7 +138,7 @@ class NewsFontPicker extends StatelessWidget {
         ActionChip(
           key: const Key('fontAddChip'),
           avatar: const Icon(Icons.add, size: 16),
-          label: const Text('Apna Font lagayen'),
+          label: const Text('Apply your font'),
           onPressed: () => _addFont(context),
         ),
         ],

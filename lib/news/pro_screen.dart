@@ -4,7 +4,7 @@
 /// selectable package cards (7 Din Rs 200 / 15 Din Rs 500 /
 /// 30 Din Rs 1,000 with BEST VALUE, monthly selected by default),
 /// the PRO KE FAYDE checklist, a payment card, and the gold
-/// 'Pro hasil karein' CTA.
+/// 'Get Pro' CTA.
 ///
 /// Payment is MANUAL (the owner's flow): the user pays the shown
 /// Easypaisa / ABL number (both Ghulam Jillani — the numbers come
@@ -63,13 +63,13 @@ class _ProScreenState extends State<ProScreen> {
       days: '7 Din',
       subtitle: 'Weekly package',
       price: AppConfig.proWeeklyRs,
-      perDay: 'sirf Rs 29 roz',
+      perDay: 'only Rs 29/day',
     ),
     _ProPackage(
       days: '15 Din',
       subtitle: 'Half month package',
       price: AppConfig.proHalfMonthRs,
-      perDay: 'sirf Rs 33 roz',
+      perDay: 'only Rs 33/day',
     ),
     _ProPackage(
       days: '30 Din',
@@ -94,9 +94,9 @@ class _ProScreenState extends State<ProScreen> {
   ///   - 1080p/4K export: editor_export_controller's double-ad
   ///     quality gate skips Pro users entirely.
   static const List<String> _benefits = <String>[
-    'Koi ads nahi — banner, interstitial aur export ads sab band',
+    'No ads — banner, interstitial and export ads all off',
     'Motion Studio ke PRO templates shamil',
-    '1080p / 4K export baghair double ad ke',
+    '1080p / 4K export without the double ad',
   ];
 
   /// Monthly is the default selection (mockup S6).
@@ -124,9 +124,9 @@ class _ProScreenState extends State<ProScreen> {
   /// payment screenshot in that chat.
   Future<void> _getPro() async {
     final _ProPackage pkg = _packages[_selected];
-    final String text = 'Assalam-o-Alaikum, mujhe TJ Pro PRO chahiye '
-        '— ${pkg.days} (${_rs(pkg.price)}). Payment kar di hai, '
-        'screenshot bhej raha hoon.';
+    final String text = 'Assalam-o-Alaikum, I want TJ Pro PRO '
+        '— ${pkg.days} (${_rs(pkg.price)}). I have made the payment, '
+        'I am sending the screenshot.';
     final Uri uri = Uri.parse(
       '${SupportContact.waMeUrl()}?text=${Uri.encodeComponent(text)}',
     );
@@ -360,7 +360,7 @@ class _ProScreenState extends State<ProScreen> {
                   ),
                   const SizedBox(height: 6),
                   const Text(
-                    'Sab kuch — zyada limits ke sath, bina rukawat',
+                    'Everything — with higher limits, without interruption',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Colors.grey, fontSize: 14),
                   ),
@@ -388,7 +388,7 @@ class _ProScreenState extends State<ProScreen> {
                           child: Column(
                             children: [
                               const Text(
-                                'Aap ka Pro ACTIVE hai',
+                                'Your Pro is ACTIVE',
                                 style: TextStyle(
                                   fontSize: 16,
                                   fontWeight: FontWeight.bold,
@@ -501,8 +501,8 @@ class _ProScreenState extends State<ProScreen> {
                           _paymentRow('JazzCash', config.jazzcashNumber),
                         const SizedBox(height: 10),
                         const Text(
-                          'Payment ke baad screenshot bhejein — aap ka '
-                          'Pro foran activate kar diya jayega.',
+                          'Send the screenshot after payment — your '
+                          'Pro will be activated immediately.',
                           style: TextStyle(
                             color: Colors.grey,
                             fontSize: 13,
@@ -531,7 +531,7 @@ class _ProScreenState extends State<ProScreen> {
                           ),
                         ),
                         child: const Text(
-                          'Pro hasil karein',
+                          'Get Pro',
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             fontSize: 17,
@@ -544,7 +544,7 @@ class _ProScreenState extends State<ProScreen> {
                   ),
                   const SizedBox(height: 12),
                   const Text(
-                    'Admin kisi user ko Pro gift bhi kar sakta hai',
+                    'The admin can also gift Pro to a user',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Colors.grey, fontSize: 12),
                   ),

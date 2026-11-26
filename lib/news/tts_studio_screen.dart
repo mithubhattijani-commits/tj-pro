@@ -58,7 +58,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
   String _format = 'wav';
 
   bool _busy = false;
-  String _status = 'Abhi kuch nahi banaya.';
+  String _status = 'Nothing created yet.';
   int? _remaining;
   bool _capOfferDevice = false;
 
@@ -129,13 +129,13 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
     if (_busy) return;
     final text = _textController.text.trim();
     if (text.isEmpty) {
-      _showMessage('Pehle text likhein.');
+      _showMessage('Write the text first.');
       return;
     }
     setState(() {
       _busy = true;
       _capOfferDevice = false;
-      _status = deviceVoice ? 'Device voice se ban rahi hai…' : 'Voice ban rahi hai…';
+      _status = deviceVoice ? 'Creating with the device voice…' : 'Creating voice…';
     });
     try {
       final result = deviceVoice
@@ -175,12 +175,12 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
       final history = await _historyService.loadAll();
       if (!mounted) return;
       final notes = <String>[];
-      if (result.cached) notes.add('Cached — 0 nayi requests');
-      if (result.usedDeviceFallback) notes.add('Device voice use hui');
-      if (result.fellBackToEdge) notes.add('Gemini fail → Edge voice use hui');
-      if (result.fellBackToGemini) notes.add('Edge fail → Gemini voice use hui');
+      if (result.cached) notes.add('Cached — 0 new requests');
+      if (result.usedDeviceFallback) notes.add('Device voice used');
+      if (result.fellBackToEdge) notes.add('Gemini failed → Edge voice used');
+      if (result.fellBackToGemini) notes.add('Edge failed → Gemini voice used');
       if (result.controlsIgnored) {
-        notes.add('Speed/pause Edge (MP3) par nahi lagte — audio waisa ka waisa hai');
+        notes.add('Speed/pause do not apply on Edge (MP3) — the audio stays as it is');
       }
       setState(() {
         _busy = false;
@@ -189,7 +189,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
         _remaining = remaining;
         _history = history;
         _status = notes.isEmpty
-            ? 'Nayi voice — ${result.proxyRequests} request(s) use hui.'
+            ? 'New voice — ${result.proxyRequests} request(s) used.'
             : notes.join(' • ');
       });
     } on TtsStudioCapException catch (e) {
@@ -198,13 +198,13 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
         _busy = false;
         _capOfferDevice = true;
         _status =
-            'Cap poora ho gaya — $e Same text dobara = cached (0 requests).';
+            'The cap is full — $e Same text again = cached (0 requests).';
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _busy = false;
-        _status = 'Voice nahi ban saki: $e';
+        _status = 'Could not create the voice: $e';
       });
     }
   }
@@ -213,7 +213,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
     if (_previewBusy) return;
     setState(() {
       _previewBusy = true;
-      _status = 'Preview ban raha hai (pehli dafa 1 request)…';
+      _status = 'Creating the preview (first time 1 request)…';
     });
     try {
       final bytes = await _service.previewVoice(_voice);
@@ -228,19 +228,19 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
         _previewPath = file.path;
         _previewDuration = duration;
         _remaining = remaining;
-        _status = 'Preview tayyar — ${_voice.label} ki awaz sunein.';
+        _status = 'Preview ready — listen to ${_voice.label}\'s voice.';
       });
     } on TtsStudioCapException catch (e) {
       if (!mounted) return;
       setState(() {
         _previewBusy = false;
-        _status = 'Preview ke liye bhi cap chahiye: $e';
+        _status = 'The preview also needs the cap: $e';
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _previewBusy = false;
-        _status = 'Preview nahi ban saka: $e';
+        _status = 'Preview could not be created: $e';
       });
     }
   }
@@ -255,12 +255,12 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
       final bytes = await file.readAsBytes();
       final text = String.fromCharCodes(bytes).trim();
       if (text.isEmpty) {
-        _showMessage('TXT file khaali hai.');
+        _showMessage('The TXT file is empty.');
         return;
       }
       setState(() => _textController.text = text);
     } catch (e) {
-      _showMessage('TXT import nahi hua: $e');
+      _showMessage('TXT import failed: $e');
     }
   }
 
@@ -273,9 +273,9 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
         File(result!.filePath!),
         'tj_pro_voice_$stamp.${result.ext}',
       );
-      _showMessage('Download folder mein save ho gaya:\n$path');
+      _showMessage('Saved to the Downloads folder:\n$path');
     } catch (e) {
-      _showMessage('Download nahi hua: $e');
+      _showMessage('Download failed: $e');
     }
   }
 
@@ -283,7 +283,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
     try {
       final file = File(entry.filePath);
       if (!await file.exists()) {
-        _showMessage('Ye file ab nahi hai (cache clear ho gaya).');
+        _showMessage('This file no longer exists (cache was cleared).');
         return;
       }
       final stamp = DateTime.now().millisecondsSinceEpoch;
@@ -291,9 +291,9 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
         file,
         'tj_pro_voice_$stamp.${entry.ext}',
       );
-      _showMessage('Download folder mein save ho gaya:\n$path');
+      _showMessage('Saved to the Downloads folder:\n$path');
     } catch (e) {
-      _showMessage('Download nahi hua: $e');
+      _showMessage('Download failed: $e');
     }
   }
 
@@ -303,14 +303,14 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
         ShareParams(files: [XFile(path)]),
       );
     } catch (e) {
-      _showMessage('Share nahi hua: $e');
+      _showMessage('Could not share: $e');
     }
   }
 
   void _playHistory(TtsHistoryEntry entry) {
     final file = File(entry.filePath);
     if (!file.existsSync()) {
-      _showMessage('Ye file ab nahi hai (cache clear ho gaya).');
+      _showMessage('This file no longer exists (cache was cleared).');
       return;
     }
     setState(() {
@@ -323,7 +323,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
         filePath: entry.filePath,
       );
       _resultDuration = entry.durationSec;
-      _status = 'History se chala rahe hain: ${entry.summary}';
+      _status = 'Playing from history: ${entry.summary}';
     });
   }
 
@@ -353,7 +353,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
               Padding(
                 padding: const EdgeInsets.only(bottom: 12),
                 child: Text(
-                  'Aaj ki voice limit: $_remaining / 5 baaki',
+                  'Today\'s voice limit: $_remaining / 5 left',
                   style: const TextStyle(color: Colors.grey, fontSize: 12),
                 ),
               ),
@@ -368,7 +368,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
               maxLines: 6,
               minLines: 5,
               decoration: const InputDecoration(
-                hintText: 'Text likhein ya paste karein…',
+                hintText: 'Write or paste the text…',
                 border: OutlineInputBorder(),
               ),
               onChanged: (_) => setState(() {}),
@@ -429,7 +429,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
             ),
             const SizedBox(height: 20),
             const Text(
-              'Voice — tap karein, phir preview sunein',
+              'Voice — tap, then listen to the preview',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
@@ -524,7 +524,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                     const SizedBox(width: 8),
                     Flexible(
                       child: Text(
-                        '▶ ${_voice.label} ki awaz suno (preview — pehli dafa 1 request)',
+                        '▶ Listen to ${_voice.label}\'s voice (preview — first time 1 request)',
                         textAlign: TextAlign.center,
                       ),
                     ),
@@ -591,7 +591,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
             ),
             Row(
               children: [
-                const Expanded(child: Text('Pause (sentences ke beech)')),
+                const Expanded(child: Text('Pause (between sentences)')),
                 SizedBox(
                   width: 200,
                   child: Slider(
@@ -616,14 +616,14 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
             ),
             if (_isEdge)
               const Text(
-                'Edge voices (MP3) par speed/pause nahi lagte — MP3 ko '
-                'decode kiye baghair resample nahi hota.',
+                'Speed/pause do not apply on Edge voices (MP3) — an MP3 '
+                'cannot be resampled without decoding.',
                 style: TextStyle(color: Colors.grey, fontSize: 12),
               ),
             const Text(
-              'Speed resample pitch bhi badalta hai — ye normal hai '
-              '(true pitch-shift ke liye phase vocoder chahiye, jo '
-              'kisi bhi app mein nahi bana).',
+              'Speed resample also changes the pitch — this is normal '
+              '(a true pitch-shift needs a phase vocoder, which '
+              'is not built into any app).',
               style: TextStyle(color: Colors.grey, fontSize: 12),
             ),
             const SizedBox(height: 20),
@@ -636,7 +636,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
               key: const Key('musicSwitch'),
               title: const Text('Background music (soft pad)'),
               subtitle: const Text(
-                'Halki si ambient music voice ke neeche — awaz hamesha upar rehti hai.',
+                'Light ambient music under the voice — the voice always stays on top.',
               ),
               value: _music,
               onChanged: (v) => setState(() => _music = v),
@@ -681,7 +681,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                         ),
                       )
                     : const Icon(Icons.record_voice_over),
-                label: Text(_busy ? 'Voice ban rahi hai…' : 'Voice banao'),
+                label: Text(_busy ? 'Creating voice…' : 'Create Voice'),
                 style: FilledButton.styleFrom(
                   backgroundColor: const Color(0xFF7C3AED),
                   padding: const EdgeInsets.symmetric(vertical: 14),
@@ -702,7 +702,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                   key: const Key('deviceVoiceButton'),
                   onPressed: _busy ? null : () => _generate(deviceVoice: true),
                   child: const Text(
-                    'Device voice se banayein (robotic, par free — cap nahi lagta)',
+                    'Create with the device voice (robotic, but free — no cap applies)',
                   ),
                 ),
               ),
@@ -754,7 +754,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                 child: Padding(
                   padding: EdgeInsets.all(16),
                   child: Text(
-                    'Abhi koi history nahi — pehli voice banayein.',
+                    'No history yet — create your first voice.',
                     style: TextStyle(color: Colors.grey),
                   ),
                 ),
@@ -790,7 +790,7 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
                         ),
                         IconButton(
                           icon: const Icon(Icons.delete_outline),
-                          tooltip: 'History se hatayein',
+                          tooltip: 'Remove from history',
                           onPressed: () async {
                             await _historyService.remove(entry.id);
                             await _load();
@@ -803,8 +803,8 @@ class _TtsStudioScreenState extends State<TtsStudioScreen> {
               ),
             const SizedBox(height: 12),
             const Text(
-              'Coins: is Studio mein koi coins nahi — sirf 5/day cap. '
-              'Magic Box ki coin economy yahan port nahi hui (user decision).',
+              'Coins: this Studio has no coins — only a 5/day cap. '
+              'The Magic Box coin economy was not ported here (user decision).',
               style: TextStyle(color: Colors.grey, fontSize: 12),
               textAlign: TextAlign.center,
             ),

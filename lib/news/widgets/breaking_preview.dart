@@ -374,7 +374,7 @@ class BreakingTemplatePreview extends StatelessWidget {
                     Expanded(
                       child: Text(
                         template.headline.isEmpty
-                            ? 'Headline yahan likhein…'
+                            ? 'Write the headline here…'
                             : template.headline,
                         style: TextStyle(
                           color: template.headline.isEmpty
@@ -769,8 +769,8 @@ class _VideoIntroPreviewState extends State<VideoIntroPreview> {
                           const SizedBox(height: 6),
                           Text(
                             _failed
-                                ? 'Video intro asset abhi bundle nahi hua'
-                                : 'Video intro load ho raha hai…',
+                                ? 'The video intro asset is not bundled yet'
+                                : 'Video intro is loading…',
                             style: const TextStyle(
                               color: Colors.white54,
                               fontSize: 11,
@@ -807,7 +807,7 @@ class _VideoIntroPreviewState extends State<VideoIntroPreview> {
               ),
               child: Text(
                 widget.headline.isEmpty
-                    ? 'Headline yahan likhein…'
+                    ? 'Write the headline here…'
                     : widget.headline,
                 style: TextStyle(
                   color: widget.headline.isEmpty

@@ -42,7 +42,7 @@ class TeleprompterScreen extends StatefulWidget {
 class _TeleprompterScreenState extends State<TeleprompterScreen> {
   CameraController? _controller;
   bool _cameraReady = false;
-  String _status = 'Camera start ho raha hai…';
+  String _status = 'Camera is starting…';
   final ScrollController _scrollController = ScrollController();
   Timer? _scrollTimer;
   Timer? _countdownTimer;
@@ -77,7 +77,7 @@ class _TeleprompterScreenState extends State<TeleprompterScreen> {
       final cameras = await availableCameras();
       if (cameras.isEmpty) {
         if (mounted) {
-          setState(() => _status = 'Koi camera nahi mila.');
+          setState(() => _status = 'No camera found.');
         }
         return;
       }
@@ -106,13 +106,13 @@ class _TeleprompterScreenState extends State<TeleprompterScreen> {
       setState(() {
         _controller = controller;
         _cameraReady = true;
-        _status = 'Camera ready — Record dabayein, pehle 3-2-1 countdown hoga.';
+        _status = 'Camera ready — tap Record; first a 3-2-1 countdown will run.';
       });
     } catch (e) {
       if (mounted) {
         setState(() {
           _cameraReady = false;
-          _status = 'Camera start nahi ho saka: $e';
+          _status = 'Camera could not start: $e';
         });
       }
     }
@@ -180,12 +180,12 @@ class _TeleprompterScreenState extends State<TeleprompterScreen> {
       setState(() {
         _recording = true;
         _recordingPath = path;
-        _status = 'Recording… script chal raha hai.';
+        _status = 'Recording… the script is running.';
       });
       _startScroll();
     } catch (e) {
       if (mounted) {
-        setState(() => _status = 'Recording start nahi ho saki: $e');
+        setState(() => _status = 'Recording could not start: $e');
       }
     }
   }
@@ -200,7 +200,7 @@ class _TeleprompterScreenState extends State<TeleprompterScreen> {
       if (mounted) {
         setState(() {
           _recording = false;
-          _status = 'Recording stop nahi ho saki: $e';
+          _status = 'Recording could not stop: $e';
         });
       }
       return;
@@ -259,8 +259,8 @@ class _TeleprompterScreenState extends State<TeleprompterScreen> {
                         controller: _scrollController,
                         child: Text(
                           script.isEmpty
-                              ? 'Tehreer khaali hai — pehle Tehreer tool '
-                                  'mein script likhein, phir yahan parhein.'
+                              ? 'The script is empty — first in the Tehreer tool '
+                                  'write the script, then read here.'
                               : script,
                           textAlign: TextAlign.center,
                           style: TextStyle(

@@ -1,12 +1,12 @@
-/// "Draft jari hai" recovery card (Phase 9, master prompt §14).
+/// "Draft in progress" recovery card (Phase 9, master prompt §14).
 ///
 /// Shown on the News Studio home when the autosaved latest project
 /// still has content. Three real actions, no dead buttons:
-///   - "Resume karein" — opens the draft in the News Maker with its
+///   - "Resume" — opens the draft in the News Maker with its
 ///     actual saved contents (the caller passes the project through).
-///   - "Discard karein" — deletes the draft JSON (caller deletes via
+///   - "Discard" — deletes the draft JSON (caller deletes via
 ///     `NewsProjectStore.delete`) and hides the card.
-///   - "Baad mein" — hides the card for this session only; the draft
+///   - "Later" — hides the card for this session only; the draft
 ///     JSON stays untouched.
 ///
 /// The card itself loads nothing — the screen hands it the already
@@ -45,7 +45,7 @@ class DraftRecoveryCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Draft jari hai — autosave se mila',
+              'Draft in progress — found from autosave',
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
             ),
             const SizedBox(height: 6),
@@ -55,8 +55,8 @@ class DraftRecoveryCard extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             const Text(
-              'Ye draft autosave hua tha — resume karein to wahi '
-              'tehreer, clips aur voiceover milenge.',
+              'This draft was autosaved — if you resume, the same '
+              'you will get the script, clips and voiceover.',
               style: TextStyle(color: Colors.white54, fontSize: 12),
             ),
             const SizedBox(height: 12),
@@ -69,20 +69,20 @@ class DraftRecoveryCard extends StatelessWidget {
                     style: FilledButton.styleFrom(
                       backgroundColor: const Color(0xFF7C3AED),
                     ),
-                    child: const Text('Resume karein'),
+                    child: const Text('Resume'),
                   ),
                 ),
                 const SizedBox(width: 8),
                 OutlinedButton(
                   key: const Key('discardDraftButton'),
                   onPressed: onDiscard,
-                  child: const Text('Discard karein'),
+                  child: const Text('Discard'),
                 ),
                 const SizedBox(width: 8),
                 TextButton(
                   key: const Key('dismissDraftButton'),
                   onPressed: onDismiss,
-                  child: const Text('Baad mein'),
+                  child: const Text('Later'),
                 ),
               ],
             ),

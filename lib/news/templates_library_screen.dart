@@ -559,7 +559,7 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
       );
       if (!spendResult.ok) {
         _showMessage(
-          'Coins kam hain — is template ke liye $cost coins chahiye. '
+          'Not enough coins — this template needs $cost coins. '
           'Watch Ads se kamayein.',
         );
         return;
@@ -590,7 +590,7 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
         ChannelPresetStore.saveAll(_presets, selectedId: preset.id),
       );
       _showMessage(
-        'Video intro apply ho gaya — ${workingVideo.displayName}.',
+        'Video intro applied — ${workingVideo.displayName}.',
       );
       setState(() {});
       return;
@@ -605,7 +605,7 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
       unawaited(
         ChannelPresetStore.saveAll(_presets, selectedId: preset.id),
       );
-      _showMessage('Template apply ho gaya — ${workingCategory.displayName}.');
+      _showMessage('Template applied — ${workingCategory.displayName}.');
       setState(() {});
       return;
     }
@@ -619,7 +619,7 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
       unawaited(
         ChannelPresetStore.saveAll(_presets, selectedId: preset.id),
       );
-      _showMessage('Template apply ho gaya — ${working.displayName}.');
+      _showMessage('Template applied — ${working.displayName}.');
     } else if (workingPreset != null) {
       final selected = _selectedItem;
       if (selected != null && selected.kind == 'preset' && selected.preset != null) {
@@ -634,7 +634,7 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
           unawaited(NewsProjectStore.save(project));
         }
         setState(() => _preset = selected.preset);
-        _showMessage('Preset apply ho gaya — ${selected.preset!.name}.');
+        _showMessage('Preset applied — ${selected.preset!.name}.');
       } else {
         // Final / Classic: copy the edited settings back onto the
         // working preset and set its template kind.
@@ -660,7 +660,7 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
           ChannelPresetStore.saveAll(_presets, selectedId: preset.id),
         );
         _showMessage(
-          'Template apply ho gaya — ${selected?.name ?? 'Final 3-Ribbon'}.',
+          'Template applied — ${selected?.name ?? 'Final 3-Ribbon'}.',
         );
       }
     }
@@ -712,7 +712,7 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
   Future<void> _saveCustom() async {
     final name = _saveNameController.text.trim();
     if (name.isEmpty) {
-      _showMessage('Pehle template ka naam likhein.');
+      _showMessage('Write the template name first.');
       return;
     }
     final working = _workingBreaking;
@@ -723,8 +723,8 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
       // headline/ticker/direction/music settings save per project
       // via "Use template".
       _showMessage(
-        'Video intro built-in hai — settings "Use template" se '
-        'project mein save hoti hain.',
+        'The video intro is built-in — settings via "Use template" '
+        'are saved in the project.',
       );
       return;
     }
@@ -743,7 +743,7 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
           orElse: () => _items.first,
         ),
       ));
-      _showMessage('Custom template save ho gaya — "$name".');
+      _showMessage('Custom template saved — "$name".');
     } else if (working != null) {
       final saved = await BreakingTemplateStore.saveCustomTemplate(
         name: name,
@@ -756,7 +756,7 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
       setState(() => _select(
         _items.firstWhere((i) => i.id == saved.id, orElse: () => _items.first),
       ));
-      _showMessage('Custom template save ho gaya — "$name".');
+      _showMessage('Custom template saved — "$name".');
     } else if (workingPreset != null) {
       final saved = await ChannelPresetStore.saveCustomTemplate(
         name: name,
@@ -772,7 +772,7 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
           orElse: () => _items.first,
         ),
       ));
-      _showMessage('Custom template save ho gaya — "$name".');
+      _showMessage('Custom template saved — "$name".');
     }
   }
 
@@ -788,7 +788,7 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
     if (!mounted) return;
     await _reload();
     if (!mounted) return;
-    _showMessage('Custom template delete ho gaya.');
+    _showMessage('Custom template deleted.');
   }
 
   Future<void> _pickLogo() async {
@@ -862,8 +862,8 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
             child: const Padding(
               padding: EdgeInsets.all(16),
               child: Text(
-                'Is category mein abhi koi template nahi — neeche '
-                '"Save as Custom Template" se apna template banayein.',
+                'No template in this category yet — below '
+                'create your template with "Save as Custom Template".',
               ),
             ),
           )
@@ -886,7 +886,7 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'Save hoga — settings summary',
+                    'Will save — settings summary',
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 8),
@@ -925,9 +925,9 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
         ),
         const SizedBox(height: 8),
         const Text(
-          'Save karta hai: ribbons, colours, speed, direction, size, '
+          'Saves: ribbons, colours, speed, direction, size, '
           'logo, intro/outro, lower third, interview plate, PIP — '
-          'har project mein reuse ho sakta hai.',
+          'can be reused in every project.',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
         const SizedBox(height: 16),
@@ -935,10 +935,10 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
           child: Padding(
             padding: EdgeInsets.all(16),
             child: Text(
-              'Split screen, map aur sports-score graphics is library '
-              'mein nahi hain — un ke liye app mein abhi koi engine '
-              'nahi hai (Phase 7). Weather aur Sports ke templates '
-              'upar hain — un ke graphics engine abhi nahi hain.',
+              'Split screen, map and sports-score graphics are not in this library '
+              'are not in it — for them there is no engine in the app yet '
+              'is not there (Phase 7). Weather and Sports templates '
+              'are above — their graphics engines are not here yet.',
               style: TextStyle(color: Colors.grey),
             ),
           ),
@@ -1008,7 +1008,7 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
                     IconButton(
                       key: Key('deleteCustom-${item.id}'),
                       icon: const Icon(Icons.delete_outline, size: 20),
-                      tooltip: 'Custom template delete karein',
+                      tooltip: 'Delete custom template',
                       onPressed: () => _deleteCustom(item),
                     ),
                   ],
@@ -1260,9 +1260,9 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
             ),
             const SizedBox(height: 4),
             const Text(
-              'Ribbon content fixed hai — top = current story, middle '
+              'Ribbon content is fixed — top = current story, middle '
               'Urdu = national news, bottom English = international. '
-              'Content kind kabhi change nahi hota.',
+              'The content kind never changes.',
               style: TextStyle(color: Colors.grey, fontSize: 12),
             ),
             const SizedBox(height: 16),
@@ -1565,12 +1565,12 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
             ),
             const SizedBox(height: 4),
             const Text(
-              'PIP inset preview mein dikhta hai — visual effect '
-              'export mein Phase 7 mein lagega.',
+              'The PIP inset shows in the preview — the visual effect '
+              'will apply in the export in Phase 7.',
               style: TextStyle(color: Colors.grey, fontSize: 12),
             ),
             _switchRow(
-              'PIP on karein',
+              'Turn PIP on',
               breaking?.pipEnabled ?? workingPreset!.pipEnabled,
               (v) => setState(() {
                 if (breaking != null) {
@@ -1723,9 +1723,9 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
               ],
             ),
             const Text(
-              'Default: Urdu ticker Left ki taraf, English Right ki '
-              'taraf chalta hai — toggle dabane se aap ki choice '
-              'hamesha jeetti hai.',
+              'Default: the Urdu ticker runs to the Left, the English one to the Right '
+              'side; by tapping the toggle, your choice '
+              'always wins.',
               style: TextStyle(color: Colors.grey, fontSize: 12),
             ),
             const SizedBox(height: 16),
@@ -1795,9 +1795,9 @@ class _TemplatesLibraryScreenState extends State<TemplatesLibraryScreen> {
             ),
             const SizedBox(height: 4),
             const Text(
-              'Ribbon content fixed hai — top = current story, middle '
+              'Ribbon content is fixed — top = current story, middle '
               'Urdu = national news, bottom English = international. '
-              'Ribbon texts channel preset / project se aate hain.',
+              'Ribbon texts come from the channel preset / project.',
               style: TextStyle(color: Colors.grey, fontSize: 12),
             ),
             const SizedBox(height: 16),

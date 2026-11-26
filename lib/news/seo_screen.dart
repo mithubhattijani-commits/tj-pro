@@ -104,7 +104,7 @@ class _SeoScreenState extends State<SeoScreen> {
         ? widget.project.tehreer
         : _titleController.text;
     if (text.trim().isEmpty) {
-      _showMessage('Pehle tehreer ya title likhein.');
+      _showMessage('Write the script or title first.');
       return;
     }
     setState(() {
@@ -130,12 +130,12 @@ class _SeoScreenState extends State<SeoScreen> {
     if (!isRomanHashtag(tag)) {
       setState(
         () => _hashtagError =
-            '"$tag" — sirf English/Roman letters allowed (Urdu script nahi).',
+            '"$tag" — only English/Roman letters allowed (no Urdu script).',
       );
       return;
     }
     if (_hashtags.contains(tag)) {
-      setState(() => _hashtagError = '"$tag" pehle se hai.');
+      setState(() => _hashtagError = '"$tag" already exists.');
       return;
     }
     setState(() {
@@ -157,7 +157,7 @@ class _SeoScreenState extends State<SeoScreen> {
       seo.followLine = _followController.text.trim();
       await NewsProjectStore.save(widget.project);
       _showMessage(
-        'SEO save ho gaya — Publish (parked) baad mein aayega.',
+        'SEO saved — Publish (parked) will come later.',
       );
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -193,7 +193,7 @@ class _SeoScreenState extends State<SeoScreen> {
             const SizedBox(height: 12),
             _buildStepper(),
             const SizedBox(height: 20),
-            _sectionTitle('Title (hook pehle)'),
+            _sectionTitle('Title (hook first)'),
             const SizedBox(height: 8),
             TextField(
               key: const Key('seoTitleField'),
@@ -201,7 +201,7 @@ class _SeoScreenState extends State<SeoScreen> {
               maxLines: 2,
               minLines: 1,
               decoration: InputDecoration(
-                hintText: 'Hook pehle — title yahan likhein…',
+                hintText: 'Hook first — write the title here…',
                 border: const OutlineInputBorder(),
                 counterText:
                     '${_titleController.text.length} / 100',
@@ -217,7 +217,7 @@ class _SeoScreenState extends State<SeoScreen> {
               const Padding(
                 padding: EdgeInsets.only(top: 4),
                 child: Text(
-                  'Title 100 chars se zyada hai (YouTube cap) — chhota karein.',
+                  'The title is over 100 chars (YouTube cap) — make it shorter.',
                   style: TextStyle(color: Colors.red, fontSize: 12),
                 ),
               ),
@@ -230,7 +230,7 @@ class _SeoScreenState extends State<SeoScreen> {
               maxLines: 4,
               minLines: 3,
               decoration: const InputDecoration(
-                hintText: 'Hook first line, phir story… (koi link nahi)',
+                hintText: 'Hook first line, then the story… (no link)',
                 border: OutlineInputBorder(),
               ),
               onChanged: (_) => setState(() {}),
@@ -256,7 +256,7 @@ class _SeoScreenState extends State<SeoScreen> {
                     key: const Key('hashtagAddField'),
                     controller: _hashtagController,
                     decoration: const InputDecoration(
-                      hintText: '#tag add karein',
+                      hintText: 'Add #tag',
                       border: OutlineInputBorder(),
                       contentPadding: EdgeInsets.symmetric(
                         horizontal: 10,
@@ -299,7 +299,7 @@ class _SeoScreenState extends State<SeoScreen> {
               ),
             ),
             const SizedBox(height: 16),
-            _sectionTitle('Follow line (aakhir mein)'),
+            _sectionTitle('Follow line (at the end)'),
             const SizedBox(height: 8),
             TextField(
               key: const Key('seoFollowField'),
@@ -318,7 +318,7 @@ class _SeoScreenState extends State<SeoScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '⚠ X: ${_caption.length} chars — caption short hogi',
+                        '⚠ X: ${_caption.length} chars — the caption will be short',
                         key: const Key('xWarning'),
                         style: const TextStyle(
                           color: Colors.amber,
@@ -338,7 +338,7 @@ class _SeoScreenState extends State<SeoScreen> {
                 ),
               ),
             const Text(
-              'Caption mein koi link nahi — links sirf comments mein',
+              'No link in the caption — links only in comments',
               style: TextStyle(color: Colors.grey, fontSize: 12),
             ),
             const SizedBox(height: 12),
@@ -372,14 +372,14 @@ class _SeoScreenState extends State<SeoScreen> {
                   padding: const EdgeInsets.symmetric(vertical: 14),
                 ),
                 child: Text(
-                  _saving ? 'Save ho raha hai…' : 'Save SEO',
+                  _saving ? 'Saving…' : 'Save SEO',
                 ),
               ),
             ),
             const SizedBox(height: 8),
             const Text(
-              'Publish (5 platforms) parked hai — applications pending '
-              'hain. SEO save ho kar project JSON mein rehta hai.',
+              'Publish (5 platforms) is parked — applications are pending '
+              'they are. The SEO is saved and stays in the project JSON.',
               style: TextStyle(color: Colors.grey, fontSize: 12),
               textAlign: TextAlign.center,
             ),
@@ -499,12 +499,12 @@ class _SeoScreenState extends State<SeoScreen> {
         const SizedBox(height: 8),
         if (_suggestionsLoading)
           const Text(
-            'Live check ho raha hai…',
+            'Live check is running…',
             style: TextStyle(color: Colors.grey),
           )
         else if (result == null)
           const Text(
-            'Refresh dabayein — Google Trends + X se live check hoga.',
+            'Tap Refresh — a live check will run from Google Trends + X.',
             style: TextStyle(color: Colors.grey),
           )
         else if (!result.available)
@@ -513,7 +513,7 @@ class _SeoScreenState extends State<SeoScreen> {
             child: Padding(
               padding: const EdgeInsets.all(12),
               child: Text(
-                'Suggestions unavailable — manually likhein\n'
+                'Suggestions unavailable — write manually\n'
                 '(${result.reason ?? 'endpoint abhi live nahi'})',
                 style: const TextStyle(color: Colors.grey),
               ),
@@ -525,7 +525,7 @@ class _SeoScreenState extends State<SeoScreen> {
             child: Padding(
               padding: EdgeInsets.all(12),
               child: Text(
-                'Is topic par koi trending tag nahi mila — manually likhein.',
+                'No trending tag found for this topic — write manually.',
                 style: TextStyle(color: Colors.grey),
               ),
             ),
@@ -569,7 +569,7 @@ class _SeoScreenState extends State<SeoScreen> {
               const SizedBox(height: 4),
               Text(
                 'Live check: ${result.suggestion!.sources.isEmpty ? 'Google Trends + X' : result.suggestion!.sources.join(' + ')}'
-                ' • Tehreer se nikale gaye',
+                ' • Extracted from the script',
                 style: const TextStyle(color: Colors.grey, fontSize: 12),
               ),
             ],

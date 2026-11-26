@@ -37,7 +37,7 @@ class ClipPickerList extends StatelessWidget {
   final ValueChanged<List<String>> onChanged;
 
   /// Build 12 (point #14d): ONE unified media picker — a
-  /// single "Media add karein" button that opens a source
+  /// single "Add media" button that opens a source
   /// sheet (gallery video / files / photo) instead of three
   /// separate add buttons. The three sources, their keys and
   /// their handlers are exactly the same; only the entry
@@ -56,7 +56,7 @@ class ClipPickerList extends StatelessWidget {
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Clip add nahi hua: $e')),
+          SnackBar(content: Text('Clip could not be added: $e')),
         );
       }
     }
@@ -75,7 +75,7 @@ class ClipPickerList extends StatelessWidget {
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Clip add nahi hua: $e')),
+          SnackBar(content: Text('Clip could not be added: $e')),
         );
       }
     }
@@ -93,7 +93,7 @@ class ClipPickerList extends StatelessWidget {
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Photo add nahi hua: $e')),
+          SnackBar(content: Text('Photo could not be added: $e')),
         );
       }
     }
@@ -110,9 +110,9 @@ class ClipPickerList extends StatelessWidget {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            '${result.droppedByCap} clip(s) add nahi hue — '
-            'project mein zyada se zyada ${NewsProject.maxClips} '
-            'clips ho sakte hain.',
+            '${result.droppedByCap} clip(s) were not added — '
+            'at most ${NewsProject.maxClips} in the project '
+            'clips can exist.',
           ),
         ),
       );
@@ -136,7 +136,7 @@ class ClipPickerList extends StatelessWidget {
                 child: Align(
                   alignment: Alignment.centerLeft,
                   child: Text(
-                    'Media kahan se add karein?',
+                    'Where to add media from?',
                     style: TextStyle(
                       fontWeight: FontWeight.bold,
                       fontSize: 15,
@@ -156,7 +156,7 @@ class ClipPickerList extends StatelessWidget {
               ListTile(
                 key: const Key('addClipFiles'),
                 leading: const Icon(Icons.folder_open_outlined),
-                title: const Text('Files se chunein'),
+                title: const Text('Choose from files'),
                 onTap: () {
                   Navigator.of(sheetContext).pop();
                   unawaited(_addFromFiles(context));
@@ -165,7 +165,7 @@ class ClipPickerList extends StatelessWidget {
               ListTile(
                 key: const Key('addClipPhoto'),
                 leading: const Icon(Icons.photo_library_outlined),
-                title: const Text('Photo add karein'),
+                title: const Text('Add photo'),
                 onTap: () {
                   Navigator.of(sheetContext).pop();
                   unawaited(_addPhotos(context));
@@ -192,7 +192,7 @@ class ClipPickerList extends StatelessWidget {
               onPressed: () => _showUnifiedSourceSheet(context),
               icon: const Icon(Icons.add_photo_alternate_outlined,
                   size: 19),
-              label: const Text('Media add karein'),
+              label: const Text('Add media'),
               style: FilledButton.styleFrom(
                 backgroundColor: const Color(0xFFFFC800),
                 foregroundColor: Colors.black,
@@ -220,7 +220,7 @@ class ClipPickerList extends StatelessWidget {
                   key: const Key('addClipFiles'),
                   onPressed: () => _addFromFiles(context),
                   icon: const Icon(Icons.folder_open),
-                  label: const Text('Files se chunein'),
+                  label: const Text('Choose from files'),
                 ),
               ),
             ],
@@ -232,15 +232,15 @@ class ClipPickerList extends StatelessWidget {
               key: const Key('addClipPhoto'),
               onPressed: () => _addPhotos(context),
               icon: const Icon(Icons.photo_library_outlined),
-              label: const Text('Photo add karein'),
+              label: const Text('Add photo'),
             ),
           ),
         ],
         const SizedBox(height: 8),
         if (paths.isEmpty)
           const Text(
-            'Abhi koi clip nahi — gallery ya files se video ya photo '
-            'add karein; yehi template ke main area mein lagega.',
+            'No clip yet — add a video or photo from the gallery or files; '
+            'add; this will sit in the template\'s main area.',
             style: TextStyle(color: Colors.grey),
           )
         else
@@ -280,7 +280,7 @@ class ClipPickerList extends StatelessWidget {
                       IconButton(
                         key: Key('removeClip-$index'),
                         icon: const Icon(Icons.delete_outline),
-                        tooltip: 'Clip hatayein',
+                        tooltip: 'Remove clip',
                         onPressed: () {
                           final next = List<String>.from(paths)
                             ..removeAt(index);
