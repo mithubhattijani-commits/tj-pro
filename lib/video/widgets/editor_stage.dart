@@ -318,7 +318,303 @@ class TimelineMath {
     }
     return idx;
   }
+
+  // ---- v1.14.0 T1: Precision (A13 / A14 / A20). ----
+
+  /// A14: timecode for [sec] at [fps] frames per second, in the
+  /// pro format H:MM:SS:FF. Negative times clamp to zero; the
+  /// frame count is the FLOOR of the fractional part (the frame
+  /// the playhead sits ON, never the next one).
+  static String formatTimecode(double sec, int fps) {
+    final f = fps <= 0 ? 30 : fps;
+    final t = sec.isFinite && sec > 0 ? sec : 0.0;
+    final totalFrames = (t * f).floor();
+    final frames = totalFrames % f;
+    final totalSec = totalFrames ~/ f;
+    final s = totalSec % 60;
+    final m = (totalSec ~/ 60) % 60;
+    final h = totalSec ~/ 3600;
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '$h:${two(m)}:${two(s)}:${two(frames)}';
+  }
+
+  /// A14: the ruler's label step (seconds) for a zoom of
+  /// [pxPerSec] px/s — the smallest "round" step whose labels
+  /// stay at least ~56 px apart, so the ruler is readable at
+  /// every zoom instead of the old fixed 2 s.
+  static double rulerStepSec(double pxPerSec) {
+    const steps = [0.5, 1.0, 2.0, 5.0, 10.0, 15.0, 30.0, 60.0, 120.0, 300.0];
+    for (final s in steps) {
+      if (s * pxPerSec >= 56) return s;
+    }
+    return steps.last;
+  }
+
+  /// A13: the px-per-second that fits a [totalSec] timeline into
+  /// [widthPx] of strip — clamped to the timeline's zoom range,
+  /// so a very long project lands on the minimum zoom (and
+  /// scrolls) instead of shrinking to nothing.
+  static double pxPerSecToFit({
+    required double totalSec,
+    required double widthPx,
+  }) {
+    if (totalSec <= 0 || widthPx <= 0) return 42;
+    return (widthPx / totalSec).clamp(12.0, 120.0).toDouble();
+  }
+
+  /// A20: the snap threshold (seconds) for the current settings.
+  /// OFF always yields 0 (= never snap — [snapSec] with a 0
+  /// threshold only snaps an EXACT hit, and callers skip the
+  /// call entirely when this returns 0). Strength scales the
+  /// long-standing bases: playhead 0.15 s, trim handles 0.08 s;
+  /// 0 = Halki (×0.5), 1 = Normal (×1), 2 = Mazboot (×2).
+  static double snapThreshold({
+    required bool on,
+    required int strength,
+    required bool forTrim,
+  }) {
+    if (!on) return 0;
+    final base = forTrim ? 0.08 : 0.15;
+    final factor = switch (strength) {
+      0 => 0.5,
+      2 => 2.0,
+      _ => 1.0,
+    };
+    return base * factor;
+  }
+
+  // ---- v1.14.0 T2: Trim modes (A6 / A7 / A25). ----
+
+  /// The shortest piece a trim mode may leave behind — the same
+  /// 0.3 s floor Split and the trim handles already enforce.
+  static const double minClipSec = 0.3;
+
+  /// A6 ROLL: move the boundary between clip A (before) and clip
+  /// B (after) by [delta] seconds (+ = later). A's used end and
+  /// B's used start move TOGETHER, so the pair's total length —
+  /// and therefore the whole timeline's — never changes. The
+  /// delta is clamped by both files: A cannot extend past its
+  /// file end or shrink below [minClipSec]; B cannot start
+  /// before its file start or shrink below [minClipSec].
+  /// Returns the new A effective-end (file seconds), the new B
+  /// trim-start (file seconds) and the delta actually applied;
+  /// null when no movement is possible at all.
+  static ({double aEnd, double bStart, double delta})? rollEdit({
+    required double aTrimStart,
+    required double aEffEnd,
+    required double aFull,
+    required double bTrimStart,
+    required double bEffEnd,
+    required double delta,
+  }) {
+    final lo = math.max(
+      aTrimStart + minClipSec - aEffEnd,
+      -bTrimStart,
+    );
+    final hi = math.min(
+      aFull - aEffEnd,
+      bEffEnd - minClipSec - bTrimStart,
+    );
+    if (hi < lo) return null;
+    final d = delta.clamp(lo, hi).toDouble();
+    if (d == 0) return null;
+    return (aEnd: aEffEnd + d, bStart: bTrimStart + d, delta: d);
+  }
+
+  /// A7 SLIP: slide clip C's USED WINDOW inside its own file by
+  /// [delta] seconds — trimStart and effective end move by the
+  /// same amount, so the clip's position and length on the
+  /// timeline do not change at all; only WHICH part of the file
+  /// plays changes. Clamped to the file's bounds. Null when no
+  /// movement is possible (window already spans the whole file).
+  static ({double start, double end, double delta})? slipEdit({
+    required double trimStart,
+    required double effEnd,
+    required double full,
+    required double delta,
+  }) {
+    final lo = -trimStart;
+    final hi = full - effEnd;
+    if (hi < lo) return null;
+    final d = delta.clamp(lo, hi).toDouble();
+    if (d == 0) return null;
+    return (start: trimStart + d, end: effEnd + d, delta: d);
+  }
+
+  /// A25: the new trimStart (file seconds) that moves clip C's
+  /// start edge exactly onto the playhead — or null when the
+  /// playhead is not strictly inside the clip's timeline span
+  /// (with the [minClipSec] tail protected: a playhead too close
+  /// to the clip's end clamps to the last legal start).
+  static double? trimStartToPlayhead({
+    required double clipStartSec,
+    required double playheadSec,
+    required double trimStart,
+    required double effEnd,
+  }) {
+    final inside = playheadSec - clipStartSec;
+    final effDur = effEnd - trimStart;
+    if (inside <= 0 || inside >= effDur) return null;
+    final candidate = trimStart + inside;
+    return candidate.clamp(trimStart, effEnd - minClipSec).toDouble();
+  }
+
+  /// A25: the new effective end (file seconds) that moves clip
+  /// C's end edge exactly onto the playhead — the mirror of
+  /// [trimStartToPlayhead].
+  static double? trimEndToPlayhead({
+    required double clipStartSec,
+    required double playheadSec,
+    required double trimStart,
+    required double effEnd,
+  }) {
+    final inside = playheadSec - clipStartSec;
+    final effDur = effEnd - trimStart;
+    if (inside <= 0 || inside >= effDur) return null;
+    final candidate = trimStart + inside;
+    return candidate.clamp(trimStart + minClipSec, effEnd).toDouble();
+  }
+
+  // ---- v1.14.0 T3: Selection & Range (A4 / A5). ----
+
+  /// A4: the clip order after moving every selected clip one
+  /// step in [direction] (-1 = peeche, +1 = aage). Returns the
+  /// NEW list of OLD indices (a permutation of 0..count-1): a
+  /// selected clip swaps with an unselected neighbour; selected
+  /// neighbours move as a block; a selected clip at the edge
+  /// stays. Pure permutation math — the State applies it to the
+  /// clip objects.
+  static List<int> multiMoveOrder({
+    required int count,
+    required Set<int> selected,
+    required int direction,
+  }) {
+    final order = [for (var i = 0; i < count; i++) i];
+    if (count < 2 || selected.isEmpty || direction == 0) return order;
+    final sel = [for (final idx in order) selected.contains(idx)];
+    if (direction > 0) {
+      for (var i = count - 2; i >= 0; i--) {
+        if (sel[i] && !sel[i + 1]) {
+          final t = order[i];
+          order[i] = order[i + 1];
+          order[i + 1] = t;
+          sel[i] = false;
+          sel[i + 1] = true;
+        }
+      }
+    } else {
+      for (var i = 1; i < count; i++) {
+        if (sel[i] && !sel[i - 1]) {
+          final t = order[i];
+          order[i] = order[i - 1];
+          order[i - 1] = t;
+          sel[i] = false;
+          sel[i - 1] = true;
+        }
+      }
+    }
+    return order;
+  }
+
+  /// A5: the per-clip plan for deleting the timeline range
+  /// [rangeIn, rangeOut) — one [RangeClipAction] per clip, in
+  /// order. A clip the range misses entirely is kept; a clip
+  /// fully inside is removed; a clip the range clips on one
+  /// side is trimmed on that side; a clip the range punches
+  /// through the middle of is SPLIT into the two surviving
+  /// pieces. Pieces shorter than 0.05 s are not worth keeping:
+  /// they collapse into the neighbouring action (a split with
+  /// a sliver on one side becomes a one-sided trim; slivers on
+  /// both sides become a removal).
+  static List<RangeClipAction> rangeDeletePlan({
+    required List<double> clipStarts,
+    required List<double> effDurations,
+    required List<double> trimStarts,
+    required double rangeIn,
+    required double rangeOut,
+  }) {
+    const sliver = 0.05;
+    final out = <RangeClipAction>[];
+    for (var i = 0; i < clipStarts.length; i++) {
+      final s = clipStarts[i];
+      final dur = effDurations[i];
+      final e = s + dur;
+      final ts = trimStarts[i];
+      if (rangeOut <= s || rangeIn >= e) {
+        out.add(const RangeClipAction.keep());
+        continue;
+      }
+      if (rangeIn <= s && rangeOut >= e) {
+        out.add(const RangeClipAction.remove());
+        continue;
+      }
+      final leftDur = rangeIn - s; // survives on the left
+      final rightDur = e - rangeOut; // survives on the right
+      if (rangeIn > s && rangeOut < e) {
+        // The range punches through the middle: split, unless a
+        // side is a sliver.
+        if (leftDur < sliver && rightDur < sliver) {
+          out.add(const RangeClipAction.remove());
+        } else if (leftDur < sliver) {
+          out.add(RangeClipAction.trimLeft(ts + (rangeOut - s)));
+        } else if (rightDur < sliver) {
+          out.add(RangeClipAction.trimRight(ts + (rangeIn - s)));
+        } else {
+          out.add(RangeClipAction.split(
+            ts + (rangeIn - s),
+            ts + (rangeOut - s),
+          ));
+        }
+        continue;
+      }
+      if (rangeIn > s) {
+        // Range starts inside, runs past the end: keep the left.
+        out.add(leftDur < sliver
+            ? const RangeClipAction.remove()
+            : RangeClipAction.trimRight(ts + (rangeIn - s)));
+      } else {
+        // Range ends inside, started before: keep the right.
+        out.add(rightDur < sliver
+            ? const RangeClipAction.remove()
+            : RangeClipAction.trimLeft(ts + (rangeOut - s)));
+      }
+    }
+    return out;
+  }
 }
+
+/// v1.14.0 T3 (A5): what a range delete does to ONE clip — see
+/// [TimelineMath.rangeDeletePlan]. [trimStart]/[effEnd] are the
+/// FILE-second values the action sets (split sets both: the
+/// left piece's new end and the right piece's new start).
+class RangeClipAction {
+  const RangeClipAction.keep()
+      : kind = RangeActionKind.keep,
+        trimStart = null,
+        effEnd = null;
+  const RangeClipAction.remove()
+      : kind = RangeActionKind.remove,
+        trimStart = null,
+        effEnd = null;
+  const RangeClipAction.trimLeft(this.trimStart)
+      : kind = RangeActionKind.trimLeft,
+        effEnd = null;
+  const RangeClipAction.trimRight(this.effEnd)
+      : kind = RangeActionKind.trimRight,
+        trimStart = null;
+  const RangeClipAction.split(this.effEnd, this.trimStart)
+      : kind = RangeActionKind.split;
+
+  final RangeActionKind kind;
+
+  /// New trimStart (file sec) for trimLeft / split.
+  final double? trimStart;
+
+  /// New effective end (file sec) for trimRight / split.
+  final double? effEnd;
+}
+
+enum RangeActionKind { keep, remove, trimLeft, trimRight, split }
 
 /// P0-2 (tools-fix wave): the outcome of resolving a Split tap —
 /// which clip is cut and at what FILE second, and whether the

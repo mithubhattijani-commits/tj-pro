@@ -270,6 +270,22 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   int _selectedClipIndex = 0;
   String _clipEditStatus = '';
 
+  /// v1.14.0 T4 (B1/B2/B5): the Maker timeline is now a REAL
+  /// time-scale — clips sit at cumulative-second positions under
+  /// a ruler, the playhead can be dragged (scrub), and the lane
+  /// area scrolls when zoomed. [_nsPps] null = fit-to-width (the
+  /// old everything-visible default, so nothing changes until
+  /// the user zooms). [_scrubSec] is the dragged playhead
+  /// position while the transport is not playing (the transport
+  /// still only plays the FIRST clip — see [_scrubTo]).
+  /// UI-only state: the project JSON is untouched, so old
+  /// projects cannot break.
+  double? _nsPps;
+  double _nsScrollX = 0;
+  double? _scrubSec;
+  double _nsViewportW = 0;
+  double _nsLayoutTotal = 0;
+
   /// Tools-fix wave (P2): debounce for the bare-rebuild text
   /// fields (Tehreer / tickers / voice script) — typing used to
   /// rebuild the WHOLE Maker screen on every keystroke just so
@@ -310,8 +326,80 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       setState(() {
         _transportPosition = pos;
         _transportPlaying = value.isPlaying;
+        if (value.isPlaying) {
+          // Playing takes the playhead back from any scrub and
+          // keeps it visible in a zoomed timeline (T4).
+          _scrubSec = null;
+          _nsFollowPlayhead();
+        }
       });
     }
+  }
+
+  /// T4: while playing, jump the lane scroll just enough to
+  /// keep the playhead inside the visible window. Fit mode
+  /// (pps null) never scrolls.
+  void _nsFollowPlayhead() {
+    final pps = _nsPps;
+    if (pps == null || _nsViewportW <= 0 || _nsLayoutTotal <= 0) return;
+    final px = _transportPosition.inMilliseconds / 1000.0 * pps;
+    var maxScroll = _nsLayoutTotal * pps - _nsViewportW;
+    if (maxScroll < 0) maxScroll = 0;
+    if (px < _nsScrollX) {
+      _nsScrollX = px.clamp(0.0, maxScroll);
+    } else if (px > _nsScrollX + _nsViewportW - 24) {
+      _nsScrollX = (px - 24).clamp(0.0, maxScroll);
+    }
+  }
+
+  /// The position the timeline SHOWS: a scrubbed playhead wins
+  /// while paused; the transport position wins while playing.
+  double get _effectivePosSec =>
+      _scrubSec ?? _transportPosition.inMilliseconds / 1000.0;
+
+  /// v1.14.0 T4 (B2): drag the playhead to [globalSec] on the
+  /// reel timeline. Scrubbing pauses playback. The transport
+  /// only plays the FIRST clip, so a target inside clip 1's used
+  /// range also seeks the player to the matching file position;
+  /// beyond clip 1 the playhead/readout move and the preview
+  /// keeps showing clip 1 — an honest limit (the guide says so).
+  Future<void> _scrubTo(NewsProject project, double globalSec) async {
+    final total = _nsLayoutTotal;
+    final target =
+        total > 0 ? globalSec.clamp(0.0, total) : (globalSec < 0 ? 0.0 : globalSec);
+    setState(() => _scrubSec = target);
+    final controller = _transportController;
+    if (controller == null || !controller.value.isInitialized) return;
+    try {
+      if (controller.value.isPlaying) await controller.pause();
+      if (project.clipPaths.isNotEmpty) {
+        final eff0 = _entryDurationSec(project, 0);
+        if (eff0 != null && target < eff0) {
+          final trim = project.trimAt(0);
+          await controller.seekTo(Duration(
+              milliseconds: ((trim.startSec + target) * 1000).round()));
+        }
+      }
+    } catch (_) {
+      // A broken clip must never break the workspace.
+    }
+  }
+
+  /// T4 (B1): header zoom — ×/÷ around the current scale; fit
+  /// returns to the everything-visible default.
+  void _nsZoomBy(double factor) {
+    final fit = _nsLayoutTotal > 0 && _nsViewportW > 0
+        ? _nsViewportW / _nsLayoutTotal
+        : 42.0;
+    final cur = _nsPps ?? fit;
+    setState(() => _nsPps = (cur * factor).clamp(4.0, 400.0));
+  }
+
+  void _nsZoomFit() {
+    setState(() {
+      _nsPps = null;
+      _nsScrollX = 0;
+    });
   }
 
   Future<void> _transportToggle() async {
@@ -2779,10 +2867,19 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     final tickerText = project.tickerText.trim().isNotEmpty
         ? project.tickerText.trim()
         : project.englishTickerText.trim();
-    final posSec = _transportPosition.inMilliseconds / 1000.0;
-    final shownPos = totalAll > 0 && posSec > totalAll ? totalAll : posSec;
-    final playFraction =
-        totalAll > 0 ? (shownPos / totalAll).clamp(0.0, 1.0) : 0.0;
+    // T4: the SCALE total counts every clip (an unprobed clip
+    // gets a nominal 3 s, so positions exist even before the
+    // duration probes land); the header total keeps the probed
+    // sum it has always shown.
+    var layoutTotal = 0.0;
+    for (var i = 0; i < project.clipPaths.length; i++) {
+      layoutTotal += _entryDurationSec(project, i) ?? 3.0;
+    }
+    if (layoutTotal <= 0) layoutTotal = totalAll;
+    _nsLayoutTotal = layoutTotal;
+    final posSec = _effectivePosSec;
+    final shownPos =
+        layoutTotal > 0 && posSec > layoutTotal ? layoutTotal : posSec;
     final hasTransport = _transportController != null &&
         (_transportController?.value.isInitialized ?? false);
     return Container(
@@ -2866,6 +2963,49 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                   ),
                 ),
               ),
+              // v1.14.0 T4 (B1): timeline zoom — out / fit / in.
+              IconButton(
+                key: const Key('nsTlZoomOut'),
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                style: IconButton.styleFrom(
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                constraints:
+                    const BoxConstraints(minWidth: 26, minHeight: 26),
+                icon: const Icon(Icons.remove, size: 16),
+                color: const Color(0xFFC4C9D0),
+                tooltip: 'Timeline chhota',
+                onPressed: layoutTotal > 0 ? () => _nsZoomBy(1 / 1.5) : null,
+              ),
+              IconButton(
+                key: const Key('nsTlZoomFit'),
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                style: IconButton.styleFrom(
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                constraints:
+                    const BoxConstraints(minWidth: 26, minHeight: 26),
+                icon: const Icon(Icons.fit_screen, size: 15),
+                color: const Color(0xFFC4C9D0),
+                tooltip: 'Sab nazar aye (fit)',
+                onPressed: layoutTotal > 0 ? _nsZoomFit : null,
+              ),
+              IconButton(
+                key: const Key('nsTlZoomIn'),
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                style: IconButton.styleFrom(
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                constraints:
+                    const BoxConstraints(minWidth: 26, minHeight: 26),
+                icon: const Icon(Icons.add, size: 16),
+                color: const Color(0xFFC4C9D0),
+                tooltip: 'Timeline bara',
+                onPressed: layoutTotal > 0 ? () => _nsZoomBy(1.5) : null,
+              ),
             ],
           ),
           const SizedBox(height: 6),
@@ -2890,41 +3030,108 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           const SizedBox(height: 6),
           LayoutBuilder(
             builder: (context, constraints) {
-              return Stack(
+              // v1.14.0 T4 (B1/B2/B5): real time-scale geometry.
+              // The 52px label column stays fixed; the lane
+              // content lives in ONE pixel space (seconds × pps)
+              // and shifts by the scroll offset when zoomed past
+              // fit. At fit (the default) nothing scrolls and the
+              // zone looks exactly as it always has.
+              final viewportW = constraints.maxWidth - 52;
+              _nsViewportW = viewportW;
+              final fitPps =
+                  layoutTotal > 0 ? viewportW / layoutTotal : 42.0;
+              final pps = (_nsPps ?? fitPps).clamp(4.0, 400.0);
+              var contentW = layoutTotal * pps;
+              if (contentW < viewportW) contentW = viewportW;
+              var maxScroll = contentW - viewportW;
+              if (maxScroll < 0) maxScroll = 0;
+              final scrollX = _nsScrollX.clamp(0.0, maxScroll);
+              Widget laneViewport(double height, Widget child) {
+                return SizedBox(
+                  height: height,
+                  child: Stack(
+                    clipBehavior: Clip.hardEdge,
+                    children: [
+                      Positioned(
+                        left: -scrollX,
+                        top: 0,
+                        width: contentW,
+                        child: child,
+                      ),
+                    ],
+                  ),
+                );
+              }
+
+              final playheadLeft = 52 + shownPos * pps - scrollX;
+              return GestureDetector(
+                // Dragging the lanes scrolls a zoomed timeline;
+                // lane/block taps are unaffected (a drag only
+                // wins after the touch slop, like every editor).
+                onHorizontalDragUpdate: maxScroll > 0
+                    ? (d) => setState(() => _nsScrollX =
+                        (_nsScrollX - d.delta.dx).clamp(0.0, maxScroll))
+                    : null,
+                child: Stack(
                 children: [
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      if (!compact && totalAll > 0) ...[
+                      if (!compact && layoutTotal > 0) ...[
                         Row(
                           children: [
                             const SizedBox(width: 52),
-                            const Text(
-                              '0:00',
-                              style: TextStyle(
-                                  fontSize: 9.5, color: Color(0xFF5E646F)),
-                            ),
-                            const Spacer(),
-                            Text(
-                              _fmtDur(totalAll / 2),
-                              style: const TextStyle(
-                                  fontSize: 9.5, color: Color(0xFF5E646F)),
-                            ),
-                            const Spacer(),
-                            Text(
-                              _fmtDur(totalAll),
-                              style: const TextStyle(
-                                  fontSize: 9.5, color: Color(0xFF5E646F)),
+                            Expanded(
+                              child: GestureDetector(
+                                key: const Key('tlRuler'),
+                                behavior: HitTestBehavior.opaque,
+                                // B2: tap or drag on the ruler
+                                // scrubs the playhead.
+                                onTapDown: (d) => _scrubTo(project,
+                                    (d.localPosition.dx + scrollX) / pps),
+                                onHorizontalDragStart: (d) => _scrubTo(
+                                    project,
+                                    (d.localPosition.dx + scrollX) / pps),
+                                onHorizontalDragUpdate: (d) => _scrubTo(
+                                    project,
+                                    (d.localPosition.dx + scrollX) / pps),
+                                child: SizedBox(
+                                  height: 16,
+                                  child: Stack(
+                                    clipBehavior: Clip.hardEdge,
+                                    children: [
+                                      Positioned(
+                                        left: -scrollX,
+                                        top: 0,
+                                        width: contentW,
+                                        child: CustomPaint(
+                                          size: Size(contentW, 16),
+                                          painter: _NsRulerPainter(
+                                            pps: pps,
+                                            totalSec: layoutTotal,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
                             ),
                           ],
                         ),
                         const SizedBox(height: 4),
                       ],
-                      _laneRow('V1', _videoLane(project, compact)),
+                      _laneRow(
+                        'V1',
+                        laneViewport(compact ? 38.0 : 50.0,
+                            _videoLane(project, compact, pps)),
+                      ),
                       const SizedBox(height: 4),
                       _laneRow(
                         'A1',
-                        InkWell(
+                        laneViewport(
+                          24,
+                          InkWell(
                           onTap: () => setState(() {
                             _activeTool = 'voice';
                             _timelineTab = 'voice';
@@ -2963,12 +3170,15 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                               ),
                             ),
                           ),
+                          ),
                         ),
                       ),
                       const SizedBox(height: 4),
                       _laneRow(
                         'A2',
-                        InkWell(
+                        laneViewport(
+                          24,
+                          InkWell(
                           onTap: () => setState(() => _activeTool = 'audio'),
                           child: Container(
                             height: 24,
@@ -2991,12 +3201,15 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                               ),
                             ),
                           ),
+                          ),
                         ),
                       ),
                       const SizedBox(height: 4),
                       _laneRow(
                         'TC',
-                        InkWell(
+                        laneViewport(
+                          24,
+                          InkWell(
                           onTap: () => setState(() {
                             _activeTool = 'ticker';
                             _timelineTab = 'ticker';
@@ -3026,17 +3239,21 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                               ),
                             ),
                           ),
+                          ),
                         ),
                       ),
                     ],
                   ),
-                  // The gold playhead at the transport position,
+                  // The gold playhead at the EFFECTIVE position,
                   // across the lanes (label column included — the
                   // reference draws it across the whole panel).
-                  if (totalAll > 0)
+                  // Time-scale: left = 52 + sec × pps − scroll;
+                  // it hides while scrolled out of view.
+                  if (layoutTotal > 0 &&
+                      playheadLeft >= 51 &&
+                      playheadLeft <= constraints.maxWidth - 2)
                     Positioned(
-                      left: (playFraction * constraints.maxWidth)
-                          .clamp(0.0, constraints.maxWidth - 2),
+                      left: playheadLeft,
                       top: 0,
                       bottom: 0,
                       child: Container(
@@ -3046,6 +3263,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                       ),
                     ),
                 ],
+                ),
               );
             },
           ),
@@ -3073,7 +3291,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     );
   }
 
-  Widget _videoLane(NewsProject project, bool compact) {
+  Widget _videoLane(NewsProject project, bool compact, double pps) {
     final h = compact ? 38.0 : 50.0;
     if (project.clipPaths.isEmpty) {
       return InkWell(
@@ -3092,16 +3310,28 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         ),
       );
     }
+    // T4 (B1): blocks sit at their cumulative-second position
+    // with true duration widths — no flex, no gaps — so the
+    // ruler ticks and the playhead line up with the clips
+    // exactly. An unprobed clip takes the nominal 3 s the
+    // scale total also uses.
+    final starts = <double>[];
+    var acc = 0.0;
+    for (var i = 0; i < project.clipPaths.length; i++) {
+      starts.add(acc);
+      acc += _entryDurationSec(project, i) ?? 3.0;
+    }
     return SizedBox(
       height: h,
-      child: Row(
+      child: Stack(
         children: [
-          for (var i = 0; i < project.clipPaths.length; i++) ...[
-            if (i > 0) const SizedBox(width: 4),
-            Expanded(
-              flex: ((_entryDurationSec(project, i) ?? 1) * 100)
-                  .round()
-                  .clamp(40, 100000),
+          for (var i = 0; i < project.clipPaths.length; i++)
+            Positioned(
+              left: starts[i] * pps,
+              top: 0,
+              height: h,
+              width: ((_entryDurationSec(project, i) ?? 3.0) * pps)
+                  .clamp(24.0, double.infinity),
               child: InkWell(
                 key: Key('tlClip-$i'),
                 // P1-3: tapping a clip SELECTS it (gold border)
@@ -3160,7 +3390,6 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                 ),
               ),
             ),
-          ],
         ],
       ),
     );
@@ -3173,7 +3402,9 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   /// Null when the project has no subtitles or none is active.
   SubtitleLine? _activeCaptionLine(NewsProject project) {
     if (project.subtitles.isEmpty) return null;
-    final pos = _transportPosition.inMilliseconds / 1000.0;
+    // T4: follows the EFFECTIVE position, so scrubbing the
+    // playhead also previews the caption at that point.
+    final pos = _effectivePosSec;
     for (final line in project.subtitles) {
       if (pos >= line.startSec && pos < line.endSec) return line;
     }
@@ -4285,7 +4516,11 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     for (var j = 0; j < i; j++) {
       startOffset += _entryDurationSec(project, j) ?? 0;
     }
-    final globalPos = _transportPosition.inMilliseconds / 1000.0;
+    // T4: split follows the EFFECTIVE position — scrub the
+    // playhead onto a later clip and Split cuts THERE (before,
+    // the raw transport position only ever pointed into clip 1,
+    // so later clips always split at their midpoint).
+    final globalPos = _effectivePosSec;
     final inside = globalPos - startOffset;
     final atPlayhead = inside > 0.15 && inside < effDur - 0.15;
     final cut = trim.startSec + (atPlayhead ? inside : effDur / 2);
@@ -8685,4 +8920,44 @@ class _CheckerboardPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_CheckerboardPainter oldDelegate) => false;
+}
+
+/// v1.14.0 T4 (B5): the Maker timeline ruler — adaptive ticks
+/// (TimelineMath.rulerStepSec, the same ladder the Video Editor
+/// uses) with second/m:ss labels, drawn in the timeline's own
+/// pixel space so it scrolls and zooms together with the lanes.
+class _NsRulerPainter extends CustomPainter {
+  _NsRulerPainter({required this.pps, required this.totalSec});
+
+  final double pps;
+  final double totalSec;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final step = TimelineMath.rulerStepSec(pps);
+    final tick = Paint()..color = const Color(0xFF3A4150);
+    for (var s = 0.0; s <= totalSec + 0.001; s += step) {
+      final x = s * pps;
+      canvas.drawLine(
+          Offset(x, size.height - 5), Offset(x, size.height), tick);
+      final tp = TextPainter(
+        text: TextSpan(
+          text: _label(s, step),
+          style: const TextStyle(fontSize: 9, color: Color(0xFF5E646F)),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, Offset(x + 3, 0));
+    }
+  }
+
+  String _label(double s, double step) {
+    if (step < 1) return s.toStringAsFixed(1);
+    final r = s.round();
+    return '${r ~/ 60}:${(r % 60).toString().padLeft(2, '0')}';
+  }
+
+  @override
+  bool shouldRepaint(_NsRulerPainter oldDelegate) =>
+      oldDelegate.pps != pps || oldDelegate.totalSec != totalSec;
 }

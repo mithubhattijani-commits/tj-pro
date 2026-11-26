@@ -55,10 +55,136 @@ class TimelineBar extends StatelessWidget {
                       : host.clipRow && host.clips.isNotEmpty
                           ? 'Long press to swap'
                           : 'Select one track to edit.',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: Color(0xFFFFD60A),
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              // v1.14.0 T1 (A20): TIMELINE snap quick toggle —
+              // tap = on/off, long-press = strength cycles
+              // (Halki → Normal → Mazboot). The full settings
+              // (switch + strength chips) also live in the Trim
+              // panel's Timeline section.
+              InkWell(
+                key: const Key('tlSnapToggle'),
+                onTap: () => host.update(() {
+                  host.tlSnapOn = !host.tlSnapOn;
+                  host.setStatus(host.tlSnapOn
+                      ? 'Snap ON — playhead aur trim handles '
+                          'boundary/beat/marker par chipkenge.'
+                      : 'Snap OFF — playhead aur trim bilkul '
+                          'azad chalenge.');
+                }),
+                onLongPress: () => host.update(() {
+                  host.tlSnapStrength = (host.tlSnapStrength + 1) % 3;
+                  host.tlSnapOn = true;
+                  host.setStatus(
+                    'Snap ki taqat: ${host.tlSnapStrength == 0 ? 'Halki' : host.tlSnapStrength == 2 ? 'Mazboot' : 'Normal'}.',
+                  );
+                }),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 2,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.anchor,
+                        size: 13,
+                        color: host.tlSnapOn
+                            ? TjProTheme.gold
+                            : Colors.white38,
+                      ),
+                      const SizedBox(width: 2),
+                      Text(
+                        host.tlSnapOn
+                            ? (host.tlSnapStrength == 0
+                                ? 'Snap·H'
+                                : host.tlSnapStrength == 2
+                                    ? 'Snap·M'
+                                    : 'Snap')
+                            : 'Snap',
+                        style: TextStyle(
+                          color: host.tlSnapOn
+                              ? TjProTheme.gold
+                              : Colors.white38,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              // v1.14.0 T1 (A14): timecode readout toggle.
+              InkWell(
+                key: const Key('tlTcToggle'),
+                onTap: () => host.update(() {
+                  host.timecodeOn = !host.timecodeOn;
+                  host.setStatus(host.timecodeOn
+                      ? 'Timecode ON — waqt H:MM:SS:FF mein '
+                          'dikhe ga.'
+                      : 'Timecode OFF — waqt m:ss mein dikhe ga.');
+                }),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 2,
+                  ),
+                  child: Text(
+                    'TC',
+                    style: TextStyle(
+                      color: host.timecodeOn
+                          ? TjProTheme.gold
+                          : Colors.white38,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+              // v1.14.0 T3 (A4): multi-select mode toggle.
+              InkWell(
+                key: const Key('tlMultiToggle'),
+                onTap: () => host.update(() {
+                  host.multiMode = !host.multiMode;
+                  if (!host.multiMode) host.clearMultiSelect();
+                  host.setStatus(host.multiMode
+                      ? 'Multi-select ON — clips par tap karke '
+                          'kai clips chunein.'
+                      : 'Multi-select OFF.');
+                }),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 2,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.checklist,
+                        size: 14,
+                        color: host.multiMode
+                            ? TjProTheme.gold
+                            : Colors.white38,
+                      ),
+                      const SizedBox(width: 2),
+                      Text(
+                        'Multi',
+                        style: TextStyle(
+                          color: host.multiMode
+                              ? TjProTheme.gold
+                              : Colors.white38,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -100,6 +226,80 @@ class TimelineBar extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 4),
+          // v1.14.0 T3 (A4): the multi-select action bar —
+          // shown only in multi mode. Batch delete / duplicate /
+          // move run on every ticked clip in ONE history step.
+          if (host.multiMode)
+            Container(
+              key: const Key('tlMultiBar'),
+              margin: const EdgeInsets.only(bottom: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              decoration: BoxDecoration(
+                color: const Color(0xFF22303C),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Row(
+                children: [
+                  Text(
+                    '${host.multiSelect.length} select',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    key: const Key('tlMultiMoveLeft'),
+                    visualDensity: VisualDensity.compact,
+                    tooltip: 'Peechay khiskayein',
+                    onPressed: host.multiSelect.isEmpty
+                        ? null
+                        : () => host.moveMultiSelected(-1),
+                    icon: const Icon(Icons.arrow_back,
+                        size: 17, color: Colors.white),
+                  ),
+                  IconButton(
+                    key: const Key('tlMultiMoveRight'),
+                    visualDensity: VisualDensity.compact,
+                    tooltip: 'Aage khiskayein',
+                    onPressed: host.multiSelect.isEmpty
+                        ? null
+                        : () => host.moveMultiSelected(1),
+                    icon: const Icon(Icons.arrow_forward,
+                        size: 17, color: Colors.white),
+                  ),
+                  IconButton(
+                    key: const Key('tlMultiDuplicate'),
+                    visualDensity: VisualDensity.compact,
+                    tooltip: 'Duplicate karein',
+                    onPressed: host.multiSelect.isEmpty
+                        ? null
+                        : host.duplicateMultiSelected,
+                    icon: const Icon(Icons.copy,
+                        size: 17, color: Colors.white),
+                  ),
+                  IconButton(
+                    key: const Key('tlMultiDelete'),
+                    visualDensity: VisualDensity.compact,
+                    tooltip: 'Delete karein',
+                    onPressed: host.multiSelect.isEmpty
+                        ? null
+                        : () => unawaited(host.deleteMultiSelected()),
+                    icon: const Icon(Icons.delete_outline,
+                        size: 17, color: Colors.redAccent),
+                  ),
+                  IconButton(
+                    key: const Key('tlMultiClear'),
+                    visualDensity: VisualDensity.compact,
+                    tooltip: 'Selection saaf karein',
+                    onPressed: host.clearMultiSelect,
+                    icon: const Icon(Icons.clear,
+                        size: 17, color: Colors.white70),
+                  ),
+                ],
+              ),
+            ),
           LayoutBuilder(
             builder: (context, constraints) {
               final halfPad = constraints.maxWidth / 2 - 52;
@@ -160,6 +360,24 @@ class TimelineBar extends StatelessWidget {
                               ),
                             ),
                           ],
+                        ),
+                        // v1.14.0 T1 (A13): zoom-to-fit — the
+                        // whole project in one screen.
+                        InkWell(
+                          key: const Key('tlZoomFit'),
+                          onTap: total > 0
+                              ? () => host.tlZoomToFit(
+                                    constraints.maxWidth - 52,
+                                  )
+                              : null,
+                          child: const Padding(
+                            padding: EdgeInsets.all(2),
+                            child: Icon(
+                              Icons.fit_screen,
+                              size: 14,
+                              color: Colors.white70,
+                            ),
+                          ),
                         ),
                         const SizedBox(height: 2),
                         if (host.clips.isNotEmpty)
@@ -239,27 +457,36 @@ class TimelineBar extends StatelessWidget {
                               // clip boundary when it lands close
                               // (Phase 2), with a light tick.
                               // A1 (v1.12): beats + manual markers
-                              // are snap targets too.
-                              final snapped = TimelineMath.snapSec(
-                                centreSec,
-                                [
-                                  ...TimelineMath.boundaries(
-                                    host.effectiveDurations,
-                                  ),
-                                  ...host.timelineBeats,
-                                  ...host.markers,
-                                ],
-                                0.15,
-                              );
-                              if (snapped != centreSec) {
-                                centreSec = snapped;
-                                HapticFeedback.selectionClick();
+                              // are snap targets too. v1.14 T1
+                              // (A20): the threshold is the user's
+                              // snap setting — 0 = snap OFF, no
+                              // snapping at all.
+                              final snapThresh =
+                                  host.tlSnapThreshold(false);
+                              if (snapThresh > 0) {
+                                final snapped = TimelineMath.snapSec(
+                                  centreSec,
+                                  [
+                                    ...TimelineMath.boundaries(
+                                      host.effectiveDurations,
+                                    ),
+                                    ...host.timelineBeats,
+                                    ...host.markers,
+                                  ],
+                                  snapThresh,
+                                );
+                                if (snapped != centreSec) {
+                                  centreSec = snapped;
+                                  HapticFeedback.selectionClick();
+                                }
                               }
                               unawaited(host.seekToGlobalSec(centreSec));
                             }
                             return false;
                           },
-                          child: SingleChildScrollView(
+                          child: _PinchZoomStrip(
+                            host: host,
+                            child: SingleChildScrollView(
                             controller: host.tlScroll,
                             scrollDirection: Axis.horizontal,
                             child: SizedBox(
@@ -267,13 +494,61 @@ class TimelineBar extends StatelessWidget {
                               height: 74,
                               child: Stack(
                                 children: [
-                                  // Ruler labels every 2s.
-                                  for (var s = 0; s <= total; s += 2)
+                                  // v1.14 T3 (A5): the marked
+                                  // range — a gold wash over the
+                                  // strip between In and Out,
+                                  // with edge lines. Drawn under
+                                  // the blocks so the filmstrips
+                                  // stay readable.
+                                  if (host.rangeIn != null &&
+                                      host.rangeOut != null &&
+                                      host.rangeOut! > host.rangeIn!)
+                                    Positioned(
+                                      key: const Key('tlRangeBand'),
+                                      left: halfPad +
+                                          host.rangeIn! * host.tlPxPerSec,
+                                      width: (host.rangeOut! -
+                                              host.rangeIn!) *
+                                          host.tlPxPerSec,
+                                      top: 11,
+                                      bottom: 0,
+                                      child: Container(
+                                        decoration: BoxDecoration(
+                                          color: TjProTheme.gold
+                                              .withValues(alpha: 0.13),
+                                          border: const Border(
+                                            left: BorderSide(
+                                              color: TjProTheme.gold,
+                                              width: 1.5,
+                                            ),
+                                            right: BorderSide(
+                                              color: TjProTheme.gold,
+                                              width: 1.5,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  // Ruler labels — v1.14 T1
+                                  // (A14): the step adapts to the
+                                  // zoom (the old fixed 2 s was
+                                  // unreadable zoomed out and
+                                  // sparse zoomed in).
+                                  for (var s = 0.0;
+                                      s <= total + 0.001;
+                                      s += TimelineMath.rulerStepSec(
+                                        host.tlPxPerSec,
+                                      ))
                                     Positioned(
                                       left: halfPad + s * host.tlPxPerSec - 8,
                                       top: 0,
                                       child: Text(
-                                        '${s}s',
+                                        _rulerLabel(
+                                          s,
+                                          TimelineMath.rulerStepSec(
+                                            host.tlPxPerSec,
+                                          ),
+                                        ),
                                         style: const TextStyle(
                                           color: Colors.white54,
                                           fontSize: 9,
@@ -367,6 +642,7 @@ class TimelineBar extends StatelessWidget {
                                     ),
                                 ],
                               ),
+                            ),
                             ),
                           ),
                         ),
@@ -600,6 +876,11 @@ class TimelineBar extends StatelessWidget {
             animation: host.clock,
             builder: (context, _) {
               String fmtT(double sec) {
+                // v1.14 T1 (A14): timecode mode shows
+                // H:MM:SS:FF at the export fps.
+                if (host.timecodeOn) {
+                  return TimelineMath.formatTimecode(sec, host.exportFps);
+                }
                 final m = sec ~/ 60;
                 final s = (sec % 60).floor().toString().padLeft(2, '0');
                 return '$m:$s';
@@ -612,6 +893,7 @@ class TimelineBar extends StatelessWidget {
                     Center(
                       child: Text(
                         fmtT(host.globalPositionSec),
+                        key: const Key('tlTimeCentre'),
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 11,
@@ -723,7 +1005,15 @@ class TimelineBar extends StatelessWidget {
     final clip = host.clips[i];
     final w = clip.effectiveDuration * host.tlPxPerSec;
     final selected = i == host.selected;
+    final inMulti = host.multiSelect.contains(i);
     final thumbs = host.thumbCache[host.thumbKey(clip)];
+    // v1.14 T2 (A7): in Slip mode the SELECTED block's body
+    // drag slips its window — the long-press reorder stands
+    // down for that block so the drag is unambiguous.
+    final slipBlock = host.trimMode == 'slip' &&
+        selected &&
+        !host.mainTrackLocked &&
+        !clip.isPhoto;
     return Positioned(
       // Keyed by the clip OBJECT so a drag-reorder moves the
       // block's element (and its live gesture) with the clip.
@@ -734,6 +1024,12 @@ class TimelineBar extends StatelessWidget {
       height: 56,
       child: GestureDetector(
         onTap: () {
+          // v1.14 T3 (A4): in multi mode a tap TICKS the clip
+          // instead of selecting it alone.
+          if (host.multiMode) {
+            host.toggleMultiSelect(i);
+            return;
+          }
           host.update(() {
             host.selected = i;
             host.clipRow = true;
@@ -744,18 +1040,49 @@ class TimelineBar extends StatelessWidget {
         // Long press: drag = live reorder (Phase 2); a stationary
         // press still opens the swap sheet (the original path).
         // Locked track: no reorder at all.
-        onLongPressStart: host.mainTrackLocked
+        onLongPressStart: host.mainTrackLocked || slipBlock
             ? null
             : (_) => host.onClipDragStart(i),
-        onLongPressMoveUpdate: host.mainTrackLocked ? null : host.onClipDragMove,
-        onLongPressEnd: host.mainTrackLocked
+        onLongPressMoveUpdate:
+            host.mainTrackLocked || slipBlock ? null : host.onClipDragMove,
+        onLongPressEnd: host.mainTrackLocked || slipBlock
             ? null
             : (_) => host.onClipDragEnd(i),
+        // v1.14 T2 (A7): Slip — drag the selected block to slide
+        // the used window inside its file (position + length
+        // unchanged). The math is TimelineMath.slipEdit, applied
+        // incrementally like the trim handles.
+        onHorizontalDragUpdate: slipBlock
+            ? (d) {
+                final res = TimelineMath.slipEdit(
+                  trimStart: clip.trimStart,
+                  effEnd: clip.effectiveEnd,
+                  full: clip.duration.inMilliseconds / 1000,
+                  delta: d.delta.dx / host.tlPxPerSec,
+                );
+                if (res != null) {
+                  host.update(() {
+                    clip.trimStart = res.start;
+                    clip.trimEnd = res.end;
+                  });
+                }
+              }
+            : null,
+        onHorizontalDragEnd: slipBlock
+            ? (_) {
+                host.pushHistory();
+                unawaited(host.loadPreview());
+              }
+            : null,
         child: Container(
           decoration: BoxDecoration(
             border: Border.all(
-              color: selected ? TjProTheme.gold : Colors.white24,
-              width: selected ? 2 : 1,
+              color: selected
+                  ? TjProTheme.gold
+                  : inMulti
+                      ? Colors.cyanAccent
+                      : Colors.white24,
+              width: selected || inMulti ? 2 : 1,
             ),
             borderRadius: BorderRadius.circular(4),
             color: const Color(0xFF2A2A2A),
@@ -799,6 +1126,24 @@ class TimelineBar extends StatelessWidget {
                     color: Colors.white,
                   ),
                 ),
+              // v1.14 T3 (A4): the multi-select tick.
+              if (inMulti)
+                Positioned(
+                  right: 3,
+                  top: 3,
+                  child: Container(
+                    key: Key('tlMultiTick-$i'),
+                    decoration: const BoxDecoration(
+                      color: Colors.cyanAccent,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.check,
+                      size: 12,
+                      color: Colors.black,
+                    ),
+                  ),
+                ),
               if (selected && !host.mainTrackLocked) ...[
                 Positioned(
                   left: 0,
@@ -808,6 +1153,29 @@ class TimelineBar extends StatelessWidget {
                   child: GestureDetector(
                     behavior: HitTestBehavior.opaque,
                     onHorizontalDragUpdate: (d) {
+                      // v1.14 T2 (A6): in Roll mode this handle
+                      // moves the boundary WITH the previous
+                      // clip (TimelineMath.rollEdit) — the pair's
+                      // total length never changes.
+                      if (host.trimMode == 'roll') {
+                        if (i <= 0) return;
+                        final a = host.clips[i - 1];
+                        final res = TimelineMath.rollEdit(
+                          aTrimStart: a.trimStart,
+                          aEffEnd: a.effectiveEnd,
+                          aFull: a.duration.inMilliseconds / 1000,
+                          bTrimStart: clip.trimStart,
+                          bEffEnd: clip.effectiveEnd,
+                          delta: d.delta.dx / host.tlPxPerSec,
+                        );
+                        if (res != null) {
+                          host.update(() {
+                            a.trimEnd = res.aEnd;
+                            clip.trimStart = res.bStart;
+                          });
+                        }
+                        return;
+                      }
                       host.update(() {
                         var v = (clip.trimStart +
                                 d.delta.dx / host.tlPxPerSec)
@@ -817,31 +1185,36 @@ class TimelineBar extends StatelessWidget {
                         // one haptic tick per engagement.
                         // A1 (v1.12): beats + markers inside this
                         // clip are targets too, converted to the
-                        // handle's file-second domain.
-                        final snapped = TimelineMath.snapSec(
-                          v,
-                          [
-                            0.0,
-                            ...TimelineMath.trimSnapFilePoints(
-                              clipStart: host.clipStartSec(i),
-                              trimStart: clip.trimStart,
-                              effectiveDuration: clip.effectiveDuration,
-                              timelinePoints: [
-                                ...host.timelineBeats,
-                                ...host.markers,
-                              ],
-                            ),
-                          ],
-                          0.08,
-                        );
-                        if (snapped != v) {
-                          if (!host.trimSnapped) {
-                            host.trimSnapped = true;
-                            HapticFeedback.selectionClick();
+                        // handle's file-second domain. v1.14 T1
+                        // (A20): the threshold is the user's snap
+                        // setting — 0 = no snapping at all.
+                        final thresh = host.tlSnapThreshold(true);
+                        if (thresh > 0) {
+                          final snapped = TimelineMath.snapSec(
+                            v,
+                            [
+                              0.0,
+                              ...TimelineMath.trimSnapFilePoints(
+                                clipStart: host.clipStartSec(i),
+                                trimStart: clip.trimStart,
+                                effectiveDuration: clip.effectiveDuration,
+                                timelinePoints: [
+                                  ...host.timelineBeats,
+                                  ...host.markers,
+                                ],
+                              ),
+                            ],
+                            thresh,
+                          );
+                          if (snapped != v) {
+                            if (!host.trimSnapped) {
+                              host.trimSnapped = true;
+                              HapticFeedback.selectionClick();
+                            }
+                            v = snapped;
+                          } else {
+                            host.trimSnapped = false;
                           }
-                          v = snapped;
-                        } else {
-                          host.trimSnapped = false;
                         }
                         clip.trimStart = v;
                       });
@@ -849,11 +1222,21 @@ class TimelineBar extends StatelessWidget {
                     onHorizontalDragEnd: (_) {
                       host.trimSnapped = false;
                       host.pushHistory();
+                      if (host.trimMode == 'roll') {
+                        if (i <= 0) {
+                          host.setStatus('Pehli clip se pehle koi '
+                              'boundary nahi — roll nahi ho sakta.');
+                        } else {
+                          unawaited(host.loadPreview());
+                        }
+                      }
                     },
                     child: Container(
                       color: TjProTheme.gold.withValues(alpha: 0.85),
-                      child: const Icon(
-                        Icons.chevron_left,
+                      child: Icon(
+                        host.trimMode == 'roll'
+                            ? Icons.swap_horiz
+                            : Icons.chevron_left,
                         size: 12,
                         color: Colors.black,
                       ),
@@ -868,6 +1251,27 @@ class TimelineBar extends StatelessWidget {
                   child: GestureDetector(
                     behavior: HitTestBehavior.opaque,
                     onHorizontalDragUpdate: (d) {
+                      // v1.14 T2 (A6): in Roll mode this handle
+                      // moves the boundary WITH the next clip.
+                      if (host.trimMode == 'roll') {
+                        if (i >= host.clips.length - 1) return;
+                        final b = host.clips[i + 1];
+                        final res = TimelineMath.rollEdit(
+                          aTrimStart: clip.trimStart,
+                          aEffEnd: clip.effectiveEnd,
+                          aFull: clip.duration.inMilliseconds / 1000,
+                          bTrimStart: b.trimStart,
+                          bEffEnd: b.effectiveEnd,
+                          delta: d.delta.dx / host.tlPxPerSec,
+                        );
+                        if (res != null) {
+                          host.update(() {
+                            clip.trimEnd = res.aEnd;
+                            b.trimStart = res.bStart;
+                          });
+                        }
+                        return;
+                      }
                       host.update(() {
                         final full = clip.duration.inMilliseconds / 1000;
                         var v = (clip.effectiveEnd +
@@ -876,30 +1280,35 @@ class TimelineBar extends StatelessWidget {
                         // Snap to the clip's true end (Phase 2).
                         // A1 (v1.12): beats + markers inside this
                         // clip are targets too (file-second domain).
-                        final snapped = TimelineMath.snapSec(
-                          v,
-                          [
-                            full,
-                            ...TimelineMath.trimSnapFilePoints(
-                              clipStart: host.clipStartSec(i),
-                              trimStart: clip.trimStart,
-                              effectiveDuration: clip.effectiveDuration,
-                              timelinePoints: [
-                                ...host.timelineBeats,
-                                ...host.markers,
-                              ],
-                            ),
-                          ],
-                          0.08,
-                        );
-                        if (snapped != v) {
-                          if (!host.trimSnapped) {
-                            host.trimSnapped = true;
-                            HapticFeedback.selectionClick();
+                        // v1.14 T1 (A20): the threshold is the
+                        // user's snap setting — 0 = no snapping.
+                        final thresh = host.tlSnapThreshold(true);
+                        if (thresh > 0) {
+                          final snapped = TimelineMath.snapSec(
+                            v,
+                            [
+                              full,
+                              ...TimelineMath.trimSnapFilePoints(
+                                clipStart: host.clipStartSec(i),
+                                trimStart: clip.trimStart,
+                                effectiveDuration: clip.effectiveDuration,
+                                timelinePoints: [
+                                  ...host.timelineBeats,
+                                  ...host.markers,
+                                ],
+                              ),
+                            ],
+                            thresh,
+                          );
+                          if (snapped != v) {
+                            if (!host.trimSnapped) {
+                              host.trimSnapped = true;
+                              HapticFeedback.selectionClick();
+                            }
+                            v = snapped;
+                          } else {
+                            host.trimSnapped = false;
                           }
-                          v = snapped;
-                        } else {
-                          host.trimSnapped = false;
                         }
                         clip.trimEnd = v;
                       });
@@ -907,11 +1316,21 @@ class TimelineBar extends StatelessWidget {
                     onHorizontalDragEnd: (_) {
                       host.trimSnapped = false;
                       host.pushHistory();
+                      if (host.trimMode == 'roll') {
+                        if (i >= host.clips.length - 1) {
+                          host.setStatus('Aakhri clip ke baad koi '
+                              'boundary nahi — roll nahi ho sakta.');
+                        } else {
+                          unawaited(host.loadPreview());
+                        }
+                      }
                     },
                     child: Container(
                       color: TjProTheme.gold.withValues(alpha: 0.85),
-                      child: const Icon(
-                        Icons.chevron_right,
+                      child: Icon(
+                        host.trimMode == 'roll'
+                            ? Icons.swap_horiz
+                            : Icons.chevron_right,
                         size: 12,
                         color: Colors.black,
                       ),
@@ -926,6 +1345,19 @@ class TimelineBar extends StatelessWidget {
     );
   }
 }
+
+  /// v1.14 T1 (A14): one ruler label for second [s] at the
+  /// adaptive [step] — sub-second steps keep a decimal, minute
+  /// steps switch to m:ss so long timelines stay readable.
+  String _rulerLabel(double s, double step) {
+    if (step >= 60) {
+      final m = s ~/ 60;
+      final ss = (s % 60).round().toString().padLeft(2, '0');
+      return '$m:$ss';
+    }
+    if (step < 1) return '${s.toStringAsFixed(1)}s';
+    return '${s.toInt()}s';
+  }
 
   /// The add-media sheet behind the timeline's red + button.
   void showAddMediaSheet(VideoEditorController host) {
@@ -1017,3 +1449,68 @@ class TimelineBar extends StatelessWidget {
     });
     unawaited(host.loadPreview());
   }
+
+/// v1.14.0 T1 (A13): pinch-to-zoom over the timeline strip.
+///
+/// A [Listener] — NOT a GestureDetector — tracks raw pointers,
+/// so it never enters the gesture arena: the strip's scroll,
+/// the blocks' taps and the long-press reorder keep exactly
+/// their old behaviour. When a SECOND pointer lands, the
+/// pointer distance becomes the zoom: the host captures its
+/// base px-per-second (tlPinchStart) and every move reports
+/// the distance ratio (tlPinchUpdate), which the host turns
+/// into a centre-anchored zoom — the same anchor the −/+
+/// buttons have always used.
+class _PinchZoomStrip extends StatefulWidget {
+  const _PinchZoomStrip({required this.host, required this.child});
+
+  final VideoEditorController host;
+  final Widget child;
+
+  @override
+  State<_PinchZoomStrip> createState() => _PinchZoomStripState();
+}
+
+class _PinchZoomStripState extends State<_PinchZoomStrip> {
+  final Map<int, Offset> _pointers = {};
+  double? _baseDistance;
+
+  double get _distance {
+    final pts = _pointers.values.toList();
+    if (pts.length < 2) return 0;
+    return (pts[0] - pts[1]).distance;
+  }
+
+  void _onDown(PointerDownEvent e) {
+    _pointers[e.pointer] = e.localPosition;
+    if (_pointers.length == 2) {
+      _baseDistance = _distance;
+      widget.host.tlPinchStart();
+    }
+  }
+
+  void _onMove(PointerMoveEvent e) {
+    if (!_pointers.containsKey(e.pointer)) return;
+    _pointers[e.pointer] = e.localPosition;
+    final base = _baseDistance;
+    if (_pointers.length == 2 && base != null && base > 0) {
+      widget.host.tlPinchUpdate(_distance / base);
+    }
+  }
+
+  void _onUp(PointerEvent e) {
+    _pointers.remove(e.pointer);
+    if (_pointers.length < 2) _baseDistance = null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      onPointerDown: _onDown,
+      onPointerMove: _onMove,
+      onPointerUp: _onUp,
+      onPointerCancel: _onUp,
+      child: widget.child,
+    );
+  }
+}

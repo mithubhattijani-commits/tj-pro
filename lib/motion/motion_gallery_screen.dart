@@ -23,6 +23,8 @@ import '../services/pro_service.dart';
 import '../services/remote_config_service.dart';
 import '../widgets/tool_guide.dart';
 import 'motion_access.dart';
+import 'motion_editor_screen.dart';
+import 'motion_my_templates.dart';
 import 'motion_preview.dart';
 import 'motion_preview_screen.dart';
 import 'motion_templates.dart';
@@ -53,6 +55,9 @@ class _MotionGalleryScreenState extends State<MotionGalleryScreen> {
   Set<String> _owned = const {};
   bool _isPro = false;
 
+  /// v1.14.0 M2: the user's saved templates (Editor's Save).
+  List<MotionMyTemplate> _mine = const [];
+
   @override
   void initState() {
     super.initState();
@@ -60,6 +65,12 @@ class _MotionGalleryScreenState extends State<MotionGalleryScreen> {
     ProService.instance.isPro.addListener(_onProChanged);
     RemoteConfigService.instance.notifier.addListener(_onConfigChanged);
     _reloadOwned();
+    _reloadMine();
+  }
+
+  Future<void> _reloadMine() async {
+    final mine = await MotionMyTemplates.load();
+    if (mounted) setState(() => _mine = mine);
   }
 
   @override
@@ -92,6 +103,23 @@ class _MotionGalleryScreenState extends State<MotionGalleryScreen> {
 
   List<MotionTemplate> get _visible {
     final q = _query.trim().toLowerCase();
+    if (_category == 'mine') {
+      // M2: saved templates ride the same card grid as free
+      // wrappers (tier free = always usable, no unlock flow);
+      // _onTap recognises the 'mine:' id and opens the Editor.
+      return _mine
+          .where((r) => q.isEmpty || r.name.toLowerCase().contains(q))
+          .map(
+            (r) => MotionTemplate(
+              id: 'mine:${r.id}',
+              name: r.name,
+              category: r.category,
+              tier: MotionTier.free,
+              scene: r.scene,
+            ),
+          )
+          .toList(growable: false);
+    }
     return MotionTemplates.all.where((t) {
       if (_category != 'all' && t.category != _category) return false;
       if (q.isEmpty) return true;
@@ -102,6 +130,22 @@ class _MotionGalleryScreenState extends State<MotionGalleryScreen> {
   }
 
   Future<void> _onTap(MotionTemplate t) async {
+    if (t.id.startsWith('mine:')) {
+      final id = t.id.substring(5);
+      for (final r in _mine) {
+        if (r.id == id) {
+          await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => MotionEditorScreen.fromSaved(saved: r),
+            ),
+          );
+          await _reloadMine();
+          return;
+        }
+      }
+      return;
+    }
     final access = _accessFor(t);
     if (access.canUse) {
       await Navigator.push(
@@ -237,7 +281,11 @@ class _MotionGalleryScreenState extends State<MotionGalleryScreen> {
   }
 
   Widget _categoryRail() {
-    final cats = ['all', ...MotionTemplates.presentCategories];
+    final cats = [
+      'all',
+      if (_mine.isNotEmpty) 'mine',
+      ...MotionTemplates.presentCategories,
+    ];
     return SizedBox(
       height: 40,
       child: ListView.separated(
@@ -249,8 +297,11 @@ class _MotionGalleryScreenState extends State<MotionGalleryScreen> {
         itemBuilder: (ctx, i) {
           final c = cats[i];
           final selected = _category == c;
-          final label =
-              c == 'all' ? 'All' : (MotionCategories.labels[c] ?? c);
+          final label = c == 'all'
+              ? 'All'
+              : c == 'mine'
+                  ? 'My Templates'
+                  : (MotionCategories.labels[c] ?? c);
           return GestureDetector(
             key: Key('motionCat-$c'),
             onTap: () => setState(() => _category = c),

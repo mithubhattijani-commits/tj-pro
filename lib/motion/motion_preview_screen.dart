@@ -1,17 +1,17 @@
 /// MOTION GRAPHICS STUDIO — full-screen template preview
-/// (Build M1, v1.11.0).
+/// (Build M1, v1.11.0; Editor button added in M2, v1.14.0).
 ///
-/// What a Gallery tap opens in M1: the template playing large
+/// What a Gallery tap opens: the template playing large
 /// through the shared engine painter, with real transport
-/// (play/pause, restart, scrub) and the template's facts. The
-/// Editor (text/logo/rang badalna) and "Video Par Lagao" are
-/// M2 — this screen says so plainly instead of showing dead
-/// buttons (the no-fake-controls rule).
+/// (play/pause, restart, scrub), the template's facts, and —
+/// since M2 — the real "Edit karein" button into the Editor
+/// (text/logo/rang/timing + Save + Video par Lagao).
 library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
+import 'motion_editor_screen.dart';
 import 'motion_painter.dart';
 import 'motion_templates.dart';
 
@@ -163,7 +163,7 @@ class _MotionPreviewScreenState extends State<MotionPreviewScreen>
                   if (t.slots.isNotEmpty) ...[
                     const SizedBox(height: 14),
                     const Text(
-                      'Editor mein badal sakenge:',
+                      'Editor mein badlein:',
                       style: TextStyle(
                         color: Colors.white,
                         fontSize: 13,
@@ -200,26 +200,37 @@ class _MotionPreviewScreenState extends State<MotionPreviewScreen>
                     ),
                   ],
                   const SizedBox(height: 16),
-                  Container(
+                  // M2: the real Editor — text/logo/rang/timing
+                  // badlein, My Templates mein save karein, aur
+                  // "Video par Lagao" se Video Editor mein PIP
+                  // overlay lagayein.
+                  SizedBox(
                     width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        colors: [Color(0xFF0D2150), Color(0xFF1D1040)],
+                    child: ElevatedButton.icon(
+                      key: const Key('motionEditButton'),
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              MotionEditorScreen(template: t),
+                        ),
                       ),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: _kBlue.withValues(alpha: 0.4),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _kBlue,
+                        foregroundColor: Colors.white,
+                        padding:
+                            const EdgeInsets.symmetric(vertical: 13),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                       ),
-                    ),
-                    child: const Text(
-                      'Editor (apna text, logo, rang) aur "Video Par '
-                      'Lagao" agle marhale (M2) mein aayenge — abhi '
-                      'ye design sirf preview ke liye hai.',
-                      style: TextStyle(
-                        color: Colors.white70,
-                        fontSize: 12.5,
-                        height: 1.45,
+                      icon: const Icon(Icons.edit_outlined, size: 19),
+                      label: const Text(
+                        'Edit karein',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14,
+                        ),
                       ),
                     ),
                   ),

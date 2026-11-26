@@ -21,6 +21,7 @@ import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:video_player/video_player.dart';
 
 import '../app_config.dart';
@@ -74,11 +75,21 @@ class VideoEditorScreen extends StatefulWidget {
     this.project,
     this.preset,
     this.initialVideoPath,
+    this.initialPipVideoPath,
   });
 
   final NewsProject? project;
   final ChannelPreset? preset;
   final String? initialVideoPath;
+
+  /// Motion M2 (v1.14.0): a rendered motion-graphic overlay
+  /// (WebM alpha / MP4) handed over by the Motion Editor's
+  /// "Video par Lagao" — when the file exists, the editor opens
+  /// with the PIP element already set to it, so the design lands
+  /// as the editor's own overlay clip (preview + export use the
+  /// existing PIP pass). Null — every existing call site — keeps
+  /// the plain behaviour.
+  final String? initialPipVideoPath;
 
   @override
   State<VideoEditorScreen> createState() => _VideoEditorScreenState();
@@ -169,6 +180,49 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
   /// Transport snap toggle: ON = Split cuts at the playhead,
   /// OFF = Split cuts at the clip midpoint (the v1.3.0 behaviour).
   bool _snapOn = true;
+
+  // ---- v1.14.0 timeline state (T1 / T2 / T3). ----
+  /// T1 (A20): the TIMELINE's own snap — the resting playhead
+  /// and the trim handles snap to boundaries / beats / markers.
+  /// Separate from [_snapOn] above (that one is Split's
+  /// playhead-vs-midpoint choice and keeps its meaning).
+  /// Strength: 0 = Halki, 1 = Normal, 2 = Mazboot. Persisted
+  /// (SharedPreferences) with [_timecodeOn].
+  bool _tlSnapOn = true;
+  int _tlSnapStrength = 1;
+
+  /// T1 (A14): timecode readouts (H:MM:SS:FF at the export fps)
+  /// in the transport row + the timeline times row, instead of
+  /// m:ss. Persisted with [_tlSnapOn].
+  bool _timecodeOn = false;
+
+  /// T2: what the selected clip's timeline handles do —
+  /// 'trim' (the original edge trim), 'roll' (A6: a handle
+  /// moves the boundary WITH the neighbouring clip, total
+  /// length unchanged) or 'slip' (A7: dragging the block
+  /// slides the used window inside the file; position and
+  /// length unchanged).
+  String _trimMode = 'trim';
+
+  /// T3 (A4): multi-select. [_multiMode] is the mode switch
+  /// (timeline taps then tick clips instead of selecting one);
+  /// [_multiSelect] holds the ticked clip indices. Both ride
+  /// the undo + session snapshots like the markers do.
+  bool _multiMode = false;
+  final Set<int> _multiSelect = <int>{};
+
+  /// T3 (A5): range In/Out points in TIMELINE seconds (null =
+  /// not set) + the loop-range playback switch. They ride the
+  /// undo + session snapshots; range EXPORT is deliberately
+  /// not part of this build (its own build, per the research).
+  double? _rangeIn;
+  double? _rangeOut;
+  bool _loopRange = false;
+
+  /// T1 (A13): the px-per-second when the current pinch
+  /// gesture on the timeline strip began (updates are computed
+  /// FROM it, never accumulated — the stage-pinch rule).
+  double _tlPinchBasePps = 42;
 
   /// Clip-selected row (the context row): true after a timeline
   /// clip is tapped — the tool zone then shows THAT clip's tools
@@ -786,6 +840,451 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         _tlProgrammaticScroll = false;
       }
     });
+  }
+
+  /// v1.14.0 T1 (A13): zoom the strip to an ABSOLUTE
+  /// px-per-second (zoom-to-fit + pinch), keeping the frame
+  /// under the centre playhead under the playhead — the same
+  /// centre rule as [_tlZoomBy].
+  void _tlZoomTo(double pxPerSec) {
+    final next = pxPerSec.clamp(12.0, 120.0).toDouble();
+    if (next == _tlPxPerSec) return;
+    if (!_tlScroll.hasClients) {
+      setState(() => _tlPxPerSec = next);
+      return;
+    }
+    final centreSec = _tlScroll.offset / _tlPxPerSec;
+    setState(() => _tlPxPerSec = next);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_tlScroll.hasClients) return;
+      final target = (centreSec * next).clamp(
+        0.0,
+        _tlScroll.position.maxScrollExtent,
+      );
+      _tlProgrammaticScroll = true;
+      try {
+        _tlScroll.jumpTo(target);
+      } finally {
+        _tlProgrammaticScroll = false;
+      }
+    });
+  }
+
+  /// v1.14.0 T1 (A13): pinch on the timeline strip — the base
+  /// is captured at gesture start and every update is computed
+  /// from it (never accumulated, so the gesture cannot drift).
+  void _tlPinchStart() => _tlPinchBasePps = _tlPxPerSec;
+
+  void _tlPinchUpdate(double scale) {
+    if (scale <= 0) return;
+    _tlZoomTo(_tlPinchBasePps * scale);
+  }
+
+  /// v1.14.0 T1 (A14): step the playhead exactly one frame
+  /// ([direction] -1 / +1) at the export fps. Playback pauses
+  /// first — a frame step is a paused-inspection action, and
+  /// seeking a playing player frame-by-frame would fight it
+  /// (the Build 4 lesson).
+  void _stepFrame(int direction) {
+    if (_clips.isEmpty) return;
+    final ctrl = _controller;
+    if (ctrl != null && ctrl.value.isPlaying) {
+      unawaited(ctrl.pause());
+    }
+    final step = 1.0 / (_exportFps <= 0 ? 30 : _exportFps);
+    unawaited(
+      _seekToGlobalSec(
+        (_globalPositionSec + direction * step)
+            .clamp(0.0, _totalDurationSec)
+            .toDouble(),
+      ),
+    );
+  }
+
+  /// v1.14.0 T1: the timeline display prefs on their own
+  /// SharedPreferences keys (see the field docs for why they
+  /// are not in the panel snapshot).
+  static const String _tlPrefsKey = 've_tl_prefs_v1';
+
+  Future<void> _loadTimelinePrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_tlPrefsKey);
+      if (raw == null || !mounted) return;
+      final m = jsonDecode(raw) as Map<String, dynamic>;
+      setState(() {
+        _tlSnapOn = m['snap'] as bool? ?? true;
+        _tlSnapStrength = ((m['strength'] as num?)?.toInt() ?? 1)
+            .clamp(0, 2)
+            .toInt();
+        _timecodeOn = m['tc'] as bool? ?? false;
+      });
+    } catch (_) {
+      // Prefs are a nicety — defaults stand on any failure.
+    }
+  }
+
+  void _saveTimelinePrefs() {
+    unawaited(() async {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(
+          _tlPrefsKey,
+          jsonEncode({
+            'snap': _tlSnapOn,
+            'strength': _tlSnapStrength,
+            'tc': _timecodeOn,
+          }),
+        );
+      } catch (_) {}
+    }());
+  }
+
+  /// The playhead second the timeline strip is centred on —
+  /// the strip-centre convention Split already uses, falling
+  /// back to the clock's global position before first layout.
+  double get _playheadSec {
+    if (_tlScroll.hasClients && _tlPxPerSec > 0) {
+      return (_tlScroll.offset / _tlPxPerSec)
+          .clamp(0.0, _totalDurationSec)
+          .toDouble();
+    }
+    return _globalPositionSec;
+  }
+
+  // ---- v1.14.0 T2: trim-mode ops (A6 / A7 / A25). ----
+
+  /// A6 ROLL on the boundary BEFORE clip [boundaryIndex]
+  /// (1..len-1): both neighbours' trims move together via
+  /// [TimelineMath.rollEdit]; the timeline's total length is
+  /// unchanged by construction. Used by the Trim panel's roll
+  /// buttons; the timeline's roll handles apply the same math
+  /// incrementally during their drags.
+  void _rollBoundaryBy(int boundaryIndex, double delta) {
+    if (boundaryIndex <= 0 || boundaryIndex >= _clips.length) {
+      _setStatus('Roll ke liye do clips ke darmiyan ki boundary '
+          'chahiye.');
+      return;
+    }
+    final a = _clips[boundaryIndex - 1];
+    final b = _clips[boundaryIndex];
+    final res = TimelineMath.rollEdit(
+      aTrimStart: a.trimStart,
+      aEffEnd: a.effectiveEnd,
+      aFull: a.duration.inMilliseconds / 1000,
+      bTrimStart: b.trimStart,
+      bEffEnd: b.effectiveEnd,
+      delta: delta,
+    );
+    if (res == null) {
+      _setStatus('Roll aur nahi ho sakta — kisi aik clip ki '
+          'file khatam ho gayi hai ya hissa bohat chhota reh '
+          'jaye ga.');
+      return;
+    }
+    _pushHistory();
+    setState(() {
+      a.trimEnd = res.aEnd;
+      b.trimStart = res.bStart;
+    });
+    _setStatus('Roll ho gaya — boundary '
+        '${res.delta >= 0 ? '+' : ''}${res.delta.toStringAsFixed(2)}s '
+        'khiski, kul lambai wahi hai.');
+    unawaited(_loadPreview());
+  }
+
+  /// A7 SLIP on the selected clip by [delta] seconds via
+  /// [TimelineMath.slipEdit] — position and length unchanged,
+  /// only the used window inside the file moves. Photo clips
+  /// have no file range to slide: honest refusal.
+  void _slipSelectedBy(double delta) {
+    if (_clips.isEmpty) return;
+    final clip = _clips[_selected];
+    if (clip.isPhoto) {
+      _setStatus('Photo clip mein slip nahi hota — us ke andar '
+          'koi video hissa nahi hai.');
+      return;
+    }
+    final res = TimelineMath.slipEdit(
+      trimStart: clip.trimStart,
+      effEnd: clip.effectiveEnd,
+      full: clip.duration.inMilliseconds / 1000,
+      delta: delta,
+    );
+    if (res == null) {
+      _setStatus('Slip aur nahi ho sakta — clip pehle hi file '
+          'ke kinare par hai.');
+      return;
+    }
+    _pushHistory();
+    setState(() {
+      clip.trimStart = res.start;
+      clip.trimEnd = res.end;
+    });
+    _setStatus('Slip ho gaya — clip wahin hai, andar ka hissa '
+        '${res.delta >= 0 ? '+' : ''}${res.delta.toStringAsFixed(2)}s '
+        'khiska.');
+    unawaited(_loadPreview());
+  }
+
+  /// A25: move the selected clip's start edge onto the
+  /// playhead (the strip's centre second). The playhead must
+  /// sit inside the clip — otherwise an honest refusal, never
+  /// a silent different trim.
+  void _trimToPlayheadStart() {
+    if (_clips.isEmpty) return;
+    final clip = _clips[_selected];
+    final next = TimelineMath.trimStartToPlayhead(
+      clipStartSec: _clipStartSec(_selected),
+      playheadSec: _playheadSec,
+      trimStart: clip.trimStart,
+      effEnd: clip.effectiveEnd,
+    );
+    if (next == null) {
+      _setStatus('Playhead is clip ke andar nahi hai — pehle '
+          'playhead ko clip ke andar layen.');
+      return;
+    }
+    _pushHistory();
+    setState(() => clip.trimStart = next);
+    _setStatus('Clip ka start playhead tak trim ho gaya.');
+    unawaited(_loadPreview());
+  }
+
+  /// A25: move the selected clip's end edge onto the playhead.
+  void _trimToPlayheadEnd() {
+    if (_clips.isEmpty) return;
+    final clip = _clips[_selected];
+    final next = TimelineMath.trimEndToPlayhead(
+      clipStartSec: _clipStartSec(_selected),
+      playheadSec: _playheadSec,
+      trimStart: clip.trimStart,
+      effEnd: clip.effectiveEnd,
+    );
+    if (next == null) {
+      _setStatus('Playhead is clip ke andar nahi hai — pehle '
+          'playhead ko clip ke andar layen.');
+      return;
+    }
+    _pushHistory();
+    setState(() => clip.trimEnd = next);
+    _setStatus('Clip ka end playhead tak trim ho gaya.');
+    unawaited(_loadPreview());
+  }
+
+  // ---- v1.14.0 T3: multi-select + range ops (A4 / A5). ----
+
+  void _toggleMultiSelect(int i) {
+    if (i < 0 || i >= _clips.length) return;
+    setState(() {
+      if (_multiSelect.contains(i)) {
+        _multiSelect.remove(i);
+      } else {
+        _multiSelect.add(i);
+      }
+      _selected = i;
+    });
+    HapticFeedback.selectionClick();
+  }
+
+  void _clearMultiSelect() {
+    if (_multiSelect.isEmpty) return;
+    setState(() => _multiSelect.clear());
+  }
+
+  /// A4: delete every ticked clip in ONE history step.
+  Future<void> _deleteMultiSelected() async {
+    if (_multiSelect.isEmpty || _busy) return;
+    final doomed = _multiSelect.where((i) => i < _clips.length).toSet();
+    if (doomed.isEmpty) return;
+    _pushHistory();
+    setState(() {
+      final kept = <VideoClip>[
+        for (var i = 0; i < _clips.length; i++)
+          if (!doomed.contains(i)) _clips[i],
+      ];
+      _clips
+        ..clear()
+        ..addAll(kept);
+      _multiSelect.clear();
+      if (_selected >= _clips.length) {
+        _selected = _clips.isEmpty ? 0 : _clips.length - 1;
+      }
+      if (_clips.isEmpty) _clipRow = false;
+    });
+    if (_clips.isNotEmpty) {
+      await _loadPreview();
+    } else {
+      await _controller?.dispose();
+      if (mounted) setState(() => _controller = null);
+    }
+    _setStatus('${doomed.length} clips delete ho gaye — Undo '
+        'se wapas aa sakte hain.');
+  }
+
+  /// A4: duplicate every ticked clip right after itself, in
+  /// ONE history step. Indices are processed back-to-front so
+  /// earlier inserts never shift the ones still to do.
+  void _duplicateMultiSelected() {
+    if (_multiSelect.isEmpty) return;
+    final idx = _multiSelect.where((i) => i < _clips.length).toList()
+      ..sort();
+    if (idx.isEmpty) return;
+    _pushHistory();
+    setState(() {
+      for (final i in idx.reversed) {
+        _clips.insert(i + 1, _clips[i].copy());
+      }
+      _multiSelect.clear();
+    });
+    _setStatus('${idx.length} clips duplicate ho gaye.');
+    unawaited(_loadPreview());
+  }
+
+  /// A4: move every ticked clip one step in [direction]
+  /// (-1 / +1) via [TimelineMath.multiMoveOrder]; the ticked
+  /// set follows the clips to their new indices.
+  void _moveMultiSelected(int direction) {
+    if (_multiSelect.isEmpty || _clips.length < 2) return;
+    final order = TimelineMath.multiMoveOrder(
+      count: _clips.length,
+      selected: _multiSelect,
+      direction: direction,
+    );
+    if (order.asMap().entries.every((e) => e.value == e.key)) {
+      _setStatus('Ye clips is taraf aur nahi khisak sakte.');
+      return;
+    }
+    // The ticked set at the clips' NEW positions — computed
+    // BEFORE the set is touched (a cascade clear would eat it).
+    final newSel = <int>{
+      for (var pos = 0; pos < order.length; pos++)
+        if (_multiSelect.contains(order[pos])) pos,
+    };
+    _pushHistory();
+    setState(() {
+      final moved = [for (final old in order) _clips[old]];
+      _clips
+        ..clear()
+        ..addAll(moved);
+      _multiSelect
+        ..clear()
+        ..addAll(newSel);
+      _selected = newSel.isEmpty
+          ? _selected.clamp(0, _clips.length - 1)
+          : newSel.reduce((a, b) => a < b ? a : b);
+    });
+    _setStatus('Clips khisak gaye.');
+    unawaited(_loadPreview());
+  }
+
+  /// A5: set the range In point at the playhead. Setting In
+  /// past an existing Out (or Out before an existing In)
+  /// clears the other point — a backwards range is never
+  /// stored (the delete/loop math assumes In < Out).
+  void _setRangeInAtPlayhead() {
+    if (_clips.isEmpty) return;
+    final t = _playheadSec;
+    setState(() {
+      _rangeIn = t;
+      if (_rangeOut != null && _rangeOut! <= t) _rangeOut = null;
+    });
+    _setStatus('Range ka In point set ho gaya '
+        '(${TimelineMath.formatTimecode(t, _exportFps)}).');
+  }
+
+  void _setRangeOutAtPlayhead() {
+    if (_clips.isEmpty) return;
+    final t = _playheadSec;
+    setState(() {
+      _rangeOut = t;
+      if (_rangeIn != null && _rangeIn! >= t) _rangeIn = null;
+    });
+    _setStatus('Range ka Out point set ho gaya '
+        '(${TimelineMath.formatTimecode(t, _exportFps)}).');
+  }
+
+  void _clearRange() {
+    setState(() {
+      _rangeIn = null;
+      _rangeOut = null;
+      _loopRange = false;
+    });
+    _setStatus('Range saaf ho gaya.');
+  }
+
+  /// A5: delete the marked range from the timeline — clips
+  /// are removed / trimmed / split per
+  /// [TimelineMath.rangeDeletePlan], in ONE history step.
+  /// The range itself is consumed by the delete.
+  Future<void> _deleteRange() async {
+    final inSec = _rangeIn;
+    final outSec = _rangeOut;
+    if (inSec == null || outSec == null || outSec <= inSec) {
+      _setStatus('Pehle In aur Out dono points set karein.');
+      return;
+    }
+    if (_clips.isEmpty || _busy) return;
+    final plan = TimelineMath.rangeDeletePlan(
+      clipStarts: [
+        for (var i = 0; i < _clips.length; i++) _clipStartSec(i),
+      ],
+      effDurations: _effectiveDurations,
+      trimStarts: [for (final c in _clips) c.trimStart],
+      rangeIn: inSec,
+      rangeOut: outSec,
+    );
+    _pushHistory();
+    var removed = 0;
+    var split = 0;
+    setState(() {
+      final next = <VideoClip>[];
+      for (var i = 0; i < _clips.length; i++) {
+        final clip = _clips[i];
+        final action = plan[i];
+        switch (action.kind) {
+          case RangeActionKind.keep:
+            next.add(clip);
+          case RangeActionKind.remove:
+            removed++;
+          case RangeActionKind.trimLeft:
+            clip.trimStart = action.trimStart!;
+            next.add(clip);
+          case RangeActionKind.trimRight:
+            clip.trimEnd = action.effEnd!;
+            next.add(clip);
+          case RangeActionKind.split:
+            split++;
+            final right = clip.copy();
+            right.trimStart = action.trimStart!;
+            right.trimEnd = clip.effectiveEnd;
+            clip.trimEnd = action.effEnd!;
+            next
+              ..add(clip)
+              ..add(right);
+        }
+      }
+      _clips
+        ..clear()
+        ..addAll(next);
+      if (_selected >= _clips.length) {
+        _selected = _clips.isEmpty ? 0 : _clips.length - 1;
+      }
+      if (_clips.isEmpty) _clipRow = false;
+      _multiSelect.clear();
+      _rangeIn = null;
+      _rangeOut = null;
+      _loopRange = false;
+    });
+    if (_clips.isNotEmpty) {
+      await _loadPreview();
+    } else {
+      await _controller?.dispose();
+      if (mounted) setState(() => _controller = null);
+    }
+    _setStatus('Range delete ho gaya — $removed clip(s) '
+        'hataye, $split clip(s) do hison mein kate. Undo se '
+        'wapas aa sakta hai.');
   }
 
   /// Live scrub (Phase 2): while the user drags the strip with
@@ -1417,11 +1916,23 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       _loadProject(widget.project!, widget.preset);
     } else if (widget.initialVideoPath != null) {
       unawaited(_loadInitialVideo());
-    } else {
+    } else if (widget.initialPipVideoPath == null) {
       // Build 10 (7F): a plain open may have a crashed/killed
       // session to offer back. Project / hub opens bring their
       // own content and are never offered a draft over it.
       unawaited(_offerSessionRestore());
+    }
+    // v1.14.0 T1: the timeline display prefs (snap on/strength,
+    // timecode) survive relaunches on their own keys — they are
+    // NOT part of the panel snapshot, so a panel Cancel can
+    // never silently flip them.
+    unawaited(_loadTimelinePrefs());
+    // Motion M2: a "Video par Lagao" handoff arrives as the PIP
+    // element, whatever else the editor opened with.
+    final pipHandoff = widget.initialPipVideoPath;
+    if (pipHandoff != null && File(pipHandoff).existsSync()) {
+      _fxPip = true;
+      _fxPipVideo = pipHandoff;
     }
     _sessionTimer = Timer.periodic(
       const Duration(seconds: 20),
@@ -1664,6 +2175,18 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
   void _onClockTick() {
     if (!mounted || _tlUserScrolling || !_clock.isPlaying) return;
     if (!_tlScroll.hasClients || _clips.isEmpty) return;
+    // v1.14.0 T3 (A5): loop-range playback — when the playhead
+    // runs past the Out point it jumps back to the In point.
+    // Only while playing (this listener never runs paused), so
+    // a user's scrub is never fought — the Build 4 rule.
+    if (_loopRange &&
+        _rangeIn != null &&
+        _rangeOut != null &&
+        _rangeOut! > _rangeIn! &&
+        _globalPositionSec >= _rangeOut! - 0.02) {
+      unawaited(_seekToGlobalSec(_rangeIn!));
+      return;
+    }
     final target = (_globalPositionSec * _tlPxPerSec).clamp(
       0.0,
       _tlScroll.position.maxScrollExtent,
@@ -2024,6 +2547,13 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     'beats': _beats,
     'beatMusic': _beatSourceMusic,
     'beatPath': _beatSourcePath,
+    // v1.14.0 T3: the range points + the multi-select set ride
+    // along too — undoing a range delete restores the range
+    // that produced it. Old snapshots lack these keys; the
+    // restore below defaults them (null / empty).
+    'rangeIn': _rangeIn,
+    'rangeOut': _rangeOut,
+    'multiSel': _multiSelect.toList()..sort(),
   });
 
   void _pushHistory() {
@@ -2074,6 +2604,16 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
           .toList();
       _beatSourceMusic = m['beatMusic'] as bool? ?? false;
       _beatSourcePath = m['beatPath'] as String?;
+      // v1.14.0 T3: absent in pre-v1.14 snapshots → null/empty.
+      _rangeIn = (m['rangeIn'] as num?)?.toDouble();
+      _rangeOut = (m['rangeOut'] as num?)?.toDouble();
+      _multiSelect
+        ..clear()
+        ..addAll(
+          ((m['multiSel'] as List?) ?? const [])
+              .map((e) => (e as num).toInt())
+              .where((i) => i >= 0 && i < clips.length),
+        );
     });
     if (_clips.isNotEmpty) {
       await _loadPreview();
@@ -2218,6 +2758,12 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         'beats': List<double>.of(_beats),
         'beatMusic': _beatSourceMusic,
         'beatPath': _beatSourcePath,
+        // v1.14.0 T3: range points + multi-select survive a
+        // relaunch the same way (absent in old drafts → the
+        // restore defaults them).
+        'rangeIn': _rangeIn,
+        'rangeOut': _rangeOut,
+        'multiSel': _multiSelect.toList()..sort(),
       };
 
   void _restorePanelSnapshot(Map<String, Object?> m) {
@@ -2338,6 +2884,19 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
           .toList();
       _beatSourceMusic = m['beatMusic'] as bool? ?? false;
       _beatSourcePath = m['beatPath'] as String?;
+      // v1.14.0 T3: absent in pre-v1.14 drafts → null/empty.
+      // (No clip-count filter here — the panel map is also the
+      // Cancel base; indices are clamped wherever they are
+      // read, exactly like _selected is.)
+      _rangeIn = (m['rangeIn'] as num?)?.toDouble();
+      _rangeOut = (m['rangeOut'] as num?)?.toDouble();
+      _multiSelect
+        ..clear()
+        ..addAll(
+          ((m['multiSel'] as List?) ?? const [])
+              .map((e) => (e as num).toInt())
+              .where((i) => i >= 0),
+        );
     });
     // Mask preview images are keyed on the mask fields, so a
     // restored value re-renders itself on the next stage build.
@@ -5389,6 +5948,124 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
   set tlUserScrolling(bool value) => _tlUserScrolling = value;
   @override
   void tlZoomBy(double factor) => _tlZoomBy(factor);
+
+  @override
+  void tlZoomToFit(double widthPx) => _tlZoomTo(
+        TimelineMath.pxPerSecToFit(
+          totalSec: _totalDurationSec,
+          widthPx: widthPx,
+        ),
+      );
+
+  @override
+  void tlPinchStart() => _tlPinchStart();
+
+  @override
+  void tlPinchUpdate(double scale) => _tlPinchUpdate(scale);
+
+  @override
+  bool get tlSnapOn => _tlSnapOn;
+
+  @override
+  set tlSnapOn(bool value) {
+    _tlSnapOn = value;
+    _saveTimelinePrefs();
+  }
+
+  @override
+  int get tlSnapStrength => _tlSnapStrength;
+
+  @override
+  set tlSnapStrength(int value) {
+    _tlSnapStrength = value;
+    _saveTimelinePrefs();
+  }
+
+  @override
+  double tlSnapThreshold(bool forTrim) => TimelineMath.snapThreshold(
+        on: _tlSnapOn,
+        strength: _tlSnapStrength,
+        forTrim: forTrim,
+      );
+
+  @override
+  bool get timecodeOn => _timecodeOn;
+
+  @override
+  set timecodeOn(bool value) {
+    _timecodeOn = value;
+    _saveTimelinePrefs();
+  }
+
+  @override
+  void stepFrame(int direction) => _stepFrame(direction);
+
+  @override
+  String get trimMode => _trimMode;
+
+  @override
+  set trimMode(String value) => _trimMode = value;
+
+  @override
+  void rollBoundaryBy(int boundaryIndex, double delta) =>
+      _rollBoundaryBy(boundaryIndex, delta);
+
+  @override
+  void slipSelectedBy(double delta) => _slipSelectedBy(delta);
+
+  @override
+  void trimToPlayheadStart() => _trimToPlayheadStart();
+
+  @override
+  void trimToPlayheadEnd() => _trimToPlayheadEnd();
+
+  @override
+  bool get multiMode => _multiMode;
+
+  @override
+  set multiMode(bool value) => _multiMode = value;
+
+  @override
+  Set<int> get multiSelect => _multiSelect;
+
+  @override
+  void toggleMultiSelect(int i) => _toggleMultiSelect(i);
+
+  @override
+  void clearMultiSelect() => _clearMultiSelect();
+
+  @override
+  Future<void> deleteMultiSelected() => _deleteMultiSelected();
+
+  @override
+  void duplicateMultiSelected() => _duplicateMultiSelected();
+
+  @override
+  void moveMultiSelected(int direction) => _moveMultiSelected(direction);
+
+  @override
+  double? get rangeIn => _rangeIn;
+
+  @override
+  double? get rangeOut => _rangeOut;
+
+  @override
+  bool get loopRange => _loopRange;
+
+  @override
+  set loopRange(bool value) => _loopRange = value;
+
+  @override
+  void setRangeInAtPlayhead() => _setRangeInAtPlayhead();
+
+  @override
+  void setRangeOutAtPlayhead() => _setRangeOutAtPlayhead();
+
+  @override
+  void clearRange() => _clearRange();
+
+  @override
+  Future<void> deleteRange() => _deleteRange();
   @override
   double get totalDurationSec => _totalDurationSec;
   @override

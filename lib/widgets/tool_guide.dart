@@ -349,6 +349,41 @@ const Map<String, ToolGuideEntry> _veGuides = {
       'Split ke baad dusra hissa select ho jata hai; dobara dabane se wahi aur katega.',
     ],
   ),
+  've.timeline': ToolGuideEntry(
+    title: 'Timeline (Precision)',
+    what:
+        'Timeline ab bilkul bareek kaam ke liye tayyar hai — zoom, '
+        'timecode, frame-by-frame harkat, snap, multi-select aur range.',
+    steps: [
+      'Zoom: do unglion se pinch karein, ya −/+ dabayein. Fit wale button (dayein taraf) se poori video aik nazar mein ajati hai.',
+      'Timecode: TC chip dabane se waqt H:MM:SS:FF mein nazar aye ga; play ke sath wale ‹ › buttons se aik frame aage/peechay jayein.',
+      'Snap: anchor wala chip snap on/off karta hai; chip ko daba kar rakhein (long press) to taqat badalti hai — Halki, Normal, Mazboot. Mukammal setting Trim panel ke Timeline hisay mein hai.',
+      'Multi-select: checklist wala chip on karke kai clips chunein — phir aik sath delete, duplicate ya aage/peechay karein.',
+      'Range: Trim panel ke Range hisay se playhead par In/Out lagayein — gold band ban jayega; phir range loop chalana ya range delete karna aik tap hai.',
+    ],
+    tips: [
+      'Snap band ho to playhead/trim bilkul free hote hain — koi point unhen kheenchta nahi.',
+      'Range delete mein jo clip aadha range mein aye wo wahin kat jata hai — kuch ghayab nahi hota.',
+    ],
+  ),
+  've.trim': ToolGuideEntry(
+    title: 'Trim / Roll / Slip',
+    what:
+        'Clip ki lambai aur andar ka hissa theek karna. Teen modes '
+        'hain: Trim (kinare katna), Roll (do clips ki boundary), '
+        'Slip (andar ka hissa sarkana).',
+    steps: [
+      'Mode chunein: Trim, Roll ya Slip — timeline ke handle bhi usi mode mein kaam karte hain.',
+      'Trim: sliders se start/end set karein, ya playhead clip ke andar rakh kar "Start → playhead" / "End → playhead" dabayein.',
+      'Roll: boundary hile gi — aik clip lamba, dusra chhota, kul lambai waisi ki waisi. Timeline par handle ghaseetein ya 1-frame buttons dabayein.',
+      'Slip: clip apni jagah rehta hai, andar ka hissa aage/peechay sarakta hai. Timeline par clip ko left/right ghaseetein ya 0.1s buttons dabayein.',
+      'Range (In/Out), Snap aur Timecode ki settings bhi isi panel mein neeche hain.',
+    ],
+    tips: [
+      'Photo clip slip nahi hota — us ke andar sarkane wala hissa hota hi nahi.',
+      'Roll sirf do clips ke darmiyan hota hai — pehli clip ke start ya aakhri ke end par roll nahi lagta.',
+    ],
+  ),
   've.delete': ToolGuideEntry(
     title: 'Delete',
     what: 'Select ki hui clip ko timeline se hata deta hai.',
@@ -942,9 +977,13 @@ const ToolGuideEntry _motionGuide = ToolGuideEntry(
     'Category ya search se apni qisam ka design dhunden.',
     'Design par tap karein — bara preview khul jayega.',
     'FREE wala foran khulta hai; PRO/COINS wale pehle unlock hote hain (qeemat wahan likhi hai).',
+    'Preview mein "Edit karein" dabayein — Editor khul jayega: layer chunein, text/font/rang, jagah, size, waqt aur animation style badlein.',
+    'Apna logo lagana ho to Logo/Image layer chunein aur photo chunein — template ke sath save ho jayega.',
+    'SAVE dabane se design "My Templates" mein save hota hai — Gallery ki My Templates category se dobara khulta hai.',
+    '"Video par Lagao" dabayein — design video ban kar Video Editor mein PIP overlay lag jayega; phir use apni video par rakh kar export karein.',
   ],
   tips: [
-    'Design ko apni video par lagana (Editor) agle hisay mein aye ga — abhi gallery aur preview hai, wahan wazeh likha bhi hai.',
+    'Lagao mein pehle transparent (WebM) video banta hai; agar phone par wo encode na ho to MP4 banta hai aur screen par wazeh likha ata hai ke konsa bana.',
     'Pro users ke liye PRO designs shamil hain — coins nahi lagte.',
   ],
 );
@@ -983,6 +1022,9 @@ const Map<String, ToolGuideEntry> _nsGuides = {
       'Export hamesha wahi hisa leta hai jo trim ke andar hai — poori asal file mehfooz rehti hai.',
       'Clip par tap karne se Media panel khulta hai — yahi is ki settings ki jagah hai.',
       'Preview ke upar dayein konay mein grid wala button hai — us se safe-area guides (thirds + mehfooz hisay ke nishan) nazar ate hain taake headline/ticker kinaron se takraye nahi. Ye sirf preview ke liye hain, export mein kabhi nahi ate.',
+      'Timeline ab asal time-scale par hai: clips apni lambai ke hisab se jagah lete hain, upar ruler (scale) hai. Header ke − / fit / + se zoom karein; zoom ho to lanes ko left/right ghaseet kar scroll karein.',
+      'Ruler par tap ya drag karne se playhead wahan chala jata hai (scrub). Pehli clip ke andar ho to preview bhi wahin se nazar aye ga; aage ki clips par playhead/readout wahan jata hai lekin preview pehli clip hi dikhata hai — asal video export mein poori chalti hai.',
+      'Split ab playhead ki asal jagah par lagta hai — playhead ko kisi bhi clip par scrub karke Split dabayein, wahi clip wahin kategi.',
     ],
   ),
   'ns.elements': ToolGuideEntry(

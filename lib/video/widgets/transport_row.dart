@@ -8,6 +8,7 @@ library;
 import 'package:flutter/material.dart';
 import '../../theme.dart';
 import '../video_editor_controller.dart';
+import 'editor_stage.dart';
 
 /// Play/pause, skip, time readout and the undo/redo/fullscreen
 /// buttons under the stage.
@@ -52,6 +53,17 @@ class TransportRow extends StatelessWidget {
                 icon: const Icon(Icons.redo, color: Colors.white, size: 20),
               ),
               const Spacer(),
+              // v1.14.0 T1 (A14): ±1-frame step buttons flank
+              // play — frame-accurate cutting in one tap.
+              IconButton(
+                key: const Key('tpFrameBack'),
+                tooltip: '1 frame peeche',
+                onPressed: host.clips.isEmpty
+                    ? null
+                    : () => host.stepFrame(-1),
+                icon: const Icon(Icons.chevron_left,
+                    color: Colors.white, size: 22),
+              ),
               IconButton(
                 tooltip: playing ? 'Pause' : 'Play',
                 onPressed: !ready
@@ -69,13 +81,28 @@ class TransportRow extends StatelessWidget {
                   size: 26,
                 ),
               ),
+              IconButton(
+                key: const Key('tpFrameNext'),
+                tooltip: '1 frame aage',
+                onPressed: host.clips.isEmpty
+                    ? null
+                    : () => host.stepFrame(1),
+                icon: const Icon(Icons.chevron_right,
+                    color: Colors.white, size: 22),
+              ),
               const SizedBox(width: 8),
               // Flexible: on narrow screens (or long durations)
               // the time readout shrinks/ellipsizes instead of
               // overflowing the transport row (v1.5.2, #67/#69).
               Flexible(
+                // v1.14.0 T1 (A14): Timecode mode (timeline
+                // header ka TC chip) renders H:MM:SS:FF at the
+                // export fps; plain mode keeps the old m:ss.s.
                 child: Text(
-                  '${fmt(host.globalPositionSec)} / ${fmt(host.totalDurationSec)}',
+                  host.timecodeOn
+                      ? '${TimelineMath.formatTimecode(host.globalPositionSec, host.exportFps)} / ${TimelineMath.formatTimecode(host.totalDurationSec, host.exportFps)}'
+                      : '${fmt(host.globalPositionSec)} / ${fmt(host.totalDurationSec)}',
+                  key: const Key('tpTimeText'),
                   style: const TextStyle(color: Colors.white, fontSize: 12),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,

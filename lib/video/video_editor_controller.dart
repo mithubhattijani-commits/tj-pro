@@ -447,6 +447,60 @@ abstract class VideoEditorController {
   bool get tlProgrammaticScroll;
   set tlProgrammaticScroll(bool value);
   void tlZoomBy(double factor);
+
+  // ---- v1.14.0 timeline (T1 / T2 / T3). ----
+  /// T1 (A13): zoom so the whole timeline fits [widthPx].
+  void tlZoomToFit(double widthPx);
+  void tlPinchStart();
+  void tlPinchUpdate(double scale);
+
+  /// T1 (A20): the timeline's own snap switch + strength
+  /// (0 Halki / 1 Normal / 2 Mazboot) — NOT [snapOn] (Split's).
+  bool get tlSnapOn;
+  set tlSnapOn(bool value);
+  int get tlSnapStrength;
+  set tlSnapStrength(int value);
+
+  /// The live snap threshold (seconds) for these settings;
+  /// 0 = snap off (callers skip snapping entirely).
+  double tlSnapThreshold(bool forTrim);
+
+  /// T1 (A14): timecode readouts instead of m:ss.
+  bool get timecodeOn;
+  set timecodeOn(bool value);
+
+  /// T1 (A14): step the playhead one frame (-1 / +1).
+  void stepFrame(int direction);
+
+  /// T2: the timeline handles' mode — 'trim' | 'roll' | 'slip'.
+  String get trimMode;
+  set trimMode(String value);
+
+  /// T2 (A6 / A7 / A25) ops.
+  void rollBoundaryBy(int boundaryIndex, double delta);
+  void slipSelectedBy(double delta);
+  void trimToPlayheadStart();
+  void trimToPlayheadEnd();
+
+  /// T3 (A4): multi-select mode + the ticked clip indices.
+  bool get multiMode;
+  set multiMode(bool value);
+  Set<int> get multiSelect;
+  void toggleMultiSelect(int i);
+  void clearMultiSelect();
+  Future<void> deleteMultiSelected();
+  void duplicateMultiSelected();
+  void moveMultiSelected(int direction);
+
+  /// T3 (A5): range In/Out (timeline seconds) + loop switch.
+  double? get rangeIn;
+  double? get rangeOut;
+  bool get loopRange;
+  set loopRange(bool value);
+  void setRangeInAtPlayhead();
+  void setRangeOutAtPlayhead();
+  void clearRange();
+  Future<void> deleteRange();
   double get totalDurationSec;
   Future<void> runObjectTracking();
   List<TrackPoint> get trackPoints;

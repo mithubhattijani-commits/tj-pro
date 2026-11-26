@@ -226,6 +226,118 @@ class MotionLayer {
   final List<double> values;
   final int barColor;
 
+  static const Object _unset = Object();
+
+  /// v1.14.0 M2: the Editor edits a layer by replacing it with a
+  /// copy. Nullable fields use the [_unset] sentinel so a caller
+  /// can also CLEAR a value (font wapas default, gradient khatam,
+  /// end = scene end, waghera) — omitting the argument keeps the
+  /// old value, passing null clears it.
+  MotionLayer copyWith({
+    double? x,
+    double? y,
+    double? width,
+    double? height,
+    double? start,
+    Object? end = _unset,
+    double? opacity,
+    double? scale,
+    double? rotation,
+    Object? entrance = _unset,
+    double? entranceSec,
+    Object? exit = _unset,
+    double? exitSec,
+    List<MotionKeyframe>? keyframes,
+    Object? text = _unset,
+    double? fontSize,
+    int? color,
+    Object? fontFamily = _unset,
+    bool? bold,
+    double? letterSpacing,
+    Object? shape = _unset,
+    int? fill,
+    Object? fill2 = _unset,
+    double? cornerRadius,
+    Object? strokeColor = _unset,
+    double? strokeWidth,
+    Object? glowColor = _unset,
+    double? glowBlur,
+    Object? imageKey = _unset,
+    Object? placeholderText = _unset,
+    double? from,
+    double? to,
+    String? prefix,
+    String? suffix,
+    int? decimals,
+    Object? label = _unset,
+    int? labelColor,
+    double? speedPxPerSecond,
+    bool? scrollRight,
+    int? bandColor,
+    double? bandHeight,
+    double? cyclePx,
+    List<double>? values,
+    int? barColor,
+  }) {
+    return MotionLayer(
+      id: id,
+      type: type,
+      x: x ?? this.x,
+      y: y ?? this.y,
+      width: width ?? this.width,
+      height: height ?? this.height,
+      start: start ?? this.start,
+      end: identical(end, _unset) ? this.end : end as double?,
+      opacity: opacity ?? this.opacity,
+      scale: scale ?? this.scale,
+      rotation: rotation ?? this.rotation,
+      entrance:
+          identical(entrance, _unset) ? this.entrance : entrance as String?,
+      entranceSec: entranceSec ?? this.entranceSec,
+      exit: identical(exit, _unset) ? this.exit : exit as String?,
+      exitSec: exitSec ?? this.exitSec,
+      keyframes: keyframes ?? this.keyframes,
+      text: identical(text, _unset) ? this.text : text as String?,
+      fontSize: fontSize ?? this.fontSize,
+      color: color ?? this.color,
+      fontFamily: identical(fontFamily, _unset)
+          ? this.fontFamily
+          : fontFamily as String?,
+      bold: bold ?? this.bold,
+      letterSpacing: letterSpacing ?? this.letterSpacing,
+      shape: identical(shape, _unset) ? this.shape : shape as String?,
+      fill: fill ?? this.fill,
+      fill2: identical(fill2, _unset) ? this.fill2 : fill2 as int?,
+      cornerRadius: cornerRadius ?? this.cornerRadius,
+      strokeColor: identical(strokeColor, _unset)
+          ? this.strokeColor
+          : strokeColor as int?,
+      strokeWidth: strokeWidth ?? this.strokeWidth,
+      glowColor:
+          identical(glowColor, _unset) ? this.glowColor : glowColor as int?,
+      glowBlur: glowBlur ?? this.glowBlur,
+      imageKey:
+          identical(imageKey, _unset) ? this.imageKey : imageKey as String?,
+      placeholderText: identical(placeholderText, _unset)
+          ? this.placeholderText
+          : placeholderText as String?,
+      from: from ?? this.from,
+      to: to ?? this.to,
+      prefix: prefix ?? this.prefix,
+      suffix: suffix ?? this.suffix,
+      decimals: decimals ?? this.decimals,
+      label: identical(label, _unset) ? this.label : label as String?,
+      labelColor: labelColor ?? this.labelColor,
+      speedPxPerSecond: speedPxPerSecond ?? this.speedPxPerSecond,
+      scrollRight: scrollRight ?? this.scrollRight,
+      bandColor: bandColor ?? this.bandColor,
+      bandHeight: bandHeight ?? this.bandHeight,
+      cyclePx: cyclePx ?? this.cyclePx,
+      values: values ?? this.values,
+      barColor: barColor ?? this.barColor,
+    );
+  }
+
   Map<String, dynamic> toJson() => {
         'id': id,
         'type': type.name,
@@ -368,6 +480,29 @@ class MotionScene {
   /// gradient — the reference's deep-navy falloff.
   final int bgColor;
   final int? bgColor2;
+
+  static const Object _unset = Object();
+
+  /// v1.14.0 M2: scene-level edits (duration, background, layer
+  /// list) replace the scene with a copy, like [MotionLayer].
+  MotionScene copyWith({
+    double? width,
+    double? height,
+    double? durationSec,
+    List<MotionLayer>? layers,
+    int? bgColor,
+    Object? bgColor2 = _unset,
+  }) {
+    return MotionScene(
+      width: width ?? this.width,
+      height: height ?? this.height,
+      durationSec: durationSec ?? this.durationSec,
+      layers: layers ?? this.layers,
+      bgColor: bgColor ?? this.bgColor,
+      bgColor2:
+          identical(bgColor2, _unset) ? this.bgColor2 : bgColor2 as int?,
+    );
+  }
 
   Map<String, dynamic> toJson() => {
         'w': width,

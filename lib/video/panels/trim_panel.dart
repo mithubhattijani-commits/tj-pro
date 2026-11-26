@@ -121,6 +121,228 @@ class TrimPanel extends StatelessWidget {
           ],
         ),
       ],
+      // ── v1.14.0 T2: Trim modes (A6 Roll / A7 Slip / A25
+      // trim-to-playhead). The mode changes what the timeline
+      // trim HANDLES do; the buttons here are the precise,
+      // testable path to the same operations.
+      SectionTitle('Trim mode'),
+      iconChoiceRail(host, [
+        KeyedSubtree(
+          key: const Key('trimModeTrim'),
+          child: iconChoiceItem(host,
+            icon: Icons.content_cut,
+            label: 'Trim',
+            selected: host.trimMode == 'trim',
+            onTap: () => host.update(() => host.trimMode = 'trim'),
+          ),
+        ),
+        KeyedSubtree(
+          key: const Key('trimModeRoll'),
+          child: iconChoiceItem(host,
+            icon: Icons.swap_horiz,
+            label: 'Roll',
+            selected: host.trimMode == 'roll',
+            onTap: () => host.update(() => host.trimMode = 'roll'),
+          ),
+        ),
+        KeyedSubtree(
+          key: const Key('trimModeSlip'),
+          child: iconChoiceItem(host,
+            icon: Icons.compare_arrows,
+            label: 'Slip',
+            selected: host.trimMode == 'slip',
+            onTap: () => host.update(() => host.trimMode = 'slip'),
+          ),
+        ),
+      ]),
+      if (host.trimMode == 'roll') ...[
+        const Text(
+          'Roll: do clips ke darmiyan ki boundary hile gi — aik '
+          'clip lamba, dusra chhota, kul lambai waisi ki waisi. '
+          'Timeline par handle ghaseetein ya ye buttons dabayein '
+          '(selected clip ki peechay wali boundary).',
+          style: TextStyle(color: Colors.grey, fontSize: 12),
+        ),
+        Row(
+          children: [
+            TextButton.icon(
+              key: const Key('rollNudgeBack'),
+              onPressed: clip == null
+                  ? null
+                  : () => host.rollBoundaryBy(
+                      host.selected, -(1 / host.exportFps)),
+              icon: const Icon(Icons.remove, size: 18),
+              label: const Text('1 frame'),
+            ),
+            TextButton.icon(
+              key: const Key('rollNudgeNext'),
+              onPressed: clip == null
+                  ? null
+                  : () => host.rollBoundaryBy(
+                      host.selected, 1 / host.exportFps),
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('1 frame'),
+            ),
+          ],
+        ),
+      ],
+      if (host.trimMode == 'slip') ...[
+        const Text(
+          'Slip: clip apni jagah par rehta hai, andar ka hissa '
+          'aage/peechay sarakta hai. Timeline par clip ko '
+          'left/right ghaseetein ya ye buttons dabayein.',
+          style: TextStyle(color: Colors.grey, fontSize: 12),
+        ),
+        Row(
+          children: [
+            TextButton.icon(
+              key: const Key('slipNudgeBack'),
+              onPressed: clip == null || clip.isPhoto
+                  ? null
+                  : () => host.slipSelectedBy(-0.1),
+              icon: const Icon(Icons.arrow_back, size: 18),
+              label: const Text('0.1s'),
+            ),
+            TextButton.icon(
+              key: const Key('slipNudgeNext'),
+              onPressed: clip == null || clip.isPhoto
+                  ? null
+                  : () => host.slipSelectedBy(0.1),
+              icon: const Icon(Icons.arrow_forward, size: 18),
+              label: const Text('0.1s'),
+            ),
+          ],
+        ),
+      ],
+      if (host.trimMode == 'trim') ...[
+        const Text(
+          'Playhead ko clip ke andar rakhein, phir clip ka start '
+          'ya end playhead tak trim karein:',
+          style: TextStyle(color: Colors.grey, fontSize: 12),
+        ),
+        Wrap(
+          spacing: 6,
+          children: [
+            TextButton.icon(
+              key: const Key('trimToPlayheadStart'),
+              onPressed: clip == null ? null : host.trimToPlayheadStart,
+              icon: const Icon(Icons.first_page, size: 18),
+              label: const Text('Start → playhead'),
+            ),
+            TextButton.icon(
+              key: const Key('trimToPlayheadEnd'),
+              onPressed: clip == null ? null : host.trimToPlayheadEnd,
+              icon: const Icon(Icons.last_page, size: 18),
+              label: const Text('End → playhead'),
+            ),
+          ],
+        ),
+      ],
+      // ── v1.14.0 T3 (A5): range In/Out on the ruler.
+      SectionTitle('Range (In / Out)'),
+      Text(
+        host.rangeIn != null && host.rangeOut != null
+            ? 'Range: ${host.rangeIn!.toStringAsFixed(1)}s – '
+                '${host.rangeOut!.toStringAsFixed(1)}s'
+            : 'Range nahi laga. Playhead rakhein aur In/Out '
+                'lagayein — gold band timeline par nazar aye ga.',
+        style: const TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          TextButton.icon(
+            key: const Key('rangeSetIn'),
+            onPressed:
+                host.clips.isEmpty ? null : host.setRangeInAtPlayhead,
+            icon: const Icon(Icons.arrow_right_alt, size: 18),
+            label: const Text('In lagayein'),
+          ),
+          TextButton.icon(
+            key: const Key('rangeSetOut'),
+            onPressed:
+                host.clips.isEmpty ? null : host.setRangeOutAtPlayhead,
+            icon: const Icon(Icons.arrow_back, size: 18),
+            label: const Text('Out lagayein'),
+          ),
+          TextButton.icon(
+            key: const Key('rangeDelete'),
+            onPressed: host.rangeIn != null && host.rangeOut != null
+                ? host.deleteRange
+                : null,
+            icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+            label: const Text('Range delete'),
+          ),
+          TextButton.icon(
+            key: const Key('rangeClear'),
+            onPressed: host.rangeIn != null || host.rangeOut != null
+                ? host.clearRange
+                : null,
+            icon: const Icon(Icons.clear, size: 18),
+            label: const Text('Saaf'),
+          ),
+        ],
+      ),
+      Row(
+        children: [
+          const Icon(Icons.repeat, size: 18, color: Colors.white70),
+          const SizedBox(width: 8),
+          const Expanded(child: Text('Range loop (play sirf range mein)')),
+          Switch(
+            key: const Key('rangeLoopSwitch'),
+            value: host.loopRange,
+            onChanged: host.rangeIn != null && host.rangeOut != null
+                ? (v) => host.update(() => host.loopRange = v)
+                : null,
+          ),
+        ],
+      ),
+      // ── v1.14.0 T1 (A20/A14): timeline ki mukammal settings —
+      // header chips sirf jaldi toggle hain, asal ghar ye hai.
+      SectionTitle('Timeline'),
+      Row(
+        children: [
+          const Icon(Icons.anchor, size: 18, color: Colors.white70),
+          const SizedBox(width: 8),
+          const Expanded(
+              child: Text('Snap (playhead/trim qareebi point par)')),
+          Switch(
+            key: const Key('tlSnapSwitch'),
+            value: host.tlSnapOn,
+            onChanged: (v) => host.tlSnapOn = v,
+          ),
+        ],
+      ),
+      if (host.tlSnapOn)
+        iconChoiceRail(host, [
+          for (final s in const [
+            (0, 'Halki'),
+            (1, 'Normal'),
+            (2, 'Mazboot'),
+          ])
+            KeyedSubtree(
+              key: Key('tlSnapStrength${s.$1}'),
+              child: iconChoiceItem(host,
+                icon: Icons.anchor,
+                label: s.$2,
+                selected: host.tlSnapStrength == s.$1,
+                onTap: () => host.tlSnapStrength = s.$1,
+              ),
+            ),
+        ]),
+      Row(
+        children: [
+          const Icon(Icons.timer_outlined, size: 18, color: Colors.white70),
+          const SizedBox(width: 8),
+          const Expanded(child: Text('Timecode (H:MM:SS:FF)')),
+          Switch(
+            key: const Key('tlTimecodeSwitch'),
+            value: host.timecodeOn,
+            onChanged: (v) => host.timecodeOn = v,
+          ),
+        ],
+      ),
       SectionTitle('Canvas'),
       iconChoiceRail(host, [
         for (final a in const [
