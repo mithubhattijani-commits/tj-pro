@@ -143,7 +143,7 @@ class MotionTemplates {
     name: 'Kinetic Headline',
     category: MotionCategories.titles,
     tier: MotionTier.free,
-    slots: const ['Line 1', 'Line 2', 'Rang', 'Font'],
+    slots: const ['Line 1', 'Line 2', 'Colour', 'Font'],
     scene: const MotionScene(
       width: 1280,
       height: 720,
@@ -276,7 +276,7 @@ class MotionTemplates {
     name: 'Naam Strip Classic',
     category: MotionCategories.naam,
     tier: MotionTier.free,
-    slots: const ['Naam', 'Ohda', 'Rang'],
+    slots: const ['Naam', 'Ohda', 'Colour'],
     scene: const MotionScene(
       width: 1280,
       height: 720,
@@ -421,9 +421,9 @@ class MotionTemplates {
             width: 580,
             start: 0.35 + i * 0.9,
             text: const [
-              'Pehla point yahan likhen',
-              'Dusra point yahan likhen',
-              'Teesra point yahan likhen',
+              'Write the first point here',
+              'Write the second point here',
+              'Write the third point here',
             ][i],
             fontSize: 44,
             color: _white,
@@ -441,7 +441,7 @@ class MotionTemplates {
     name: 'Counter / Ginti',
     category: MotionCategories.numbers,
     tier: MotionTier.free,
-    slots: const ['Akhri number', 'Label'],
+    slots: const ['Last number', 'Label'],
     scene: const MotionScene(
       width: 1280,
       height: 720,

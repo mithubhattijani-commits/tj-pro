@@ -1,7 +1,7 @@
 /// MOTION GRAPHICS STUDIO — Editor (Build M2, v1.14.0).
 ///
 /// Opens from a Gallery template (via the Preview screen's
-/// "Edit karein") or from a saved My Template. Everything here
+/// "Edit") or from a saved My Template. Everything here
 /// edits the REAL scene model through copyWith: text, fonts,
 /// colours, background, size/position, timing, entrance/exit
 /// style, ticker speed/direction, counter numbers, and the
@@ -209,8 +209,8 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
     if (!mounted) return;
     setState(() {
       _savedId = id;
-      _status = 'Save ho gaya — Gallery ki "My Templates" '
-          'category mein mil jayega.';
+      _status = 'Saved — in the Gallery\'s "My Templates" '
+          'category.';
     });
   }
 
@@ -222,7 +222,7 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
     setState(() {
       _savedId = id;
       _name = name;
-      _status = 'Copy ban gaya aur save bhi ho gaya.';
+      _status = 'A copy was made and saved.';
     });
   }
 
@@ -233,17 +233,16 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: _kCard,
-        title: const Text('Template delete karein?',
+        title: const Text('Delete template?',
             style: TextStyle(color: Colors.white, fontSize: 16)),
         content: Text(
-          '"$_name" My Templates se hamesha ke liye delete ho '
-          'jayega.',
+          '"$_name" will be deleted forever from My Templates.',
           style: const TextStyle(color: Colors.white70, fontSize: 13),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Nahi'),
+            child: const Text('No'),
           ),
           TextButton(
             key: const Key('motionDeleteConfirm'),
@@ -269,12 +268,12 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
   /// [VideoEditorScreen.initialPipVideoPath]).
   Future<void> _lagao() async {
     if (FeatureGate.isKilled(KillableFeature.motion)) {
-      setState(() => _status = 'Motion abhi band hai (kill switch).');
+      setState(() => _status = 'Motion is off right now (kill switch).');
       return;
     }
     setState(() {
       _lagaoBusy = true;
-      _status = 'Frames ban rahe hain…';
+      _status = 'Creating frames…';
     });
     try {
       final tmp = await getTemporaryDirectory();
@@ -304,8 +303,8 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
       var note = '';
       if (webm.ok && await File(webmPath).exists()) {
         outPath = webmPath;
-        note = 'Transparent (WebM) overlay ban gaya — Video '
-            'Editor mein PIP layer lag gaya hai.';
+        note = 'Transparent (WebM) overlay created — in the Video '
+            'the PIP layer has been placed in the Editor.';
       } else {
         final mp4Path = p.join(dir.path, 'motion.mp4');
         final mp4 = await FfmpegService.run(
@@ -315,14 +314,14 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
         );
         if (mp4.ok && await File(mp4Path).exists()) {
           outPath = mp4Path;
-          note = 'Transparent encode nahi ho saka — MP4 (scene '
-              'ke background ke sath) PIP layer lag gaya hai.';
+          note = 'Transparent encode failed — MP4 (with the scene\'s '
+              'background) the PIP layer has been placed in the Editor.';
         }
       }
       if (!mounted) return;
       if (outPath == null) {
         setState(() => _status =
-            'Video nahi ban saka — dobara try karein.');
+            'Video could not be created — try again.');
         return;
       }
       setState(() => _status = note);
@@ -336,7 +335,7 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
     } catch (_) {
       if (mounted) {
         setState(() => _status =
-            'Video nahi ban saka — dobara try karein.');
+            'Video could not be created — try again.');
       }
     } finally {
       if (mounted) setState(() => _lagaoBusy = false);
@@ -601,7 +600,7 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
               )
             : const Icon(Icons.video_library_outlined, size: 19),
         label: const Text(
-          'Video par Lagao',
+          'Place on Video',
           style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
         ),
       ),
@@ -619,7 +618,7 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
       ..._typeControls(layer),
       _sectionTitle('Position / Size'),
       _slider(
-        'Aage-peechay (X)',
+        'Left-right (X)',
         layer.x / _scene.width,
         0,
         1,
@@ -627,7 +626,7 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
         format: (v) => '${(v * 100).round()}%',
       ),
       _slider(
-        'Upar-neeche (Y)',
+        'Up-down (Y)',
         layer.y / _scene.height,
         0,
         1,
@@ -658,7 +657,7 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
         (v) => _updateLayer((l) => l.copyWith(rotation: v)),
         format: (v) => '${v.round()}°',
       ),
-      _sectionTitle('Waqt (Timing)'),
+      _sectionTitle('Timing'),
       _slider(
         'Start',
         layer.start,
@@ -734,7 +733,7 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
             format: (v) => v.toStringAsFixed(1),
           ),
           _swatches(
-            'Text rang',
+            'Text colour',
             layer.color,
             (c) => _updateLayer((l) => l.copyWith(color: c)),
           ),
@@ -752,12 +751,12 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
       case MotionLayerType.shape:
         return [
           _swatches(
-            'Fill rang',
+            'Fill colour',
             layer.fill,
             (c) => _updateLayer((l) => l.copyWith(fill: c)),
           ),
           _swatches(
-            'Gradient end (dusra rang)',
+            'Gradient end (second colour)',
             layer.fill2,
             (c) => _updateLayer((l) => l.copyWith(fill2: c)),
             allowNone: true,
@@ -771,7 +770,7 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
             format: (v) => v.round().toString(),
           ),
           _swatches(
-            'Glow rang',
+            'Glow colour',
             layer.glowColor,
             (c) => _updateLayer((l) => l.copyWith(glowColor: c)),
             allowNone: true,
@@ -788,8 +787,8 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
       case MotionLayerType.image:
         return [
           const Text(
-            'Apna logo ya photo is layer par lagayein — file '
-            'template ke sath save ho jati hai.',
+            'Attach your logo or photo to this layer — the file '
+            'is saved with the template.',
             style: TextStyle(color: Colors.white54, fontSize: 12.5),
           ),
           const SizedBox(height: 8),
@@ -802,7 +801,7 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
               label: Text(
                 _imagePaths[layer.imageKey] != null
                     ? 'Photo badlein'
-                    : 'Logo / photo chunein',
+                    : 'Choose logo / photo',
               ),
             ),
           ),
@@ -822,7 +821,7 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
         return [
           _textField(
             'motionCounterFrom',
-            'Shuru number',
+            'Start number',
             layer.from.round().toString(),
             (v) => _updateLayer(
                 (l) => l.copyWith(from: double.tryParse(v) ?? l.from)),
@@ -830,7 +829,7 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
           ),
           _textField(
             'motionCounterTo',
-            'Aakhri number',
+            'Last number',
             layer.to.round().toString(),
             (v) => _updateLayer(
                 (l) => l.copyWith(to: double.tryParse(v) ?? l.to)),
@@ -838,19 +837,19 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
           ),
           _textField(
             'motionCounterPrefix',
-            'Pehle (prefix)',
+            'Before (prefix)',
             layer.prefix,
             (v) => _updateLayer((l) => l.copyWith(prefix: v)),
           ),
           _textField(
             'motionCounterSuffix',
-            'Baad mein (suffix)',
+            'After (suffix)',
             layer.suffix,
             (v) => _updateLayer((l) => l.copyWith(suffix: v)),
           ),
           _textField(
             'motionCounterLabel',
-            'Neeche wala label',
+            'Bottom label',
             layer.label ?? '',
             (v) => _updateLayer((l) => l.copyWith(label: v)),
           ),
@@ -863,7 +862,7 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
             format: (v) => v.round().toString(),
           ),
           _swatches(
-            'Number rang',
+            'Number colour',
             layer.color,
             (c) => _updateLayer((l) => l.copyWith(color: c)),
           ),
@@ -895,12 +894,12 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
                 _updateLayer((l) => l.copyWith(scrollRight: v)),
           ),
           _swatches(
-            'Band rang',
+            'Band colour',
             layer.bandColor,
             (c) => _updateLayer((l) => l.copyWith(bandColor: c)),
           ),
           _swatches(
-            'Text rang',
+            'Text colour',
             layer.color,
             (c) => _updateLayer((l) => l.copyWith(color: c)),
           ),
@@ -909,13 +908,13 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
       case MotionLayerType.chart:
         return [
           _swatches(
-            'Bar rang',
+            'Bar colour',
             layer.barColor,
             (c) => _updateLayer((l) => l.copyWith(barColor: c)),
           ),
           const Text(
-            'Bar values is marhale mein template wale hi rehte '
-            'hain (values editor agle marhale mein).',
+            'Bar values stay the template\'s at this stage '
+            'are (values editor in the next stage).',
             style: TextStyle(color: Colors.white38, fontSize: 11.5),
           ),
         ];
@@ -960,7 +959,7 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
         format: (v) => '${v.toStringAsFixed(1)}s',
       ),
       _swatches(
-        'Background rang',
+        'Background colour',
         _scene.bgColor,
         (c) => setState(() => _scene = _scene.copyWith(bgColor: c)),
       ),

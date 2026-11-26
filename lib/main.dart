@@ -903,23 +903,23 @@ class _HomeScreenState extends State<HomeScreen> {
           version.isEmpty ? "What's New" : "What's New — v$version",
         ),
         content: const Text(
-          '• News Studio captions ab ASAL timings ke sath — '
-          'voiceover ki asal awaaz se mile hue lafz-ba-lafz '
-          'captions, Maker aur Caption Studio dono mein\n'
-          '• Logo Parts: apna logo dein, app khud us ke hisay '
-          'alag kar ke har hisay ko ghumata hai; Permanent Logo '
-          'alag se hamesha ke liye\n'
-          '• Teleprompter: camera par script khud scroll hoti '
-          'hai — recording seedha project ke clips mein\n'
-          '• Audio Ducking: voice aate hi background music khud '
-          'dheema ho jata hai\n'
-          '• Apna banner lagwayein: Home ke DONO hero banners '
-          'coins se book ho sakte hain (1 ghanta 100, 2 ghante '
-          '200, 4 ghante 300) — Advertise page se; waqt khatam '
-          'hote hi owner ka banner khud wapas\n'
-          '• Report bhejo: About mein button — masla likhein, '
-          'report khud pohanch jayegi; app ki khataen bhi '
-          'khud-kar report hoti hain',
+          '• News Studio captions now use REAL timings — '
+          'word-by-word captions matched to the actual voiceover '
+          'audio, in both the Maker and Caption Studio\n'
+          '• Logo Parts: give your logo — the app splits it into parts '
+          'and rotates each part; Permanent Logo '
+          'separately, forever\n'
+          '• Teleprompter: the script scrolls by itself on the camera '
+          '— the recording goes straight into the project clips\n'
+          '• Audio Ducking: as soon as the voice comes, the background music itself '
+          'slows down\n'
+          '• Place your own banner: BOTH Home hero banners '
+          'can be booked with coins (1 hour 100, 2 hours '
+          '200, 4 hours 300) — from the Advertise page; when the time '
+          'ends, the owner\'s banner returns automatically\n'
+          '• Send a report: button in About — write the problem, '
+          'the report is delivered automatically; app errors are also '
+          'reported automatically',
         ),
         actions: [
           TextButton(
@@ -957,7 +957,7 @@ class _HomeScreenState extends State<HomeScreen> {
               // it fired on. Read-only; the Copy button puts it
               // on the clipboard.
               const Text(
-                'Diagnostics — aakhri khata',
+                'Diagnostics — last error',
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 6),
@@ -975,12 +975,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 future: CrashGuard.loadStoredDiagnostic(),
                 builder: (context, snap) {
                   if (snap.connectionState != ConnectionState.done) {
-                    return const Text('Load ho raha hai…');
+                    return const Text('Loading…');
                   }
                   final text = snap.data;
                   if (text == null || text.isEmpty) {
                     return const Text(
-                      'Abhi tak koi khata record nahi hui.',
+                      'No error recorded yet.',
                     );
                   }
                   return Column(

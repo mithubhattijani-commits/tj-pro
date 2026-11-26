@@ -79,7 +79,7 @@ class LiveService {
     try {
       final cameras = await availableCameras();
       if (cameras.isEmpty) {
-        status.value = 'Koi camera nahi mila.';
+        status.value = 'No camera found.';
         return false;
       }
       final selected = cameras.firstWhere(
@@ -107,7 +107,7 @@ class LiveService {
       status.value = 'Camera ready.';
       return true;
     } catch (e) {
-      status.value = 'Camera start nahi ho saka: $e';
+      status.value = 'Camera could not start: $e';
       return false;
     }
   }
@@ -147,14 +147,14 @@ class LiveService {
     }
     if (targets.isEmpty) {
       status.value =
-          'Pehle Facebook ya YouTube ki stream key save karein.';
+          'Save the Facebook or YouTube stream key first.';
       return false;
     }
     if (!await initCamera()) return false;
     final controller = _controller;
     if (controller == null) return false;
     destinations.value = states;
-    status.value = 'Live connect ho raha hai…';
+    status.value = 'Live is connecting…';
     try {
       await controller.startMultiStreaming(targets);
       _live = true;
@@ -175,7 +175,7 @@ class LiveService {
         states[id] = LiveDestinationState.failed;
       }
       destinations.value = Map.of(states);
-      status.value = 'Live start nahi ho saka: $e';
+      status.value = 'Live could not start: $e';
       return false;
     }
   }
@@ -195,7 +195,7 @@ class LiveService {
     _live = false;
     destinations.value = {};
     statsLine.value = '';
-    status.value = 'Live band ho gaya.';
+    status.value = 'Live has ended.';
   }
 
   /// Stops ONE platform, keeping the other live.
@@ -212,7 +212,7 @@ class LiveService {
       _overlayTimer = null;
       _statsTimer?.cancel();
       _statsTimer = null;
-      status.value = 'Live band ho gaya.';
+      status.value = 'Live has ended.';
     }
   }
 
@@ -231,14 +231,14 @@ class LiveService {
       // or kill the live stream.
       final targetName = target.name;
       if (targetName == null) {
-        status.value = 'Camera switch fail ho gaya (camera ka naam nahi mila).';
+        status.value = 'Camera switch failed (camera name not found).';
         return;
       }
       try {
         await _controller?.switchCamera(targetName);
         _cameraIndex = next;
       } catch (_) {
-        status.value = 'Camera switch fail ho gaya (live ke doran).';
+        status.value = 'Camera switch failed (during live).';
       }
       return;
     }
@@ -262,7 +262,7 @@ class LiveService {
       _cameraIndex = next;
       _ready = true;
     } catch (e) {
-      status.value = 'Camera switch fail ho gaya: $e';
+      status.value = 'Camera switch failed: $e';
     }
   }
 

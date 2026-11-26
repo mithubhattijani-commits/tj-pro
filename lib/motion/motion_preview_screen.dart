@@ -4,7 +4,7 @@
 /// What a Gallery tap opens: the template playing large
 /// through the shared engine painter, with real transport
 /// (play/pause, restart, scrub), the template's facts, and —
-/// since M2 — the real "Edit karein" button into the Editor
+/// since M2 — the real "Edit" button into the Editor
 /// (text/logo/rang/timing + Save + Video par Lagao).
 library;
 
@@ -163,7 +163,7 @@ class _MotionPreviewScreenState extends State<MotionPreviewScreen>
                   if (t.slots.isNotEmpty) ...[
                     const SizedBox(height: 14),
                     const Text(
-                      'Editor mein badlein:',
+                      'Change in the editor:',
                       style: TextStyle(
                         color: Colors.white,
                         fontSize: 13,
@@ -226,7 +226,7 @@ class _MotionPreviewScreenState extends State<MotionPreviewScreen>
                       ),
                       icon: const Icon(Icons.edit_outlined, size: 19),
                       label: const Text(
-                        'Edit karein',
+                        'Edit',
                         style: TextStyle(
                           fontWeight: FontWeight.w700,
                           fontSize: 14,

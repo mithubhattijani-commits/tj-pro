@@ -102,8 +102,8 @@ class MotionUnlock {
       builder: (ctx) => AlertDialog(
         title: Text(template.name),
         content: Text(
-          'Ye design aik dafa ke $price coins mein hamesha ke '
-          'liye unlock ho jayega.\n'
+          'This design will be unlocked forever for a one-time $price coins. '
+          'will be unlocked.\n'
           'Aap ka balance: $balance coins.',
         ),
         actions: [
@@ -142,8 +142,8 @@ class MotionUnlock {
       builder: (ctx) => AlertDialog(
         title: Text(template.name),
         content: const Text(
-          'Aik rewarded ad dekhen — ye design hamesha ke liye '
-          'unlock ho jayega.',
+          'Watch a rewarded ad — this design will be unlocked forever '
+          'will be unlocked.',
         ),
         actions: [
           TextButton(
@@ -174,13 +174,13 @@ class MotionUnlock {
       builder: (ctx) => AlertDialog(
         title: Text(template.name),
         content: const Text(
-          'Ye design sirf Pro members ke liye hai — coins se '
-          'nahi khulta. Pro ki tafseel dekhen?',
+          'This design is for Pro members only — it does not unlock '
+          'does not unlock with coins. See the Pro details?',
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Band karein'),
+            child: const Text('Close'),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),

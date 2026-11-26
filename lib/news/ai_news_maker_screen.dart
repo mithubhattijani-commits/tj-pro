@@ -119,7 +119,7 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
 
   GeminiVoice _voice = GeminiVoice.aoede;
   bool _voiceBusy = false;
-  String _voiceStatus = 'Abhi voice nahi bani.';
+  String _voiceStatus = 'No voice has been created yet.';
   int? _voiceRemaining;
 
   bool _analysisRunning = false;
@@ -267,7 +267,7 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
     if (project == null || _analysisRunning) return;
     final text = _tehreerController.text.trim();
     if (text.isEmpty) {
-      _showMessage('Pehle tehreer paste karein.');
+      _showMessage('Paste the script first.');
       return;
     }
     // COINS (Phase 10): the One Click charge lands BEFORE
@@ -283,12 +283,12 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
     if (!spendResult.ok) {
       _showMessage(
         spendResult.error == PricingService.errorProRequired
-            ? 'One Click AI News Maker sirf Pro users ke liye hai.'
+            ? 'One Click AI News Maker is for Pro users only.'
             : spendResult.error == PricingService.errorAdNotCompleted
-                ? 'Ad mukammal nahi hua — One Click nahi chala.'
-                : 'Coins kam hain — One Click AI News Maker ke liye '
+                ? 'The ad did not complete — One Click did not run.'
+                : 'Not enough coins — for One Click AI News Maker '
                     '${PricingService.coinsOr(PricingService.keyNsOneClick, CoinCosts.oneClick)} '
-                    'coins chahiye. Watch Ads se kamayein.',
+                    'coins are needed. Earn them from Watch Ads.',
       );
       return;
     }
@@ -343,12 +343,12 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
     if (project == null || _voiceBusy) return;
     final text = _tehreerController.text.trim();
     if (text.isEmpty) {
-      _showMessage('Pehle tehreer likhein.');
+      _showMessage('Write the script first.');
       return;
     }
     setState(() {
       _voiceBusy = true;
-      _voiceStatus = 'Voice ban rahi hai…';
+      _voiceStatus = 'Creating voice…';
     });
     try {
       final cached = regenerate
@@ -369,13 +369,13 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
           if (!mounted) return;
           final String failLine =
               spendResult.error == PricingService.errorProRequired
-                  ? 'Voiceover sirf Pro users ke liye hai.'
+                  ? 'Voiceover is for Pro users only.'
                   : spendResult.error ==
                           PricingService.errorAdNotCompleted
-                      ? 'Ad mukammal nahi hua — voiceover nahi bana.'
-                      : 'Voiceover ke liye '
+                      ? 'The ad did not complete — the voiceover was not created.'
+                      : 'For the voiceover, '
                           '${PricingService.coinsOr(PricingService.keyNsVoiceover, CoinCosts.voiceover)} '
-                          'coins chahiye — balance kam hai. '
+                          'coins are needed — balance is low. '
                           'Watch Ads se coins kamayein.';
           setState(() {
             _voiceBusy = false;
@@ -410,7 +410,7 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
         project.captionTimingSource = 'estimate';
         project.captionAlignedHash = '';
         _syncSubtitleControllers();
-        syncNote = ' Subtitles voiceover se sync ho gaye.';
+        syncNote = ' Subtitles synced with the voiceover.';
       }
       setState(() {
         _voiceBusy = false;
@@ -418,17 +418,17 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
         project.voiceoverDurationSec = duration;
         _voiceRemaining = remaining;
         _voiceStatus = result.cached
-            ? 'Cached voice — 0 nayi calls (same tehreer).$syncNote'
+            ? 'Cached voice — 0 new calls (same script).$syncNote'
             : result.usedDeviceFallback
-                ? 'Device voice use hui (proxy/cap issue) — 0 proxy calls.$syncNote'
-                : 'Nayi voice — ${result.proxyRequests} request(s) use hui.$syncNote';
+                ? 'Device voice used (proxy/cap issue) — 0 proxy calls.$syncNote'
+                : 'New voice — ${result.proxyRequests} request(s) used.$syncNote';
       });
       _scheduleSave();
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _voiceBusy = false;
-        _voiceStatus = 'Voice nahi ban saki: $e';
+        _voiceStatus = 'Could not create the voice: $e';
       });
     }
   }
@@ -437,7 +437,7 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
     final data = await Clipboard.getData('text/plain');
     final text = data?.text?.trim() ?? '';
     if (text.isEmpty) {
-      _showMessage('Clipboard khaali hai — pehle text copy karein.');
+      _showMessage('Clipboard is empty — copy some text first.');
       return;
     }
     setState(() => _tehreerController.text = text);
@@ -448,7 +448,7 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
     final data = await Clipboard.getData('text/plain');
     final text = data?.text?.trim() ?? '';
     if (text.isEmpty) {
-      _showMessage('Clipboard khaali hai — pehle text copy karein.');
+      _showMessage('Clipboard is empty — copy some text first.');
       return;
     }
     setState(() => _tickerController.text = text);
@@ -555,10 +555,10 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
           actions: [
             IconButton(
               icon: const Icon(Icons.check),
-              tooltip: 'Project save karein',
+              tooltip: 'Save project',
               onPressed: () async {
                 await _saveNow();
-                _showMessage('Project save ho gaya.');
+                _showMessage('Project saved.');
               },
             ),
           ],
@@ -579,7 +579,7 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
       children: [
         const Text(
-          'Paste news → AI karta hai baaki',
+          'Paste news → AI does the rest',
           style: TextStyle(color: Colors.grey, fontSize: 13),
         ),
         if (_saveStatus.isNotEmpty)
@@ -614,7 +614,7 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
           textAlign: TextAlign.right,
           textDirection: TextDirection.rtl,
           decoration: const InputDecoration(
-            hintText: 'Tehreer yahan paste karein…',
+            hintText: 'Paste the script here…',
             border: OutlineInputBorder(),
           ),
           onChanged: (_) {
@@ -645,7 +645,7 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
                 : const Icon(Icons.auto_awesome),
             label: Text(
               _analysisRunning
-                  ? 'AI Analysis chal rahi hai…'
+                  ? 'AI Analysis is running…'
                   : 'AI Analysis chalao (13 steps)',
             ),
             style: FilledButton.styleFrom(
@@ -656,11 +656,11 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
         ),
         const SizedBox(height: 4),
         Text(
-          'Voiceover step mein proxy request(s) lagti hain'
+          'The voiceover step uses proxy request(s)'
           // Cap line: non-admins only. Admins get -1 (unlimited)
           // from remainingToday() and see no counter here.
           '${_voiceRemaining == null || _voiceRemaining == -1 ? '' : ' — Aaj ki voice limit: $_voiceRemaining / 5 baaki'}'
-          ' — cached tehreer = 0 nayi calls.',
+          ' — cached script = 0 new calls.',
           style: const TextStyle(color: Colors.grey, fontSize: 12),
         ),
         const SizedBox(height: 16),
@@ -725,7 +725,7 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
             const SizedBox(width: 8),
             const Expanded(
               child: Text(
-                'Export • Phase 7 mein aayega',
+                'Export • Coming in Phase 7',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.grey),
               ),
@@ -764,13 +764,13 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
         ),
         subtitle: state.blocked
             ? const Text(
-                'Phase 7 mein aayega',
+                'Coming in Phase 7',
                 style: TextStyle(color: Colors.grey),
               )
             : state.done
                 ? const Text('Done', style: TextStyle(color: Colors.grey))
                 : const Text(
-                    'Abhi nahi hua — "AI Analysis chalao" dabayein',
+                    'Not done yet — tap "Run AI Analysis"',
                     style: TextStyle(color: Colors.grey),
                   ),
         children: [
@@ -791,7 +791,7 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
           children: [
             const Text(
               'Topics — rules-based extraction (zero quota). '
-              'Chip hatayein ya apna topic add karein.',
+              'Remove a chip or add your own topic.',
               style: TextStyle(color: Colors.grey, fontSize: 12),
             ),
             const SizedBox(height: 8),
@@ -839,8 +839,8 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
               const Padding(
                 padding: EdgeInsets.only(top: 8),
                 child: Text(
-                  'Abhi koi topic nahi — tehreer paste kar ke '
-                  '"AI Analysis chalao" dabayein.',
+                  'No topics yet — paste the script and '
+                  'tap "Run AI Analysis".',
                   style: TextStyle(color: Colors.grey),
                 ),
               ),
@@ -852,7 +852,7 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
           controller: _headlineController,
           maxLines: 2,
           decoration: const InputDecoration(
-            labelText: 'Headline (auto — edit kar sakte hain)',
+            labelText: 'Headline (auto — you can edit)',
             border: OutlineInputBorder(),
           ),
           onChanged: (_) => _scheduleSave(),
@@ -863,7 +863,7 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
           controller: _summaryController,
           maxLines: 3,
           decoration: const InputDecoration(
-            labelText: 'Summary — 2 lines (auto — edit kar sakte hain)',
+            labelText: 'Summary — 2 lines (auto — you can edit)',
             border: OutlineInputBorder(),
           ),
           onChanged: (_) => _scheduleSave(),
@@ -897,7 +897,7 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
                 onPressed: _voiceBusy ? null : () => _buildVoice(),
                 icon: const Icon(Icons.play_arrow),
                 label: Text(
-                  _voiceBusy ? 'Voice ban rahi hai…' : 'Voice banao',
+                  _voiceBusy ? 'Creating voice…' : 'Create Voice',
                 ),
                 style: FilledButton.styleFrom(
                   backgroundColor: const Color(0xFF7C3AED),
@@ -923,8 +923,8 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
       case 'subtitles':
         if (project.subtitles.isEmpty) {
           return const Text(
-            'Abhi koi subtitles nahi — "AI Analysis chalao" dabayein '
-            '(pehle basic split, phir voiceover se karaoke sync).',
+            'No subtitles yet — tap "Run AI Analysis" '
+            '(basic split first, then karaoke sync from the voiceover).',
             style: TextStyle(color: Colors.grey),
           );
         }
@@ -937,10 +937,10 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
                 Expanded(
                   child: Text(
                     synced
-                        ? 'Voiceover se synced — har line ki timing real '
-                            'voiceover length se hai.'
+                        ? 'Synced with the voiceover — every line\'s timing is real '
+                            'is from the voiceover length.'
                         : 'Basic split — voiceover bante hi timings us ki '
-                            'real length se sync honge.',
+                            'will sync with the real length.',
                     style: const TextStyle(
                       color: Colors.grey,
                       fontSize: 12,
@@ -1005,7 +1005,7 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
                     IconButton(
                       key: Key('subtitleDelete-$index'),
                       icon: const Icon(Icons.delete_outline),
-                      tooltip: 'Line hatayein',
+                      tooltip: 'Remove line',
                       onPressed: () {
                         setState(() {
                           project.subtitles.removeAt(index);
@@ -1031,8 +1031,8 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
           children: [
             const Text(
               'Suggested media — tehreer se nikle topics. In keywords '
-              'se match karte clips gallery se chunein. Full AI media '
-              'search baad ki phase mein aayega.',
+              'choose matching clips from the gallery. Full AI media '
+              'search will come in a later phase.',
               style: TextStyle(color: Colors.grey, fontSize: 12),
             ),
             const SizedBox(height: 8),
@@ -1047,7 +1047,7 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
               const Padding(
                 padding: EdgeInsets.only(top: 8),
                 child: Text(
-                  'Abhi koi keywords nahi — pehle analysis chalao.',
+                  'No keywords yet — run the analysis first.',
                   style: TextStyle(color: Colors.grey),
                 ),
               ),
@@ -1176,7 +1176,7 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
                 );
                 await _reloadPreset();
               },
-              child: const Text('News Maker ke Template panel mein badlein'),
+              child: const Text('Change it in the News Maker\'s Template panel'),
             ),
           ],
         );
@@ -1188,7 +1188,7 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
                 key: const Key('aiTickerField'),
                 controller: _tickerController,
                 decoration: const InputDecoration(
-                  hintText: 'Ticker text yahan paste karein…',
+                  hintText: 'Paste the ticker text here…',
                   border: OutlineInputBorder(),
                 ),
                 onChanged: (_) {
@@ -1246,9 +1246,9 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
                     key: const Key('timelineSaveButton'),
                     onPressed: () async {
                       await _saveNow();
-                      _showMessage('Project save ho gaya.');
+                      _showMessage('Project saved.');
                     },
-                    child: const Text('Project save karein'),
+                    child: const Text('Save project'),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -1364,8 +1364,8 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
             ),
             const SizedBox(height: 4),
             const Text(
-              'Koi invented fact nahi — publish se pehle aap khud check '
-              'karein. App sources ko verify NAHI karta, sirf list karta hai.',
+              'No invented facts — check yourself before publishing '
+              'check them. The app does NOT verify the sources, it only lists them.',
               style: TextStyle(color: Colors.grey, fontSize: 12),
             ),
             const SizedBox(height: 12),
@@ -1394,7 +1394,7 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
                     IconButton(
                       key: Key('sourceDelete-$index'),
                       icon: const Icon(Icons.delete_outline, size: 18),
-                      tooltip: 'Source hatayein',
+                      tooltip: 'Remove source',
                       onPressed: () {
                         setState(() => project.sources.removeAt(index));
                         _scheduleSave();
@@ -1452,7 +1452,7 @@ class _AiNewsMakerScreenState extends State<AiNewsMakerScreen> {
                 IconButton(
                   key: const Key('sourceAddButton'),
                   icon: const Icon(Icons.add_circle),
-                  tooltip: 'Source add karein',
+                  tooltip: 'Add source',
                   onPressed: () {
                     final value = _sourceValueController.text.trim();
                     if (value.isEmpty) return;

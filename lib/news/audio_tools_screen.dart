@@ -53,7 +53,7 @@ class _AudioToolsScreenState extends State<AudioToolsScreen> {
   final _artistController = TextEditingController();
 
   bool _busy = false;
-  String _status = 'Pehle audio ya video file chunein.';
+  String _status = 'Choose an audio or video file first.';
   String? _outputPath;
 
   @override
@@ -120,13 +120,13 @@ class _AudioToolsScreenState extends State<AudioToolsScreen> {
         _trimEndController.text =
             duration == null ? '' : duration.toStringAsFixed(1);
         _status = isVideo
-            ? 'Video chuni gayi — audio extract kar sakte hain.'
+            ? 'Video chosen — you can extract the audio.'
             : duration == null
-                ? 'Audio chuni gayi (duration nahi parhi ja saki).'
-                : 'Audio chuni gayi — ${duration.toStringAsFixed(1)}s.';
+                ? 'Audio chosen (duration could not be read).'
+                : 'Audio chosen — ${duration.toStringAsFixed(1)}s.';
       });
     } catch (e) {
-      _showMessage('File pick nahi hui: $e');
+      _showMessage('File could not be picked: $e');
     }
   }
 
@@ -160,7 +160,7 @@ class _AudioToolsScreenState extends State<AudioToolsScreen> {
     if (!_hasInput || _busy) return;
     setState(() {
       _busy = true;
-      _status = 'Convert ho raha hai…';
+      _status = 'Converting…';
       _outputPath = null;
     });
     try {
@@ -173,7 +173,7 @@ class _AudioToolsScreenState extends State<AudioToolsScreen> {
       setState(() {
         _busy = false;
         _outputPath = result.outputPath;
-        _status = 'Convert ho gaya — ${result.bytes} bytes.';
+        _status = 'Converted — ${result.bytes} bytes.';
       });
     } catch (e) {
       if (!mounted) return;
@@ -188,7 +188,7 @@ class _AudioToolsScreenState extends State<AudioToolsScreen> {
     if (!_hasInput || _busy) return;
     setState(() {
       _busy = true;
-      _status = 'Audio nikal rahe hain…';
+      _status = 'Extracting audio…';
       _outputPath = null;
     });
     try {
@@ -200,13 +200,13 @@ class _AudioToolsScreenState extends State<AudioToolsScreen> {
       setState(() {
         _busy = false;
         _outputPath = result.outputPath;
-        _status = 'Audio nikal gaya — ${result.bytes} bytes.';
+        _status = 'Audio extracted — ${result.bytes} bytes.';
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _busy = false;
-        _status = 'Audio nahi nikla: $e';
+        _status = 'Audio could not be extracted: $e';
       });
     }
   }
@@ -215,7 +215,7 @@ class _AudioToolsScreenState extends State<AudioToolsScreen> {
     if (!_hasInput || _busy) return;
     final bytes = _inputBytes;
     if (bytes == null) {
-      _showMessage('Trim ke liye audio file chahiye (video nahi).');
+      _showMessage('Trim needs an audio file (not a video).');
       return;
     }
     final start = _parseDouble(_trimStartController, 0);
@@ -224,12 +224,12 @@ class _AudioToolsScreenState extends State<AudioToolsScreen> {
         ? _inputDuration
         : double.tryParse(endText);
     if (end == null || end <= start) {
-      _showMessage('Trim range galat hai — end, start se bara hona chahiye.');
+      _showMessage('The trim range is wrong — the end must be greater than the start.');
       return;
     }
     setState(() {
       _busy = true;
-      _status = 'Trim ho raha hai…';
+      _status = 'Trimming…';
       _outputPath = null;
     });
     try {
@@ -244,7 +244,7 @@ class _AudioToolsScreenState extends State<AudioToolsScreen> {
       setState(() {
         _busy = false;
         _outputPath = outPath;
-        _status = 'Trim ho gaya — ${trimmed.length} bytes (no re-encode).';
+        _status = 'Trimmed — ${trimmed.length} bytes (no re-encode).';
       });
     } catch (e) {
       if (!mounted) return;
@@ -263,12 +263,12 @@ class _AudioToolsScreenState extends State<AudioToolsScreen> {
         allowedExtensions: ['mp3', 'wav'],
       );
       if (picked.length < 2) {
-        _showMessage('Join ke liye kam se kam 2 files chunein.');
+        _showMessage('Choose at least 2 files to join.');
         return;
       }
       setState(() {
         _busy = true;
-        _status = 'Join ho raha hai…';
+        _status = 'Joining…';
         _outputPath = null;
       });
       final files = <Uint8List>[];
@@ -289,7 +289,7 @@ class _AudioToolsScreenState extends State<AudioToolsScreen> {
       setState(() {
         _busy = false;
         _outputPath = outPath;
-        _status = 'Join ho gaya — ${joined.length} bytes.';
+        _status = 'Joined — ${joined.length} bytes.';
       });
     } catch (e) {
       if (!mounted) return;
@@ -333,7 +333,7 @@ class _AudioToolsScreenState extends State<AudioToolsScreen> {
                     Flexible(
                       child: Text(
                         _inputPath == null
-                            ? 'Audio / Video file chunein'
+                            ? 'Choose an audio / video file'
                             : _inputPath!.split('/').last,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -409,7 +409,7 @@ class _AudioToolsScreenState extends State<AudioToolsScreen> {
             ),
             if (!_format.isLossy)
               const Text(
-                'WAV lossless hai — bitrate nahi lagta.',
+                'WAV is lossless — bitrate does not apply.',
                 style: TextStyle(color: Colors.grey, fontSize: 12),
               ),
             Row(
@@ -501,7 +501,7 @@ class _AudioToolsScreenState extends State<AudioToolsScreen> {
               ],
             ),
             const Text(
-              'Speed pitch bhi badalta hai (resample — true pitch-shift nahi).',
+              'Speed also changes the pitch (resample — not a true pitch-shift).',
               style: TextStyle(color: Colors.grey, fontSize: 12),
             ),
             Row(
@@ -528,7 +528,7 @@ class _AudioToolsScreenState extends State<AudioToolsScreen> {
               key: const Key('loudnormSwitch'),
               title: const Text('Loudnorm normalise'),
               subtitle: const Text(
-                'Volume gain se zyada — loudnorm on ho to volume ignore hota hai.',
+                'More than volume gain — if loudnorm is on, the volume is ignored.',
               ),
               value: _loudnorm,
               onChanged: (v) => setState(() => _loudnorm = v),
@@ -596,7 +596,7 @@ class _AudioToolsScreenState extends State<AudioToolsScreen> {
                         ),
                       )
                     : const Icon(Icons.transform),
-                label: Text(_busy ? 'Chal raha hai…' : 'Convert karein'),
+                label: Text(_busy ? 'Running…' : 'Convert'),
                 style: FilledButton.styleFrom(
                   backgroundColor: const Color(0xFF7C3AED),
                   padding: const EdgeInsets.symmetric(vertical: 14),
@@ -612,7 +612,7 @@ class _AudioToolsScreenState extends State<AudioToolsScreen> {
                     onPressed: !_hasInput || !_isVideo || _busy
                         ? null
                         : _extractAudio,
-                    child: const Text('Video se audio nikalein'),
+                    child: const Text('Extract audio from video'),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -622,7 +622,7 @@ class _AudioToolsScreenState extends State<AudioToolsScreen> {
                     onPressed: !_hasInput || _isVideo || _busy
                         ? null
                         : _trimOnly,
-                    child: const Text('Sirf trim karein'),
+                    child: const Text('Trim only'),
                   ),
                 ),
               ],
@@ -634,7 +634,7 @@ class _AudioToolsScreenState extends State<AudioToolsScreen> {
                 key: const Key('joinAudioButton'),
                 onPressed: _busy ? null : _joinFiles,
                 icon: const Icon(Icons.merge_type, size: 18),
-                label: const Text('2+ audio files join karein'),
+                label: const Text('Join 2+ audio files'),
               ),
             ),
             const SizedBox(height: 12),
@@ -665,7 +665,7 @@ class _AudioToolsScreenState extends State<AudioToolsScreen> {
                         key: const Key('openOutputButton'),
                         onPressed: () => OpenFilex.open(_outputPath!),
                         icon: const Icon(Icons.open_in_new, size: 18),
-                        label: const Text('File kholein'),
+                        label: const Text('Open file'),
                       ),
                     ],
                   ),

@@ -182,7 +182,7 @@ class _MotionGalleryScreenState extends State<MotionGalleryScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Unlock nahi ho saka — dobara try karein.',
+              'Unlock failed — try again.',
             ),
           ),
         );
@@ -348,7 +348,7 @@ class _MotionGalleryScreenState extends State<MotionGalleryScreen> {
     if (items.isEmpty) {
       return const Center(
         child: Text(
-          'Koi design nahi mila — search ya category badal kar dekhen.',
+          'No design found — try changing the search or category.',
           style: TextStyle(color: Colors.white54, fontSize: 13),
           textAlign: TextAlign.center,
         ),

@@ -153,7 +153,7 @@ class _AdminBannerScreenState extends State<AdminBannerScreen> {
     // local email list. Fail closed with a plain message.
     if (!AuthService.isAdmin.value) {
       setState(() {
-        _error = 'Save nahi ho sakta: ye account admin nahi hai '
+        _error = 'Cannot save: this account is not an admin '
             '(server check fail).';
         _success = null;
       });
@@ -161,8 +161,8 @@ class _AdminBannerScreenState extends State<AdminBannerScreen> {
     }
     if (!SupabaseService.isInitialized) {
       setState(() {
-        _error = 'Save nahi ho sakta: Supabase abhi connected nahi '
-            'hai. Internet check karke dobara try karein.';
+        _error = 'Cannot save: Supabase is not connected right now '
+            'it is. Check the internet and try again.';
         _success = null;
       });
       return;
@@ -192,7 +192,7 @@ class _AdminBannerScreenState extends State<AdminBannerScreen> {
       if (!mounted) return;
       setState(() {
         _saving = false;
-        _error = 'Save fail ho gaya: $e';
+        _error = 'Save failed: $e';
       });
       return;
     }
@@ -207,10 +207,10 @@ class _AdminBannerScreenState extends State<AdminBannerScreen> {
     setState(() {
       _saving = false;
       _success = _enabled && imageUrl.isNotEmpty
-          ? 'Banner save ho gaya — ab yehi banner app mein live '
-              'hai, bina kisi new build ke.'
-          : 'Save ho gaya — override OFF hai, is liye app wapas '
-              'remote-config wale banner par chali gayi hai.';
+          ? 'Banner saved — this banner is now live in the app '
+              'it is, without any new build.'
+          : 'Saved — the override is OFF, so the app has returned '
+              'to the remote-config banner.';
     });
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Banner saved.')),
@@ -241,7 +241,7 @@ class _AdminBannerScreenState extends State<AdminBannerScreen> {
                   errorBuilder: (context, error, stackTrace) =>
                       const Center(
                     child: Text(
-                      'Preview load nahi hua.',
+                      'Preview did not load.',
                       style: TextStyle(color: Colors.grey),
                     ),
                   ),
@@ -252,7 +252,7 @@ class _AdminBannerScreenState extends State<AdminBannerScreen> {
                   errorBuilder: (context, error, stackTrace) =>
                       const Center(
                     child: Text(
-                      'Preview load nahi hua.',
+                      'Preview did not load.',
                       style: TextStyle(color: Colors.grey),
                     ),
                   ),
@@ -272,7 +272,7 @@ class _AdminBannerScreenState extends State<AdminBannerScreen> {
               child: Padding(
                 padding: EdgeInsets.all(24),
                 child: Text(
-                  'Ye page sirf admin ke liye hai.',
+                  'This page is for admins only.',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: Colors.grey),
                 ),
@@ -293,8 +293,8 @@ class _AdminBannerScreenState extends State<AdminBannerScreen> {
                 ),
                 const SizedBox(height: 4),
                 const Text(
-                  'Koi bhi image — portrait ya landscape — poori fit '
-                  'hogi, kabhi crop nahi hogi.',
+                  'Any image — portrait or landscape — will fit fully '
+                  'will fit, never cropped.',
                   style: TextStyle(color: Colors.grey, fontSize: 13),
                 ),
                 const SizedBox(height: 8),
@@ -315,7 +315,7 @@ class _AdminBannerScreenState extends State<AdminBannerScreen> {
                   keyboardType: TextInputType.url,
                   decoration: const InputDecoration(
                     labelText: 'Banner link URL (tap par khulega)',
-                    hintText: 'https://… (khaali = koi link nahi)',
+                    hintText: 'https://… (empty = no link)',
                     border: OutlineInputBorder(),
                   ),
                 ),
@@ -326,8 +326,8 @@ class _AdminBannerScreenState extends State<AdminBannerScreen> {
                       setState(() => _enabled = value),
                   title: const Text('Banner override ON'),
                   subtitle: const Text(
-                    'OFF karne se app wapas remote-config / default '
-                    'banner par chali jayegi.',
+                    'Turning it OFF returns the app to the remote-config / default '
+                    'banner.',
                   ),
                 ),
                 const SizedBox(height: 8),

@@ -370,7 +370,7 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
               // is still priming (it may still be black).
               final displayStatus =
                   (!_previewPrimed && status == 'Camera ready.')
-                      ? 'Camera tayyar ho raha hai…'
+                      ? 'Camera is getting ready…'
                       : status;
               return Row(
                 children: [
@@ -421,7 +421,7 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
                             child: preview ??
                                 const Center(
                                   child: Text(
-                                    'Camera tayyar ho raha hai…',
+                                    'Camera is getting ready…',
                                     style: TextStyle(color: Colors.white70),
                                   ),
                                 ),
@@ -437,7 +437,7 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
                               color: Colors.black,
                               child: const Center(
                                 child: Text(
-                                  'Camera tayyar ho raha hai…',
+                                  'Camera is getting ready…',
                                   style: TextStyle(color: Colors.white70),
                                 ),
                               ),
@@ -464,7 +464,7 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
                 const Padding(
                   padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
                   child: Text(
-                    'Kis par live chalna hai?',
+                    'On which one should the live run?',
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
                 ),
@@ -472,7 +472,7 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
                   title: const Text('Facebook'),
                   subtitle: _fbConnected
                       ? null
-                      : const Text('Pehle Facebook key save karein'),
+                      : const Text('Save the Facebook key first'),
                   value: _fbSelected,
                   onChanged: _fbConnected
                       ? (v) => setState(() => _fbSelected = v)
@@ -482,7 +482,7 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
                   title: const Text('YouTube'),
                   subtitle: _ytConnected
                       ? null
-                      : const Text('Pehle YouTube key save karein'),
+                      : const Text('Save the YouTube key first'),
                   value: _ytSelected,
                   onChanged: _ytConnected
                       ? (v) => setState(() => _ytSelected = v)
@@ -495,8 +495,8 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
                   const Padding(
                     padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
                     child: Text(
-                      'Live ke liye pehle neeche Stream Keys mein apni '
-                      'key save karein — phir yahan platform on karein.',
+                      'For live, first save your key below in Stream Keys '
+                      'save the key — then turn the platform on here.',
                       style: TextStyle(color: Colors.grey),
                     ),
                   ),
@@ -519,10 +519,10 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
                             setState(() => _goLiveAttempted = true);
                             final message =
                                 (!_fbConnected && !_ytConnected)
-                                    ? 'Live ke liye pehle neeche Stream '
-                                        'Keys mein apni key save karein, '
-                                        'phir platform select karein.'
-                                    : 'Kam az kam ik platform select karein.';
+                                    ? 'For live, first below in Stream '
+                                        'save your key in Keys, '
+                                        'then select the platform.'
+                                    : 'Select at least one platform.';
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(content: Text(message)),
                             );
@@ -565,7 +565,7 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
             const Padding(
               padding: EdgeInsets.only(bottom: 8),
               child: Text(
-                'Kam az kam ik platform select karein.',
+                'Select at least one platform.',
                 style: TextStyle(color: Colors.red),
               ),
             ),
@@ -615,8 +615,8 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
                       e.key == 'facebook' ? 'Facebook' : 'YouTube';
                   final label = switch (e.value) {
                     LiveDestinationState.live => 'LIVE',
-                    LiveDestinationState.starting => 'Connect ho raha…',
-                    LiveDestinationState.failed => 'Fail — dobara try karein',
+                    LiveDestinationState.starting => 'Connecting…',
+                    LiveDestinationState.failed => 'Failed — try again',
                     LiveDestinationState.stopped => 'Band',
                   };
                   return ListTile(
@@ -625,7 +625,7 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
                         ? TextButton(
                             onPressed: () =>
                                 _service.stopDestination(e.key),
-                            child: const Text('Is ko band karein'),
+                            child: const Text('Turn this off'),
                           )
                         : null,
                   );
@@ -636,14 +636,14 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
           const Divider(height: 32),
           // Stream keys.
           const Text(
-            'Stream Keys (sirf is phone par mehfooz)',
+            'Stream Keys (safe only on this phone)',
             style: TextStyle(fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 4),
           const Text(
             'Facebook: facebook.com > Live Video > Stream Key. YouTube: '
-            'YouTube Studio > Go Live > Stream Key. Key kabhi screen par '
-            'nahi dikhayi jayegi, sirf "connected" nazar aayega.',
+            'YouTube Studio > Go Live > Stream Key. The key will never be shown on screen, '
+            'will not be shown, only "connected" will appear.',
             style: TextStyle(color: Colors.grey),
           ),
           const SizedBox(height: 8),
@@ -673,7 +673,7 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
                       _fbKeyCtrl.clear();
                     });
                   },
-                  child: const Text('Facebook key save karein'),
+                  child: const Text('Save the Facebook key'),
                 ),
               ),
               const SizedBox(width: 8),
@@ -720,7 +720,7 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
                       _ytKeyCtrl.clear();
                     });
                   },
-                  child: const Text('YouTube key save karein'),
+                  child: const Text('Save the YouTube key'),
                 ),
               ),
               const SizedBox(width: 8),
@@ -775,7 +775,7 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
           const SizedBox(height: 8),
           TextField(
             decoration: const InputDecoration(
-              labelText: 'Lower-third subtitle (ohda / jagah)',
+              labelText: 'Lower-third subtitle (designation / place)',
               border: OutlineInputBorder(),
             ),
             controller: _lowerSubtitleCtrl,
@@ -788,7 +788,7 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
           const SizedBox(height: 8),
           TextField(
             decoration: const InputDecoration(
-              labelText: 'Ticker text (neeche chalta hua)',
+              labelText: 'Ticker text (runs below)',
               border: OutlineInputBorder(),
             ),
             controller: _tickerTextCtrl,
@@ -821,7 +821,7 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
                   icon: const Icon(Icons.image),
                   label: Text(
                     _template.logoPath == null
-                        ? 'Logo chunein (upload)'
+                        ? 'Choose logo (upload)'
                         : 'Logo badlein',
                   ),
                 ),
@@ -831,7 +831,7 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
                 child: DropdownButtonFormField<LogoPosition>(
                   initialValue: _template.logoPosition,
                   decoration: const InputDecoration(
-                    labelText: 'Logo jagah',
+                    labelText: 'Logo place',
                     border: OutlineInputBorder(),
                   ),
                   items: LogoPosition.values
@@ -860,9 +860,9 @@ class _LiveStudioScreenState extends State<LiveStudioScreen>
           ),
           const SizedBox(height: 12),
           const Text(
-            'Zaroori: dono platform par ek saath live bhejne se battery '
-            'aur mobile data zyada kharch hoga. Pehli dafa private ya '
-            'unlisted test live karein, phir public karein.',
+            'Important: sending live on both platforms together will use more battery '
+            'and mobile data. The first time, go live private or '
+            'go live unlisted as a test, then go public.',
             style: TextStyle(color: Colors.red),
           ),
         ],

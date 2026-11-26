@@ -107,11 +107,11 @@ class _AdvertiseScreenState extends State<AdvertiseScreen> {
     final price = config.advertisingBannerPriceCoins;
     final hours = config.advertisingBannerDurationHours;
     final text = report
-        ? 'Assalam-o-Alaikum, TJ Pro ke Advertise page par lage banner '
-            'ke baare mein report karna hai: '
-        : 'Assalam-o-Alaikum, TJ Pro par apna advertising banner '
-            'lagwana hai ($price coins / $hours hours). '
-            'Banner ki details ye hain: ';
+        ? 'Assalam-o-Alaikum, about the banner placed on TJ Pro\'s Advertise page '
+            'to report about: '
+        : 'Assalam-o-Alaikum, I want to place my advertising banner on TJ Pro '
+            'to be placed ($price coins / $hours hours). '
+            'The banner details are: ';
     final uri = Uri.parse(
       '${SupportContact.waMeUrl()}?text=${Uri.encodeComponent(text)}',
     );
@@ -146,7 +146,7 @@ class _AdvertiseScreenState extends State<AdvertiseScreen> {
                 ),
                 const SizedBox(height: 4),
                 const Text(
-                  'Apna banner yahan lagwayein — TJ Pro ke users dekhenge.',
+                  'Place your banner here — TJ Pro users will see it.',
                   style: TextStyle(color: Colors.grey),
                 ),
                 const SizedBox(height: 12),
@@ -175,7 +175,7 @@ class _AdvertiseScreenState extends State<AdvertiseScreen> {
                               errorBuilder: (context, error, stackTrace) =>
                                   const Center(
                                 child: Text(
-                                  'Banner load nahi hua.',
+                                  'Banner did not load.',
                                   style: TextStyle(color: Colors.grey),
                                 ),
                               ),
@@ -186,7 +186,7 @@ class _AdvertiseScreenState extends State<AdvertiseScreen> {
                               errorBuilder: (context, error, stackTrace) =>
                                   const Center(
                                 child: Text(
-                                  'Banner load nahi hua.',
+                                  'Banner did not load.',
                                   style: TextStyle(color: Colors.grey),
                                 ),
                               ),
@@ -198,7 +198,7 @@ class _AdvertiseScreenState extends State<AdvertiseScreen> {
                     child: Padding(
                       padding: EdgeInsets.all(16),
                       child: Text(
-                        'Advertising banner abhi band hai.',
+                        'The advertising banner is off right now.',
                         textAlign: TextAlign.center,
                         style: TextStyle(color: Colors.grey),
                       ),
@@ -263,8 +263,8 @@ class _AdvertiseScreenState extends State<AdvertiseScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          'Apna banner lagwayein — 100 coins / 1 ghanta, '
-                          '200 / 2 ghante, 300 / 4 ghante',
+                          'Place your banner — 100 coins / 1 hour, '
+                          '200 / 2 hours, 300 / 4 hours',
                           style: TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.w600,
@@ -272,13 +272,13 @@ class _AdvertiseScreenState extends State<AdvertiseScreen> {
                         ),
                         const SizedBox(height: 6),
                         const Text(
-                          'Booking ab app ke andar hoti hai — slot '
-                          'chunein, image dein, coins katte hi banner '
-                          'Home par live (pehle khud-kar moderation '
-                          'jaanch hoti hai). Waqt khatam hote hi '
-                          'banner khud hat jata hai aur owner ka '
-                          'banner wapas aa jata hai. Reject hone par '
-                          'coins khud wapas.',
+                          'Booking now happens inside the app — slot '
+                          'choose, give the image, as soon as the coins are charged the banner '
+                          'Live on Home (first an automatic moderation '
+                          'check happens). When the time ends, '
+                          'the banner removes itself and the owner\'s '
+                          'banner comes back. On rejection, '
+                          'coins back automatically.',
                           style: TextStyle(color: Colors.grey, fontSize: 13),
                         ),
                         const SizedBox(height: 12),
@@ -362,8 +362,8 @@ class _AdvertiseScreenState extends State<AdvertiseScreen> {
                 ],
                 const SizedBox(height: 20),
                 const Text(
-                  'Banner admin panel se control hota hai — owner '
-                  'approve kare to hi banner live hota hai.',
+                  'The banner is controlled from the admin panel — the owner '
+                  'approves, only then does the banner go live.',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: Colors.grey, fontSize: 13),
                 ),
