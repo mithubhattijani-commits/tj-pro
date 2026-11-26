@@ -36,6 +36,16 @@ class VideoClip {
   // the reverse / silence-remove passes already use.
   double volume = 1;
   bool muted = false;
+  // v1.16.0 G3 (A23 + C3): [disabled] takes the clip out of the
+  // render without deleting it — preview shows black/silence
+  // and the export swaps in a black+silent stand-in of the
+  // same effective duration (its timeline space is preserved).
+  // [colorLabel] is a user-picked colour tag (0 = none,
+  // 1..6 = the TimelineMath.clipLabelColors palette) painted
+  // on the timeline block. Both default to the historical
+  // values, so old snapshots/projects are unaffected.
+  bool disabled = false;
+  int colorLabel = 0;
   // v1.4.0 Unlink audio: the clip's audio, extracted to its own
   // file; the clip itself is muted and the detached file becomes
   // the music track (when none is picked) so it stays editable.
@@ -53,6 +63,8 @@ class VideoClip {
     c.volume = volume;
     c.muted = muted;
     c.detachedAudioPath = detachedAudioPath;
+    c.disabled = disabled;
+    c.colorLabel = colorLabel;
     return c;
   }
 }

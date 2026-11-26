@@ -365,7 +365,7 @@ class StoreAudioPreviewPlayer {
             : StoreAudioPreviewState(
                 itemId: item.id,
                 phase: StoreAudioPhase.error,
-                message: 'Audio play nahi hua — dobara try karein.',
+                message: 'Audio did not play — try again.',
               );
         return;
       }
@@ -392,7 +392,7 @@ class StoreAudioPreviewPlayer {
         state.value = StoreAudioPreviewState(
           itemId: item.id,
           phase: StoreAudioPhase.error,
-          message: 'Preview download nahi hua — net check karke dobara try karein.',
+          message: 'Preview did not download — check the net and try again.',
         );
       }
       return;
@@ -413,7 +413,7 @@ class StoreAudioPreviewPlayer {
         state.value = StoreAudioPreviewState(
           itemId: item.id,
           phase: StoreAudioPhase.error,
-          message: 'Ye audio file play nahi ho saki.',
+          message: 'This audio file could not be played.',
         );
       }
       return;

@@ -208,7 +208,7 @@ class TtsStudioCapException implements Exception {
   final int needed;
   @override
   String toString() =>
-      'TtsStudioCapException: $needed request(s) chahiye, aaj sirf '
+      'TtsStudioCapException: $needed request(s) needed, today only '
       '$remaining baaki (cap 5/day).';
 }
 
@@ -506,9 +506,9 @@ class TtsStudioService {
     http.Client? client,
   }) async {
     final clean = text.trim();
-    if (clean.isEmpty) throw Exception('Text khaali hai — pehle likhein.');
+    if (clean.isEmpty) throw Exception('Text is empty — write something first.');
     if (format != 'wav' && format != 'mp3') {
-      throw Exception('Format sirf wav ya mp3 ho sakta hai.');
+      throw Exception('The format can only be wav or mp3.');
     }
     final resolvedLang = lang ?? GeminiVoiceService.detectLang(clean);
     final dir = await _cacheDir();
@@ -688,7 +688,7 @@ class TtsStudioService {
     String format = 'wav',
   }) async {
     final clean = text.trim();
-    if (clean.isEmpty) throw Exception('Text khaali hai — pehle likhein.');
+    if (clean.isEmpty) throw Exception('Text is empty — write something first.');
     final resolvedLang = lang ?? GeminiVoiceService.detectLang(clean);
     final tmp = await getTemporaryDirectory();
     final stamp = DateTime.now().microsecondsSinceEpoch;
@@ -705,11 +705,11 @@ class TtsStudioService {
         final chunkFile = File(p.join(workDir.path, 'tts_$i.wav'));
         final result = await tts.synthesizeToFile(chunks[i], chunkFile.path);
         if (result != 1 || !await chunkFile.exists()) {
-          throw Exception('Device voice se audio nahi ban saka.');
+          throw Exception('Could not create audio with the device voice.');
         }
         wavs.add(await chunkFile.readAsBytes());
       }
-      if (wavs.isEmpty) throw Exception('Device voice se audio nahi ban saka.');
+      if (wavs.isEmpty) throw Exception('Could not create audio with the device voice.');
       var outBytes = wavs.length == 1 ? wavs.first : concatWav(wavs);
       if (!controls.isDefault) {
         outBytes = applyTtsControls(outBytes, text: clean, controls: controls);

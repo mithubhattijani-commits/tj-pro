@@ -27,10 +27,11 @@ import '../services/reel_export_service.dart';
 import '../services/video_export_service.dart';
 import 'editor_models.dart';
 import 'video_editor_controller.dart';
+import 'widgets/editor_stage.dart' show TimelineMath;
 
 /// Phase 0: thrown inside the export pipeline when the user has
 /// cancelled the export; caught by [_VideoEditorScreenState._export]
-/// and turned into the "Export cancel kar diya gaya." status.
+/// and turned into the "Export cancelled." status.
 class ExportCancelled implements Exception {
   const ExportCancelled();
 }
@@ -239,7 +240,7 @@ class VideoEditorExportController {
               ? (portraitP ? 1920 : 1080)
               : (portraitP ? 1280 : 720);
           final seg = p.join(dir.path, 'photo_${stamp}_$i.mp4');
-          host.setStatus('Photo clip ${i + 1} tayyar ho raha hai…');
+          host.setStatus('Preparing photo clip ${i + 1}…');
           final res = await FfmpegService.run(
             FfmpegService.photoClipCommand(
               imagePath: c.file.path,
@@ -313,7 +314,7 @@ class VideoEditorExportController {
             listFile: cutList,
             output: cutFile,
           );
-          host.setStatus('Beat cuts jor rahe hain…');
+          host.setStatus('Adding beat cuts…');
           final res = await FfmpegService.run(cc);
           if (!res.ok) throw Exception('Beat cut join failed. ${res.logs}');
           // Hotfix (audit C5): the join consumed the cut parts.
@@ -344,7 +345,7 @@ class VideoEditorExportController {
           }
         } catch (e) {
           host.setStatus(
-            'Note: LUT load nahi hua, baghair LUT ke export ho raha hai.',
+            'Note: the LUT did not load; exporting without the LUT.',
           );
         }
       }
@@ -410,8 +411,12 @@ class VideoEditorExportController {
       final effectiveSpeed = hasRamp ? 1.0 : host.speed;
       // v1.3.0 (§6.8): auto-duck keeps the music OUT of the main
       // pass — a post-pass sidechain-ducks it under the clip audio.
-      final duckMusic = host.autoDuck && host.musicPath != null;
-      final String? mainMusicPath = duckMusic ? null : host.musicPath;
+      // v1.16.0 G3 (A3): the audio lane's mute binds BOTH music
+      // branches — a muted lane's music never reaches the render.
+      final duckMusic =
+          host.autoDuck && host.musicPath != null && !host.musicMuted;
+      final String? mainMusicPath =
+          (duckMusic || host.musicMuted) ? null : host.musicPath;
       final String? rampAudio = (hasRamp && mainMusicPath == null)
           ? rampAudioFilter(rampSegs)
           : null;
@@ -512,7 +517,7 @@ class VideoEditorExportController {
           // ramp (e.g. a clip with no audio track for the ramp audio
           // chain) must NOT fail the whole export — retry un-ramped.
           host.setStatus(
-            'Note: speed ramp fail ho gaya, baghair ramp ke save ho raha hai.',
+            'Note: the speed ramp failed; saving without the ramp.',
           );
           final retryCmd = FfmpegService.singleClipCommand(
             input: c.file.path,
@@ -663,7 +668,7 @@ class VideoEditorExportController {
         if (!res.ok && hasRamp) {
           // PRO ramp fallback, same contract as the single-clip branch.
           host.setStatus(
-            'Note: speed ramp fail ho gaya, baghair ramp ke save ho raha hai.',
+            'Note: the speed ramp failed; saving without the ramp.',
           );
           final retryFc = FfmpegService.finalPassCommand(
             input: merged,
@@ -711,7 +716,7 @@ class VideoEditorExportController {
         try {
           final dims = FfmpegService.exportDims(host.aspect, host.fxQuality);
           if (dims != null) {
-            host.setStatus('Canvas blur fill lag raha hai…');
+            host.setStatus('Applying canvas blur fill…');
             final bfOut = p.join(dir.path, 'pve_export_blurfill_$stamp.mp4');
             final res = await FfmpegService.run(
               FfmpegService.blurFillPassCommand(
@@ -725,13 +730,13 @@ class VideoEditorExportController {
               await advanceTo(bfOut);
             } else {
               host.setStatus(
-                'Note: blur fill fail ho gaya, baghair is ke save ho raha hai.',
+                'Note: blur fill failed; saving without it.',
               );
             }
           }
         } catch (e) {
           host.setStatus(
-            'Note: blur fill fail ho gaya ($e), baghair is ke save ho raha hai.',
+            'Note: blur fill failed ($e); saving without it.',
           );
         }
       }
@@ -742,7 +747,7 @@ class VideoEditorExportController {
       host.checkExportCancelled();
       if (duckMusic) {
         try {
-          host.setStatus('Music ducking ho raha hai…');
+          host.setStatus('Ducking music…');
           final hasAudio = await ReelExportService.probeHasAudio(File(out));
           final duckOut = p.join(dir.path, 'pve_export_duck_$stamp.mp4');
           final res = await FfmpegService.run(
@@ -758,12 +763,12 @@ class VideoEditorExportController {
             await advanceTo(duckOut);
           } else {
             host.setStatus(
-              'Note: music ducking fail ho gaya, baghair music ke save ho raha hai.',
+              'Note: music ducking failed; saving without the music.',
             );
           }
         } catch (e) {
           host.setStatus(
-            'Note: music ducking fail ho gaya ($e), baghair music ke save ho raha hai.',
+            'Note: music ducking failed ($e); saving without the music.',
           );
         }
       }
@@ -777,7 +782,7 @@ class VideoEditorExportController {
       if (host.projectVoiceoverPath != null &&
           await File(host.projectVoiceoverPath!).exists()) {
         try {
-          host.setStatus('Voiceover mix ho raha hai…');
+          host.setStatus('Mixing voiceover…');
           final hasAudio = await ReelExportService.probeHasAudio(File(out));
           final mixOut = p.join(dir.path, 'pve_export_voicemix_$stamp.mp4');
           final res = await FfmpegService.run(
@@ -792,12 +797,12 @@ class VideoEditorExportController {
             await advanceTo(mixOut);
           } else {
             host.setStatus(
-              'Note: voiceover mix fail ho gaya, baghair voice ke save ho raha hai.',
+              'Note: the voiceover mix failed; saving without the voice.',
             );
           }
         } catch (e) {
           host.setStatus(
-            'Note: voiceover mix fail ho gaya ($e), baghair voice ke save ho raha hai.',
+            'Note: the voiceover mix failed ($e); saving without the voice.',
           );
         }
       }
@@ -835,12 +840,12 @@ class VideoEditorExportController {
             host.setStatus('Stabilized (${res.engine}).');
           } else {
             host.setStatus(
-              'Note: stabilization fail ho gaya, baghair is ke save ho raha hai.',
+              'Note: stabilization failed; saving without it.',
             );
           }
         } catch (e) {
           host.setStatus(
-            'Note: stabilization fail ho gaya ($e), baghair is ke save ho raha hai.',
+            'Note: stabilization failed ($e); saving without it.',
           );
         }
       }
@@ -851,7 +856,7 @@ class VideoEditorExportController {
         try {
           final size = await VideoExportService.probeVideoSize(File(out));
           if (size != null) {
-            host.setStatus('Transform lag raha hai…');
+            host.setStatus('Applying transform…');
             final tfOut = p.join(dir.path, 'pve_export_transform_$stamp.mp4');
             final res = await FfmpegService.run(
               FfmpegService.transformPassCommand(
@@ -870,13 +875,13 @@ class VideoEditorExportController {
               await advanceTo(tfOut);
             } else {
               host.setStatus(
-                'Note: transform fail ho gaya, baghair is ke save ho raha hai.',
+                'Note: transform failed; saving without it.',
               );
             }
           }
         } catch (e) {
           host.setStatus(
-            'Note: transform fail ho gaya ($e), baghair is ke save ho raha hai.',
+            'Note: transform failed ($e); saving without it.',
           );
         }
       }
@@ -886,7 +891,7 @@ class VideoEditorExportController {
       host.checkExportCancelled();
       if (useBgRemover && host.proChroma) {
         host.setStatus(
-          'Note: BG remover aur chromakey dono on hain — BG remover use ho raha hai.',
+          'Note: both BG remover and chromakey are on — the BG remover is being used.',
         );
       }
       if (useBgRemover) {
@@ -897,7 +902,7 @@ class VideoEditorExportController {
         // so Remove BG never regresses.
         var modnetDone = false;
         try {
-          host.setStatus('Video background (MODNet HQ) hata rahe hain…');
+          host.setStatus('Removing the video background (MODNet HQ)…');
           var lastPct = -1;
           final modnetOut = await VideoExportService.modnetRemoveBackground(
             input: out,
@@ -921,13 +926,13 @@ class VideoEditorExportController {
           host.setStatus('Video background removed (MODNet HQ).');
         } catch (e) {
           host.setStatus(
-            'Note: MODNet BG fail ($e) — ML Kit wala tareeqa use ho raha hai.',
+            'Note: MODNet BG failed ($e) — the ML Kit method is being used.',
           );
         }
         if (!modnetDone) {
           try {
             host.setStatus(
-              'Video background hata rahe hain… (lambi clips par minutes lag sakte hain)',
+              'Removing the video background… (long clips can take minutes)',
             );
             var lastPct = -1;
             final bgOut = await removeVideoBackground(
@@ -951,13 +956,13 @@ class VideoEditorExportController {
             host.setStatus('Video background removed.');
           } catch (e) {
             host.setStatus(
-              'Note: video BG remover fail ho gaya ($e), pichli video save ho rahi hai.',
+              'Note: the video BG remover failed ($e); the previous video is being saved.',
             );
           }
         }
       } else if (host.proChroma) {
         try {
-          host.setStatus('Chromakey laga rahe hain…');
+          host.setStatus('Applying chromakey…');
           final chromaOut = p.join(dir.path, 'pve_export_chroma_$stamp.mp4');
           final c = ProChroma(
             color: host.proChromaColor,
@@ -980,12 +985,12 @@ class VideoEditorExportController {
             await advanceTo(chromaOut);
           } else {
             host.setStatus(
-              'Note: chromakey fail ho gaya, baghair is ke save ho raha hai.',
+              'Note: chromakey failed; saving without it.',
             );
           }
         } catch (e) {
           host.setStatus(
-            'Note: chromakey fail ho gaya ($e), baghair is ke save ho raha hai.',
+            'Note: chromakey failed ($e); saving without it.',
           );
         }
       }
@@ -999,7 +1004,7 @@ class VideoEditorExportController {
       host.checkExportCancelled();
       if (host.mainMask != 'none') {
         try {
-          host.setStatus('Main mask lag raha hai…');
+          host.setStatus('Applying main mask…');
           final size = await VideoExportService.probeVideoSize(File(out));
           final maskPath = size == null
               ? null
@@ -1024,17 +1029,17 @@ class VideoEditorExportController {
               await advanceTo(mmOut);
             } else {
               host.setStatus(
-                'Note: main mask fail ho gaya, baghair mask ke save ho raha hai.',
+                'Note: main mask failed; saving without the mask.',
               );
             }
           } else {
             host.setStatus(
-              'Note: main mask ke liye size/PNG nahi mila — baghair mask ke save ho raha hai.',
+              'Note: no size/PNG found for the main mask — saving without the mask.',
             );
           }
         } catch (e) {
           host.setStatus(
-            'Note: main mask fail ho gaya ($e), baghair mask ke save ho raha hai.',
+            'Note: main mask failed ($e); saving without the mask.',
           );
         }
       }
@@ -1046,7 +1051,7 @@ class VideoEditorExportController {
           host.proSticker.trim().isNotEmpty ||
           (host.trackPoints.isNotEmpty && host.trackSticker.trim().isNotEmpty)) {
         try {
-          host.setStatus('Motion titles laga rahe hain…');
+          host.setStatus('Applying motion titles…');
           final ovOut = p.join(dir.path, 'pve_export_overlay_$stamp.mp4');
           final cmd = await host.buildOverlayCommand(
             dir: dir,
@@ -1061,13 +1066,13 @@ class VideoEditorExportController {
               await advanceTo(ovOut);
             } else {
               host.setStatus(
-                'Note: motion title pass fail ho gaya, baghair is ke save ho raha hai.',
+                'Note: the motion title pass failed; saving without it.',
               );
             }
           }
         } catch (e) {
           host.setStatus(
-            'Note: motion title pass fail ho gaya ($e), baghair is ke save ho raha hai.',
+            'Note: the motion title pass failed ($e); saving without it.',
           );
         }
       }
@@ -1101,10 +1106,32 @@ class VideoEditorExportController {
         final bool pipKeyframed = host.pipKeyframes && host.pipBlend == 'normal';
         if (host.pipKeyframes && host.pipBlend != 'normal') {
           host.setStatus(
-            'Note: PIP keyframes blend mode ke sath nahi chalte — '
-            'blend wala static PIP lag raha hai.',
+            'Note: PIP keyframes do not run with a blend mode — '
+            'a static PIP with blend is being applied.',
           );
         }
+        // v1.16.0 G2 (Motion M3): the PIP window — when the
+        // inset is placed inside the timeline, the export gates
+        // the overlay to [start, end) and shifts the inset input
+        // by the start (-itsoffset below) so the inset's own 0
+        // lands on the window start: the same window the stage
+        // preview shows. A full window (the default) keeps the
+        // historical command byte-for-byte.
+        final pipWindow = TimelineMath.pipWindowIsFull(
+          start: host.pipStartSec,
+          end: host.pipEndSec,
+          totalDur: exportDurSec,
+        )
+            ? null
+            : TimelineMath.pipWindowClamp(
+                start: host.pipStartSec,
+                end: host.pipEndSec,
+                totalDur: exportDurSec,
+              );
+        final String? pipEnable = pipWindow == null
+            ? null
+            : 'between(t,${pipWindow.start.toStringAsFixed(3)},'
+                '${pipWindow.end.toStringAsFixed(3)})';
         String snippet;
         String? pipMaskPath;
         if (pipKeyframed) {
@@ -1114,8 +1141,8 @@ class VideoEditorExportController {
           );
           if (baseSize == null || pipSize == null) {
             host.setStatus(
-              'Note: PIP keyframes ke liye size nahi mila — '
-              'simple PIP lag raha hai.',
+              'Note: no size found for PIP keyframes — '
+              'a simple PIP is being applied.',
             );
             snippet = pipOverlayFilter(
               pipLabel: '[1:v]',
@@ -1123,6 +1150,7 @@ class VideoEditorExportController {
               pipScale: host.pipScale,
               margin: 24,
               outLabel: '[vout]',
+              windowEnable: pipEnable,
             );
           } else {
             if (host.pipMask != 'none') {
@@ -1168,6 +1196,7 @@ class VideoEditorExportController {
               outLabel: '[vout]',
               easing: host.pkEasing,
               hasMask: pipMaskPath != null,
+              windowEnable: pipEnable,
             );
           }
         } else if (pipStock) {
@@ -1177,6 +1206,7 @@ class VideoEditorExportController {
             pipScale: host.pipScale,
             margin: 24,
             outLabel: '[vout]',
+            windowEnable: pipEnable,
           );
         } else {
           final baseSize = await VideoExportService.probeVideoSize(File(out));
@@ -1188,8 +1218,8 @@ class VideoEditorExportController {
             // geometry the advanced graph cannot be built, so the
             // stock composite runs and the user is told.
             host.setStatus(
-              'Note: PIP blend/mask ke liye size nahi mila — '
-              'simple PIP lag raha hai.',
+              'Note: no size found for PIP blend/mask — '
+              'a simple PIP is being applied.',
             );
             snippet = pipOverlayFilter(
               pipLabel: '[1:v]',
@@ -1197,6 +1227,7 @@ class VideoEditorExportController {
               pipScale: host.pipScale,
               margin: 24,
               outLabel: '[vout]',
+              windowEnable: pipEnable,
             );
           } else {
             if (host.pipMask != 'none') {
@@ -1217,6 +1248,14 @@ class VideoEditorExportController {
         final StringBuffer pb = StringBuffer();
         pb.write('-y -i ');
         pb.write(FfmpegService.q(out));
+        // v1.16.0 G2: with a PIP window, the inset input is
+        // shifted by the window start so its own 0 lands on
+        // the window start (pairs with the enable gate).
+        if (pipWindow != null && pipWindow.start > 0.001) {
+          pb.write(
+            ' -itsoffset ${pipWindow.start.toStringAsFixed(3)}',
+          );
+        }
         pb.write(' -i ');
         pb.write(FfmpegService.q(host.fxPipVideo));
         if (pipMaskPath != null) {
@@ -1243,7 +1282,7 @@ class VideoEditorExportController {
         // PIP on but no inset video picked: the pass is skipped and
         // the user is told — never a fake PIP claim.
         host.setStatus(
-          'Note: PIP video nahi chuna — PIP ke baghair save ho raha hai.',
+          'Note: no PIP video chosen — saving without PIP.',
         );
       }
 
@@ -1271,12 +1310,12 @@ class VideoEditorExportController {
           );
           if (!fontReady) {
             host.setStatus(
-              'Kasheeda font nahi mila — Final template nahi laga, '
-              'saaf video save ho rahi hai.',
+              'Kasheeda font not found — the Final template was not applied, '
+              'the clean video is being saved.',
             );
           } else {
             try {
-              host.setStatus('Final template (animated) lag raha hai…');
+              host.setStatus('Applying the Final template (animated)…');
               final size = await VideoExportService.probeVideoSize(File(out));
               if (size != null) {
                 final effPreset = effectivePresetFor(
@@ -1376,15 +1415,15 @@ class VideoEditorExportController {
                   parityDone = true;
                 } else {
                   host.setStatus(
-                    'Note: animated template fail ho gaya, static '
-                    'template se try ho raha hai.',
+                    'Note: the animated template failed, static '
+                    'is being tried from the template.',
                   );
                 }
               }
             } catch (e) {
               host.setStatus(
-                'Note: animated template fail ho gaya ($e), static '
-                'template se try ho raha hai.',
+                'Note: the animated template failed ($e), static '
+                'is being tried from the template.',
               );
             }
           }
@@ -1397,7 +1436,7 @@ class VideoEditorExportController {
               host.news.tickerText.trim().isNotEmpty;
           String? templatePng;
           if (useNews) {
-            host.setStatus('News template laga rahe hain…');
+            host.setStatus('Applying news template…');
             // Timeline handoff (Phase 7): render the PROJECT's template
             // kind (nigraanFinal / breaking / classic) from its preset
             // instead of the live design, with the logo left out of the
@@ -1442,7 +1481,7 @@ class VideoEditorExportController {
             final res = await FfmpegService.run(overlayCmd);
             if (!res.ok) {
               host.setStatus(
-                'Note: news template pass fail ho gaya, saaf video save ho rahi hai.',
+                'Note: the news template pass failed; the clean video is being saved.',
               );
             } else {
               await advanceTo(templated);
@@ -1489,7 +1528,7 @@ class VideoEditorExportController {
               if (n != null) segments.add(n);
             }
             if (segments.length > 1) {
-              host.setStatus('Intro/outro jor rahe hain…');
+              host.setStatus('Adding intro/outro…');
               final listFile = p.join(dir.path, 'attach_$stamp.txt');
               await File(listFile).writeAsString(
                 segments
@@ -1504,14 +1543,14 @@ class VideoEditorExportController {
                 await advanceTo(joined);
               } else {
                 host.setStatus(
-                  'Note: intro/outro attach fail ho gaya, baghair is ke save ho raha hai.',
+                  'Note: intro/outro attach failed; saving without it.',
                 );
               }
             }
           }
         } catch (e) {
           host.setStatus(
-            'Note: intro/outro attach fail ho gaya ($e), baghair is ke save ho raha hai.',
+            'Note: intro/outro attach failed ($e); saving without it.',
           );
         }
       }
@@ -1566,6 +1605,58 @@ class VideoEditorExportController {
     }
   }
 
+  /// v1.16.0 G3 (A23): clip disable — for the duration of ONE
+  /// export, every disabled clip is swapped for a generated
+  /// black+silent stand-in of the same effective duration (its
+  /// timeline space is preserved; its picture and sound are
+  /// gone). Returns a restore closure that puts the user's
+  /// original clips back, or null when nothing was swapped.
+  /// Guarded per clip: a stand-in that fails to generate keeps
+  /// that clip's original file — an export never breaks over
+  /// a disabled clip.
+  Future<void Function()?> _swapDisabledClips() async {
+    final idx = <int>[
+      for (var i = 0; i < host.clips.length; i++)
+        if (host.clips[i].disabled) i,
+    ];
+    if (idx.isEmpty) return null;
+    final originals = <int, VideoClip>{};
+    try {
+      final dir = await host.workDir();
+      final stamp = DateTime.now().millisecondsSinceEpoch;
+      for (final i in idx) {
+        final c = host.clips[i];
+        final out = p.join(dir.path, 'disabled_${stamp}_$i.mp4');
+        final ar = c.aspectRatio <= 0 ? 16 / 9 : c.aspectRatio;
+        final h = ((1280 / ar) / 2).round() * 2;
+        final res = await FfmpegService.run(
+          FfmpegService.blackClipCommand(
+            durationSec: c.effectiveDuration,
+            width: 1280,
+            height: h < 2 ? 2 : h,
+            fps: host.exportFps,
+            output: out,
+          ),
+        );
+        if (!res.ok) continue;
+        originals[i] = c;
+        host.clips[i] = VideoClip(
+          File(out),
+          Duration(milliseconds: (c.effectiveDuration * 1000).round()),
+          c.aspectRatio,
+        );
+      }
+    } catch (_) {
+      // Guarded: whatever was swapped is restored by the caller.
+    }
+    if (originals.isEmpty) return null;
+    return () {
+      originals.forEach((i, c) {
+        if (i < host.clips.length) host.clips[i] = c;
+      });
+    };
+  }
+
   Future<void> export() async {
     if (host.clips.isEmpty) {
       host.setStatus('Add at least one video first.');
@@ -1596,6 +1687,9 @@ class VideoEditorExportController {
     });
     // Build 10 (7D): this call's one quality step-down retry.
     var stepDownUsed = false;
+    // v1.16.0 G3 (A23): disabled clips render as black+silent
+    // stand-ins for this export only (restored in the finally).
+    final restoreDisabled = await _swapDisabledClips();
     try {
       // Hotfix (audit C4): mark the export window — if the
       // process dies mid-encode, the next launch reports the
@@ -1614,7 +1708,7 @@ class VideoEditorExportController {
           msg.contains('libass');
       if (host.exportCancelRequested || e is ExportCancelled) {
         // Phase 0: a user cancel is not a failure.
-        host.setStatus('Export cancel kar diya gaya.');
+        host.setStatus('Export cancelled.');
       } else if (host.captions.isNotEmpty &&
           subFail &&
           !CaptionService.containsArabicInSegments(host.captions)) {
@@ -1624,7 +1718,7 @@ class VideoEditorExportController {
           await _exportInner();
         } catch (e2) {
           if (host.exportCancelRequested || e2 is ExportCancelled) {
-            host.setStatus('Export cancel kar diya gaya.');
+            host.setStatus('Export cancelled.');
           } else {
             host.setStatus('Export failed: $e2');
           }
@@ -1642,14 +1736,14 @@ class VideoEditorExportController {
         final originalQuality = host.fxQuality;
         host.fxQuality = originalQuality - 1;
         host.setStatus(
-          'Export fail ho gaya — quality gira kar dobara koshish '
-          'ho rahi hai…',
+          'Export failed — lowering the quality and retrying '
+          'in progress…',
         );
         try {
           await _exportInner();
         } catch (e2) {
           if (host.exportCancelRequested || e2 is ExportCancelled) {
-            host.setStatus('Export cancel kar diya gaya.');
+            host.setStatus('Export cancelled.');
           } else {
             host.setStatus('Export failed: $e2');
           }
@@ -1660,6 +1754,9 @@ class VideoEditorExportController {
         host.setStatus('Export failed: $e');
       }
     } finally {
+      // v1.16.0 G3: the disabled-clip stand-ins never persist —
+      // the user's original clips come back whatever happened.
+      restoreDisabled?.call();
       // Hotfix (audit C4): any graceful end (success, failure,
       // cancel) closes the export window — a marker that
       // survives to the next launch means the process died.

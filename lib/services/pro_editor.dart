@@ -654,6 +654,10 @@ String keyframedPipFilter({
   KeyframeEasing easing = KeyframeEasing.linear,
   bool hasMask = false,
   String maskLabel = '[2:v]',
+  // v1.16.0 G2: optional PIP window gate (ffmpeg enable
+  // expression, e.g. "between(t,2.000,5.500)"). Null = always
+  // visible (historical behaviour).
+  String? windowEnable,
 }) {
   final s = track.start;
   final e = track.end;
@@ -682,7 +686,10 @@ String keyframedPipFilter({
     buf.write('[pa0]null[pa];');
   }
   buf.write('[pv1][pa]alphamerge[pipA];');
-  buf.write("$baseLabel[pipA]overlay=x='$xExpr':y='$yExpr'$outLabel");
+  final enable =
+      windowEnable == null ? '' : ":enable='$windowEnable'";
+  buf.write(
+      "$baseLabel[pipA]overlay=x='$xExpr':y='$yExpr'$enable$outLabel");
   return buf.toString();
 }
 

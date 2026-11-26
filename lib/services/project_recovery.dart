@@ -10,7 +10,7 @@
 /// (no crash marker is written), so this does NOT claim "interrupted"
 /// detection. What it does, really: on the News Studio home, the
 /// most recently autosaved project that still has CONTENT (tehreer,
-/// headline, clips or a voiceover) is offered as a "Draft jari hai"
+/// headline, clips or a voiceover) is offered as a "Draft in progress"
 /// card — Resume opens it in the News Maker with its actual saved
 /// contents, Discard deletes the JSON, Dismiss hides it for this
 /// session only. An empty project (nothing typed yet) is never
@@ -78,8 +78,8 @@ RecoverableDraft? findRecoverableDraft(
 }
 
 String _ageLabel(Duration age) {
-  if (age.inMinutes < 1) return 'abhi';
-  if (age.inMinutes < 60) return '${age.inMinutes} min pehle';
-  if (age.inHours < 24) return '${age.inHours} ghante pehle';
-  return '${age.inDays} din pehle';
+  if (age.inMinutes < 1) return 'just now';
+  if (age.inMinutes < 60) return '${age.inMinutes} min ago';
+  if (age.inHours < 24) return '${age.inHours} hours ago';
+  return '${age.inDays} days ago';
 }

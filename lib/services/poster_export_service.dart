@@ -110,7 +110,7 @@ class PosterExportService {
     } catch (e) {
       return PosterResult(
         success: false,
-        error: 'Poster render nahi hua: $e',
+        error: 'Poster did not render: $e',
       );
     }
   }

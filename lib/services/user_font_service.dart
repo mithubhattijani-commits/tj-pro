@@ -1,5 +1,5 @@
 /// User-uploaded fonts (fix #51) — the SHARED service behind every
-/// "Apna Font" picker in TJ Pro.
+/// "My Font" picker in TJ Pro.
 ///
 /// The user picks any `.ttf` / `.otf` file (file_picker, already a
 /// dependency); this service validates it, copies it into the app
@@ -122,7 +122,7 @@ class UserFontService {
         name: font.name,
         familyLabel: font.family,
         isBundled: false,
-        script: 'Apna Font',
+        script: 'My Font',
         apply: (base) => base.copyWith(fontFamily: font.family),
       );
 
@@ -239,7 +239,7 @@ class UserFontService {
     final ext = p.extension(picked.path).toLowerCase();
     if (ext != '.ttf' && ext != '.otf') {
       throw UserFontException(
-        'Ye file sahi font nahi hai — .ttf ya .otf chunein.',
+        'This file is not a valid font — choose a .ttf or .otf file.',
       );
     }
 
@@ -251,12 +251,12 @@ class UserFontService {
       bytes = await picked.readAsBytes();
     } catch (_) {
       throw UserFontException(
-        'Ye file sahi font nahi hai — .ttf ya .otf chunein.',
+        'This file is not a valid font — choose a .ttf or .otf file.',
       );
     }
     if (!_hasSfntMagic(bytes)) {
       throw UserFontException(
-        'Ye file sahi font nahi hai — .ttf ya .otf chunein.',
+        'This file is not a valid font — choose a .ttf or .otf file.',
       );
     }
 
@@ -264,7 +264,7 @@ class UserFontService {
     //    display name deduplicated with ` (2)`, ` (3)`, …
     final existing = await _readEntries();
     var displayName = p.basenameWithoutExtension(picked.path).trim();
-    if (displayName.isEmpty) displayName = 'Apna Font';
+    if (displayName.isEmpty) displayName = 'My Font';
     final takenNames = existing.map((f) => f.name).toSet();
     if (takenNames.contains(displayName)) {
       var suffix = 2;
@@ -295,7 +295,7 @@ class UserFontService {
         // Best-effort cleanup; the exception below is what matters.
       }
       throw UserFontException(
-        'Font load nahi ho saka — file kharab lagti hai.',
+        'Font could not load — the file seems corrupt.',
       );
     }
 

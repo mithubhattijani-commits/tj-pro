@@ -132,7 +132,7 @@ class ReelExportResult {
   final List<String> notes;
 
   /// Which pipeline step failed, when [success] is false
-  /// (Phase 9: 'Clips tayyar karna', 'Clips join karna', 'Gallery
+  /// (Phase 9: 'Preparing clips', 'Joining clips', 'Gallery
   /// save karna'…). The export screen shows it and offers a retry.
   final String? failedStep;
 }
@@ -320,7 +320,7 @@ class ReelExportService {
       if (isCancelled?.call() != true) return null;
       return ReelExportResult(
         success: false,
-        error: 'Export cancel kar diya gaya.',
+        error: 'Export cancelled.',
         failedStep: 'Export (cancel)',
         notes: notes,
       );
@@ -349,25 +349,25 @@ class ReelExportService {
     if (handoff.clipPaths.isEmpty) {
       return ReelExportResult(
         success: false,
-        error: 'Koi clip nahi — pehle clips add karein.',
-        failedStep: 'Clips tayyar karna',
+        error: 'No clips — add clips first.',
+        failedStep: 'Preparing clips',
         notes: handoff.droppedClipPaths.isEmpty
             ? const []
             : [
-                '${handoff.droppedClipPaths.length} clip file(s) nahi mili.',
+                '${handoff.droppedClipPaths.length} clip file(s) not found.',
               ],
       );
     }
     if (handoff.droppedClipPaths.isNotEmpty) {
       notes.add(
-        '${handoff.droppedClipPaths.length} clip file(s) nahi mili — '
-        'un ke baghair export ho raha hai.',
+        '${handoff.droppedClipPaths.length} clip file(s) not found — '
+        'exporting without them.',
       );
     }
     if (handoff.cappedClipCount > 0) {
       notes.add(
-        '${handoff.cappedClipCount} clip(s) 20-clip limit se zyada '
-        'thi — pehle 20 export ho rahe hain.',
+        '${handoff.cappedClipCount} clip(s) exceeded the 20-clip limit '
+        '— the first 20 are being exported.',
       );
     }
     final cancelledBeforeStart = cancelledResult();
@@ -447,10 +447,10 @@ class ReelExportService {
       if (!fontReady && project.templateKind == 'nigraanFinal') {
         return ReelExportResult(
           success: false,
-          error: 'Kasheeda font nahi mila — Final template ki Urdu '
-              'usi font mein render hoti hai, is liye export roka '
-              'gaya. (Font app ke saath bundled hai; assets check '
-              'karein.)',
+          error: 'Kasheeda font not found — the Final template\'s Urdu '
+              'is rendered in that font, so the export was stopped'
+              '. (The font is bundled with the app; check the assets'
+              '.)',
           failedStep: 'Template font',
           notes: notes,
         );
@@ -497,7 +497,7 @@ class ReelExportService {
           : libraryStyleShadows(tickerStyle.recipe);
 
       // --- 1. Normalise + join clips (export fps + dims). ---
-      step('Clips tayyar ho rahe hain…', 0.05);
+      step('Preparing clips…', 0.05);
       final normFiles = <String>[];
       // v1.5.1 (#52): per-clip durations for the transition
       // chain's xfade offsets (null = unknown → no transition).
@@ -562,8 +562,8 @@ class ReelExportService {
         if (!res.ok) {
           return ReelExportResult(
             success: false,
-            error: 'Clip ${i + 1} tayyar nahi hua. ${res.logs}',
-            failedStep: 'Clips tayyar karna',
+            error: 'Clip ${i + 1} could not be prepared. ${res.logs}',
+            failedStep: 'Preparing clips',
             notes: notes,
           );
         }
@@ -577,7 +577,7 @@ class ReelExportService {
         // --- 1b. Library transition (#52): xfade chain instead
         // of the hard-cut concat. Any failure falls back to the
         // concat below with a note — never a failed export.
-        step('Transition lag raha hai…', 0.25);
+        step('Applying transition…', 0.25);
         var allAudio = true;
         for (final nf in normFiles) {
           if (!await probeHasAudio(File(nf))) {
@@ -606,8 +606,8 @@ class ReelExportService {
         }
         if (!transitionDone) {
           notes.add(
-            'Library transition nahi laga — clips seedha join ho '
-            'rahe hain.',
+            'Library transition not applied — clips are being joined '
+            'directly.',
           );
         }
         if (!transitionDone) {
@@ -626,8 +626,8 @@ class ReelExportService {
           if (!res.ok) {
             return ReelExportResult(
               success: false,
-              error: 'Clips join nahi hue. ${res.logs}',
-              failedStep: 'Clips join karna',
+              error: 'Clips could not be joined. ${res.logs}',
+              failedStep: 'Joining clips',
               notes: notes,
             );
           }
@@ -650,8 +650,8 @@ class ReelExportService {
         if (!res.ok) {
           return ReelExportResult(
             success: false,
-            error: 'Clips join nahi hue. ${res.logs}',
-            failedStep: 'Clips join karna',
+            error: 'Clips could not be joined. ${res.logs}',
+            failedStep: 'Joining clips',
             notes: notes,
           );
         }
@@ -664,7 +664,7 @@ class ReelExportService {
       if (normFiles.length > 1) {
         await discardIntermediates(normFiles);
       }
-      step('Clips join ho gaye.', 0.30);
+      step('Clips joined.', 0.30);
 
       {
         final c = cancelledResult();
@@ -673,7 +673,7 @@ class ReelExportService {
       // --- 2. Voiceover mix (ducked under the voice). ---
       final voiceover = handoff.voiceoverPath;
       if (voiceover != null) {
-        step('Voiceover mix ho raha hai…', 0.35);
+        step('Mixing voiceover…', 0.35);
         final hasAudio = await probeHasAudio(File(out));
         final mixOut = p.join(dir.path, 'reel_voicemix_$stamp.mp4');
         final res = await runStage(
@@ -692,12 +692,12 @@ class ReelExportService {
           await advanceTo(mixOut);
         } else {
           notes.add(
-            'Voiceover mix fail ho gaya — clip audio ke saath export '
-            'ho raha hai.',
+            'Voiceover mix failed — exporting with the clip audio '
+            'is in progress.',
           );
         }
       } else {
-        notes.add('Voiceover nahi bani — baghair voice ke export ho raha hai.');
+        notes.add('Voiceover was not created — exporting without voice.');
       }
       step('Voiceover done.', 0.45);
 
@@ -727,7 +727,7 @@ class ReelExportService {
           storeMusicFile != null && await storeMusicFile.exists();
       if (project.voiceMusicEnabled &&
           (storeMusicFile != null || musicTrack != null)) {
-        step('Background music mix ho raha hai…', 0.46);
+        step('Mixing background music…', 0.46);
         // A SET store item is the source, full stop: when its
         // file has gone missing the bed is skipped with a note
         // (never a silent swap to another track).
@@ -736,8 +736,8 @@ class ReelExportService {
           musicFile = hasStoreMusic ? storeMusicFile : null;
           if (!hasStoreMusic) {
             notes.add(
-              'Store music file nahi mila — baghair music ke export '
-              'ho raha hai.',
+              'Store music file not found — exporting without music '
+              'is in progress.',
             );
           }
         } else {
@@ -748,8 +748,8 @@ class ReelExportService {
           );
           if (musicFile == null) {
             notes.add(
-              'Background music file nahi mila — baghair music ke '
-              'export ho raha hai.',
+              'Background music file not found — without music '
+              'export is in progress.',
             );
           }
         }
@@ -823,8 +823,8 @@ class ReelExportService {
               await advanceTo(bedOut);
             } else {
               notes.add(
-                'Background music mix nahi hua — baghair music ke export '
-                'ho raha hai.',
+                'Background music could not be mixed — exporting without music '
+                'is in progress.',
               );
             }
           }
@@ -839,7 +839,7 @@ class ReelExportService {
       // --- 3. Chroma key (preset sensitivity + background). ---
       final chroma = handoff.chroma;
       if (chroma != null) {
-        step('Chroma key lag raha hai…', 0.48);
+        step('Applying chroma key…', 0.48);
         var chromaForExport = chroma;
         if (handoff.chromaBackgroundAsset != null) {
           try {
@@ -856,8 +856,8 @@ class ReelExportService {
             );
           } catch (_) {
             notes.add(
-              'Chroma background load nahi hua — solid background ke '
-              'saath key ho raha hai.',
+              'Chroma background did not load — a solid background '
+              'is being used for keying.',
             );
             chromaForExport = ProChroma(
               color: chroma.color,
@@ -883,8 +883,8 @@ class ReelExportService {
           await advanceTo(chromaOut);
         } else {
           notes.add(
-            'Chroma key fail ho gaya — baghair chroma ke export ho '
-            'raha hai.',
+            'Chroma key failed — exporting without chroma '
+            'is in progress.',
           );
         }
       }
@@ -902,7 +902,7 @@ class ReelExportService {
       final mediaOv =
           overrideFor(project.elementOverrides, NewsElement.media);
       if (!mediaOv.isIdentity) {
-        step('Media adjust ho raha hai…', 0.56);
+        step('Adjusting media…', 0.56);
         final mediaOut = p.join(dir.path, 'reel_media_$stamp.mp4');
         final String mediaCmd;
         if (mediaOv.hidden) {
@@ -935,8 +935,8 @@ class ReelExportService {
           await advanceTo(mediaOut);
         } else {
           notes.add(
-            'Media adjustment nahi laga — default size/position '
-            'ke saath export ho raha hai.',
+            'Media adjustment not applied — exporting with the default size/position '
+            '.',
           );
         }
       }
@@ -948,7 +948,7 @@ class ReelExportService {
       // furniture so the ribbons/logo stay crisp. Any failure is
       // a note — the export continues un-effected.
       if (effectItem != null) {
-        step('Effect lag raha hai…', 0.57);
+        step('Applying effect…', 0.57);
         final fxOut = p.join(dir.path, 'reel_effect_$stamp.mp4');
         String? fxCmd;
         if (effectItem.recipe.kind == 'grade') {
@@ -994,8 +994,8 @@ class ReelExportService {
         }
         if (fxCmd == null) {
           notes.add(
-            'Library effect (${effectItem.name}) nahi laga — baghair '
-            'effect ke export ho raha hai.',
+            'Library effect (${effectItem.name}) not applied — exporting without '
+            'the effect.',
           );
         } else {
           final res = await runStage(
@@ -1008,8 +1008,8 @@ class ReelExportService {
             await advanceTo(fxOut);
           } else {
             notes.add(
-              'Library effect (${effectItem.name}) nahi laga — '
-              'baghair effect ke export ho raha hai.',
+              'Library effect (${effectItem.name}) not applied — '
+              'exporting without the effect.',
             );
           }
         }
@@ -1030,7 +1030,7 @@ class ReelExportService {
       // Scoped to 'nigraanFinal' ONLY: the breaking / classic call
       // arguments are unchanged, so their frames render exactly as
       // they do today.
-      step('Template lag raha hai…', 0.58);
+      step('Applying template…', 0.58);
       final effective = effectivePresetFor(project: project, preset: preset);
       final templatePng = await renderLiveTemplateImage(
         template: NewsTemplate(),
@@ -1087,14 +1087,14 @@ class ReelExportService {
           parityApplied = true;
         } else {
           notes.add(
-            'Animated Final template nahi laga — static template ke '
-            'saath export ho raha hai.',
+            'Animated Final template not applied — exporting with the static template '
+            '.',
           );
           if (project.elementOverrides.isNotEmpty) {
             notes.add(
-              'Manual element adjustments (Elements panel) sirf '
-              'animated template pass mein lagte hain — is static '
-              'export mein default layout aaya hai.',
+              'Manual element adjustments (Elements panel) apply only '
+              'in the animated template pass — this static '
+              'export uses the default layout.',
             );
           }
         }
@@ -1108,7 +1108,7 @@ class ReelExportService {
           videoBitrateKbps: effectiveSettings.videoBitrateKbps,
         );
         if (overlayCmd == null) {
-          notes.add('Template overlay skip hua (koi overlay nahi bana).');
+          notes.add('Template overlay skipped (no overlay was created).');
         } else {
           final res = await runStage(
             overlayCmd,
@@ -1120,8 +1120,8 @@ class ReelExportService {
             await advanceTo(templated);
           } else {
             notes.add(
-              'Template overlay fail ho gaya — saaf video export ho '
-              'rahi hai.',
+              'Template overlay failed — exporting the clean video '
+              'now.',
             );
           }
         }
@@ -1136,7 +1136,7 @@ class ReelExportService {
       // 'nigraanFinal' — skipped there, the logo + capsule are
       // already burned in at the reference position). ---
       if (!parityApplied) {
-        step('Logo lag raha hai…', 0.70);
+        step('Applying logo…', 0.70);
         final logoDone = await _overlayRotatingLogo(
           input: out,
           dir: dir,
@@ -1160,7 +1160,7 @@ class ReelExportService {
         if (c != null) return c;
       }
       // --- 5b. Watermark overlay (Phase 8). ---
-      step('Watermark lag raha hai…', 0.78);
+      step('Applying watermark…', 0.78);
       final watermarkDone = await _overlayWatermark(
         input: out,
         dir: dir,
@@ -1192,7 +1192,7 @@ class ReelExportService {
           reporterPhotoPath.isNotEmpty &&
           !overrideFor(project.elementOverrides, NewsElement.reporter)
               .hidden) {
-        step('Reporter lag raha hai…', 0.79);
+        step('Applying reporter…', 0.79);
         final reporterDone = await _applyReporterOverlay(
           input: out,
           dir: dir,
@@ -1227,12 +1227,12 @@ class ReelExportService {
         final pipSource = handoff.pipVideoPath;
         if (pipSource == null) {
           notes.add(
-            'PIP on tha lekin PIP video nahi chuna gaya (ya file '
-            'nahi mili) — baghair PIP ke export ho raha hai. '
-            'Template panel ke PIP section se video chunein.',
+            'PIP was on but no PIP video was chosen (or the file '
+            'was not found) — exporting without PIP. '
+            'Choose a video from the PIP section of the Template panel.',
           );
         } else {
-          step('PIP lag raha hai…', 0.80);
+          step('Applying PIP…', 0.80);
           final pipDone = await _applyPipOverlay(
             input: out,
             dir: dir,
@@ -1255,7 +1255,7 @@ class ReelExportService {
         if (c != null) return c;
       }
       // --- 6. Intro / outro assembly. ---
-      step('Intro/outro jor rahe hain…', 0.80);
+      step('Adding intro/outro…', 0.80);
       // Built-in video intro template (v1.2.0): when the project has
       // one applied, extract its bundled MP4 so the assembly can
       // prepend it as the first segment. Missing/failed = note only.
@@ -1271,8 +1271,8 @@ class ReelExportService {
           videoIntroPath = f.path;
         } else {
           notes.add(
-            'Video intro template file nahi mila — intro ke baghair '
-            'export ho raha hai.',
+            'Video intro template file not found — without the intro '
+            'export is in progress.',
           );
         }
       }
@@ -1305,7 +1305,7 @@ class ReelExportService {
         playResY: h,
       );
       if (ass != null) {
-        step('Captions burn ho rahe hain…', 0.88);
+        step('Burning captions…', 0.88);
         final burned = await _burnInCaptions(
           input: out,
           assContent: ass,
@@ -1330,14 +1330,14 @@ class ReelExportService {
         if (!await Gal.requestAccess()) {
           return ReelExportResult(
             success: false,
-            error: 'Gallery access denied — video save nahi hui.',
-            failedStep: 'Gallery save karna',
+            error: 'Gallery access denied — the video was not saved.',
+            failedStep: 'Saving to gallery',
             notes: notes,
           );
         }
       }
       await Gal.putVideo(out);
-      step('Gallery mein save ho gaya.', 1.0);
+      step('Saved to the gallery.', 1.0);
       return ReelExportResult(
         success: true,
         outputPath: out,
@@ -1346,7 +1346,7 @@ class ReelExportService {
     } catch (e) {
       return ReelExportResult(
         success: false,
-        error: 'Export fail ho gaya: $e',
+        error: 'Export failed: $e',
         failedStep: 'Export',
         notes: notes,
       );
@@ -1497,8 +1497,8 @@ class ReelExportService {
         final videoFile = File(preset.logoVideoPath!);
         if (!await videoFile.exists()) {
           notes.add(
-            'Logo video file nahi mila — baghair logo ke export '
-            'ho raha hai.',
+            'Logo video file not found — export without the logo '
+            'is in progress.',
           );
         } else if (preset.logoKeyedFramesDir != null &&
             await File(
@@ -1515,8 +1515,8 @@ class ReelExportService {
           stillPath = keyedStill?.path;
           if (stillPath == null) {
             notes.add(
-              'Logo video key nahi ho saka — baghair logo ke '
-              'export ho raha hai.',
+              'Logo video could not be keyed — without the logo '
+              'export is in progress.',
             );
           }
         } else {
@@ -1527,8 +1527,8 @@ class ReelExportService {
           );
           stillPath = still?.path;
           notes.add(
-            'Logo video ka background solid nahi mila — export '
-            'mein us ka pehla frame still ke tor par lage ga.',
+            'Logo video background is not solid — in the export '
+            'its first frame will be used as a still.',
           );
         }
       }
@@ -1627,7 +1627,7 @@ class ReelExportService {
       clockFont = dejaVu?.path ?? FfmpegService.findFontFile();
       if (clockFont == null) {
         notes.add(
-          'Clock font nahi mila — capsule mein sirf date nazar '
+          'Clock font not found — only the date will show in the capsule '
           'aayegi.',
         );
       }
@@ -1651,8 +1651,8 @@ class ReelExportService {
         );
         if (pingPongPath == null) {
           notes.add(
-            'Rotating logo ka cycle render nahi hua — dusray '
-            'logo source se export ho raha hai.',
+            'The rotating logo cycle did not render — exporting from another '
+            'logo source.',
           );
         }
       }
@@ -1677,10 +1677,10 @@ class ReelExportService {
         onProgress: onProgress,
       );
       if (res.ok) return parityOut;
-      notes.add('Animated template pass fail ho gaya. ${res.logs}');
+      notes.add('Animated template pass failed. ${res.logs}');
       return null;
     } catch (e) {
-      notes.add('Animated template pass fail ho gaya ($e).');
+      notes.add('Animated template pass failed ($e).');
       return null;
     }
   }
@@ -1708,8 +1708,8 @@ class ReelExportService {
     try {
       if (!await File(photoPath).exists()) {
         notes.add(
-          'Reporter photo nahi mili — reporter ke baghair export '
-          'ho raha hai.',
+          'Reporter photo not found — exporting without the reporter '
+          'is in progress.',
         );
         return null;
       }
@@ -1728,8 +1728,8 @@ class ReelExportService {
       );
       if (png == null) {
         notes.add(
-          'Reporter photo render nahi hui — reporter ke baghair '
-          'export ho raha hai.',
+          'Reporter photo did not render — without the reporter '
+          'export is in progress.',
         );
         return null;
       }
@@ -1748,10 +1748,10 @@ class ReelExportService {
         onProgress: onProgress,
       );
       if (res.ok) return reporterOut;
-      notes.add('Reporter overlay nahi laga. ${res.logs}');
+      notes.add('Reporter overlay not applied. ${res.logs}');
       return null;
     } catch (e) {
-      notes.add('Reporter overlay nahi laga ($e).');
+      notes.add('Reporter overlay not applied ($e).');
       return null;
     }
   }
@@ -1781,8 +1781,8 @@ class ReelExportService {
         final videoFile = File(preset.logoVideoPath!);
         if (!await videoFile.exists()) {
           notes.add(
-            'Logo video file nahi mila — baghair logo ke export '
-            'ho raha hai.',
+            'Logo video file not found — export without the logo '
+            'is in progress.',
           );
           return null;
         }
@@ -1811,8 +1811,8 @@ class ReelExportService {
                 ))?.path;
           if (still == null) {
             notes.add(
-              'Logo video key nahi ho saka — baghair logo ke '
-              'export ho raha hai.',
+              'Logo video could not be keyed — without the logo '
+              'export is in progress.',
             );
             return null;
           }
@@ -1833,8 +1833,8 @@ class ReelExportService {
           );
           if (still == null) {
             notes.add(
-              'Logo video overlay fail ho gaya — baghair logo ke '
-              'export ho raha hai.',
+              'Logo video overlay failed — without the logo '
+              'export is in progress.',
             );
             return null;
           }
@@ -1867,7 +1867,7 @@ class ReelExportService {
         );
         if (res.ok) return logoOut;
         notes.add(
-          'Logo video overlay fail ho gaya — baghair logo ke export.',
+          'Logo video overlay failed — exporting without the logo.',
         );
         return null;
       }
@@ -1893,7 +1893,7 @@ class ReelExportService {
             onProgress: onProgress,
           );
           if (res.ok) return logoOut;
-          notes.add('Logo overlay fail ho gaya — baghair logo ke export.');
+          notes.add('Logo overlay failed — exporting without the logo.');
           return null;
         }
         final key = preset.logoParts.isNotEmpty
@@ -1940,7 +1940,7 @@ class ReelExportService {
           onProgress: onProgress,
         );
         if (res.ok) return logoOut;
-        notes.add('Logo overlay fail ho gaya — baghair logo ke export.');
+        notes.add('Logo overlay failed — exporting without the logo.');
         return null;
       }
       // Default logo: the pre-rendered mov when it is on the device.
@@ -1980,19 +1980,19 @@ class ReelExportService {
           );
           if (res.ok) return logoOut;
           notes.add(
-            'Rotating logo (mov) fail ho gaya — generated loop se try '
-            'ho raha hai.',
+            'Rotating logo (mov) failed — trying with the generated loop '
+            'is in progress.',
           );
         } else {
           notes.add(
-            'Rotating logo ka cycle render nahi hua — generated '
-            'loop se try ho raha hai.',
+            'The rotating logo cycle did not render — generated '
+            'loop is being tried.',
           );
         }
       } else {
         notes.add(
-          'Rotating logo mov abhi download nahi hua — generated '
-          'rotating logo use ho raha hai.',
+          'Rotating logo mov has not downloaded yet — the generated '
+          'rotating logo is being used.',
         );
       }
       final initial = preset.name.trim().isEmpty
@@ -2031,10 +2031,10 @@ class ReelExportService {
         onProgress: onProgress,
       );
       if (res.ok) return logoOut;
-      notes.add('Logo overlay fail ho gaya — baghair logo ke export.');
+      notes.add('Logo overlay failed — exporting without the logo.');
       return null;
     } catch (e) {
-      notes.add('Logo overlay fail ho gaya ($e) — baghair logo ke export.');
+      notes.add('Logo overlay failed ($e) — exporting without the logo.');
       return null;
     }
   }
@@ -2097,8 +2097,8 @@ class ReelExportService {
           wmPath = moved;
         } else {
           notes.add(
-            'Watermark ki manual position/size nahi lagi — '
-            'designed position ke saath export ho raha hai.',
+            'The watermark\'s manual position/size was not applied — '
+            'exporting with the designed position.',
           );
         }
       }
@@ -2116,14 +2116,14 @@ class ReelExportService {
       );
       if (res.ok) return wmOut;
       notes.add(
-        'Watermark lag nahi saka — baghair watermark ke export ho '
-        'raha hai.',
+        'Watermark could not be applied — exporting without the watermark '
+        'is in progress.',
       );
       return null;
     } catch (e) {
       notes.add(
-        'Watermark lag nahi saka ($e) — baghair watermark ke export '
-        'ho raha hai.',
+        'Watermark could not be applied ($e) — exporting without the watermark '
+        'is in progress.',
       );
       return null;
     }
@@ -2197,12 +2197,12 @@ class ReelExportService {
       );
       if (res.ok) return pipOut;
       notes.add(
-        'PIP lag nahi saka — baghair PIP ke export ho raha hai.',
+        'PIP could not be applied — exporting without PIP.',
       );
       return null;
     } catch (e) {
       notes.add(
-        'PIP lag nahi saka ($e) — baghair PIP ke export ho raha hai.',
+        'PIP could not be applied ($e) — exporting without PIP.',
       );
       return null;
     }
@@ -2261,8 +2261,8 @@ class ReelExportService {
         segments.add(vtplNorm);
       } else {
         notes.add(
-          'Video intro template tayyar nahi hua — intro ke baghair '
-          'export ho raha hai.',
+          'Video intro template was not ready — without the intro '
+          'export is in progress.',
         );
       }
     }
@@ -2281,8 +2281,8 @@ class ReelExportService {
       } catch (e) {
         intro = null;
         notes.add(
-          'Intro download nahi hua ($e) — intro ke baghair export '
-          'ho raha hai.',
+          'Intro did not download ($e) — exporting without the intro '
+          'is in progress.',
         );
       }
       if (intro != null) {
@@ -2314,12 +2314,12 @@ class ReelExportService {
           segments.add(introNorm);
         } else {
           notes.add(
-            'Intro tayyar nahi hua — intro ke baghair export ho raha hai.',
+            'Intro was not ready — exporting without the intro.',
           );
         }
       }
     } else {
-      notes.add('Intro off hai — intro ke baghair export ho raha hai.');
+      notes.add('Intro is off — exporting without the intro.');
     }
 
     segments.add(main);
@@ -2340,8 +2340,8 @@ class ReelExportService {
           );
         } catch (_) {
           notes.add(
-            'End card nahi bana — template frame outro ke tor par '
-            'use ho raha hai.',
+            'End card was not created — the template frame is being used as the outro '
+            'is being used.',
           );
         }
       }
@@ -2366,7 +2366,7 @@ class ReelExportService {
         segments.add(outroSeg);
       } else {
         notes.add(
-          'Outro card nahi bana — outro ke baghair export ho raha hai.',
+          'Outro card was not created — exporting without the outro.',
         );
       }
     }
@@ -2388,7 +2388,7 @@ class ReelExportService {
     );
     if (!res.ok) {
       notes.add(
-        'Intro/outro join fail ho gaya — main video export ho rahi hai.',
+        'Intro/outro join failed — the main video is being exported.',
       );
       return null;
     }
@@ -2463,13 +2463,13 @@ class ReelExportService {
       );
       if (res.ok) {
         notes.add(
-          'Styled captions fail hue — plain captions burn hue hain.',
+          'Styled captions failed — plain captions were burned.',
         );
         return burned;
       }
     }
     notes.add(
-      'Captions burn nahi hue — baghair captions ke export ho raha hai.',
+      'Captions could not be burned — exporting without captions.',
     );
     return null;
   }

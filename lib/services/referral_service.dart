@@ -113,8 +113,8 @@ class ReferralService {
   /// Share-sheet text: download link + the ref link (same URL — the
   /// code rides inside it).
   String get shareText =>
-      'TJ Pro — free photo & video editor! Mere link se download '
-      'karein aur app mein hi sab editing karein:\n$shareLink';
+      'TJ Pro — free photo & video editor! Download from my link '
+      'and do all the editing right in the app:\n$shareLink';
 
   /// True when this install was attributed to someone's code.
   bool get isAttributed =>

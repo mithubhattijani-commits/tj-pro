@@ -194,17 +194,17 @@ class UpdateService {
   static String pausedReasonText(int reason) {
     switch (reason) {
       case 1:
-        return 'server se dobara koshish ka intezar hai';
+        return 'waiting to retry from the server';
       case 2:
-        return 'network ka intezar hai — internet band ya kamzor hai';
+        return 'waiting for network — internet is off or weak';
       case 3:
-        return 'Wi-Fi ka intezar hai — mobile data par download ruki hai';
+        return 'waiting for Wi-Fi — download is paused on mobile data';
       case 4:
-        return 'download system ne roki hui hai';
+        return 'paused by the download system';
       case 5:
-        return 'wajah maloom nahi';
+        return 'reason unknown';
       default:
-        return 'download ruki hui hai';
+        return 'download is paused';
     }
   }
 
@@ -214,27 +214,27 @@ class UpdateService {
   static String failedReasonText(int reason) {
     switch (reason) {
       case 1000:
-        return 'download fail ho gayi (wajah maloom nahi)';
+        return 'download failed (reason unknown)';
       case 1001:
-        return 'APK file save nahi ho saki (storage masla)';
+        return 'Could not save the APK file (storage problem)';
       case 1002:
       case 1004:
-        return 'server se data nahi mila (network/server masla)';
+        return 'No data received from the server (network/server problem)';
       case 1005:
-        return 'server ne bohat zyada redirects bheje';
+        return 'the server sent too many redirects';
       case 1006:
-        return 'phone mein jagah khatam hai — storage khaali karein';
+        return 'the phone is out of space — free up storage';
       case 1007:
-        return 'download ki jagah (storage) nahi mili';
+        return 'download location (storage) not found';
       case 1008:
-        return 'download wahin se aage nahi badh saki';
+        return 'the download could not resume from where it stopped';
       case 1009:
-        return 'purani adhoori file ne rok lagayi thi — saaf kar di gayi hai, Retry karein';
+        return 'an old incomplete file was blocking it — it has been cleared, tap Retry';
       default:
         if (reason >= 400 && reason < 600) {
-          return 'server ne jawab diya: HTTP $reason';
+          return 'the server replied: HTTP $reason';
         }
-        return 'download fail ho gayi';
+        return 'download failed';
     }
   }
 
@@ -543,7 +543,7 @@ class UpdateService {
       case UpdateCheckResult.upToDate:
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Aap ka app up to date hai.'),
+            content: Text('Your app is up to date.'),
           ),
         );
         break;
@@ -551,8 +551,8 @@ class UpdateService {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Internet connection nahi hai — check karne ke liye '
-              'internet on karein.',
+              'No internet connection — to check, '
+              'turn on the internet.',
             ),
           ),
         );
@@ -560,7 +560,7 @@ class UpdateService {
       case UpdateCheckResult.manifestNotFound:
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Update file nahi mili — baad me koshish karein.'),
+            content: Text('Update file not found — try again later.'),
           ),
         );
         break;
@@ -575,12 +575,12 @@ class UpdateService {
       // tapping outside dismisses it; the download runs in background.
       barrierDismissible: true,
       builder: (dialogContext) => AlertDialog(
-        title: Text('Naya version: ${update.versionName}'),
+        title: Text('New version: ${update.versionName}'),
         content: Text(
           [
             if (update.notes.isNotEmpty) update.notes,
-            'Install ke liye aap ko khud Install dabana hoga — '
-                'app khud-ba-khud install nahi ho sakti.',
+            'For install, you must tap Install yourself — '
+                'the app cannot install by itself.',
           ].join('\n\n'),
         ),
         actions: [
@@ -614,14 +614,14 @@ class UpdateService {
         return PopScope(
           canPop: false,
           child: AlertDialog(
-            title: const Text('Update zaroori hai'),
+            title: const Text('Update required'),
             content: Text(
               update.notes.isNotEmpty
                   ? update.notes
-                  : 'Is version ko mazeed istemal karne ke liye naya '
-                      'version install karna zaroori hai. Update dabayen '
-                      '— download background me hogi, aur install ke '
-                      'liye aap ko khud Install dabana hoga.',
+                  : 'To keep using this version, installing the new '
+                      'version is required. Tap Update '
+                      '— the download will run in the background, and for install '
+                      'you must tap Install yourself.',
             ),
             actions: <Widget>[
               FilledButton(
@@ -629,7 +629,7 @@ class UpdateService {
                   Navigator.pop(dialogContext);
                   downloadAndInstall(context, update);
                 },
-                child: const Text('Update karein'),
+                child: const Text('Update'),
               ),
             ],
           ),
@@ -665,8 +665,8 @@ class UpdateService {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Update download pehle se chal rahi hai — usi ko '
-              'aage badhne dein.',
+              'An update download is already in progress — let '
+              'it continue.',
             ),
           ),
         );
@@ -727,8 +727,8 @@ class UpdateService {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Pehle Settings me TJ Pro ke liye "Install unknown apps" '
-              'allow karein, phir dobara Update dabayen.',
+              'First, in Settings, for TJ Pro, allow "Install unknown apps" '
+              'then tap Update again.',
             ),
           ),
         );
@@ -755,8 +755,8 @@ class UpdateService {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Update download shuru nahi ho saki. Internet check kar '
-              'ke dobara koshish karein.',
+              'The update download could not start. Check the internet '
+              'Please try again.',
             ),
           ),
         );
@@ -776,8 +776,8 @@ class UpdateService {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Update background me download ho rahi hai — aap app '
-            'istemal karte rahen.',
+            'The update is downloading in the background — you can keep using the app '
+            'keep using it.',
           ),
           duration: Duration(seconds: 4),
         ),
@@ -848,7 +848,7 @@ class UpdateService {
         bytesDownloaded: downloaded,
         bytesTotal: total,
         statusNote: state == 'paused'
-            ? 'Download ruki hui hai — '
+            ? 'Download is paused — '
                 '${pausedReasonText((status['reason'] as int?) ?? -1)}.'
             : null,
         replaceStatusNote: true,
@@ -861,8 +861,8 @@ class UpdateService {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text(
-                'Update download pehle se chal rahi hai — usi ko '
-                'aage badhne dein.',
+                'An update download is already in progress — let '
+                'it continue.',
               ),
             ),
           );
@@ -1013,8 +1013,8 @@ class UpdateService {
             backgroundProgress.value = null;
             _setUpdateState(
               UpdatePhase.failed,
-              statusNote: 'Download ki halat nahi mil rahi thi — '
-                  'Retry dabayein, pehle halat check hogi.',
+              statusNote: 'The download state could not be read — '
+                  'Tap Retry; the state will be checked first.',
               replaceStatusNote: true,
             );
             return;
@@ -1055,16 +1055,16 @@ class UpdateService {
           final since = pausedSince ??= DateTime.now();
           _setUpdateState(
             UpdatePhase.downloading,
-            statusNote: 'Download ruki hui hai — '
+            statusNote: 'Download is paused — '
                 '${pausedReasonText(reason)}.',
           );
           if (!pausedWatchdogFired &&
               DateTime.now().difference(since) >= pausedWatchdog) {
             pausedWatchdogFired = true;
             showMessage?.call(
-              'Update download kaafi der se ruki hai — '
+              'The update download has been stuck for a while — '
               '${pausedReasonText(reason)}. Internet / Wi-Fi check '
-              'karein; masla hal hote hi download khud aage badhegi.',
+              'the download will continue by itself once the issue is fixed.',
             );
           }
         } else if (state == 'running' || state == 'pending') {
@@ -1118,7 +1118,7 @@ class UpdateService {
           final reason = (status?['reason'] as int?) ?? -1;
           final reasonText = state == 'failed'
               ? failedReasonText(reason)
-              : 'download system mein nahi mili';
+              : 'not found in the download system';
           if (state == 'failed') {
             CrashGuard.report(
               Exception(
@@ -1132,12 +1132,12 @@ class UpdateService {
           await _clearPendingDownload();
           _setUpdateState(
             UpdatePhase.failed,
-            statusNote: 'Wajah: $reasonText.',
+            statusNote: 'Reason: $reasonText.',
             replaceStatusNote: true,
           );
           showMessage?.call(
-            'Update download nahi ho saka — $reasonText. '
-            'Retry dabayein.',
+            'Update could not download — $reasonText. '
+            'Tap Retry.',
           );
           return;
         }
@@ -1153,8 +1153,8 @@ class UpdateService {
       backgroundProgress.value = null;
       _setUpdateState(UpdatePhase.failed);
       showMessage?.call(
-        'Update download nahi ho saka. Internet check kar ke '
-        'dobara koshish karein.',
+        'Update could not download. Check the internet and '
+        'try again.',
       );
     } finally {
       if (_pollingDownloadId == downloadId) _pollingDownloadId = null;
@@ -1225,7 +1225,7 @@ class UpdateService {
           // Build 13: a re-attached PAUSED download explains
           // itself immediately instead of looking frozen.
           statusNote: state == 'paused'
-              ? 'Download ruki hui hai — '
+              ? 'Download is paused — '
                   '${pausedReasonText((status?['reason'] as int?) ?? -1)}.'
               : null,
           replaceStatusNote: true,
