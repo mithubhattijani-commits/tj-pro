@@ -184,7 +184,7 @@ void main() {
       final done = UpdateService.downloadAndInstall(ctx, update);
       await Future<void>.delayed(const Duration(milliseconds: 300));
       final note = UpdateService.updateState.value.statusNote ?? '';
-      expect(note, contains('ruki'));
+      expect(note, contains('paused'));
       expect(note, contains('network'));
       statuses[42] = {
         'status': 'success',

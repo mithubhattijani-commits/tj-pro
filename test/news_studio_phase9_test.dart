@@ -417,14 +417,14 @@ void main() {
   });
 
   group('Export failure + cancel name the step', () {
-    test('no clips fails with failedStep = Clips tayyar karna', () async {
+    test('no clips fails with failedStep = Preparing clips', () async {
       final result = await ReelExportService.exportReel(
         project: NewsProject(id: 'noclips'),
         preset: ChannelPreset.nigraanTv(),
       );
       expect(result.success, isFalse);
-      expect(result.failedStep, 'Clips tayyar karna');
-      expect(result.error, contains('Koi clip nahi'));
+      expect(result.failedStep, 'Preparing clips');
+      expect(result.error, contains('No clips'));
     });
 
     test('cancel before any ffmpeg work returns the cancel result',
@@ -570,9 +570,9 @@ void main() {
         300,
       );
       await tester.pump();
-      expect(find.textContaining('Clips tayyar karna'), findsOneWidget);
+      expect(find.textContaining('Preparing clips'), findsOneWidget);
       expect(find.byKey(const Key('retryExportButton')), findsOneWidget);
-      expect(find.textContaining('Koi clip nahi'), findsOneWidget);
+      expect(find.textContaining('No clips'), findsOneWidget);
     });
 
     testWidgets('unknown duration shows an honest no-estimate message',
@@ -591,7 +591,7 @@ void main() {
       );
       await tester.pump();
       expect(
-        find.textContaining('duration maloom nahi'),
+        find.textContaining('duration unknown'),
         findsOneWidget,
       );
     });

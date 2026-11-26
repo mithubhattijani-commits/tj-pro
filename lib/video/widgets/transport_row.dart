@@ -57,7 +57,7 @@ class TransportRow extends StatelessWidget {
               // play — frame-accurate cutting in one tap.
               IconButton(
                 key: const Key('tpFrameBack'),
-                tooltip: '1 frame peeche',
+                tooltip: '1 frame back',
                 onPressed: host.clips.isEmpty
                     ? null
                     : () => host.stepFrame(-1),
@@ -83,7 +83,7 @@ class TransportRow extends StatelessWidget {
               ),
               IconButton(
                 key: const Key('tpFrameNext'),
-                tooltip: '1 frame aage',
+                tooltip: '1 frame forward',
                 onPressed: host.clips.isEmpty
                     ? null
                     : () => host.stepFrame(1),

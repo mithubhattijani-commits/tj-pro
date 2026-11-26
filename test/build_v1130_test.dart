@@ -300,7 +300,7 @@ void main() {
         300,
       );
       await tester.pump();
-      expect(find.textContaining('Koi clip nahi'), findsOneWidget);
+      expect(find.textContaining('No clips'), findsOneWidget);
       // The v1.13.0 rule: no completed export → no ad, not even
       // an attempted load on the interstitial placement.
       expect(_interstitialShows, 0);
@@ -640,7 +640,7 @@ void main() {
       );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
-      expect(find.textContaining('Abhi koi saved look nahi'), findsOneWidget);
+      expect(find.textContaining('No saved look yet'), findsOneWidget);
 
       // Save the current settings under a name.
       await tester.tap(find.byKey(const Key('myLookSaveButton')));

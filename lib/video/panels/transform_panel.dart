@@ -73,8 +73,8 @@ class TransformPanel extends StatelessWidget {
         child: const Text('Transform reset'),
       ),
       const Text(
-        'Transform export mein blurred backdrop par lagta hai — '
-        'kaale kinare kabhi nahi aate.',
+        'Transform applies over a blurred backdrop in the export — '
+        'black edges never appear.',
         style: TextStyle(color: Colors.grey, fontSize: 12),
       ),
       if (clip != null && clip.isPhoto) ...[

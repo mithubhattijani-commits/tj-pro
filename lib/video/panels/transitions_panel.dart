@@ -90,8 +90,8 @@ class TransitionsPanel extends StatelessWidget {
         onChanged: (v) => host.update(() => host.proTransitionDur = v),
       ),
       const Text(
-        'Duration har clip boundary par same lagti hai; type '
-        'badalne se kul duration badal sakti hai (xfade overlap).',
+        'The duration applies the same at every clip boundary; changing the type '
+        'changing it can change the total duration (xfade overlap).',
         style: TextStyle(color: Colors.grey, fontSize: 12),
       ),
       const Divider(height: 32),

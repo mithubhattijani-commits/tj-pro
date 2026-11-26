@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import '../../theme.dart';
+import '../editor_models.dart';
 import '../editor_stage.dart';
 import '../video_editor_controller.dart';
 
@@ -51,7 +52,7 @@ class TimelineBar extends StatelessWidget {
               Expanded(
                 child: Text(
                   host.elementRow && host.fxPip
-                      ? 'PIP element selected — Switch se main track par wapas.'
+                      ? 'PIP element selected — use Switch to return to the main track.'
                       : host.clipRow && host.clips.isNotEmpty
                           ? 'Long press to swap'
                           : 'Select one track to edit.',
@@ -74,16 +75,16 @@ class TimelineBar extends StatelessWidget {
                 onTap: () => host.update(() {
                   host.tlSnapOn = !host.tlSnapOn;
                   host.setStatus(host.tlSnapOn
-                      ? 'Snap ON — playhead aur trim handles '
+                      ? 'Snap ON — the playhead and trim handles '
                           'boundary/beat/marker par chipkenge.'
-                      : 'Snap OFF — playhead aur trim bilkul '
-                          'azad chalenge.');
+                      : 'Snap OFF — the playhead and trim are completely '
+                          'will move freely.');
                 }),
                 onLongPress: () => host.update(() {
                   host.tlSnapStrength = (host.tlSnapStrength + 1) % 3;
                   host.tlSnapOn = true;
                   host.setStatus(
-                    'Snap ki taqat: ${host.tlSnapStrength == 0 ? 'Halki' : host.tlSnapStrength == 2 ? 'Mazboot' : 'Normal'}.',
+                    'Snap ki taqat: ${host.tlSnapStrength == 0 ? 'Light' : host.tlSnapStrength == 2 ? 'Mazboot' : 'Normal'}.',
                   );
                 }),
                 child: Padding(
@@ -127,9 +128,9 @@ class TimelineBar extends StatelessWidget {
                 onTap: () => host.update(() {
                   host.timecodeOn = !host.timecodeOn;
                   host.setStatus(host.timecodeOn
-                      ? 'Timecode ON — waqt H:MM:SS:FF mein '
+                      ? 'Timecode ON — time in H:MM:SS:FF '
                           'dikhe ga.'
-                      : 'Timecode OFF — waqt m:ss mein dikhe ga.');
+                      : 'Timecode OFF — time will show in m:ss.');
                 }),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
@@ -155,8 +156,8 @@ class TimelineBar extends StatelessWidget {
                   host.multiMode = !host.multiMode;
                   if (!host.multiMode) host.clearMultiSelect();
                   host.setStatus(host.multiMode
-                      ? 'Multi-select ON — clips par tap karke '
-                          'kai clips chunein.'
+                      ? 'Multi-select ON — tap clips to '
+                          'choose many clips.'
                       : 'Multi-select OFF.');
                 }),
                 child: Padding(
@@ -252,7 +253,7 @@ class TimelineBar extends StatelessWidget {
                   IconButton(
                     key: const Key('tlMultiMoveLeft'),
                     visualDensity: VisualDensity.compact,
-                    tooltip: 'Peechay khiskayein',
+                    tooltip: 'Move back',
                     onPressed: host.multiSelect.isEmpty
                         ? null
                         : () => host.moveMultiSelected(-1),
@@ -262,7 +263,7 @@ class TimelineBar extends StatelessWidget {
                   IconButton(
                     key: const Key('tlMultiMoveRight'),
                     visualDensity: VisualDensity.compact,
-                    tooltip: 'Aage khiskayein',
+                    tooltip: 'Move forward',
                     onPressed: host.multiSelect.isEmpty
                         ? null
                         : () => host.moveMultiSelected(1),
@@ -272,7 +273,7 @@ class TimelineBar extends StatelessWidget {
                   IconButton(
                     key: const Key('tlMultiDuplicate'),
                     visualDensity: VisualDensity.compact,
-                    tooltip: 'Duplicate karein',
+                    tooltip: 'Duplicate',
                     onPressed: host.multiSelect.isEmpty
                         ? null
                         : host.duplicateMultiSelected,
@@ -282,7 +283,7 @@ class TimelineBar extends StatelessWidget {
                   IconButton(
                     key: const Key('tlMultiDelete'),
                     visualDensity: VisualDensity.compact,
-                    tooltip: 'Delete karein',
+                    tooltip: 'Delete',
                     onPressed: host.multiSelect.isEmpty
                         ? null
                         : () => unawaited(host.deleteMultiSelected()),
@@ -292,7 +293,7 @@ class TimelineBar extends StatelessWidget {
                   IconButton(
                     key: const Key('tlMultiClear'),
                     visualDensity: VisualDensity.compact,
-                    tooltip: 'Selection saaf karein',
+                    tooltip: 'Clear selection',
                     onPressed: host.clearMultiSelect,
                     icon: const Icon(Icons.clear,
                         size: 17, color: Colors.white70),
@@ -675,40 +676,116 @@ class TimelineBar extends StatelessWidget {
               laneKey: 'pip',
               icon: Icons.picture_in_picture_alt,
               label: 'PIP',
-              child: InkWell(
-              onTap: () => host.update(() {
-                host.elementRow = true;
-                host.clipRow = false;
-                host.activeTool = null;
-              }),
-              child: Container(
-                height: 22,
-                decoration: BoxDecoration(
-                  color: host.elementRow
-                      ? const Color(0xFF6A4C00)
-                      : const Color(0xFF263238),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                alignment: Alignment.centerLeft,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: const Row(
-                  children: [
-                    Icon(
-                      Icons.picture_in_picture_alt,
-                      size: 13,
-                      color: Colors.white70,
-                    ),
-                    SizedBox(width: 6),
-                    Text(
-                      'PIP element',
-                      style: TextStyle(
-                        color: Colors.white70,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
+              // v1.16.0 G3 (A3): the PIP lane lock — while locked
+              // the window cannot be dragged and the PIP timing
+              // controls are disabled (accidental-change guard).
+              laneAction: InkWell(
+                key: const Key('pipLaneLock'),
+                onTap: () => host.update(
+                    () => host.pipLaneLocked = !host.pipLaneLocked),
+                child: Padding(
+                  padding: const EdgeInsets.all(2),
+                  child: Icon(
+                    host.pipLaneLocked ? Icons.lock : Icons.lock_open,
+                    size: 13,
+                    color: host.pipLaneLocked
+                        ? TjProTheme.gold
+                        : Colors.white54,
+                  ),
                 ),
               ),
+              child: LayoutBuilder(
+              builder: (context, laneConstraints) {
+                // v1.16.0 G2 (Motion M3): the PIP lane shows the
+                // inset's WINDOW as a segment of the timeline —
+                // drag it sideways to move the window (length
+                // preserved); trim it in the PIP panel. A full
+                // window renders exactly like the old full bar.
+                final total = host.totalDurationSec;
+                final laneW = laneConstraints.maxWidth;
+                final pxPerSec =
+                    (total > 0 && laneW > 0) ? laneW / total : 0.0;
+                final w = total > 0
+                    ? TimelineMath.pipWindowClamp(
+                        start: host.pipStartSec,
+                        end: host.pipEndSec,
+                        totalDur: total,
+                      )
+                    : (start: 0.0, end: 0.0);
+                final segLeft = w.start * pxPerSec;
+                final segWidth = total > 0
+                    ? (w.end - w.start) * pxPerSec
+                    : laneW;
+                return GestureDetector(
+                  onTap: () => host.update(() {
+                    host.elementRow = true;
+                    host.clipRow = false;
+                    host.activeTool = null;
+                  }),
+                  onHorizontalDragUpdate: pxPerSec > 0 && !host.pipLaneLocked
+                      ? (d) {
+                          final moved = TimelineMath.pipWindowDragged(
+                            start: w.start,
+                            end: w.end,
+                            deltaSec: d.delta.dx / pxPerSec,
+                            totalDur: total,
+                          );
+                          host.update(() {
+                            host.pipStartSec = moved.start;
+                            host.pipEndSec = moved.end;
+                          });
+                        }
+                      : null,
+                  child: Stack(
+                    children: [
+                      Container(
+                        height: 22,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1A2226),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                      Positioned(
+                        left: segLeft,
+                        width: segWidth <= 0 ? laneW : segWidth,
+                        child: Container(
+                          key: const Key('pipWindowSeg'),
+                          height: 22,
+                          decoration: BoxDecoration(
+                            color: host.elementRow
+                                ? const Color(0xFF6A4C00)
+                                : const Color(0xFF263238),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          alignment: Alignment.centerLeft,
+                          padding:
+                              const EdgeInsets.symmetric(horizontal: 8),
+                          child: const Row(
+                            children: [
+                              Icon(
+                                Icons.picture_in_picture_alt,
+                                size: 13,
+                                color: Colors.white70,
+                              ),
+                              SizedBox(width: 6),
+                              Flexible(
+                                child: Text(
+                                  'PIP element',
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
             ),
             ),
           ],
@@ -718,6 +795,23 @@ class TimelineBar extends StatelessWidget {
             laneKey: 'audio',
             icon: Icons.music_note,
             label: 'Audio',
+            // v1.16.0 G3 (A3): the audio lane mute — REAL: the
+            // export drops the music entirely while muted.
+            laneAction: InkWell(
+              key: const Key('audioLaneMute'),
+              onTap: () =>
+                  host.update(() => host.musicMuted = !host.musicMuted),
+              child: Padding(
+                padding: const EdgeInsets.all(2),
+                child: Icon(
+                  host.musicMuted ? Icons.volume_off : Icons.volume_up,
+                  size: 13,
+                  color: host.musicMuted
+                      ? Colors.redAccent
+                      : Colors.white54,
+                ),
+              ),
+            ),
             child: InkWell(
             onTap: () => host.openToolTab('audio', 'music'),
             child: Container(
@@ -811,6 +905,86 @@ class TimelineBar extends StatelessWidget {
             ),
           ),
           ),
+          // v1.16.0 G4 (A18): the captions lane — every caption
+          // as a strip at its timeline span (the export's own
+          // mapping, TimelineMath.captionStripSpans). Tapping a
+          // strip seeks to it and opens the editor on it. Shown
+          // only when captions exist.
+          if (host.captions.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            _laneRow(
+              laneKey: 'captions',
+              icon: Icons.closed_caption,
+              label: 'CC',
+              child: LayoutBuilder(
+                builder: (context, c) {
+                  final total = host.totalDurationSec;
+                  final spans = TimelineMath.captionStripSpans(
+                    segments: [
+                      for (final s in host.captions)
+                        (start: s.start, end: s.end),
+                    ],
+                    timelineRelative: host.captionsTimelineRelative,
+                    selectedClipStart: host.clips.isEmpty
+                        ? 0
+                        : host.clipStartSec(host.selected),
+                    totalDur: total,
+                  );
+                  return Stack(
+                    children: [
+                      Container(
+                        height: 22,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1A1A1A),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                      for (var i = 0; i < spans.length; i++)
+                        Positioned(
+                          left: total > 0
+                              ? (spans[i].start / total * c.maxWidth)
+                                  .clamp(0.0, c.maxWidth - 10)
+                              : 0,
+                          width: total > 0
+                              ? ((spans[i].end - spans[i].start) /
+                                      total *
+                                      c.maxWidth)
+                                  .clamp(10.0, c.maxWidth)
+                              : c.maxWidth,
+                          child: GestureDetector(
+                            onTap: () =>
+                                unawaited(host.editCaptionAt(i)),
+                            child: Container(
+                              key: Key('captionStrip-$i'),
+                              height: 22,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 5),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF4A3F00),
+                                borderRadius: BorderRadius.circular(4),
+                                border: Border.all(
+                                    color: TjProTheme.gold
+                                        .withValues(alpha: 0.5)),
+                              ),
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                host.captions[i].text,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 9,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ],
           // Build 3 (Phase 3): the Keyframes lane — ◆ points at
           // each active track's keyframe times (gold = title /
           // sticker track, cyan = PIP track; both tracks span the
@@ -950,6 +1124,9 @@ class TimelineBar extends StatelessWidget {
     required IconData icon,
     required String label,
     required Widget child,
+    // v1.16.0 G3 (A3): an optional REAL lane control (audio
+    // mute / PIP lock) shown before the row's eye toggle.
+    Widget? laneAction,
   }) {
     final hidden = host.laneHidden.contains(laneKey);
     return Row(
@@ -971,6 +1148,7 @@ class TimelineBar extends StatelessWidget {
                   ),
                 ),
               ),
+              ?laneAction,
               InkWell(
                 onTap: () => host.update(() {
                   if (hidden) {
@@ -1020,6 +1198,29 @@ class TimelineBar extends StatelessWidget {
   /// (photo clips show themselves), gold border when selected,
   /// trim handles on the selected block, tap = select + preview,
   /// long-press = the swap sheet ("Long press to swap").
+  /// v1.16.0 G4 (A16): the clip block's waveform strip — kicks
+  /// off the (cached, once-only) render and paints the PNG when
+  /// it exists. No audio stream / still rendering = no strip.
+  Widget _clipWaveOverlay(VideoClip clip) {
+    host.ensureClipWave(clip);
+    final path = host.clipWaveCache[host.clipWaveKey(clip)];
+    if (path == null || path.isEmpty) return const SizedBox.shrink();
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: 0,
+      height: 15,
+      child: Opacity(
+        opacity: clip.muted || clip.disabled ? 0.3 : 0.75,
+        child: Image.file(
+          File(path),
+          fit: BoxFit.fill,
+          errorBuilder: (_, _, _) => const SizedBox.shrink(),
+        ),
+      ),
+    );
+  }
+
   Widget _timelineClipBlock(int i, {required double left}) {
     final clip = host.clips[i];
     final w = clip.effectiveDuration * host.tlPxPerSec;
@@ -1135,6 +1336,11 @@ class TimelineBar extends StatelessWidget {
                         ],
                       ),
               ),
+              // v1.16.0 G4 (A16): the clip's real audio
+              // waveform along the block's bottom (trimmed
+              // range; rendered once, cached — see
+              // host.ensureClipWave).
+              if (!clip.isPhoto) _clipWaveOverlay(clip),
               if (clip.isPhoto)
                 const Positioned(
                   left: 3,
@@ -1143,6 +1349,98 @@ class TimelineBar extends StatelessWidget {
                     Icons.photo,
                     size: 12,
                     color: Colors.white,
+                  ),
+                ),
+              // v1.16.0 G3 (C3): the colour label strip.
+              if (clip.colorLabel > 0)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  child: Container(
+                    key: Key('tlClipLabel-$i'),
+                    height: 4,
+                    color: Color(TimelineMath.clipLabelArgb[
+                        TimelineMath.clipLabelClamp(clip.colorLabel)]),
+                  ),
+                ),
+              // v1.16.0 G3 (A23): a disabled clip is veiled —
+              // its space stays, its picture is gone (the same
+              // in the preview and the export).
+              if (clip.disabled)
+                Positioned.fill(
+                  child: Container(
+                    key: Key('tlClipDisabled-$i'),
+                    color: Colors.black.withValues(alpha: 0.62),
+                    alignment: Alignment.center,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 5, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: Colors.black87,
+                        borderRadius: BorderRadius.circular(3),
+                        border: Border.all(color: Colors.white38),
+                      ),
+                      child: const Text(
+                        'OFF',
+                        style: TextStyle(
+                          color: Colors.white70,
+                          fontSize: 8,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              // v1.16.0 G3 (A22): state badges from the clip's
+              // REAL state (TimelineMath.clipBadgeKeys) — mute,
+              // changed volume, trimmed, audio unlinked.
+              if (TimelineMath.clipBadgeKeys(
+                    isPhoto: clip.isPhoto,
+                    muted: clip.muted,
+                    volume: clip.volume,
+                    trimStart: clip.trimStart,
+                    trimEnd: clip.trimEnd,
+                    hasDetachedAudio: clip.detachedAudioPath != null,
+                    disabled: clip.disabled,
+                  )
+                  .any((b) => b != 'photo' && b != 'off'))
+                Positioned(
+                  left: 3,
+                  bottom: 3,
+                  child: Row(
+                    key: Key('tlClipBadges-$i'),
+                    children: [
+                      for (final b in TimelineMath.clipBadgeKeys(
+                        isPhoto: clip.isPhoto,
+                        muted: clip.muted,
+                        volume: clip.volume,
+                        trimStart: clip.trimStart,
+                        trimEnd: clip.trimEnd,
+                        hasDetachedAudio:
+                            clip.detachedAudioPath != null,
+                        disabled: clip.disabled,
+                      ))
+                        if (b != 'photo' && b != 'off')
+                          Container(
+                            margin: const EdgeInsets.only(right: 2),
+                            padding: const EdgeInsets.all(1.5),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.72),
+                              borderRadius: BorderRadius.circular(2.5),
+                            ),
+                            child: Icon(
+                              switch (b) {
+                                'mute' => Icons.volume_off,
+                                'vol' => Icons.volume_up,
+                                'trim' => Icons.content_cut,
+                                _ => Icons.link_off,
+                              },
+                              size: 9,
+                              color: Colors.white,
+                            ),
+                          ),
+                    ],
                   ),
                 ),
               // v1.14 T3 (A4): the multi-select tick.
@@ -1243,8 +1541,8 @@ class TimelineBar extends StatelessWidget {
                       host.pushHistory();
                       if (host.trimMode == 'roll') {
                         if (i <= 0) {
-                          host.setStatus('Pehli clip se pehle koi '
-                              'boundary nahi — roll nahi ho sakta.');
+                          host.setStatus('Before the first clip, no '
+                              'no boundary — roll is not possible.');
                         } else {
                           unawaited(host.loadPreview());
                         }
@@ -1337,8 +1635,8 @@ class TimelineBar extends StatelessWidget {
                       host.pushHistory();
                       if (host.trimMode == 'roll') {
                         if (i >= host.clips.length - 1) {
-                          host.setStatus('Aakhri clip ke baad koi '
-                              'boundary nahi — roll nahi ho sakta.');
+                          host.setStatus('After the last clip, no '
+                              'no boundary — roll is not possible.');
                         } else {
                           unawaited(host.loadPreview());
                         }
@@ -1390,7 +1688,7 @@ class TimelineBar extends StatelessWidget {
             ListTile(
               leading: const Icon(Icons.videocam, color: Colors.white),
               title: const Text(
-                'Video add karein',
+                'Add video',
                 style: TextStyle(color: Colors.white),
               ),
               onTap: () {
@@ -1401,7 +1699,7 @@ class TimelineBar extends StatelessWidget {
             ListTile(
               leading: const Icon(Icons.photo, color: Colors.white),
               title: const Text(
-                'Photo add karein',
+                'Add photo',
                 style: TextStyle(color: Colors.white),
               ),
               onTap: () {
@@ -1431,7 +1729,7 @@ class TimelineBar extends StatelessWidget {
                 leading:
                     const Icon(Icons.arrow_back, color: Colors.white),
                 title: const Text(
-                  'Peechay wali clip se swap',
+                  'Swap with the previous clip',
                   style: TextStyle(color: Colors.white),
                 ),
                 onTap: () {
@@ -1444,7 +1742,7 @@ class TimelineBar extends StatelessWidget {
                 leading:
                     const Icon(Icons.arrow_forward, color: Colors.white),
                 title: const Text(
-                  'Aglay wali clip se swap',
+                  'Swap with the next clip',
                   style: TextStyle(color: Colors.white),
                 ),
                 onTap: () {

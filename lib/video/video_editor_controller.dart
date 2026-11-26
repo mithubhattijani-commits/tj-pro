@@ -103,6 +103,13 @@ abstract class VideoEditorController {
   CaptionStyle get captionStyle;
   set captionStyle(CaptionStyle value);
   List<CaptionSegment> get captions;
+  // v1.16.0 G4 (A18): whether [captions] are timeline-relative
+  // (handoff/import) or recorded against the selected clip —
+  // the captions lane maps them with the export's own rule.
+  bool get captionsTimelineRelative;
+  // v1.16.0 G4 (A18): seek to caption [index]'s start and open
+  // the caption editor focused on that caption.
+  Future<void> editCaptionAt(int index);
   set captions(List<CaptionSegment> value);
   Future<void> captureFrameInsert();
   void checkExportCancelled();
@@ -132,6 +139,10 @@ abstract class VideoEditorController {
   bool get detectingBeats;
   set detectingBeats(bool value);
   void duplicateSelectedClip();
+  // v1.16.0 G3 (A23 + C3): disable/enable the selected clip and
+  // set its colour label (0 = none).
+  void toggleSelectedClipDisabled();
+  void setSelectedClipColorLabel(int label);
   Future<void> editCaptions();
   Future<void> importCaptionsFile();
   Future<void> shareCaptionsFile(String kind);
@@ -232,7 +243,21 @@ abstract class VideoEditorController {
   set musicPath(String? value);
   double get musicVolume;
   set musicVolume(double value);
+  // v1.16.0 G3 (A3): lane-level controls — the audio lane's
+  // mute (binds the export: muted music never reaches the
+  // render) and the PIP lane's lock (guards the window drag +
+  // the PIP timing controls against accidental changes).
+  bool get musicMuted;
+  set musicMuted(bool value);
+  bool get pipLaneLocked;
+  set pipLaneLocked(bool value);
   Map<String, String> get musicWaveCache;
+  // v1.16.0 G4 (A16): per-clip waveform PNG cache (path+trim
+  // keyed), rendered once per clip by [ensureClipWave] — the
+  // timeline block paints it without ever blocking a scroll.
+  Map<String, String> get clipWaveCache;
+  void ensureClipWave(VideoClip clip);
+  String clipWaveKey(VideoClip clip);
   bool get muteOriginal;
   set muteOriginal(bool value);
   NewsTemplate get news;
@@ -281,6 +306,14 @@ abstract class VideoEditorController {
   set pipPosition(PipPosition value);
   double get pipScale;
   set pipScale(double value);
+  // v1.16.0 G2 (Motion M3): the PIP window — the inset shows
+  // only inside [pipStartSec, pipEndSec) of the timeline.
+  // pipEndSec == -1 means "to the end" (the historical default:
+  // the window is the whole timeline).
+  double get pipStartSec;
+  set pipStartSec(double value);
+  double get pipEndSec;
+  set pipEndSec(double value);
   String pipSnippetAdvanced({ required VideoSize base, required VideoSize pip, required bool hasMask, });
   KeyframeEasing get pkEasing;
   set pkEasing(KeyframeEasing value);

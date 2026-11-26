@@ -668,3 +668,83 @@ Widget panelDrillOrColumn(
     PanelDrillDown.appliesTo(children)
         ? PanelDrillDown(host, embedded: true, children: children)
         : PanelColumn(children: children);
+
+/// v1.16.0 G3 (C3): the clip colour-label picker — a bottom
+/// sheet of colour dots (None + the TimelineMath palette).
+/// Picking one sets the SELECTED clip's label via the host op
+/// and closes the sheet.
+void showClipLabelPicker(VideoEditorController host) {
+  if (host.clips.isEmpty) return;
+  final current = TimelineMath.clipLabelClamp(
+    host.clips[host.selected].colorLabel,
+  );
+  showModalBottomSheet<void>(
+    context: host.context,
+    backgroundColor: const Color(0xFF1B1B1B),
+    builder: (ctx) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 18),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Clip label',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 12,
+              children: [
+                for (var i = 0;
+                    i < TimelineMath.clipLabelArgb.length;
+                    i++)
+                  InkWell(
+                    key: Key('clipLabelDot-$i'),
+                    borderRadius: BorderRadius.circular(20),
+                    onTap: () {
+                      host.setSelectedClipColorLabel(i);
+                      Navigator.pop(ctx);
+                    },
+                    child: Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: i == 0
+                            ? const Color(0xFF2A2A2A)
+                            : Color(TimelineMath.clipLabelArgb[i]),
+                        border: Border.all(
+                          color: i == current
+                              ? Colors.white
+                              : Colors.white24,
+                          width: i == current ? 2.5 : 1,
+                        ),
+                      ),
+                      child: i == 0
+                          ? const Icon(
+                              Icons.block,
+                              size: 18,
+                              color: Colors.white54,
+                            )
+                          : (i == current
+                              ? const Icon(
+                                  Icons.check,
+                                  size: 18,
+                                  color: Colors.white,
+                                )
+                              : null),
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}

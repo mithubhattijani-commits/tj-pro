@@ -255,7 +255,7 @@ void main() {
       // 2 hours via WhatsApp) — booking is in-app now with the
       // user-confirmed 100/200/300 table for 1/2/4 hours.
       expect(
-        find.textContaining('100 coins / 1 ghanta, 200 / 2 ghante'),
+        find.textContaining('100 coins / 1 hour, 200 / 2 hours'),
         findsOneWidget,
       );
     });

@@ -292,8 +292,8 @@ class PanelTabRow extends StatelessWidget {
               SectionTitle('Urdu (AI) captions'),
               const Text(
                 'Shruti Urdu AI model (on-device) se Urdu captions — '
-                'Whisper wale option se alag, Urdu ke liye trained. '
-                'Model pack pehli dafa download hota hai.',
+                'Separate from the Whisper option, trained for Urdu. '
+                'The model pack downloads the first time.',
                 style: TextStyle(color: Colors.grey, fontSize: 12),
               ),
               const SizedBox(height: 6),
@@ -306,7 +306,7 @@ class PanelTabRow extends StatelessWidget {
                   icon: const Icon(Icons.closed_caption, size: 18),
                   label: Text(
                     host.transcribing
-                        ? 'Captions ban rahe hain…'
+                        ? 'Creating captions…'
                         : 'Urdu (AI) captions banayein',
                   ),
                 ),

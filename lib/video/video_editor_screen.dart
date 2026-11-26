@@ -119,6 +119,10 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
   String? _musicPath;
   // Music track gain (1.0 = unchanged); applied to the music audio only.
   double _musicVolume = 1.0;
+  // v1.16.0 G3 (A3): lane controls — audio-lane mute (export
+  // binds it) + PIP-lane lock (guards window edits).
+  bool _musicMuted = false;
+  bool _pipLaneLocked = false;
   String? _fontFile;
   List<CaptionSegment> _captions = [];
   String _captionLocale = 'ur';
@@ -420,7 +424,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       _adjGrain = 0;
       _adjAuto = false;
     });
-    _setStatus('Colour / Adjust reset ho gaya.');
+    _setStatus('Colour / Adjust reset.');
   }
 
   /// §6.6 undo/redo snapshot stacks (see _pushHistory).
@@ -615,6 +619,13 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
   // channel preset's settings (Phase 7).
   PipPosition _pipPosition = PipPosition.bottomRight;
   double _pipScale = 0.3;
+  // v1.16.0 G2 (Motion M3): the PIP window on the timeline —
+  // the inset (incl. a Motion "Video par Lagao" overlay, which
+  // arrives through this same PIP layer) shows only inside
+  // [_pipStartSec, _pipEndSec); _pipEndSec == -1 = to the end.
+  // Defaults = the whole timeline (pre-M3 behaviour).
+  double _pipStartSec = 0;
+  double _pipEndSec = -1;
   ShakeFx _fxShake = ShakeFx.none;
   int _fxQuality = 0;
 
@@ -686,7 +697,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         _setStatus(AiToolCharge.insufficientMessage);
         return false;
       case AiChargeOutcome.failed:
-        _setStatus('Charge nahi hua — dobara try karein.');
+        _setStatus('Charge failed — try again.');
         return false;
     }
   }
@@ -724,7 +735,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       _trackStartY = y;
       _trackPoints = [];
       _status =
-          'Object tapped (${x.toStringAsFixed(2)}, ${y.toStringAsFixed(2)}) — ab Track dabayein.';
+          'Object tapped (${x.toStringAsFixed(2)}, ${y.toStringAsFixed(2)}) — now tap Track.';
     });
   }
 
@@ -778,7 +789,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       _tfY = 0;
       _tfRot = 0;
     });
-    _setStatus('Canvas transform reset ho gaya.');
+    _setStatus('Canvas transform reset.');
   }
 
   /// The stage's render matrix for the main-clip transform:
@@ -965,8 +976,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
   /// incrementally during their drags.
   void _rollBoundaryBy(int boundaryIndex, double delta) {
     if (boundaryIndex <= 0 || boundaryIndex >= _clips.length) {
-      _setStatus('Roll ke liye do clips ke darmiyan ki boundary '
-          'chahiye.');
+      _setStatus('Roll needs the boundary between two clips '
+          'is needed.');
       return;
     }
     final a = _clips[boundaryIndex - 1];
@@ -980,9 +991,9 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       delta: delta,
     );
     if (res == null) {
-      _setStatus('Roll aur nahi ho sakta — kisi aik clip ki '
-          'file khatam ho gayi hai ya hissa bohat chhota reh '
-          'jaye ga.');
+      _setStatus('Roll cannot go further — one of the clips '
+          'the file has ended or too little of the part would be '
+          'left.');
       return;
     }
     _pushHistory();
@@ -990,9 +1001,9 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       a.trimEnd = res.aEnd;
       b.trimStart = res.bStart;
     });
-    _setStatus('Roll ho gaya — boundary '
+    _setStatus('Roll done — the boundary '
         '${res.delta >= 0 ? '+' : ''}${res.delta.toStringAsFixed(2)}s '
-        'khiski, kul lambai wahi hai.');
+        'moved, the total length is the same.');
     unawaited(_loadPreview());
   }
 
@@ -1004,8 +1015,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     if (_clips.isEmpty) return;
     final clip = _clips[_selected];
     if (clip.isPhoto) {
-      _setStatus('Photo clip mein slip nahi hota — us ke andar '
-          'koi video hissa nahi hai.');
+      _setStatus('Slip does not work on a photo clip — inside it '
+          'there is no video portion.');
       return;
     }
     final res = TimelineMath.slipEdit(
@@ -1015,8 +1026,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       delta: delta,
     );
     if (res == null) {
-      _setStatus('Slip aur nahi ho sakta — clip pehle hi file '
-          'ke kinare par hai.');
+      _setStatus('Slip cannot go further — the clip is already at the file '
+          'edge.');
       return;
     }
     _pushHistory();
@@ -1024,7 +1035,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       clip.trimStart = res.start;
       clip.trimEnd = res.end;
     });
-    _setStatus('Slip ho gaya — clip wahin hai, andar ka hissa '
+    _setStatus('Slip done — the clip is in place, the inside portion '
         '${res.delta >= 0 ? '+' : ''}${res.delta.toStringAsFixed(2)}s '
         'khiska.');
     unawaited(_loadPreview());
@@ -1044,13 +1055,13 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       effEnd: clip.effectiveEnd,
     );
     if (next == null) {
-      _setStatus('Playhead is clip ke andar nahi hai — pehle '
-          'playhead ko clip ke andar layen.');
+      _setStatus('The playhead is not inside this clip — first '
+          'bring the playhead inside the clip.');
       return;
     }
     _pushHistory();
     setState(() => clip.trimStart = next);
-    _setStatus('Clip ka start playhead tak trim ho gaya.');
+    _setStatus('Clip start trimmed to the playhead.');
     unawaited(_loadPreview());
   }
 
@@ -1065,13 +1076,13 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       effEnd: clip.effectiveEnd,
     );
     if (next == null) {
-      _setStatus('Playhead is clip ke andar nahi hai — pehle '
-          'playhead ko clip ke andar layen.');
+      _setStatus('The playhead is not inside this clip — first '
+          'bring the playhead inside the clip.');
       return;
     }
     _pushHistory();
     setState(() => clip.trimEnd = next);
-    _setStatus('Clip ka end playhead tak trim ho gaya.');
+    _setStatus('Clip end trimmed to the playhead.');
     unawaited(_loadPreview());
   }
 
@@ -1121,8 +1132,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       await _controller?.dispose();
       if (mounted) setState(() => _controller = null);
     }
-    _setStatus('${doomed.length} clips delete ho gaye — Undo '
-        'se wapas aa sakte hain.');
+    _setStatus('${doomed.length} clips deleted — Undo '
+        'can bring them back.');
   }
 
   /// A4: duplicate every ticked clip right after itself, in
@@ -1140,7 +1151,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       }
       _multiSelect.clear();
     });
-    _setStatus('${idx.length} clips duplicate ho gaye.');
+    _setStatus('${idx.length} clips duplicated.');
     unawaited(_loadPreview());
   }
 
@@ -1155,7 +1166,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       direction: direction,
     );
     if (order.asMap().entries.every((e) => e.value == e.key)) {
-      _setStatus('Ye clips is taraf aur nahi khisak sakte.');
+      _setStatus('These clips cannot move further this way.');
       return;
     }
     // The ticked set at the clips' NEW positions — computed
@@ -1177,7 +1188,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
           ? _selected.clamp(0, _clips.length - 1)
           : newSel.reduce((a, b) => a < b ? a : b);
     });
-    _setStatus('Clips khisak gaye.');
+    _setStatus('Clips moved.');
     unawaited(_loadPreview());
   }
 
@@ -1192,7 +1203,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       _rangeIn = t;
       if (_rangeOut != null && _rangeOut! <= t) _rangeOut = null;
     });
-    _setStatus('Range ka In point set ho gaya '
+    _setStatus('Range In point set '
         '(${TimelineMath.formatTimecode(t, _exportFps)}).');
   }
 
@@ -1203,7 +1214,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       _rangeOut = t;
       if (_rangeIn != null && _rangeIn! >= t) _rangeIn = null;
     });
-    _setStatus('Range ka Out point set ho gaya '
+    _setStatus('Range Out point set '
         '(${TimelineMath.formatTimecode(t, _exportFps)}).');
   }
 
@@ -1213,7 +1224,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       _rangeOut = null;
       _loopRange = false;
     });
-    _setStatus('Range saaf ho gaya.');
+    _setStatus('Range cleared.');
   }
 
   /// A5: delete the marked range from the timeline — clips
@@ -1224,7 +1235,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     final inSec = _rangeIn;
     final outSec = _rangeOut;
     if (inSec == null || outSec == null || outSec <= inSec) {
-      _setStatus('Pehle In aur Out dono points set karein.');
+      _setStatus('Set both the In and Out points first.');
       return;
     }
     if (_clips.isEmpty || _busy) return;
@@ -1285,9 +1296,9 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       await _controller?.dispose();
       if (mounted) setState(() => _controller = null);
     }
-    _setStatus('Range delete ho gaya — $removed clip(s) '
-        'hataye, $split clip(s) do hison mein kate. Undo se '
-        'wapas aa sakta hai.');
+    _setStatus('Range deleted — $removed clip(s) '
+        'removed, $split clip(s) cut into two parts. Undo '
+        'can bring it back.');
   }
 
   /// Live scrub (Phase 2): while the user drags the strip with
@@ -1336,6 +1347,53 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       _musicWaveCache[musicPath] = '';
     } finally {
       _musicWavePending.remove(musicPath);
+    }
+  }
+
+  // v1.16.0 G4 (A16): per-clip waveform — the clip's REAL audio
+  // (its trimmed range) rendered once via showwavespic and
+  // cached in the work dir, keyed by path + trim, so scrolling
+  // the timeline never re-renders. A clip with no audio stream
+  // fails the render and simply shows no wave ('' in cache).
+  final Map<String, String> _clipWaveCache = {};
+  final Set<String> _clipWavePending = {};
+
+  String _clipWaveKey(VideoClip clip) =>
+      '${clip.file.path}|${(clip.trimStart * 10).round()}|'
+      '${(clip.effectiveDuration * 10).round()}';
+
+  Future<void> _ensureClipWave(VideoClip clip) async {
+    if (clip.isPhoto) return;
+    final key = _clipWaveKey(clip);
+    if (_clipWaveCache.containsKey(key) || _clipWavePending.contains(key)) {
+      return;
+    }
+    _clipWavePending.add(key);
+    try {
+      final dir = await _workDir();
+      final out = p.join(
+        dir.path,
+        'clip_wave_${key.hashCode.abs()}.png',
+      );
+      if (await File(out).exists()) {
+        _clipWaveCache[key] = out;
+        if (mounted) setState(() {});
+        return;
+      }
+      final result = await FfmpegService.run(
+        '-y -ss ${clip.trimStart.toStringAsFixed(3)} '
+        '-t ${clip.effectiveDuration.toStringAsFixed(3)} '
+        '-i ${FfmpegService.q(clip.file.path)} -filter_complex '
+        '"showwavespic=s=640x36:colors=0x90CAF9" '
+        '-frames:v 1 ${FfmpegService.q(out)}',
+      );
+      _clipWaveCache[key] =
+          (result.ok && await File(out).exists()) ? out : '';
+      if (mounted) setState(() {});
+    } catch (_) {
+      _clipWaveCache[key] = '';
+    } finally {
+      _clipWavePending.remove(key);
     }
   }
 
@@ -1396,14 +1454,14 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
 
   Future<void> _trackObject() async {
     if (_clips.isEmpty || _trackStartX == null || _trackStartY == null) {
-      _setStatus('Pehle preview par object ko tap karein.');
+      _setStatus('Tap the object on the preview first.');
       return;
     }
     if (_tracking || _busy) return;
     if (!await _ensurePremiumUnlocked()) return;
     setState(() {
       _tracking = true;
-      _status = 'Object track ho raha hai…';
+      _status = 'Tracking object…';
     });
     try {
       final dir = await _workDir();
@@ -1425,8 +1483,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       setState(() {
         _trackPoints = points;
         _status = points.isEmpty
-            ? 'Object track nahi hua — dobara tap karke try karein.'
-            : '${points.length} track points mil gaye.';
+            ? 'Object could not be tracked — tap again and try.'
+            : '${points.length} track points found.';
       });
     } catch (e) {
       _setStatus('Tracking failed: $e');
@@ -1443,7 +1501,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     if (_detectingBeats || _busy) return;
     setState(() {
       _detectingBeats = true;
-      _status = 'Beats dhoond rahe hain…';
+      _status = 'Finding beats…';
     });
     try {
       final dir = await _workDir();
@@ -1456,8 +1514,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         _beatSourceMusic = fromMusic;
         _beatSourcePath = input;
         _status = beats.isEmpty
-            ? 'Koi beat nahi mili.'
-            : '${beats.length} beats mili.';
+            ? 'No beats found.'
+            : '${beats.length} beats found.';
       });
     } catch (e) {
       _setStatus('Beat detect failed: $e');
@@ -1472,12 +1530,12 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
   /// existing one is refused instead of stacking invisibly.
   void _addMarkerAtPlayhead() {
     if (_clips.isEmpty) {
-      _setStatus('Pehle clip add karein.');
+      _setStatus('Add a clip first.');
       return;
     }
     final t = _globalPositionSec.clamp(0.0, _totalDurationSec).toDouble();
     if (_markers.any((m) => (m - t).abs() < 0.05)) {
-      _setStatus('Is jagah par marker pehle se hai.');
+      _setStatus('A marker already exists at this spot.');
       return;
     }
     _pushHistory();
@@ -1485,7 +1543,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       _markers = [..._markers, t]..sort();
     });
     HapticFeedback.selectionClick();
-    _setStatus('Marker lag gaya — ${t.toStringAsFixed(1)}s par.');
+    _setStatus('Marker added — at ${t.toStringAsFixed(1)}s.');
   }
 
   /// A1 (v1.12): remove one manual marker (Beats panel list).
@@ -1495,7 +1553,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     setState(() {
       _markers = _markers.where((m) => (m - sec).abs() >= 0.001).toList();
     });
-    _setStatus('Marker hata diya.');
+    _setStatus('Marker removed.');
   }
 
   /// A2 (v1.12): import captions from an .srt / .vtt file. The
@@ -1520,8 +1578,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       if (!mounted) return;
       if (segments.isEmpty) {
         _setStatus(
-          'Is file mein koi caption nahi mila — file check karein. '
-          'Aap ki mojooda captions mehfooz hain.',
+          'No captions found in this file — check the file. '
+          'Your existing captions are safe.',
         );
         return;
       }
@@ -1529,19 +1587,19 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         final replace = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
-            title: const Text('Captions badal dein?'),
+            title: const Text('Replace captions?'),
             content: Text(
               'Is file ke ${segments.length} segments mojooda '
-              '${_captions.length} captions ki jagah le lenge.',
+              '${_captions.length} captions will replace them.',
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.of(ctx).pop(false),
-                child: const Text('Rehne dein'),
+                child: const Text('Keep them'),
               ),
               TextButton(
                 onPressed: () => Navigator.of(ctx).pop(true),
-                child: const Text('Badal dein'),
+                child: const Text('Replace'),
               ),
             ],
           ),
@@ -1551,7 +1609,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       setState(() {
         _captions = segments;
         _captionsTimelineRelative = true;
-        _status = '${segments.length} caption segments import ho gaye.';
+        _status = '${segments.length} caption segments imported.';
       });
     } catch (e) {
       if (mounted) _setStatus('Caption import failed: $e');
@@ -1565,7 +1623,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
   /// through Import unchanged.
   Future<void> _shareCaptionsFile(String kind) async {
     if (_captions.isEmpty) {
-      _setStatus('Pehle captions banayein ya import karein.');
+      _setStatus('Create or import captions first.');
       return;
     }
     try {
@@ -1593,7 +1651,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     }
     final VideoPlayerController? ctrl = _controller;
     if (ctrl == null || !ctrl.value.isInitialized) {
-      _setStatus('Pehle clip ka preview load honay dein.');
+      _setStatus('Let the clip preview load first.');
       return;
     }
     final int idx = _selected < _clips.length ? _selected : 0;
@@ -1605,7 +1663,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     );
     setState(() {
       _busy = true;
-      _status = 'Frame save ho raha hai…';
+      _status = 'Saving frame…';
     });
     try {
       final Directory dir = await _workDir();
@@ -1620,7 +1678,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         return;
       }
       await Gal.putImage(out);
-      _setStatus('Frame photo gallery mein save ho gaya.');
+      _setStatus('Frame photo saved to the gallery.');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Frame saved to gallery.')),
@@ -1644,7 +1702,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     final VideoClip clip = _clips[idx];
     setState(() {
       _busy = true;
-      _status = 'Audio extract ho raha hai…';
+      _status = 'Extracting audio…';
     });
     try {
       final Directory dir = await _workDir();
@@ -1659,7 +1717,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         _setStatus('Audio extract failed. ${r.logs}');
         return;
       }
-      _setStatus('Audio extract ho gaya.');
+      _setStatus('Audio extracted.');
       await OpenFilex.open(out);
     } catch (e) {
       _setStatus('Audio extract failed: $e');
@@ -1676,7 +1734,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     if (_waveformBusy || _busy) return;
     setState(() {
       _waveformBusy = true;
-      _status = 'Waveform bana rahe hain…';
+      _status = 'Building waveform…';
     });
     try {
       final dir = await _workDir();
@@ -1693,7 +1751,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       setState(() {
         _waveformPath = res;
         _status = res == null
-            ? 'Waveform nahi bana — audio nahi mili.'
+            ? 'Waveform not built — no audio found.'
             : 'Waveform ready.';
       });
     } catch (e) {
@@ -1909,6 +1967,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     // strip scrolled so the playhead stays at the centre — unless
     // the user is dragging the strip themselves.
     _clock.addListener(_onClockTick);
+    _clock.addListener(_syncPipWindow);
     // Plain editor only: a handoff project brings its own template
     // ([_loadProject] below) — the saved live template must NOT
     // overwrite it when this future resolves.
@@ -1998,9 +2057,9 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         duration: const Duration(seconds: 10),
-        content: const Text('Pichhla adhoora kaam mila hai.'),
+        content: const Text('Unfinished previous work found.'),
         action: SnackBarAction(
-          label: 'Wapas layen',
+          label: 'Restore',
           onPressed: () => unawaited(_restoreSession(session)),
         ),
       ),
@@ -2043,11 +2102,11 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       _lastSessionJson = '';
       await _loadPreview();
       setState(
-        () => _status = 'Pichhla kaam wapas aa gaya (${result.value} clip).',
+        () => _status = 'Previous work restored (${result.value} clips).',
       );
       _flashStatus();
     } else {
-      setState(() => _status = 'Pichhla kaam wapas nahi aa saka.');
+      setState(() => _status = 'Previous work could not be restored.');
       _flashStatus();
     }
   }
@@ -2063,7 +2122,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     final file = File(path);
     if (!await file.exists()) {
       if (mounted) {
-        setState(() => _status = 'Hub wali video nahi mili: $path');
+        setState(() => _status = 'Hub video not found: $path');
         _flashStatus();
       }
       return;
@@ -2099,7 +2158,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         _proChromaBgKind = 'image';
         _proChromaBgImage = handoff.chroma!.backgroundImagePath;
       }
-      _status = 'Project load ho raha hai…';
+      _status = 'Loading project…';
     });
     // Bundled chroma backdrop (newsroom / studio desk): materialise
     // the asset to a file, like the LUT loader does — FFmpeg cannot
@@ -2119,7 +2178,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
           setState(() {
             _proChromaBgKind = 'color';
             _proChromaBgImage = null;
-            _status = 'Note: chroma background load nahi hua, solid background use hoga.';
+            _status = 'Note: the chroma background did not load; a solid background will be used.';
           });
         }
       }
@@ -2164,6 +2223,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     // the restore offer on the next plain open is opt-in.
     unawaited(_saveSessionSnapshot());
     _clock.removeListener(_onClockTick);
+    _clock.removeListener(_syncPipWindow);
     _detachTrimBinding();
     _clock.dispose();
     _scrubSeekTimer?.cancel();
@@ -2202,6 +2262,61 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         _tlProgrammaticScroll = false;
       }
     }
+  }
+
+  // v1.16.0 G2 (Motion M3): keep the PIP preview's playback
+  // phase aligned with its window — the inset starts at its
+  // own 0 when the window starts and loops inside it
+  // (TimelineMath.pipLocalTime). Only a drift over 0.4 s is
+  // corrected, throttled to 4x/sec, and only while the main
+  // clock is playing, so scrubbing is never fought.
+  DateTime _lastPipSync = DateTime.fromMillisecondsSinceEpoch(0);
+
+  void _syncPipWindow() {
+    if (!mounted || !_clock.isPlaying || !_fxPip) return;
+    final pc = _pipController;
+    if (pc == null || !pc.value.isInitialized) return;
+    final total = _totalDurationSec;
+    if (total <= 0) return;
+    final w = TimelineMath.pipWindowClamp(
+      start: _pipStartSec,
+      end: _pipEndSec,
+      totalDur: total,
+    );
+    final t = _globalPositionSec;
+    if (!TimelineMath.pipVisibleAt(t: t, start: w.start, end: w.end)) {
+      return;
+    }
+    final pipDur = pc.value.duration.inMilliseconds / 1000;
+    final want =
+        TimelineMath.pipLocalTime(t: t, start: w.start, pipDur: pipDur);
+    final have = pc.value.position.inMilliseconds / 1000;
+    if ((want - have).abs() < 0.4) return;
+    final now = DateTime.now();
+    if (now.difference(_lastPipSync).inMilliseconds < 250) return;
+    _lastPipSync = now;
+    unawaited(pc.seekTo(Duration(milliseconds: (want * 1000).round())));
+  }
+
+  /// The export overlay gate for the PIP window: '' when the
+  /// window is the whole timeline (historical path), else the
+  /// `:enable='between(t,S,E)'` suffix for an overlay filter.
+  String get _pipEnableSuffix {
+    final total = _totalDurationSec;
+    if (TimelineMath.pipWindowIsFull(
+      start: _pipStartSec,
+      end: _pipEndSec,
+      totalDur: total,
+    )) {
+      return '';
+    }
+    final w = TimelineMath.pipWindowClamp(
+      start: _pipStartSec,
+      end: _pipEndSec,
+      totalDur: total,
+    );
+    return ":enable='between(t,${w.start.toStringAsFixed(3)},"
+        "${w.end.toStringAsFixed(3)})'";
   }
 
   // ---- v1.5.0 timeline model: the ONE source of durations. ----
@@ -2436,7 +2551,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       // deterministically — some devices keep a black texture
       // until the first seek lands.
       await c.seekTo(Duration(milliseconds: (clip.trimStart * 1000).round()));
-      await c.setVolume(clip.muted ? 0 : clip.volume);
+      await c.setVolume(clip.muted || clip.disabled ? 0 : clip.volume);
       if (mounted) setState(() {});
     } catch (e) {
       // Phase 0 sweep: was an unguarded setState after awaits.
@@ -2534,6 +2649,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
           'vol': c.volume,
           'muted': c.muted,
           'det': c.detachedAudioPath,
+          'dis': c.disabled,
+          'lbl': c.colorLabel,
         },
     ],
     'sel': _selected,
@@ -2582,6 +2699,10 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       c.volume = (e['vol'] as num?)?.toDouble() ?? 1;
       c.muted = e['muted'] as bool? ?? false;
       c.detachedAudioPath = e['det'] as String?;
+      // v1.16.0 G3: old snapshots have no dis/lbl keys — the
+      // defaults (enabled, no label) apply.
+      c.disabled = e['dis'] as bool? ?? false;
+      c.colorLabel = (e['lbl'] as num?)?.toInt() ?? 0;
       clips.add(c);
     }
     setState(() {
@@ -2630,14 +2751,14 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     if (_undoStack.isEmpty || _busy) return;
     _redoStack.add(_snapshot());
     await _restoreSnapshot(_undoStack.removeLast());
-    _setStatus('Undo ho gaya.');
+    _setStatus('Undo done.');
   }
 
   Future<void> _redo() async {
     if (_redoStack.isEmpty || _busy) return;
     _undoStack.add(_snapshot());
     await _restoreSnapshot(_redoStack.removeLast());
-    _setStatus('Redo ho gaya.');
+    _setStatus('Redo done.');
   }
 
   /// Build 3 (Phase 3) — the panel-session snapshot behind the
@@ -2658,6 +2779,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         'crossfade': _crossfade,
         'text': _text,
         'musicVolume': _musicVolume,
+        'musicMuted': _musicMuted,
+        'pipLaneLocked': _pipLaneLocked,
         'autoDuck': _autoDuck,
         'tfScale': _tfScale,
         'tfX': _tfX,
@@ -2687,6 +2810,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         'pipMaskInvert': _pipMaskInvert,
         'pipPosition': _pipPosition.index,
         'pipScale': _pipScale,
+        'pipStart': _pipStartSec,
+        'pipEnd': _pipEndSec,
         'pipKeyframes': _pipKeyframes,
         'pkStartX': _pkStartX,
         'pkStartY': _pkStartY,
@@ -2779,6 +2904,9 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       _crossfade = m['crossfade'] as bool? ?? false;
       _text = m['text'] as String? ?? '';
       _musicVolume = d('musicVolume');
+      // v1.16.0 G3 (A3): old snapshots lack both keys.
+      _musicMuted = m['musicMuted'] as bool? ?? false;
+      _pipLaneLocked = m['pipLaneLocked'] as bool? ?? false;
       _autoDuck = m['autoDuck'] as bool? ?? false;
       _tfScale = d('tfScale');
       _tfX = d('tfX');
@@ -2809,6 +2937,10 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       _pipPosition =
           PipPosition.values[(m['pipPosition'] as num?)?.toInt() ?? 3];
       _pipScale = d('pipScale');
+      // v1.16.0 G2: PIP window — old snapshots have no keys and
+      // fall back to the full-timeline window (0 / -1).
+      _pipStartSec = (m['pipStart'] as num?)?.toDouble() ?? 0;
+      _pipEndSec = (m['pipEnd'] as num?)?.toDouble() ?? -1;
       _pipKeyframes = m['pipKeyframes'] as bool? ?? false;
       _pkStartX = d('pkStartX');
       _pkStartY = d('pkStartY');
@@ -2914,7 +3046,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     _panelBase = null;
     if (base != null) _restorePanelSnapshot(base);
     _openTool(null);
-    _setStatus('Panel changes cancel ho gaye.');
+    _setStatus('Panel changes cancelled.');
   }
 
   /// Build 3: keep the preview's playback rate honest — while the
@@ -2982,7 +3114,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       await _controller?.dispose();
       if (mounted) setState(() => _controller = null);
     }
-    _setStatus('Clip delete ho gaya — Undo se wapas aa sakta hai.');
+    _setStatus('Clip deleted — Undo can bring it back.');
   }
 
   /// v1.4.0 clip-row op: duplicate the selected clip right after
@@ -2994,8 +3126,36 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       _clips.insert(_selected + 1, _clips[_selected].copy());
       _selected = _selected + 1;
     });
-    _setStatus('Clip duplicate ho gaya (Clip ${_selected + 1}).');
+    _setStatus('Clip duplicated (Clip ${_selected + 1}).');
     unawaited(_loadPreview());
+  }
+
+  /// v1.16.0 G3 (A23): disable/enable the selected clip. A
+  /// disabled clip keeps its timeline space but renders black
+  /// + silent in the preview and the export; it is never
+  /// deleted and can be re-enabled any time.
+  void _toggleSelectedClipDisabled() {
+    if (_clips.isEmpty) return;
+    _pushHistory();
+    setState(() {
+      final c = _clips[_selected];
+      c.disabled = !c.disabled;
+    });
+    _setStatus(_clips[_selected].disabled
+        ? 'Clip disabled — it will render black and silent; '
+            'its place on the timeline is kept.'
+        : 'Clip enabled.');
+    unawaited(_loadPreview());
+  }
+
+  /// v1.16.0 G3 (C3): set the selected clip's colour label.
+  void _setSelectedClipColorLabel(int label) {
+    if (_clips.isEmpty) return;
+    _pushHistory();
+    setState(() {
+      _clips[_selected].colorLabel = TimelineMath.clipLabelClamp(label);
+    });
+    _setStatus(label == 0 ? 'Clip label removed.' : 'Clip label set.');
   }
 
   /// v1.4.0 clip-row op: replace the selected clip's media with a
@@ -3021,13 +3181,13 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         nc.volume = old.volume;
         nc.muted = old.muted;
         _clips[_selected] = nc;
-        _status = 'Clip replace ho gaya (${d.inSeconds}s).';
+        _status = 'Clip replaced (${d.inSeconds}s).';
       });
       _flashStatus();
       await _loadPreview();
     } catch (e) {
       await probe.dispose();
-      _setStatus('Replace nahi hua: $e');
+      _setStatus('Replace failed: $e');
     }
   }
 
@@ -3040,7 +3200,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     final idx = _selected < _clips.length ? _selected : 0;
     final clip = _clips[idx];
     if (clip.isPhoto) {
-      _setStatus('Photo clip mein audio nahi hota.');
+      _setStatus('Photo clips have no audio.');
       return;
     }
     setState(() => _busy = true);
@@ -3054,7 +3214,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         '-y ${FfmpegService.q(out)}',
       );
       if (!r.ok) {
-        _setStatus('Unlink nahi hua — clip mein audio nahi mila. ${r.logs}');
+        _setStatus('Unlink failed — no audio found in the clip. ${r.logs}');
         return;
       }
       _pushHistory();
@@ -3064,7 +3224,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         _musicPath ??= out;
       });
       _setStatus(
-        'Audio unlink ho gaya — awaz alag track par hai, clip mute hai.',
+        'Audio unlinked — the sound is on a separate track, the clip is muted.',
       );
     } catch (e) {
       _setStatus('Unlink failed: $e');
@@ -3083,12 +3243,12 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     final idx = _selected < _clips.length ? _selected : 0;
     final clip = _clips[idx];
     if (clip.isPhoto) {
-      _setStatus('Photo clip mein audio nahi hota.');
+      _setStatus('Photo clips have no audio.');
       return;
     }
     setState(() {
       _busy = true;
-      _status = voice ? 'Voice enhance ho rahi hai…' : 'Noise kam ho raha hai…';
+      _status = voice ? 'Enhancing voice…' : 'Reducing noise…';
     });
     try {
       final dir = await _workDir();
@@ -3100,7 +3260,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         '-c:a pcm_s16le -y ${FfmpegService.q(rawWav)}',
       );
       if (!extract.ok) {
-        _setStatus('Clip se audio nahi nikla. ${extract.logs}');
+        _setStatus('No audio could be extracted from the clip. ${extract.logs}');
         return;
       }
       final ok = voice
@@ -3109,8 +3269,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       if (!ok || !await File(cleanWav).exists()) {
         _setStatus(
           voice
-              ? 'Voice enhance nahi hua — asal audio hi rahega.'
-              : 'Noise reduce nahi hua — asal audio hi rahega.',
+              ? 'Voice enhance failed — the original audio will be kept.'
+              : 'Noise reduction failed — the original audio will be kept.',
         );
         return;
       }
@@ -3122,7 +3282,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         '-y ${FfmpegService.q(muxed)}',
       );
       if (!mux.ok) {
-        _setStatus('Processed audio wapas nahi laga. ${mux.logs}');
+        _setStatus('Processed audio could not be put back. ${mux.logs}');
         return;
       }
       _pushHistory();
@@ -3135,7 +3295,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         nc.detachedAudioPath = clip.detachedAudioPath;
         _clips[idx] = nc;
       });
-      _setStatus(voice ? 'Voice enhance ho gayi.' : 'Noise kam ho gaya.');
+      _setStatus(voice ? 'Voice enhanced.' : 'Noise reduced.');
       await _loadPreview();
     } catch (e) {
       _setStatus('Audio tool failed: $e');
@@ -3154,19 +3314,19 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     final idx = _selected < _clips.length ? _selected : 0;
     final clip = _clips[idx];
     if (clip.isPhoto) {
-      _setStatus('Photo clip par slow-mo nahi lagta.');
+      _setStatus('Slow-mo does not apply to photo clips.');
       return;
     }
     if (clip.effectiveDuration > 10.5) {
       _setStatus(
-        'Smooth Slow-Mo sirf ~10s tak ki clip par lagta hai — '
-        'pehle clip trim karein.',
+        'Smooth Slow-Mo only applies to clips up to ~10s — '
+        'trim the clip first.',
       );
       return;
     }
     setState(() {
       _busy = true;
-      _status = 'Smooth Slow-Mo (AI) ban raha hai…';
+      _status = 'Creating Smooth Slow-Mo (AI)…';
     });
     try {
       final dir = await _workDir();
@@ -3179,7 +3339,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         '-y ${FfmpegService.q(seg)}',
       );
       if (!segRes.ok) {
-        _setStatus('Slow-mo ke liye clip tayyar nahi hua. ${segRes.logs}');
+        _setStatus('The clip could not be prepared for slow-mo. ${segRes.logs}');
         return;
       }
       var lastPct = -1;
@@ -3205,10 +3365,10 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         nc.muted = clip.muted;
         _clips[idx] = nc;
       });
-      _setStatus('Smooth Slow-Mo tayyar — clip ab 0.5x speed par hai.');
+      _setStatus('Smooth Slow-Mo ready — the clip is now at 0.5x speed.');
       await _loadPreview();
     } catch (e) {
-      _setStatus('Smooth Slow-Mo nahi hua: $e');
+      _setStatus('Smooth Slow-Mo failed: $e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -3234,7 +3394,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     final clip = _clips[_selected];
     setState(() {
       _transcribing = true;
-      _status = 'Urdu (AI) captions ban rahe hain…';
+      _status = 'Creating Urdu (AI) captions…';
     });
     try {
       final caps = await UrduCaptionService.instance.transcribe(clip.file.path);
@@ -3242,8 +3402,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       if (caps.isEmpty) {
         setState(
           () => _status =
-              'Urdu (AI): koi awaz samajh nahi aayi — ya model pack '
-              'abhi download nahi hua.',
+              'Urdu (AI): no speech could be understood — or the model pack '
+              'has not downloaded yet.',
         );
       } else {
         setState(() {
@@ -3258,7 +3418,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
               .toList();
           _captionsTimelineRelative = false;
           _status =
-              '${caps.length} Urdu (AI) caption segments ready — Edit se dekh/edit kar sakte hain.';
+              '${caps.length} Urdu (AI) caption segments are ready — view/edit them from Edit.';
         });
       }
     } catch (e) {
@@ -3316,7 +3476,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     final picked = await showDialog<(String, String?)>(
       context: context,
       builder: (ctx) => SimpleDialog(
-        title: const Text('Tool search karein'),
+        title: const Text('Search tools'),
         children: [
           for (final e in entries)
             SimpleDialogOption(
@@ -3457,7 +3617,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       _qualityPicked = true;
     });
     _setStatus(
-      'Export: ${const ['720p', '1080p', '4K'][q]} · $fps fps set ho gaya.',
+      'Export: ${const ['720p', '1080p', '4K'][q]} · $fps fps set.',
     );
     return true;
   }
@@ -3485,7 +3645,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     setState(() {
       _clips.add(clip);
       _selected = _clips.length - 1;
-      _status = 'Photo clip add ho gaya (3s, Ken Burns on).';
+      _status = 'Photo clip added (3s, Ken Burns on).';
     });
     _flashStatus();
     await _loadPreview();
@@ -3497,7 +3657,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     if (_clips.isEmpty || _busy) return;
     final ctrl = _controller;
     if (ctrl == null || !ctrl.value.isInitialized) {
-      _setStatus('Pehle clip ka preview load honay dein.');
+      _setStatus('Let the clip preview load first.');
       return;
     }
     final idx = _selected < _clips.length ? _selected : 0;
@@ -3514,7 +3674,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         '-frames:v 1 -q:v 2 -y ${FfmpegService.q(out)}',
       );
       if (!r.ok) {
-        _setStatus('Freeze frame nahi bana. ${r.logs}');
+        _setStatus('Freeze frame was not created. ${r.logs}');
         return;
       }
       _pushHistory();
@@ -3527,7 +3687,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         _clips.insert(idx + 1, frozen);
         _selected = idx + 1;
       });
-      _setStatus('Freeze frame clip ban gaya (2s).');
+      _setStatus('Freeze frame clip created (2s).');
       await _loadPreview();
     } catch (e) {
       _setStatus('Freeze frame failed: $e');
@@ -3546,13 +3706,13 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     if (_clips.isEmpty || _busy) return;
     final clip = _clips[_selected];
     if (clip.isPhoto) {
-      _setStatus('Photo clip PIP nahi ban sakta — video clip chunein.');
+      _setStatus('A photo clip cannot become PIP — choose a video clip.');
       return;
     }
     if (_clips.length < 2) {
       _setStatus(
-        'Switch ke liye kam az kam 2 clips chahiye — warna main '
-        'track khaali ho jayega.',
+        'Switch needs at least 2 clips — otherwise the main '
+        'track would become empty.',
       );
       return;
     }
@@ -3565,7 +3725,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       _clipRow = false;
       _elementRow = true;
     });
-    _setStatus('Clip PIP track par chala gaya (Switch).');
+    _setStatus('Clip moved to the PIP track (Switch).');
     await _loadPreview();
   }
 
@@ -3577,7 +3737,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     if (!_fxPip || _fxPipVideo.isEmpty || _busy) return;
     final file = File(_fxPipVideo);
     if (!await file.exists()) {
-      _setStatus('PIP video file nahi mili.');
+      _setStatus('PIP video file not found.');
       return;
     }
     _pushHistory();
@@ -3587,7 +3747,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       _elementRow = false;
     });
     await _addClipFile(file);
-    _setStatus('PIP element main track par aa gaya (Switch).');
+    _setStatus('PIP element moved to the main track (Switch).');
   }
 
   /// v1.5.0 Capture (InShot): the playhead frame becomes a still
@@ -3599,12 +3759,12 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     if (_clips.isEmpty || _busy) return;
     final clip = _clips[_selected];
     if (clip.isPhoto) {
-      _setStatus('Photo clip par Capture nahi — wo pehle se still hai.');
+      _setStatus('No Capture on a photo clip — it is already a still.');
       return;
     }
     final ctrl = _controller;
     if (ctrl == null || !ctrl.value.isInitialized) {
-      _setStatus('Pehle clip ka preview load honay dein.');
+      _setStatus('Let the clip preview load first.');
       return;
     }
     final posSec = ctrl.value.position.inMilliseconds / 1000.0;
@@ -3618,7 +3778,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         '-frames:v 1 -q:v 2 -y ${FfmpegService.q(out)}',
       );
       if (!r.ok) {
-        _setStatus('Capture nahi hua. ${r.logs}');
+        _setStatus('Capture failed. ${r.logs}');
         return;
       }
       _pushHistory();
@@ -3641,7 +3801,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         }
         _selected = idx + 1;
       });
-      _setStatus('Capture — frame timeline mein lag gaya (2s still).');
+      _setStatus('Capture — the frame was placed on the timeline (2s still).');
       await _loadPreview();
     } catch (e) {
       _setStatus('Capture failed: $e');
@@ -3659,12 +3819,12 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     final idx = _selected;
     final clip = _clips[idx];
     if (clip.isPhoto) {
-      _setStatus('Photo clip reverse nahi hota.');
+      _setStatus('Photo clips cannot be reversed.');
       return;
     }
     setState(() {
       _busy = true;
-      _status = 'Reverse ban raha hai…';
+      _status = 'Creating reverse…';
     });
     try {
       final dir = await _workDir();
@@ -3684,7 +3844,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         );
       }
       if (!r.ok) {
-        _setStatus('Reverse nahi hua. ${r.logs}');
+        _setStatus('Reverse failed. ${r.logs}');
         return;
       }
       _pushHistory();
@@ -3698,7 +3858,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         nc.muted = clip.muted;
         _clips[idx] = nc;
       });
-      _setStatus('Clip reverse ho gaya.');
+      _setStatus('Clip reversed.');
       await _loadPreview();
     } catch (e) {
       _setStatus('Reverse failed: $e');
@@ -3715,12 +3875,12 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     final idx = _selected;
     final clip = _clips[idx];
     if (clip.isPhoto) {
-      _setStatus('Photo clip ke liye Photo Editor ka Rotate use karein.');
+      _setStatus('For a photo clip, use the Photo Editor\'s Rotate.');
       return;
     }
     setState(() {
       _busy = true;
-      _status = flip ? 'Flip ho raha hai…' : 'Rotate ho raha hai…';
+      _status = flip ? 'Flipping…' : 'Rotating…';
     });
     try {
       final dir = await _workDir();
@@ -3734,7 +3894,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         '-y ${FfmpegService.q(out)}',
       );
       if (!r.ok) {
-        _setStatus('${flip ? 'Flip' : 'Rotate'} nahi hua. ${r.logs}');
+        _setStatus('${flip ? 'Flip' : 'Rotate'} failed. ${r.logs}');
         return;
       }
       _pushHistory();
@@ -3748,7 +3908,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         nc.muted = clip.muted;
         _clips[idx] = nc;
       });
-      _setStatus(flip ? 'Clip flip ho gaya.' : 'Clip 90° rotate ho gaya.');
+      _setStatus(flip ? 'Clip flipped.' : 'Clip rotated 90°.');
       await _loadPreview();
     } catch (e) {
       _setStatus('${flip ? 'Flip' : 'Rotate'} failed: $e');
@@ -3766,12 +3926,12 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     final idx = _selected;
     final clip = _clips[idx];
     if (clip.isPhoto) {
-      _setStatus('Photo clip ke liye Photo Editor ka Enhance use karein.');
+      _setStatus('For a photo clip, use the Photo Editor\'s Enhance.');
       return;
     }
     setState(() {
       _busy = true;
-      _status = 'HD Enhance ban raha hai…';
+      _status = 'Creating HD Enhance…';
     });
     try {
       final dir = await _workDir();
@@ -3786,7 +3946,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         '-y ${FfmpegService.q(out)}',
       );
       if (!r.ok) {
-        _setStatus('HD Enhance nahi hua. ${r.logs}');
+        _setStatus('HD Enhance failed. ${r.logs}');
         return;
       }
       _pushHistory();
@@ -3800,7 +3960,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         nc.muted = clip.muted;
         _clips[idx] = nc;
       });
-      _setStatus('HD Enhance tayyar (2x upscale + sharpen).');
+      _setStatus('HD Enhance ready (2x upscale + sharpen).');
       await _loadPreview();
     } catch (e) {
       _setStatus('HD Enhance failed: $e');
@@ -3855,13 +4015,13 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
   /// registry. The pipeline notices at the next
   /// [_checkExportCancelled] checkpoint (the killed stage itself
   /// just reports a failed/cancelled result into its guarded
-  /// pass), and [_export] surfaces "Export cancel kar diya gaya."
+  /// pass), and [_export] surfaces "Export cancelled."
   /// — never a fake failure.
   void _cancelExport() {
     if (!_exporting || _exportCancelRequested) return;
     _exportCancelRequested = true;
     FfmpegService.cancel();
-    _setStatus('Export cancel ho raha hai…');
+    _setStatus('Cancelling export…');
   }
 
   /// Pipeline checkpoint: throws [_ExportCancelled] when
@@ -3941,7 +4101,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     }
     if (_pipBlend == 'normal') {
       b.write('[pv1][pa]alphamerge[pipA];');
-      b.write('[0:v][pipA]overlay=x=$xx:y=$yy[vout]');
+      b.write('[0:v][pipA]overlay=x=$xx:y=$yy$_pipEnableSuffix[vout]');
     } else {
       // [0:v] is consumed twice (crop + final overlay) — split it.
       b.write('[0:v]split=2[bbg][bcrop];');
@@ -3950,7 +4110,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       b.write('[bc][pc]blend=all_mode=$_pipBlend[bl];');
       b.write('[bl]format=yuva420p[blf];');
       b.write('[blf][pa]alphamerge[bla];');
-      b.write('[bbg][bla]overlay=x=$xx:y=$yy[vout]');
+      b.write('[bbg][bla]overlay=x=$xx:y=$yy$_pipEnableSuffix[vout]');
     }
     return b.toString();
   }
@@ -4409,7 +4569,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         _setStatus(AiToolCharge.insufficientMessage);
         return false;
       case AiChargeOutcome.failed:
-        _setStatus('Charge nahi hua — dobara try karein.');
+        _setStatus('Charge failed — try again.');
         return false;
     }
   }
@@ -4435,7 +4595,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     final clip = _clips[_selected];
     setState(() {
       _transcribing = true;
-      _status = 'Video ki audio nikal rahe hain…';
+      _status = 'Extracting the video\'s audio…';
     });
     try {
       final tmp = await getTemporaryDirectory();
@@ -4461,7 +4621,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
             lastModelPct = pct;
             setState(
               () => _status =
-                  'Caption model download… $pct% (pehli dafa, ek dafa hi)',
+                  'Caption model download… $pct% (first time only, one time)',
             );
           }
         },
@@ -4470,7 +4630,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       if (!mounted) return;
       if (segments.isEmpty) {
         setState(
-          () => _status = 'No speech detected — video me awaz nahi mili ya samajh nahi aayi.',
+          () => _status = 'No speech detected — no sound found in the video, or it could not be understood.',
         );
       } else {
         setState(() {
@@ -4478,7 +4638,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
           // Transcribed segments are per-clip, not timeline-relative.
           _captionsTimelineRelative = false;
           _status =
-              '${segments.length} caption segments ready — export se pehle Edit se dekh/edit kar sakte hain.';
+              '${segments.length} caption segments ready — view/edit them from Edit before export.';
         });
       }
     } catch (e) {
@@ -4490,6 +4650,29 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
 
   /// Review/edit dialog for the generated caption lines (text only;
   /// timings stay as recorded).
+  /// v1.16.0 G4 (A18): the captions lane's tap target — seek
+  /// the playhead to the caption's timeline start (the same
+  /// span mapping the lane paints and the export applies) and
+  /// open the editor focused on that caption.
+  int _captionFocusIndex = -1;
+
+  Future<void> _editCaptionAt(int index) async {
+    if (index < 0 || index >= _captions.length) return;
+    final spans = TimelineMath.captionStripSpans(
+      segments: [for (final s in _captions) (start: s.start, end: s.end)],
+      timelineRelative: _captionsTimelineRelative,
+      selectedClipStart: _clips.isEmpty ? 0 : _clipStartSec(_selected),
+      totalDur: _totalDurationSec,
+    );
+    await _seekToGlobalSec(spans[index].start);
+    _captionFocusIndex = index;
+    try {
+      await _editCaptions();
+    } finally {
+      _captionFocusIndex = -1;
+    }
+  }
+
   Future<void> _editCaptions() async {
     if (_captions.isEmpty) return;
     final texts = _captions.map((s) => s.text).toList();
@@ -4509,8 +4692,15 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
                   Expanded(
                     child: TextFormField(
                       initialValue: texts[i],
+                      // v1.16.0 G4 (A18): opened from the
+                      // captions lane, the tapped caption is
+                      // focused and its label gilded.
+                      autofocus: i == _captionFocusIndex,
                       decoration: InputDecoration(
                         labelText: 'Caption ${i + 1}',
+                        labelStyle: i == _captionFocusIndex
+                            ? const TextStyle(color: TjProTheme.gold)
+                            : null,
                       ),
                       onChanged: (v) => texts[i] = v,
                     ),
@@ -4623,14 +4813,14 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     );
     if (res == null) return; // unreachable: inputs guarded above
     if (res.refusal == SplitRefusal.tooSmall) {
-      _setStatus('Clip bohat chhota hai — split nahi ho sakta.');
+      _setStatus('The clip is too short — it cannot be split.');
       return;
     }
     if (res.refusal == SplitRefusal.atEdge) {
       _setStatus(
-        'Playhead clip ke bilkul kinare par hai — split nahi kata. '
-        'Line ko thora andar le jayen, ya Split panel se '
-        '"Darmiyan se" chunein.',
+        'The playhead is exactly on the clip\'s edge — the split was not cut. '
+        'Move the line a little inward, or from the Split panel '
+        'Choose "From the middle".',
       );
       return;
     }
@@ -4655,8 +4845,8 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     HapticFeedback.selectionClick();
     _setStatus(
       playheadMode
-          ? 'Split ho gaya — playhead par kata, 2 clips ban gaye.'
-          : 'Split ho gaya — darmiyan se kata, 2 clips ban gaye.',
+          ? 'Split done — cut at the playhead, 2 clips created.'
+          : 'Split done — cut from the middle, 2 clips created.',
     );
     unawaited(_loadPreview());
   }
@@ -4719,7 +4909,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
   /// tap the colour to key out, store it as '#RRGGBB'.
   Future<void> _eyedropperPick() async {
     if (_clips.isEmpty) {
-      _setStatus('Pehle clip select karein.');
+      _setStatus('Select a clip first.');
       return;
     }
     final clip = _clips[_selected < _clips.length ? _selected : 0];
@@ -4735,7 +4925,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         '-frames:v 1 -q:v 2 -y ${FfmpegService.q(frame)}',
       );
       if (!r.ok) {
-        _setStatus('Frame nahi mila — video play karke dobara try karein.');
+        _setStatus('Frame not found — play the video and try again.');
         return;
       }
       if (!mounted) return;
@@ -4765,7 +4955,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       });
       _scheduleChromaPreview();
     } catch (e) {
-      _setStatus('Backdrop load nahi hua: $e');
+      _setStatus('Backdrop did not load: $e');
     }
   }
 
@@ -5000,7 +5190,7 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
                                             ),
                                             const SizedBox(height: 12),
                                             const Text(
-                                              'Pehli video add karein — ya timeline '
+                                              'Add the first video — or the timeline '
                                               'ke + tile se.',
                                               style: TextStyle(
                                                 color: Colors.white54,
@@ -5321,6 +5511,10 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
   @override
   List<CaptionSegment> get captions => _captions;
   @override
+  bool get captionsTimelineRelative => _captionsTimelineRelative;
+  @override
+  Future<void> editCaptionAt(int index) => _editCaptionAt(index);
+  @override
   set captions(List<CaptionSegment> value) => _captions = value;
   @override
   Future<void> captureFrameInsert() => _captureFrameInsert();
@@ -5378,6 +5572,11 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
   set detectingBeats(bool value) => _detectingBeats = value;
   @override
   void duplicateSelectedClip() => _duplicateSelectedClip();
+  @override
+  void toggleSelectedClipDisabled() => _toggleSelectedClipDisabled();
+  @override
+  void setSelectedClipColorLabel(int label) =>
+      _setSelectedClipColorLabel(label);
   @override
   Future<void> editCaptions() => _editCaptions();
   @override
@@ -5569,7 +5768,21 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
   @override
   set musicVolume(double value) => _musicVolume = value;
   @override
+  bool get musicMuted => _musicMuted;
+  @override
+  set musicMuted(bool value) => _musicMuted = value;
+  @override
+  bool get pipLaneLocked => _pipLaneLocked;
+  @override
+  set pipLaneLocked(bool value) => _pipLaneLocked = value;
+  @override
   Map<String, String> get musicWaveCache => _musicWaveCache;
+  @override
+  Map<String, String> get clipWaveCache => _clipWaveCache;
+  @override
+  void ensureClipWave(VideoClip clip) => _ensureClipWave(clip);
+  @override
+  String clipWaveKey(VideoClip clip) => _clipWaveKey(clip);
   @override
   bool get muteOriginal => _muteOriginal;
   @override
@@ -5666,6 +5879,14 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
   double get pipScale => _pipScale;
   @override
   set pipScale(double value) => _pipScale = value;
+  @override
+  double get pipStartSec => _pipStartSec;
+  @override
+  set pipStartSec(double value) => _pipStartSec = value;
+  @override
+  double get pipEndSec => _pipEndSec;
+  @override
+  set pipEndSec(double value) => _pipEndSec = value;
   @override
   String pipSnippetAdvanced({ required VideoSize base, required VideoSize pip, required bool hasMask, }) => _pipSnippetAdvanced(base: base, pip: pip, hasMask: hasMask);
   @override
@@ -5933,14 +6154,14 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     if (_busy) {
       _setStatus(
         _status.isNotEmpty
-            ? 'Abhi ye chal raha hai: $_status'
-            : 'Abhi ek kaam chal raha hai — mukammal hone dein, '
-                'phir try karein.',
+            ? 'Currently running: $_status'
+            : 'A task is already running — let it finish, '
+                'then try again.',
       );
     } else if (_clips.isEmpty) {
       _setStatus(
-        'Pehle koi clip add karein — baghair clip ke ye tool '
-        'nahi chalega.',
+        'Add a clip first — without a clip this tool '
+        'will not work.',
       );
     }
   }
@@ -6257,7 +6478,7 @@ class _ChromaEyeDialogState extends State<_ChromaEyeDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Rang chunein — frame par tap karein'),
+      title: const Text('Pick a colour — tap the frame'),
       content: SizedBox(
         width: 320,
         height: 320,

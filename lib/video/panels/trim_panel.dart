@@ -26,7 +26,7 @@ class TrimPanel extends StatelessWidget {
       SectionTitle('Trim selected clip'),
       if (clip == null)
         const Text(
-          'Pehle timeline se clip add karein (+ tile).',
+          'Add a clip from the timeline first (+ tile).',
           style: TextStyle(color: Colors.grey),
         )
       else ...[
@@ -157,10 +157,10 @@ class TrimPanel extends StatelessWidget {
       ]),
       if (host.trimMode == 'roll') ...[
         const Text(
-          'Roll: do clips ke darmiyan ki boundary hile gi — aik '
-          'clip lamba, dusra chhota, kul lambai waisi ki waisi. '
-          'Timeline par handle ghaseetein ya ye buttons dabayein '
-          '(selected clip ki peechay wali boundary).',
+          'Roll: the boundary between two clips will move — one '
+          'clip longer, the other shorter, the total length stays the same. '
+          'Drag the handle on the timeline or tap these buttons '
+          '(the selected clip\'s previous boundary).',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
         Row(
@@ -188,9 +188,9 @@ class TrimPanel extends StatelessWidget {
       ],
       if (host.trimMode == 'slip') ...[
         const Text(
-          'Slip: clip apni jagah par rehta hai, andar ka hissa '
-          'aage/peechay sarakta hai. Timeline par clip ko '
-          'left/right ghaseetein ya ye buttons dabayein.',
+          'Slip: the clip stays in its place, the inside portion '
+          'slides forward/back. On the timeline, the clip '
+          'drag left/right or tap these buttons.',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
         Row(
@@ -216,8 +216,8 @@ class TrimPanel extends StatelessWidget {
       ],
       if (host.trimMode == 'trim') ...[
         const Text(
-          'Playhead ko clip ke andar rakhein, phir clip ka start '
-          'ya end playhead tak trim karein:',
+          'Keep the playhead inside the clip, then trim the clip\'s start '
+          'or end to the playhead:',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
         Wrap(
@@ -244,8 +244,8 @@ class TrimPanel extends StatelessWidget {
         host.rangeIn != null && host.rangeOut != null
             ? 'Range: ${host.rangeIn!.toStringAsFixed(1)}s – '
                 '${host.rangeOut!.toStringAsFixed(1)}s'
-            : 'Range nahi laga. Playhead rakhein aur In/Out '
-                'lagayein — gold band timeline par nazar aye ga.',
+            : 'No range set. Place the playhead and set In/Out '
+                'set them — a gold band will appear on the timeline.',
         style: const TextStyle(color: Colors.grey, fontSize: 12),
       ),
       Wrap(
@@ -257,14 +257,14 @@ class TrimPanel extends StatelessWidget {
             onPressed:
                 host.clips.isEmpty ? null : host.setRangeInAtPlayhead,
             icon: const Icon(Icons.arrow_right_alt, size: 18),
-            label: const Text('In lagayein'),
+            label: const Text('Set In'),
           ),
           TextButton.icon(
             key: const Key('rangeSetOut'),
             onPressed:
                 host.clips.isEmpty ? null : host.setRangeOutAtPlayhead,
             icon: const Icon(Icons.arrow_back, size: 18),
-            label: const Text('Out lagayein'),
+            label: const Text('Set Out'),
           ),
           TextButton.icon(
             key: const Key('rangeDelete'),
@@ -288,7 +288,7 @@ class TrimPanel extends StatelessWidget {
         children: [
           const Icon(Icons.repeat, size: 18, color: Colors.white70),
           const SizedBox(width: 8),
-          const Expanded(child: Text('Range loop (play sirf range mein)')),
+          const Expanded(child: Text('Range loop (play only within the range)')),
           Switch(
             key: const Key('rangeLoopSwitch'),
             value: host.loopRange,
@@ -317,7 +317,7 @@ class TrimPanel extends StatelessWidget {
       if (host.tlSnapOn)
         iconChoiceRail(host, [
           for (final s in const [
-            (0, 'Halki'),
+            (0, 'Light'),
             (1, 'Normal'),
             (2, 'Mazboot'),
           ])
@@ -375,9 +375,9 @@ class TrimPanel extends StatelessWidget {
         ],
       ),
       const Text(
-        'Stage par do unglion se pinch karke zoom, aik ungli se '
-        'ghuma kar pan, do unglion se rotate karein — double tap '
-        'reset. Yehi transform export mein bhi lagta hai.',
+        'On the stage, pinch with two fingers to zoom, with one finger '
+        'drag to pan, rotate with two fingers — double tap '
+        'reset. The same transform also applies in the export.',
         style: TextStyle(color: Colors.grey, fontSize: 12),
       ),
       const SizedBox(height: 6),
@@ -433,7 +433,7 @@ class TrimPanel extends StatelessWidget {
               icon: const Icon(Icons.movie_creation_outlined),
               label: Text(
                 host.introClipPath == null
-                    ? 'Intro chunein'
+                    ? 'Choose intro'
                     : p.basename(host.introClipPath!),
               ),
             ),
@@ -460,7 +460,7 @@ class TrimPanel extends StatelessWidget {
               icon: const Icon(Icons.movie_filter_outlined),
               label: Text(
                 host.outroClipPath == null
-                    ? 'Outro chunein'
+                    ? 'Choose outro'
                     : p.basename(host.outroClipPath!),
               ),
             ),
@@ -473,9 +473,9 @@ class TrimPanel extends StatelessWidget {
         ],
       ),
       const Text(
-        'Attach export ke aakhir mein lagta hai: intro sab se '
-        'pehle, outro sab se aakhir mein (export size par '
-        'normalise karke).',
+        'Attach applies at the end of the export: the intro first of all '
+        'first, the outro at the very end (normalised to the export size).'
+        'after normalising).',
         style: TextStyle(color: Colors.grey, fontSize: 12),
       ),
       const Divider(height: 32),

@@ -135,7 +135,7 @@ void main() {
       expect(find.byKey(Key('tlTab-$tab')), findsOneWidget);
     }
     expect(find.byKey(const Key('tlTabIcon-clips')), findsOneWidget);
-    expect(find.textContaining('koi music nahi'), findsOneWidget);
+    expect(find.textContaining('no music'), findsOneWidget);
     // Open the Logo tool: the timeline collapses away.
     await _openTool(tester, 'logo');
     expect(find.byKey(const Key('makerPanel-logo')), findsOneWidget);
@@ -239,6 +239,8 @@ void main() {
     await tester.tap(find.byKey(const Key('logoView-upar')));
     await _frames(tester);
     expect(preset.logoCubeTilt, 0.85);
+    await tester.ensureVisible(find.byKey(const Key('logoView-samne')));
+    await _frames(tester);
     await tester.tap(find.byKey(const Key('logoView-samne')));
     await _frames(tester);
     expect(preset.logoCubeTilt, 0.0);

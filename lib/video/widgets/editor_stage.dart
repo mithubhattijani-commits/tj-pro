@@ -607,6 +607,154 @@ class TimelineMath {
     }
     return out;
   }
+
+  // ---- PIP window (v1.16.0 G2 — Motion M3 placement). ----
+
+  /// The PIP window's minimum length, in seconds.
+  static const double pipMinWindowSec = 0.1;
+
+  /// Resolves the stored PIP window (start, end with end == -1
+  /// meaning "to the end") against the timeline's total duration
+  /// into a concrete (start, end) pair: start clamped into
+  /// [0, total - min], end clamped into [start + min, total].
+  /// A total of 0 (no clips) resolves to (0, 0).
+  static ({double start, double end}) pipWindowClamp({
+    required double start,
+    required double end,
+    required double totalDur,
+  }) {
+    if (totalDur <= 0) return (start: 0, end: 0);
+    var s = start.clamp(0.0, totalDur).toDouble();
+    var e = (end < 0 ? totalDur : end).clamp(0.0, totalDur).toDouble();
+    if (e - s < pipMinWindowSec) {
+      e = s + pipMinWindowSec;
+      if (e > totalDur) {
+        e = totalDur;
+        s = (e - pipMinWindowSec).clamp(0.0, totalDur).toDouble();
+      }
+    }
+    return (start: s, end: e);
+  }
+
+  /// True when the window covers the whole timeline (the stored
+  /// default: start 0 and end -1/at the end) — the export then
+  /// takes its historical, ungated path byte-for-byte.
+  static bool pipWindowIsFull({
+    required double start,
+    required double end,
+    required double totalDur,
+  }) {
+    if (start > 0.001) return false;
+    if (end < 0) return true;
+    return totalDur <= 0 || end >= totalDur - 0.001;
+  }
+
+  /// Whether the PIP inset is visible at timeline time [t] for a
+  /// RESOLVED window (see [pipWindowClamp]): start inclusive, end
+  /// exclusive — the same gate the export's
+  /// `enable='between(t,start,end)'` applies.
+  static bool pipVisibleAt({
+    required double t,
+    required double start,
+    required double end,
+  }) =>
+      t >= start && t < end;
+
+  /// The inset's own playback position at timeline time [t]: the
+  /// window starts the inset at its 0, and a shorter inset loops
+  /// (the preview controller loops; the export keeps its stock
+  /// end-of-stream behaviour — see the G2 note in the report).
+  static double pipLocalTime({
+    required double t,
+    required double start,
+    required double pipDur,
+  }) {
+    if (pipDur <= 0) return 0;
+    final local = t - start;
+    if (local <= 0) return 0;
+    return local % pipDur;
+  }
+
+  /// Dragging the PIP lane segment by [deltaSec] moves the whole
+  /// window (start and end together, length preserved), clamped
+  /// so the window never leaves the timeline.
+  static ({double start, double end}) pipWindowDragged({
+    required double start,
+    required double end,
+    required double deltaSec,
+    required double totalDur,
+  }) {
+    final len = end - start;
+    if (totalDur <= 0 || len <= 0) return (start: start, end: end);
+    var s = (start + deltaSec).clamp(0.0, totalDur - len).toDouble();
+    if (s < 0) s = 0;
+    return (start: s, end: s + len);
+  }
+
+  // ---- Clip identity (v1.16.0 G3 — T7: A22 badges + C3 labels). ----
+
+  /// The C3 colour-label palette: index 0 = no label, 1..6 map
+  /// to these colours. Stored on the clip as an int so old
+  /// projects (no field) read as 0.
+  static const List<int> clipLabelArgb = [
+    0x00000000, // 0 = none
+    0xFFE53935, // 1 red
+    0xFFFB8C00, // 2 orange
+    0xFFFDD835, // 3 yellow
+    0xFF43A047, // 4 green
+    0xFF1E88E5, // 5 blue
+    0xFF8E24AA, // 6 purple
+  ];
+
+  /// Clamps a stored colour-label value into the palette range.
+  static int clipLabelClamp(int label) =>
+      label.clamp(0, clipLabelArgb.length - 1).toInt();
+
+  /// A18 (v1.16.0 G4): where each caption segment sits on the
+  /// timeline, as (start, end) spans — the SAME mapping the
+  /// export applies in _adjustedCaptions (minus its speed
+  /// scaling, which is an export-time transform): timeline-
+  /// relative segments sit at their own times; per-clip
+  /// segments sit on the selected clip (offset by its start).
+  /// Spans are clamped into [0, totalDur].
+  static List<({double start, double end})> captionStripSpans({
+    required List<({double start, double end})> segments,
+    required bool timelineRelative,
+    required double selectedClipStart,
+    required double totalDur,
+  }) {
+    final offset = timelineRelative ? 0.0 : selectedClipStart;
+    return [
+      for (final s in segments)
+        (
+          start: (offset + s.start).clamp(0.0, totalDur).toDouble(),
+          end: (offset + s.end).clamp(0.0, totalDur).toDouble(),
+        ),
+    ];
+  }
+
+  /// A22: the badge keys a clip block shows, derived ONLY from
+  /// the clip's real state, in display order. Keys: 'off'
+  /// (disabled), 'mute', 'vol' (volume changed), 'trim'
+  /// (trimmed), 'detach' (audio unlinked), 'photo'.
+  static List<String> clipBadgeKeys({
+    required bool isPhoto,
+    required bool muted,
+    required double volume,
+    required double trimStart,
+    required double trimEnd,
+    required bool hasDetachedAudio,
+    required bool disabled,
+  }) {
+    final out = <String>[];
+    if (disabled) out.add('off');
+    if (muted) out.add('mute');
+    if (!muted && (volume - 1).abs() > 0.001) out.add('vol');
+    if (trimStart > 0.001 || trimEnd >= 0) out.add('trim');
+    if (hasDetachedAudio) out.add('detach');
+    if (isPhoto) out.add('photo');
+    return out;
+  }
 }
 
 /// v1.14.0 T3 (A5): what a range delete does to ONE clip — see
@@ -953,6 +1101,36 @@ class StageCanvas extends StatelessWidget {
                         ),
                       ),
                     ),
+                    // v1.16.0 G3 (A23): a DISABLED clip previews
+                    // as black + silent (its preview volume is
+                    // bound in _loadPreview) — the same black the
+                    // export renders for it.
+                    if (clip.disabled)
+                      Positioned.fromRect(
+                        rect: frame,
+                        child: Container(
+                          color: Colors.black,
+                          alignment: Alignment.center,
+                          child: const Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.visibility_off,
+                                color: Colors.white38,
+                                size: 30,
+                              ),
+                              SizedBox(height: 6),
+                              Text(
+                                'Clip disabled',
+                                style: TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
                     // PIP live preview (§6.11): composited over the
                     // frame, NOT transformed — the export applies
                     // its PIP pass after the transform pass.
@@ -1123,7 +1301,7 @@ class StageCanvas extends StatelessWidget {
     if (!ready || ctrl == null) {
       return const Center(
         child: Text(
-          'Preview load ho raha hai…',
+          'Loading preview…',
           style: TextStyle(color: Colors.white70),
         ),
       );
@@ -1286,6 +1464,30 @@ class StageCanvas extends StatelessWidget {
   }
 
   Widget _pipPreviewLayer(Size stage) {
+    // v1.16.0 G2 (Motion M3): the PIP window — outside
+    // [pipStartSec, pipEndSec) the inset is not shown, exactly
+    // like the export's enable gate. A full window (the
+    // default) never hides it: pre-M3 behaviour.
+    final total = host.totalDurationSec;
+    if (total > 0 &&
+        !TimelineMath.pipWindowIsFull(
+          start: host.pipStartSec,
+          end: host.pipEndSec,
+          totalDur: total,
+        )) {
+      final w = TimelineMath.pipWindowClamp(
+        start: host.pipStartSec,
+        end: host.pipEndSec,
+        totalDur: total,
+      );
+      if (!TimelineMath.pipVisibleAt(
+        t: host.globalPositionSec,
+        start: w.start,
+        end: w.end,
+      )) {
+        return const SizedBox.shrink();
+      }
+    }
     final clip = host.clips.isEmpty ? null : host.clips[host.selected];
     final ctrl = host.controller;
     // Main content rect (contain fit, centred on the black stage).

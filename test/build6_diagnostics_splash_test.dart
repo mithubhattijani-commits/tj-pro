@@ -2,7 +2,7 @@
 //
 // Part 2: CrashGuard now persists the last error (message +
 // first stack lines + timestamp) so a phone-only failure can be
-// read back from About → "Diagnostics — aakhri khata" instead of
+// read back from About → "Diagnostics — last error" instead of
 // guessed at. These tests pin the recording (through the storage
 // seam AND through real SharedPreferences), the format caps, and
 // the About display.
@@ -151,7 +151,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
 
-      expect(find.text('Diagnostics — aakhri khata'), findsOneWidget);
+      expect(find.text('Diagnostics — last error'), findsOneWidget);
       final shown = tester
           .widgetList<SelectableText>(find.byType(SelectableText))
           .map((w) => w.data ?? '')
@@ -176,7 +176,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
 
       expect(
-        find.text('Abhi tak koi khata record nahi hui.'),
+        find.text('No error recorded yet.'),
         findsOneWidget,
       );
       expect(tester.takeException(), isNull);

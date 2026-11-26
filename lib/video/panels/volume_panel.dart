@@ -29,7 +29,7 @@ class VolumePanel extends StatelessWidget {
     if (clip == null) {
       return const [
         Text(
-          'Pehle timeline se clip select karein.',
+          'Select a clip from the timeline first.',
           style: TextStyle(color: Colors.grey),
         ),
       ];
@@ -52,7 +52,7 @@ class VolumePanel extends StatelessWidget {
       ),
       SwitchListTile(
         title: const Text('Mute clip'),
-        subtitle: const Text('Is clip ki awaz export mein nahi aayegi.'),
+        subtitle: const Text('This clip\'s sound will not be in the export.'),
         value: clip.muted,
         onChanged: (v) {
           host.update(() => clip.muted = v);
@@ -64,13 +64,13 @@ class VolumePanel extends StatelessWidget {
       ),
       if (clip.detachedAudioPath != null)
         Text(
-          'Audio unlinked hai: ${p.basename(clip.detachedAudioPath!)} '
-          '(alag track par hai).',
+          'Audio is unlinked: ${p.basename(clip.detachedAudioPath!)} '
+          '(is on a separate track).',
           style: const TextStyle(color: Colors.grey, fontSize: 12),
         ),
       const Text(
-        'Volume sirf is clip par lagta hai — baqi clips ki awaz '
-        'apni jagah rehti hai.',
+        'The volume applies to this clip only — the other clips\' sound '
+        'stays in its place.',
         style: TextStyle(color: Colors.grey, fontSize: 12),
       ),
       SectionTitle('Audio ops'),

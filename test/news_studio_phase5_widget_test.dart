@@ -246,7 +246,7 @@ void main() {
         find.byKey(const Key('ttsGenerateButton')),
       );
       expect(find.byKey(const Key('ttsGenerateButton')), findsOneWidget);
-      expect(find.text('Voice banao'), findsOneWidget);
+      expect(find.text('Create Voice'), findsOneWidget);
     });
 
     testWidgets('Caption Studio builds with a test project',
@@ -325,7 +325,7 @@ void main() {
         find.byKey(const Key('convertButton')),
       );
       expect(find.byKey(const Key('convertButton')), findsOneWidget);
-      expect(find.text('Convert karein'), findsOneWidget);
+      expect(find.text('Convert'), findsOneWidget);
       await _scrollTo(
         tester,
         const Key('audioToolsList'),

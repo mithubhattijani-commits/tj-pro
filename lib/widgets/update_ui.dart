@@ -77,14 +77,14 @@ class UpdatePopup extends StatelessWidget {
   Widget build(BuildContext context) {
     return AlertDialog(
       icon: const Icon(Icons.system_update, size: 36),
-      title: Text('Naya version: ${update.versionName}'),
+      title: Text('New version: ${update.versionName}'),
       content: Text(
         [
           if (update.notes.isNotEmpty) update.notes,
-          'Update dabayen — download background me hogi aur aap app '
-              'istemal karte rahenge. Download mukammal hone par '
-              'Install ke liye aap ko khud Install dabana hoga — app '
-              'khud-ba-khud install nahi ho sakti.',
+          'Tap Update — the download will be in the background and you can '
+              'keep using the app. When the download completes, '
+              'For install, you will have to tap Install yourself — the app '
+              'cannot install by itself.',
         ].join('\n\n'),
       ),
       actions: [
@@ -135,14 +135,14 @@ class UpdateProgressBar extends StatelessWidget {
                       children: [
                         Text(
                           state.bytesTotal > 0
-                              ? 'Update download ho rahi hai — '
+                              ? 'Update is downloading — '
                                   '${state.percent}%  •  '
                                   '${_mb(state.bytesDownloaded)} / '
                                   '${_mb(state.bytesTotal)}  •  '
                                   '${_mb(state.bytesRemaining)} baqi'
-                              : 'Update download ho rahi hai — '
+                              : 'Update is downloading — '
                                   '${_mb(state.bytesDownloaded)} '
-                                  'download ho gaya',
+                                  'downloaded',
                           style: const TextStyle(fontSize: 12),
                         ),
                         const SizedBox(height: 4),
@@ -180,7 +180,7 @@ class UpdateProgressBar extends StatelessWidget {
                   const SizedBox(width: 8),
                   const Expanded(
                     child: Text(
-                      'Update download ho gayi hai.',
+                      'Update has downloaded.',
                       style: TextStyle(fontSize: 12),
                     ),
                   ),
@@ -201,7 +201,7 @@ class UpdateProgressBar extends StatelessWidget {
                   SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'Installer khul raha hai — wahan Install '
+                      'The installer is opening — there, tap Install '
                       'dabayen.',
                       style: TextStyle(fontSize: 12),
                     ),
@@ -219,8 +219,8 @@ class UpdateProgressBar extends StatelessWidget {
                   Expanded(
                     child: Text(
                       state.statusNote == null
-                          ? 'Update download nahi ho saka.'
-                          : 'Update download nahi ho saka. '
+                          ? 'Update could not download.'
+                          : 'Update could not download. '
                               '${state.statusNote}',
                       style: const TextStyle(fontSize: 12),
                     ),
@@ -232,7 +232,7 @@ class UpdateProgressBar extends StatelessWidget {
                   ),
                   IconButton(
                     icon: const Icon(Icons.close, size: 18),
-                    tooltip: 'Band karein',
+                    tooltip: 'Close',
                     onPressed: () =>
                         UpdateService.dismissFailedState(),
                   ),

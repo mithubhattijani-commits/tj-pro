@@ -272,10 +272,10 @@ void main() {
       await _scrollTo(
         tester,
         const Key('templatesLibraryList'),
-        find.textContaining('Content kind kabhi change nahi hota'),
+        find.textContaining('The content kind never changes'),
       );
       expect(
-        find.textContaining('Content kind kabhi change nahi hota'),
+        find.textContaining('The content kind never changes'),
         findsOneWidget,
       );
     });
@@ -328,7 +328,7 @@ void main() {
         find.byKey(const Key('useTemplate-breakingRedBanner')),
       );
       await _pumpFrames(tester);
-      expect(find.textContaining('Template apply ho gaya'), findsOneWidget);
+      expect(find.textContaining('Template applied'), findsOneWidget);
       expect(preset.templateKind, 'breaking');
       expect(preset.breakingVariant, 'breakingRedBanner');
     });
@@ -344,7 +344,7 @@ void main() {
       await tester.tap(find.byKey(const Key('saveCustomButton')));
       await _pumpFrames(tester);
       expect(
-        find.text('Pehle template ka naam likhein.'),
+        find.text('Write the template name first.'),
         findsOneWidget,
       );
     });

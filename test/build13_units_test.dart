@@ -235,14 +235,14 @@ void main() {
 
   group('point 2 — reason texts', () {
     test('paused reasons', () {
-      expect(UpdateService.pausedReasonText(1), contains('dobara'));
+      expect(UpdateService.pausedReasonText(1), contains('retry'));
       expect(UpdateService.pausedReasonText(2), contains('network'));
       expect(UpdateService.pausedReasonText(3), contains('Wi-Fi'));
-      expect(UpdateService.pausedReasonText(-1), contains('ruki'));
+      expect(UpdateService.pausedReasonText(-1), contains('paused'));
     });
 
     test('failed reasons', () {
-      expect(UpdateService.failedReasonText(1006), contains('jagah'));
+      expect(UpdateService.failedReasonText(1006), contains('space'));
       expect(UpdateService.failedReasonText(1009), contains('file'));
       expect(UpdateService.failedReasonText(404), contains('404'));
       expect(UpdateService.failedReasonText(-1), contains('fail'));

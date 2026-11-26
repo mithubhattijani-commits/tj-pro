@@ -22,8 +22,8 @@ class VoiceEnhancePanel extends StatelessWidget {
     return [
       SectionTitle('Voice Enhance'),
       const Text(
-        'Selected clip ki awaz saaf + wazeh: noise kam, voice '
-        'band EQ, compression aur loudness normalise — on-device '
+        'The selected clip\'s sound, clean + clear: less noise, voice '
+        'band EQ, compression and loudness normalise — on-device '
         '(AudioEnhanceService).',
         style: TextStyle(color: Colors.grey, fontSize: 12),
       ),
@@ -35,12 +35,12 @@ class VoiceEnhancePanel extends StatelessWidget {
               ? null
               : () => unawaited(host.enhanceSelectedClipAudio(voice: true)),
           icon: const Icon(Icons.record_voice_over),
-          label: const Text('Voice Enhance lagayein'),
+          label: const Text('Apply Voice Enhance'),
         ),
       ),
       const SizedBox(height: 8),
       const Text(
-        'Sirf denoise chahiye to Volume panel ka Denoise use karein.',
+        'If you only want denoise, use the Denoise in the Volume panel.',
         style: TextStyle(color: Colors.grey, fontSize: 12),
       ),
       const Divider(height: 32),

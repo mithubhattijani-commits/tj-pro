@@ -472,7 +472,7 @@ void main() {
 
       // Media panel holds the clip pickers. Build 12 (point
       // #14d) — UPDATED IN PLACE: the three add buttons are
-      // now ONE unified "Media add karein" entry; the sources
+      // now ONE unified "Add media" entry; the sources
       // (with their original keys) live in its sheet.
       await openTool(tester, 'media');
       expect(find.byKey(const Key('mediaAddButton')), findsOneWidget);
@@ -582,7 +582,7 @@ void main() {
       await tester.pump();
       expect(find.byKey(const Key('factCheckTitle')), findsOneWidget);
       expect(
-        find.textContaining('verify NAHI karta'),
+        find.textContaining('does NOT verify'),
         findsOneWidget,
       );
     });
@@ -639,7 +639,7 @@ void main() {
       await tester.pump();
       await tester.tap(find.text('Voiceover'));
       await tester.pump();
-      expect(find.text('Abhi voice nahi bani.'), findsNothing);
+      expect(find.text('No voice has been created yet.'), findsNothing);
     });
 
     testWidgets('fact-check source add/remove is real', (tester) async {
@@ -709,23 +709,23 @@ void main() {
           'شیخوپورہ پولیس کی بڑی کارروائی');
       expect(find.textContaining('/ 100'), findsOneWidget);
       // Suggestions start idle (endpoint not live — no fake tags).
-      expect(find.textContaining('Refresh dabayein'), findsOneWidget);
+      expect(find.textContaining('Tap Refresh'), findsOneWidget);
 
       // Urdu-script hashtag is rejected, Roman accepted.
       final addField =
           tester.widget<TextField>(find.byKey(const Key('hashtagAddField')));
       addField.onSubmitted!('#خبر');
       await tester.pump();
-      expect(find.textContaining('Urdu script nahi'), findsOneWidget);
+      expect(find.textContaining('no Urdu script'), findsOneWidget);
       addField.onSubmitted!('#Sheikhupura');
       await tester.pump();
       expect(find.byKey(const Key('hashtag-#Sheikhupura')), findsOneWidget);
 
       // No-links note sits below the fold — scroll to it.
-      await scrollTo(tester, find.textContaining('Caption mein koi link nahi'));
+      await scrollTo(tester, find.textContaining('No link in the caption'));
       await tester.pump();
       expect(
-        find.textContaining('Caption mein koi link nahi'),
+        find.textContaining('No link in the caption'),
         findsOneWidget,
       );
 
@@ -750,7 +750,7 @@ void main() {
       );
       // The button shows the save is in flight (awaiting the disk
       // write that only real async can finish).
-      expect(find.text('Save ho raha hai…'), findsOneWidget);
+      expect(find.text('Saving…'), findsOneWidget);
     });
   });
 }

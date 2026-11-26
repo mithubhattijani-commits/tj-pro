@@ -289,7 +289,7 @@ void main() {
       await tester.pump();
       expect(tester.takeException(), isNull);
       // The deferred banner landed after the frame.
-      expect(find.textContaining('Kuch ghalat ho gaya'), findsOneWidget);
+      expect(find.textContaining('Something went wrong'), findsOneWidget);
       // And the error was still RECORDED (recording is never
       // deferred or throttled).
       expect(CrashGuard.lastError.value, contains('mid-frame error'));

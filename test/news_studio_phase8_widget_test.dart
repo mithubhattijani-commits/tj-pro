@@ -185,7 +185,7 @@ void main() {
       );
       await tester.tap(find.byKey(const Key('useTemplate-category_sports')));
       await _pumpFrames(tester);
-      expect(find.text('Template apply ho gaya — Sports News.'),
+      expect(find.text('Template applied — Sports News.'),
           findsOneWidget);
       expect(project.templateKind, 'nigraanFinal');
     });
@@ -263,7 +263,7 @@ void main() {
       );
       await tester.tap(find.byKey(const Key('saveCustomButton')));
       await _pumpFrames(tester);
-      expect(find.text('Pehle template ka naam likhein.'), findsOneWidget);
+      expect(find.text('Write the template name first.'), findsOneWidget);
     });
   });
 
@@ -386,7 +386,7 @@ void main() {
       await tester.tap(find.byKey(const Key('brandingSaveButton')));
       await _pumpFrames(tester);
       expect(
-        find.text('Branding save ho gayi — naye projects par lagoo hogi.'),
+        find.text('Branding saved — it will apply to new projects.'),
         findsOneWidget,
       );
     });

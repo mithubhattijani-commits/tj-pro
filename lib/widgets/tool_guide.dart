@@ -45,7 +45,7 @@ class ToolGuideEntry {
   /// Step-by-step istemal (numbered, isi tarteeb mein).
   final List<String> steps;
 
-  /// 'Agar masla aye to' — aam ghaltiyan aur un ka hal.
+  /// 'If something goes wrong' — common mistakes and their fixes.
   final List<String> tips;
 }
 
@@ -173,14 +173,14 @@ class ToolGuideSheet extends StatelessWidget {
                     ),
                   ),
                   IconButton(
-                    tooltip: 'Band karein',
+                    tooltip: 'Close',
                     onPressed: () => Navigator.of(context).pop(),
                     icon: const Icon(Icons.close, color: Colors.white70),
                   ),
                 ],
               ),
               const SizedBox(height: 6),
-              const _GuideHeading('Ye tool kya karta hai'),
+              const _GuideHeading('What this tool does'),
               Text(
                 entry.what,
                 style: const TextStyle(
@@ -190,7 +190,7 @@ class ToolGuideSheet extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 14),
-              const _GuideHeading('Kaise istemal karein — step by step'),
+              const _GuideHeading('How to use — step by step'),
               for (var i = 0; i < entry.steps.length; i++)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 7),
@@ -230,7 +230,7 @@ class ToolGuideSheet extends StatelessWidget {
                 ),
               if (entry.tips.isNotEmpty) ...[
                 const SizedBox(height: 8),
-                const _GuideHeading('Agar masla aye to'),
+                const _GuideHeading('If something goes wrong'),
                 for (final tip in entry.tips)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 6),
@@ -304,441 +304,475 @@ const Map<String, ToolGuideEntry> _veGuides = {
   've.canvas': ToolGuideEntry(
     title: 'Canvas',
     what:
-        'Video ka size (ratio), zoom aur peeche ka background set karta hai — '
-        'jaise 9:16 Reels ke liye ya 16:9 YouTube ke liye.',
+        'Sets the video size (ratio), zoom and the background behind it — '
+        'such as 9:16 for Reels or 16:9 for YouTube.',
     steps: [
-      'Ratio tab se video ka size chunein (9:16, 16:9, 1:1 waghera).',
-      'Zoom tab mein video ko bara/chhota karke frame mein fit karein.',
-      'Background tab se peeche ka rang ya dhundli (blur) tasveer lagayein.',
-      'Upar ✓ dabayein — tabdeeli pakki ho jayegi.',
+      'From the Ratio tab, choose the video size (9:16, 16:9, 1:1, etc.).',
+      'In the Zoom tab, make the video bigger/smaller to fit the frame.',
+      'From the Background tab, set a colour or a blurred picture behind.',
+      'Tap ✓ above — the change will be confirmed.',
     ],
     tips: [
-      'Video kinaron se kat raha ho to Zoom kam karke pura frame mein layein.',
-      'Background sirf tab nazar ata hai jab video frame se chhota ho.',
+      'If the video is being cut at the edges, reduce the Zoom to bring it fully into the frame.',
+      'The background shows only when the video is smaller than the frame.',
     ],
   ),
   've.precut': ToolGuideEntry(
     title: 'Precut (Trim / Cut / Split)',
     what:
-        'Clip ke ghair-zaroori hisay katne ke liye hai — Trim se kinare, '
-        'Cut se darmiyan ka hissa, aur Split se clip do hison mein.',
+        'It is for cutting the unwanted parts of a clip — Trim for the edges, '
+        'Cut for the middle portion, and Split to divide a clip into two parts.',
     steps: [
-      'Pehle timeline mein wo clip select karein jis par kaam karna hai.',
-      'Trim: clip ke shuru/aakhir ke handle kheench kar fazool hissa hatayein.',
-      'Cut: do points set karke darmiyan ka hissa nikaal dein.',
-      'Split: playhead (peeli line) jis jagah ho, clip wahin se do ho jayegi.',
-      'Upar ✓ dabakar panel band karein.',
+      'First select the clip on the timeline you want to work on.',
+      'Trim: drag the handles at the clip\'s start/end to remove the unwanted part.',
+      'Cut: set two points and remove the middle portion.',
+      'Split: wherever the playhead (yellow line) is, the clip divides right there.',
+      'Tap ✓ above to close the panel.',
     ],
     tips: [
-      'Split playhead ki jagah par hota hai — pehle video chala kar ya timeline kheench kar line sahi jagah par layein.',
-      'Galat kat jaye to upar wale Undo (↩) se wapas ho jata hai.',
+      'Split happens at the playhead\'s position — first play the video or drag the timeline to bring the line to the right place.',
+      'If a cut goes wrong, the Undo (↩) above brings it back.',
     ],
   ),
   've.split': ToolGuideEntry(
     title: 'Split',
     what:
-        'Playhead (peeli line) ke NEECHE wali clip ko bilkul line wali '
-        'jagah se do hison mein kaat deta hai — phir har hissa alag '
-        'handle hota hai.',
+        'The clip UNDER the playhead (yellow line) is cut into two parts exactly at the line '
+        'cuts from that place into two parts — then each part separately '
+        'can be handled separately.',
     steps: [
-      'Timeline kheench kar peeli line katne wali jagah par layein — line jis clip ke upar hai, wahi kategi (select ki hui purani clip nahi).',
-      'Split dabayein — clip wahin se do ho jayegi, screen par tasdeeq bhi ayegi.',
-      'Panel ke upar "Playhead par / Darmiyan se" wala intekhab hai: Playhead par = line wali jagah; Darmiyan se = select ki hui clip bilkul darmiyan se kategi.',
+      'Drag the timeline to bring the yellow line to the cutting spot — the clip under the line is the one that will be cut (not an older selected clip).',
+      'Tap Split — the clip will divide right there, and a confirmation will show on screen.',
+      'At the top of the panel is the "At playhead / From the middle" choice: At playhead = at the line; From the middle = the selected clip is cut exactly in the middle.',
     ],
     tips: [
-      'Line clip ke bilkul kinare par ho to split NAHI hota aur wajah screen par likhi ati hai — pehle ki tarah chup chaap darmiyan se nahi kat ta. Line ko thora andar layein.',
-      'Split ke baad pehla (baen wala) hissa select rehta hai — dobara dabane se ghalat jagah nahi kategi.',
-      'Timeline ke darmiyan mein jo waqt likha ata hai wo line ke neeche wala asal second hai — katne se pehle wahin se tasdeeq kar lein.',
-      'Split bhi timeline wali snap setting ka paband hai (Trim panel ke Timeline hisay mein) — snap band ho to line bilkul free hoti hai.',
+      'If the line is exactly on the clip\'s edge, the split does NOT happen and the reason shows on screen — it no longer cuts silently from the middle like before. Move the line a little inward.',
+      'After a split, the first (left) part stays selected — pressing again will not cut at the wrong place.',
+      'The time shown in the middle of the timeline is the actual second under the line — verify from there before cutting.',
+      'Split also obeys the timeline snap setting (in the Trim panel\'s Timeline section) — with snap off, the line is completely free.',
     ],
   ),
   've.timeline': ToolGuideEntry(
     title: 'Timeline (Precision)',
     what:
-        'Timeline ab bilkul bareek kaam ke liye tayyar hai — zoom, '
-        'timecode, frame-by-frame harkat, snap, multi-select aur range.',
+        'The timeline is now ready for fine work — zoom, '
+        'timecode, frame-by-frame movement, snap, multi-select and range.',
     steps: [
-      'Zoom: do unglion se pinch karein, ya −/+ dabayein. Fit wale button (dayein taraf) se poori video aik nazar mein ajati hai.',
-      'Timecode: TC chip dabane se waqt H:MM:SS:FF mein nazar aye ga; play ke sath wale ‹ › buttons se aik frame aage/peechay jayein.',
-      'Snap: anchor wala chip snap on/off karta hai; chip ko daba kar rakhein (long press) to taqat badalti hai — Halki, Normal, Mazboot. Mukammal setting Trim panel ke Timeline hisay mein hai.',
-      'Multi-select: checklist wala chip on karke kai clips chunein — phir aik sath delete, duplicate ya aage/peechay karein.',
-      'Range: Trim panel ke Range hisay se playhead par In/Out lagayein — gold band ban jayega; phir range loop chalana ya range delete karna aik tap hai.',
-      'Koi tool khula ho to timeline khud chhup jati hai taake preview bara rahe aur sirf us tool ke options nazar ayen — tool band karte hi timeline wapas a jati hai.',
+      'Zoom: pinch with two fingers, or tap −/+; with the Fit button (on the right) the whole video comes into one view.',
+      'Timecode: tap the TC chip and the time shows in H:MM:SS:FF; with the ‹ › buttons next to play, move one frame forward/back.',
+      'Snap: the anchor chip turns snap on/off; hold the chip (long press) to change the strength — Light, Normal, Strong. The full setting is in the Timeline section of the Trim panel.',
+      'Multi-select: turn on the checklist chip and choose many clips — then delete, duplicate or move them together.',
+      'Range: from the Range section of the Trim panel, set In/Out at the playhead — a gold band will appear; then looping the range or deleting it is one tap.',
+      'When a tool is open, the timeline hides itself so the preview stays big and only that tool\'s options show — close the tool and the timeline comes back.',
     ],
     tips: [
-      'Snap band ho to playhead/trim bilkul free hote hain — koi point unhen kheenchta nahi.',
-      'Range delete mein jo clip aadha range mein aye wo wahin kat jata hai — kuch ghayab nahi hota.',
-      'Timeline ke darmiyan wala waqt hamesha line ke neeche wala second hai — playhead aur label kabhi alag nahi hote.',
-      'Panel ke andar hisay (sections) upar aik line mein chips ki surat mein ate hain — chip dabayein, sirf usi hisay ke options neeche ayenge; poora panel scroll nahi karna parta.',
+      'When snap is off, the playhead/trim are completely free — no point pulls them.',
+      'In a range delete, a clip that falls half in the range is cut right there — nothing disappears.',
+      'The time in the middle of the timeline is always the second under the line — the playhead and the label never disagree.',
+      'Inside a panel, the sections appear as chips in one line at the top — tap a chip and only that section\'s options show below; you do not have to scroll the whole panel.',
     ],
   ),
   've.trim': ToolGuideEntry(
     title: 'Trim / Roll / Slip',
     what:
-        'Clip ki lambai aur andar ka hissa theek karna. Teen modes '
-        'hain: Trim (kinare katna), Roll (do clips ki boundary), '
-        'Slip (andar ka hissa sarkana).',
+        'Fixing the clip\'s length and inside portion. There are three modes '
+        'are: Trim (cutting edges), Roll (the boundary of two clips), '
+        'Slip (slide the inner portion).',
     steps: [
-      'Mode chunein: Trim, Roll ya Slip — timeline ke handle bhi usi mode mein kaam karte hain.',
-      'Trim: sliders se start/end set karein, ya playhead clip ke andar rakh kar "Start → playhead" / "End → playhead" dabayein.',
-      'Roll: boundary hile gi — aik clip lamba, dusra chhota, kul lambai waisi ki waisi. Timeline par handle ghaseetein ya 1-frame buttons dabayein.',
-      'Slip: clip apni jagah rehta hai, andar ka hissa aage/peechay sarakta hai. Timeline par clip ko left/right ghaseetein ya 0.1s buttons dabayein.',
-      'Range (In/Out), Snap aur Timecode ki settings bhi isi panel mein neeche hain.',
+      'Choose a mode: Trim, Roll or Slip — the timeline handles work in the same mode.',
+      'Trim: set start/end with the sliders, or keep the playhead inside the clip and tap "Start → playhead" / "End → playhead".',
+      'Roll: the boundary will move — one clip longer, the other shorter, total length unchanged. Drag the handle on the timeline or tap the 1-frame buttons.',
+      'Slip: the clip stays in its place; the inner portion slides forward/back. Drag the clip left/right on the timeline or tap the 0.1s buttons.',
+      'The Range (In/Out), Snap and Timecode settings are also below in this panel.',
     ],
     tips: [
-      'Photo clip slip nahi hota — us ke andar sarkane wala hissa hota hi nahi.',
-      'Roll sirf do clips ke darmiyan hota hai — pehli clip ke start ya aakhri ke end par roll nahi lagta.',
+      'A photo clip does not slip — it has no inner portion to slide.',
+      'Roll happens only between two clips — it does not apply at the first clip\'s start or the last clip\'s end.',
     ],
   ),
   've.delete': ToolGuideEntry(
     title: 'Delete',
-    what: 'Select ki hui clip ko timeline se hata deta hai.',
+    what: 'Removes the selected clip from the timeline.',
     steps: [
-      'Timeline mein wo clip select karein jo hatani hai.',
-      'Delete dabayein — clip gayab ho jayegi aur baqi clips jagah par kar lengi.',
+      'Select the clip on the timeline that you want to remove.',
+      'Tap Delete — the clip will disappear and the other clips will close the gap.',
     ],
     tips: [
-      'Ghalti se delete ho jaye to Undo (↩) se clip wapas a jati hai.',
+      'If it is deleted by mistake, the clip comes back with Undo (↩).',
     ],
   ),
   've.duplicate': ToolGuideEntry(
     title: 'Duplicate',
-    what: 'Select ki hui clip ki aik aur copy usi ke sath bana deta hai.',
+    what: 'Makes another copy of the selected clip right next to it.',
     steps: [
-      'Clip select karein.',
-      'Duplicate dabayein — copy foran us ke baad lag jayegi.',
+      'Select a clip.',
+      'Tap Duplicate — the copy will be placed right after it.',
     ],
     tips: [
-      'Copy bilkul asal jaisi hoti hai — us par alag effect/speed lag sakta hai.',
+      'The copy is exactly like the original — a separate effect/speed can be applied to it.',
+    ],
+  ),
+  've.disable': ToolGuideEntry(
+    title: 'Disable',
+    what:
+        'Turns the selected clip off WITHOUT deleting it — its place on the '
+        'timeline stays, but the preview shows black and the export renders '
+        'black + silence for its length. Turn it back on with Enable.',
+    steps: [
+      'Select a clip.',
+      'Tap Disable — the clip block is veiled with an OFF mark.',
+      'Tap Enable to bring it back exactly as it was.',
+    ],
+    tips: [
+      'Good for A/B comparison: disable a clip, export, then enable and export again.',
+      'Small badges on a clip block show its real state: muted, volume changed, trimmed, audio unlinked.',
+      'Lane controls: the speaker icon on the Audio lane mutes the music in the export; the lock on the PIP lane protects the PIP window from accidental drags.',
+    ],
+  ),
+  've.label': ToolGuideEntry(
+    title: 'Label',
+    what:
+        'Gives the selected clip a colour label — a coloured strip on its '
+        'timeline block, saved with the project.',
+    steps: [
+      'Select a clip.',
+      'Tap Label and pick a colour (or None to remove it).',
+    ],
+    tips: [
+      'Use colours to mark kinds of clips — for example blue for the main story, green for B-roll, yellow for waiting.',
     ],
   ),
   've.replace': ToolGuideEntry(
     title: 'Replace',
     what:
-        'Select ki hui clip ko gallery ki dusri video se badal deta hai — '
-        'jagah aur muddat (duration) wahi rehti hai.',
+        'Replaces the selected clip with another video from the gallery — '
+        'the place and duration stay the same.',
     steps: [
-      'Clip select karein.',
-      'Replace dabayein aur gallery se nayi video chunein.',
-      'Nayi video purani jagah par, utni hi lambi ho kar lag jayegi.',
+      'Select a clip.',
+      'Tap Replace and choose a new video from the gallery.',
+      'The new video will be placed at the old place, at the same length.',
     ],
     tips: [
-      'Nayi video chhoti ho to wo loop/short ho sakti hai — lambi video chunein to behtar.',
+      'If the new video is short it may loop/be cut short — choosing a longer video is better.',
     ],
   ),
   've.freeze': ToolGuideEntry(
     title: 'Freeze',
     what:
-        'Playhead wale frame ko rok kar (freeze) aik khari hui tasveer-clip '
-        'bana deta hai jo chand second screen par rehti hai.',
+        'Freezing the playhead frame makes a still picture-clip '
+        'that stays on screen for a few seconds.',
     steps: [
-      'Peeli line us frame par layein jise rokna hai.',
-      'Freeze dabayein — wahan aik freeze clip lag jayega.',
-      'Us ki lambai kinare kheench kar kam/zyada kar sakte hain.',
+      'Bring the yellow line to the frame you want to freeze.',
+      'Tap Freeze — a freeze clip will be placed there.',
+      'You can increase/decrease its length by dragging the edges.',
     ],
     tips: [
-      'Kisi khaas lamhe ko zor de kar dikhane ke liye freeze behtareen hai.',
+      'Freeze is best for emphasising a special moment.',
     ],
   ),
   've.capture': ToolGuideEntry(
     title: 'Capture',
-    what: 'Playhead wale frame ki tasveer (photo) bana kar clip ke tor par laga deta hai.',
+    what: 'Makes a picture (photo) of the playhead frame and places it as a clip.',
     steps: [
       'Peeli line matlooba frame par layein.',
-      'Capture dabayein — us frame ki photo clip timeline mein lag jayegi.',
+      'Tap Capture — a photo clip of that frame will be placed on the timeline.',
     ],
     tips: [
-      'Thumbnail ya cover ke liye acha frame capture karke istemal karein.',
+      'Capture a good frame for a thumbnail or cover and use it.',
     ],
   ),
   've.reverse': ToolGuideEntry(
     title: 'Reverse',
-    what: 'Select ki hui clip ko ulta chala deta hai — aakhir se shuru ki taraf.',
+    what: 'Plays the selected clip in reverse — from the end towards the start.',
     steps: [
-      'Clip select karein.',
-      'Reverse dabayein — kuch dair lage gi, clip ulta chalegi.',
+      'Select a clip.',
+      'Tap Reverse — it will take a little time, the clip will play in reverse.',
     ],
     tips: [
-      'Reverse mein awaz bhi ulti ho jati hai — zaroorat ho to Volume se awaz band kar dein.',
-      'Lambi clip par reverse mein waqt zyada lagta hai.',
+      'In reverse the sound also reverses — if needed, turn the sound off from Volume.',
+      'Reverse takes more time on a long clip.',
     ],
   ),
   've.switch': ToolGuideEntry(
     title: 'Switch',
     what:
-        'Select ki hui clip ko main video se hata kar chhoti PIP (tasveer '
-        'mein tasveer) bana deta hai, ya PIP ko wapas main bana deta hai.',
+        'Removes the selected clip from the main video and makes it a small PIP (picture '
+        'in picture), or turns PIP back into the main.',
     steps: [
-      'Clip select karein.',
-      'Switch dabayein — clip PIP ban jayegi (ya PIP wapas main clip).',
-      'PIP ko ungli se kheench kar jagah aur size set karein.',
+      'Select a clip.',
+      'Tap Switch — the clip will become PIP (or PIP back to a main clip).',
+      'Drag the PIP with your finger to set its place and size.',
     ],
     tips: [
-      'PIP ki mazeed settings Overlay ke PIP tab mein milti hain.',
+      'More PIP settings are in the Overlay PIP tab.',
     ],
   ),
   've.speed': ToolGuideEntry(
     title: 'Speed',
     what:
-        'Clip ki raftaar badalta hai — slow motion ya tez. Curve se raftaar '
-        'ahista ahista badalti hai, Beat se music ki taal par.',
+        'Changes the clip\'s speed — slow motion or fast. With Curve, the speed '
+        'changes gradually; with Beat, to the music\'s beat.',
     steps: [
-      'Clip select karke Speed kholein.',
-      'Standard tab mein slider se raftaar set karein (0.5× slow, 2× tez).',
-      'Curve tab mein tayyar shapes chunein — raftaar naram badlegi.',
-      '✓ dabayein — clip ki lambai raftaar ke hisab se badal jayegi.',
+      'Select the clip and open Speed.',
+      'In the Standard tab, set the speed with the slider (0.5× slow, 2× fast).',
+      'In the Curve tab, choose ready shapes — the speed will change smoothly.',
+      'Tap ✓ — the clip length will change according to the speed.',
     ],
     tips: [
-      'Slow motion mein awaz bhi dheemi ho jati hai — aksar Volume kam kar dete hain.',
-      'Bohat tez (4× se zyada) par video jhatke wali lag sakti hai.',
+      'In slow motion the sound also slows down — often the Volume is reduced.',
+      'Very fast (more than 4×) video can look jerky.',
     ],
   ),
   've.audio': ToolGuideEntry(
     title: 'Audio',
     what:
-        'Video ki awaz ka markaz: background Music lagana, Voice Effect se '
-        'awaz badalna, aur Clean se shor kam karna.',
+        'The centre of the video\'s sound: applying background Music, changing the voice with Voice Effect, '
+        'and reducing noise with Clean.',
     steps: [
-      'Music tab: apni file ya Store se music lagayein, volume set karein.',
-      'Voice tab: awaz par effect (voice changer) lagayein.',
-      'Clean tab: recording ka shor/hiss kam karein.',
-      'Har tab ki tabdeeli ✓ se pakki hoti hai.',
+      'Music tab: apply music from your file or the Store, set the volume.',
+      'Voice tab: apply an effect (voice changer) to the voice.',
+      'Clean tab: reduce the recording\'s noise/hiss.',
+      'Every tab\'s change is confirmed with ✓.',
     ],
     tips: [
-      'Music tez ho aur awaz dab jaye to music ka volume 20–30% rakhein.',
-      'More audio tools mein converter, trimmer aur joiner bhi hain.',
+      'If the music is loud and the voice is drowned, keep the music volume at 20–30%.',
+      'More audio tools also include a converter, trimmer and joiner.',
     ],
   ),
   've.volume': ToolGuideEntry(
     title: 'Volume',
-    what: 'Select ki hui clip ki awaz ka volume kam ya zyada karta hai.',
+    what: 'Increases or decreases the selected clip\'s sound volume.',
     steps: [
-      'Clip select karein.',
-      'Slider se volume set karein — 0 matlab awaz bilkul band.',
-      '✓ dabayein.',
+      'Select a clip.',
+      'Set the volume with the slider — 0 means the sound is fully off.',
+      'tap ✓.',
     ],
     tips: [
-      'Background clip ki awaz band karne ke liye volume 0 kar dein.',
+      'To turn off the background clip\'s sound, set the volume to 0.',
     ],
   ),
   've.text': ToolGuideEntry(
     title: 'Text',
     what:
-        'Video par likhai lagata hai — aam Text, tayyar Motion Titles, aur '
-        'bolne par khud banne wale Captions.',
+        'Applies text on the video — plain Text, ready Motion Titles, and '
+        'Captions that are created automatically from speech.',
     steps: [
-      'Text tab: naya text likhein, font, rang aur size set karein.',
-      'Text ko ungli se kheench kar sahi jagah rakhein.',
-      'Titles tab: tayyar animated title chunein aur apna lafz likhein.',
-      'Captions tab: video ki awaz se khud captions banayein (Urdu AI bhi hai).',
+      'Text tab: write new text, set the font, colour and size.',
+      'Drag the text with your finger to the right place.',
+      'Titles tab: choose a ready animated title and write your words.',
+      'Captions tab: create captions automatically from the video\'s voice (Urdu AI is also available).',
+      'Once captions exist, the timeline shows a CC lane: every caption is a strip at its time — tap a strip to jump to it and edit it.',
     ],
     tips: [
-      'Caption banane mein thora waqt lagta hai — video lambi ho to sabr karein.',
-      'Text nazar na aye to dekhein wo clip ke time ke andar hai ya nahi.',
+      'Captions take a little time to create — if the video is long, be patient.',
+      'If the text does not show, check whether it is inside the clip\'s time.',
+      'Every video clip block shows its real audio waveform at the bottom — a flat line means silence there.',
     ],
   ),
   've.colour': ToolGuideEntry(
     title: 'Colour (Filters / Adjust)',
     what:
-        'Video ke rang theek karta hai — Filters se aik tap mein look, '
-        'Adjust se roshni, rang aur safai ki bareek settings.',
+        'Fixes the video colours — a look in one tap with Filters, '
+        'Fine settings for light, colour and clarity from Adjust.',
     steps: [
-      'Filters tab: koi filter chunein aur us ki miqdar (intensity) set karein.',
-      'Adjust tab: brightness, contrast, saturation waghera sliders se theek karein.',
-      'Preview mein asar sath sath nazar ata hai — ✓ se pakka karein.',
-      'My Looks: jo settings pasand ayen, Adjust ke neeche "Save look" se naam de kar save kar lein — agli dafa wo look aik tap se lag jayega.',
+      'Filters tab: choose a filter and set its amount (intensity).',
+      'Adjust tab: fix brightness, contrast, saturation etc. with the sliders.',
+      'The effect shows in the preview as you go — confirm with ✓.',
+      'My Looks: save the settings you like with a name using "Save look" under Adjust — next time that look applies with one tap.',
     ],
     tips: [
-      'LUT, Sharpen aur Clarity ka asar sirf export ki hui video mein ata hai — preview mein nahi dikhta, ye normal hai.',
-      'Hold-to-compare se pehle/bag ki halat dekh sakte hain.',
-      'Saved looks sirf is phone par rehte hain; kisi look ke dustbin (delete) icon se wo hat jata hai, aur usi naam se dobara Save karne se look update ho jata hai.',
+      'The effect of LUT, Sharpen and Clarity appears only in the exported video — it does not show in the preview; this is normal.',
+      'With hold-to-compare you can see the before/after state.',
+      'Saved looks stay only on this phone; a look is removed with its dustbin (delete) icon, and saving again with the same name updates the look.',
     ],
   ),
   've.effects': ToolGuideEntry(
     title: 'Effects',
     what:
-        'Video par visual effects lagata hai; Tracking se effect kisi '
-        'cheez ke sath chipak kar chalta hai.',
+        'Applies visual effects on the video; with Tracking, the effect '
+        'sticks to a thing and moves with it.',
     steps: [
-      'Effects tab se effect chunein — preview mein foran nazar aye ga.',
-      'Tracking tab: effect ko kisi point par lagayein, wo us ke sath hile ga.',
-      '✓ dabayein.',
+      'Choose an effect from the Effects tab — it will show in the preview immediately.',
+      'Tracking tab: attach the effect to a point; it will move with it.',
+      'tap ✓.',
     ],
     tips: [
-      'Zyada effects video ko bhari aur slow kar sakte hain — aik do hi rakhein.',
+      'Too many effects can make the video heavy and slow — keep just one or two.',
     ],
   ),
   've.overlay': ToolGuideEntry(
     title: 'Overlay (Sticker / Keyframes / PIP)',
     what:
-        'Video ke upar cheezen lagata hai — Sticker, dusri video ki chhoti '
-        'jhalak (PIP), aur Keyframes se harkat wali animation.',
+        'Places things over the video — Sticker, a small glimpse of another video '
+        'glimpse (PIP), and movement animation with Keyframes.',
     steps: [
-      'Sticker tab: sticker chunein, jagah aur size set karein.',
-      'PIP tab: dusri video/photo upar lagayein, kinare gol ya mask bhi hota hai.',
-      'Keyframes tab: kisi cheez ko waqt ke sath hilne ki harkat dein.',
-      '✓ se pakka karein.',
+      'Sticker tab: choose a sticker, set its place and size.',
+      'PIP tab: place another video/photo on top; edges can be round or masked too.',
+      'PIP timing: set the Start/End sliders (or the playhead buttons) to show the inset only on part of the timeline — the PIP lane shows that window as a segment; drag the segment to move the window.',
+      'Keyframes tab: give something movement over time.',
+      'Confirm with ✓.',
     ],
     tips: [
-      'PIP select karne par neeche element wali line ati hai — wahan se Edit/Delete asan hai.',
-      'PIP ke hisay (Position, Size, Style, Blend, Mask) panel ke upar aik line mein chips ki surat mein hain — chip dabayein, sirf usi hisay ke options ayenge.',
+      'When PIP is selected, the element row appears below — Edit/Delete is easy from there.',
+      'The PIP sections (Position, Size, Style, Blend, Mask) are chips in one line at the top of the panel — tap a chip and only that section\'s options appear.',
+      'A Motion overlay placed with "Place on Video" is this same PIP layer — its timing window is set the same way. The inset starts at its own beginning when the window starts; in the preview it loops inside the window, in the export a shorter inset holds its last frame until the window ends.',
     ],
   ),
   've.aicut': ToolGuideEntry(
     title: 'AI Cut',
     what:
-        'AI video ke khamosh aur fazool hisay khud pehchan kar katne mein '
-        'madad karta hai — lambi recording chhoti karne ke liye.',
+        'Helps you automatically find and cut the silent and useless parts of a video '
+        '— for making a long recording shorter.',
     steps: [
-      'AI Cut kholein aur analysis khatam hone dein.',
-      'Jo hisay rakhne hain wo check karein, baqi kat jayenge.',
-      'Apply karein — naya chhota version ban jayega.',
+      'Open AI Cut and let the analysis finish.',
+      'Check the parts you want to keep; the rest will be cut.',
+      'Tap Apply — a new shorter version will be created.',
     ],
     tips: [
-      'AI ki tajweez har dafa kaamil nahi hoti — apply se pehle preview dekh lein.',
-      'Ye tool coins se chalta hai; qeemat button par likhi hoti hai.',
+      'The AI suggestion is not perfect every time — check the preview before applying.',
+      'This tool runs on coins; the price is written on the button.',
     ],
   ),
   've.voiceenhance': ToolGuideEntry(
     title: 'Voice Enhance',
-    what: 'Recording ki awaz saaf aur wazeh karta hai — shor kam, awaz ubhri hui.',
+    what: 'Makes the recording\'s sound clean and clear — less noise, prominent voice.',
     steps: [
-      'Clip select karke Voice Enhance kholein.',
-      'Miqdar set karein aur preview sun kar check karein.',
-      '✓ dabayein.',
+      'Select the clip and open Voice Enhance.',
+      'Set the amount and check by listening to the preview.',
+      'tap ✓.',
     ],
     tips: [
-      'Bohat zyada enhance awaz ko ghair-qudrati bana sakta hai — darmiyani miqdar behtar hai.',
+      'Too much enhance can make the sound unnatural — a medium amount is better.',
     ],
   ),
   've.edit': ToolGuideEntry(
     title: 'Crop / Transform',
-    what: 'Clip ko crop karna, ghumana, aur frame mein us ki jagah/size badalna.',
+    what: 'Cropping the clip, rotating it, and changing its place/size in the frame.',
     steps: [
-      'Kinare kheench kar crop karein — bahar wala hissa kat jayega.',
-      'Scale se bara/chhota, position se jagah badlein.',
-      '✓ dabayein.',
+      'Drag the edges to crop — the outside part will be cut off.',
+      'Change the size with Scale, the place with Position.',
+      'tap ✓.',
     ],
     tips: [
-      'Crop ke baad khali jagah aye to Canvas ke Background se bhar sakte hain.',
+      'If empty space appears after cropping, you can fill it from the Canvas Background.',
     ],
   ),
   've.enhance': ToolGuideEntry(
     title: 'Enhance (HD)',
-    what: 'Video ki quality behtar karta hai — safai aur sharpness barhti hai.',
+    what: 'Improves the video quality — cleanliness and sharpness increase.',
     steps: [
-      'Clip select karke Enhance kholein.',
-      'Enhance chalane par processing hogi — khatam hone dein.',
-      'Preview dekh kar ✓ dabayein.',
+      'Select the clip and open Enhance.',
+      'Running Enhance will process — let it finish.',
+      'Check the preview and tap ✓.',
     ],
     tips: [
-      'Bohat purani/dhundli video jadui tor par HD nahi banti — behtari zaroor ati hai.',
-      'Lambi video par waqt zyada lagta hai.',
+      'A very old/blurry video does not magically become HD — but improvement definitely comes.',
+      'Long videos take more time.',
     ],
   ),
   've.stabilizer': ToolGuideEntry(
     title: 'Stabilizer',
-    what: 'Hath ke hilne se bani video ko smooth karta hai — jhatke kam ho jate hain.',
+    what: 'Smooths a video made shaky by hand movement — the jerks reduce.',
     steps: [
-      'Clip select karke Stabilizer kholein.',
-      'Stabilize chalanein — analysis aur processing hogi.',
-      'Natija dekh kar ✓ dabayein.',
+      'Select the clip and open Stabilizer.',
+      'Run Stabilize — analysis and processing will happen.',
+      'Check the result, then tap ✓.',
     ],
     tips: [
-      'Stabilize mein kinare thore kat jate hain — ye is amal ka hissa hai.',
-      'Bohat zyada hili hui video poori smooth nahi hoti.',
+      'In Stabilize the edges get slightly cut — that is part of the process.',
+      'A very shaky video does not become fully smooth.',
     ],
   ),
   've.cutout': ToolGuideEntry(
     title: 'Cutout / Chroma',
     what:
-        'Video ka background hatata hai — sabz parda (chroma) ya AI cutout se '
-        'banda alag ho jata hai.',
+        'Removes the video background — with a green screen (chroma) or AI cutout '
+        'the person is separated.',
     steps: [
-      'Clip select karke Cutout kholein.',
-      'Sabz/ek-rang parda ho to chroma rang chunein; warna AI cutout chalanein.',
-      'Kinare theek nazar ayen to ✓ dabayein.',
+      'Select the clip and open Cutout.',
+      'If there is a green/single-colour screen, choose the chroma colour; otherwise run AI cutout.',
+      'If the edges look right, tap ✓.',
     ],
     tips: [
-      'Background aur kapron ka rang aik jaisa ho to cutout wahan se kat sakta hai.',
-      'AI cutout coins se chalta hai; qeemat pehle dikh jati hai.',
+      'If the background and clothing colours are the same, the cutout can cut in from there.',
+      'AI cutout runs on coins; the price is shown first.',
     ],
   ),
   've.mask': ToolGuideEntry(
     title: 'Mask',
     what:
-        'Clip ya PIP ke kisi hisay ko chhupata/dikhata hai — gol, chokor ya '
-        'naram kinare wali shaklon mein.',
+        'Hides/shows a part of the clip or PIP — in round, square or '
+        'soft-edged shapes.',
     steps: [
-      'Cheez select karke Mask kholein.',
-      'Mask ki shakal chunein aur size/jagah set karein.',
-      'Feather se kinare naram karein, ✓ dabayein.',
+      'Select the item and open Mask.',
+      'Choose the mask shape and set the size/place.',
+      'Soften the edges with Feather, tap ✓.',
     ],
     tips: [
-      'Mask ulta (invert) karne se chhupa hua hissa dikhne lagta hai aur dikhne wala chhup jata hai.',
+      'Inverting the mask makes the hidden part show and the visible part hide.',
     ],
   ),
   've.opacity': ToolGuideEntry(
     title: 'Opacity',
-    what: 'Select ki hui cheez ko kitna dhundla (transparent) karna hai — ye set karta hai.',
+    what: 'Sets how transparent the selected item should be.',
     steps: [
-      'Cheez select karein.',
-      'Slider kam karein to cheez peeche wali video mein ghulne lage gi.',
-      '✓ dabayein.',
+      'Select the item.',
+      'Lower the slider and the item starts blending into the video behind it.',
+      'tap ✓.',
     ],
     tips: [
-      'Watermark jaisi halki jhalak ke liye 30–40% opacity acha rehta hai.',
+      'For a light watermark-like glimpse, 30–40% opacity works well.',
     ],
   ),
   've.rotate': ToolGuideEntry(
     title: 'Rotate / Flip',
-    what: 'Clip ko ghumata hai (90° ke steps) ya ulta (flip) karta hai.',
+    what: 'Rotates the clip (in 90° steps) or flips it.',
     steps: [
-      'Clip select karke Rotate kholein.',
-      'Rotate se ghumayein, Flip se aaine jaisa ulta karein.',
-      '✓ dabayein.',
+      'Select the clip and open Rotate.',
+      'Rotate with Rotate, mirror with Flip.',
+      'tap ✓.',
     ],
     tips: [
-      'Galat side par bani video (portrait/landscape) yahin se seedhi hoti hai.',
+      'A video recorded on the wrong side (portrait/landscape) is straightened right here.',
     ],
   ),
   've.ease': ToolGuideEntry(
     title: 'Ease',
     what:
-        'Animation ki harkat ko naram karta hai — shuru/aakhir mein ahista '
-        'ya tez (ease in/out).',
+        'Makes the animation movement smooth — slow at the start/end '
+        'or fast (ease in/out).',
     steps: [
-      'Jis cheez par keyframe animation hai use select karein.',
-      'Ease ki shakal chunein — harkat ka andaaz badal jayega.',
-      'Preview chala kar dekhein, phir ✓ dabayein.',
+      'Select the item that has keyframe animation.',
+      'Choose the ease shape — the style of movement will change.',
+      'Play the preview and check, then tap ✓.',
     ],
     tips: [
-      'Ease sirf tab asar karta hai jab keyframes lage hon — pehle Keyframes tab se animation banayein.',
+      'Ease takes effect only when keyframes are applied — first create the animation from the Keyframes tab.',
     ],
   ),
   've.transitions': ToolGuideEntry(
     title: 'Transitions',
-    what: 'Do clips ke darmiyan ka jorna (transition) lagata hai — fade, slide waghera.',
+    what: 'Applies the join (transition) between two clips — fade, slide, etc.',
     steps: [
-      'Timeline mein do clips ke jor (kinara) par tap karein.',
-      'Transition chunein aur us ki muddat set karein.',
-      'Preview mein jor dekh kar ✓ dabayein.',
+      'Tap the join (edge) of two clips on the timeline.',
+      'Choose a transition and set its duration.',
+      'Check the join in the preview and tap ✓.',
     ],
     tips: [
-      'Transition sirf clips ke jor par lagta hai — clip ke darmiyan nahi.',
-      'Store se mazeed transitions mil sakte hain.',
+      'A transition applies only at the join of clips — not in the middle of a clip.',
+      'More transitions can be found in the Store.',
     ],
   ),
   've.templates': ToolGuideEntry(
     title: 'Templates (Store)',
-    what: 'Online Store ka Templates hisa kholta hai — tayyar designs jo aik tap mein lagte hain.',
+    what: 'Opens the Templates section of the Online Store — ready designs that apply with one tap.',
     steps: [
-      'Templates dabayein — Store khul jayega.',
-      'Design chunein, preview dekhein, phir download/apply karein.',
-      'Kuch templates coins se milte hain — qeemat wahan likhi hoti hai.',
+      'Tap Templates — the Store will open.',
+      'Choose a design, see the preview, then download/apply.',
+      'Some templates are available for coins — the price is written there.',
     ],
     tips: [
-      'Download ke liye internet lazmi hai; aik dafa aya hua template offline bhi chalta hai.',
+      'Internet is required for download; once a template has arrived, it also works offline.',
     ],
   ),
 };
@@ -749,222 +783,222 @@ const Map<String, ToolGuideEntry> _veGuides = {
 const Map<String, ToolGuideEntry> _peGuides = {
   'pe.canvas': ToolGuideEntry(
     title: 'Canvas',
-    what: 'Photo ka size/ratio badalta hai aur aas paas ki khali jagah ka background set karta hai.',
+    what: 'Changes the photo size/ratio and sets the background of the empty space around it.',
     steps: [
-      'Ratio chunein (1:1, 4:5, 9:16 waghera) — photo us frame mein ajaye gi.',
-      'Khali jagah ke liye rang ya blur background chunein.',
-      '✓ (Confirm) dabayein.',
+      'Choose a ratio (1:1, 4:5, 9:16, etc.) — the photo will come into that frame.',
+      'For the empty space, choose a colour or blur background.',
+      'Tap ✓ (Confirm).',
     ],
     tips: [
-      'DP/profile ke liye 1:1, story ke liye 9:16 aam istemal hai.',
+      '1:1 is common for DP/profile, 9:16 for stories.',
     ],
   ),
   'pe.filter': ToolGuideEntry(
     title: 'Filter',
-    what: 'Photo par aik tap mein tayyar rang-look (filter) lagata hai.',
+    what: 'Applies a ready colour look (filter) to the photo with one tap.',
     steps: [
-      'Filter chunein — preview mein foran asar dikhe ga.',
-      'Slider se filter ki miqdar kam/zyada karein.',
-      '✓ dabayein.',
+      'Choose a filter — the effect shows in the preview immediately.',
+      'Adjust the filter amount with the slider.',
+      'tap ✓.',
     ],
     tips: [
-      'Hold-to-compare (upar wala chip dabaye rakhein) se pehle ki halat dikhti hai.',
+      'Hold-to-compare (hold the chip above) shows the before state.',
     ],
   ),
   'pe.adjust': ToolGuideEntry(
     title: 'Adjust',
     what:
-        'Photo ki roshni aur rang bareek settings se theek karta hai — '
+        'Fixes the photo\'s light and colour with fine settings — '
         'brightness, contrast, saturation, HSL waghera.',
     steps: [
-      'Jo setting badalni hai us ka slider chalanein.',
-      'HSL mein kisi aik rang ko alag se theek kar sakte hain.',
-      'Preview dekh kar ✓ dabayein — wahi save hoga jo preview mein dikha.',
+      'Move the slider of the setting you want to change.',
+      'In HSL you can fix one colour separately.',
+      'Check the preview and tap ✓ — what showed in the preview is what will be saved.',
     ],
     tips: [
-      'Thora thora badlein — zyada adjust photo ko ghair-qudrati bana deta hai.',
+      'Change little by little — too much adjusting makes the photo unnatural.',
     ],
   ),
   'pe.effect': ToolGuideEntry(
     title: 'Effect',
-    what: 'Photo par khaas visual effects lagata hai.',
+    what: 'Applies special visual effects to the photo.',
     steps: [
-      'Effect chunein — preview mein nazar aye ga.',
-      'Apply dabayein tab hi effect pakka hota hai.',
+      'Choose an effect — it will show in the preview.',
+      'The effect is confirmed only when you tap Apply.',
     ],
     tips: [
-      'Panel band karne se ghair-apply shuda effect khatam ho jata hai — pasand aye to pehle Apply karein.',
+      'Closing the panel removes an unapplied effect — if you like it, Apply first.',
     ],
   ),
   'pe.background': ToolGuideEntry(
     title: 'Background',
-    what: 'Photo ka peeche wala hissa naye background se badalta hai.',
+    what: 'Replaces the photo\'s background with a new background.',
     steps: [
-      'Background ki qisam chunein (rang, dhundla, ya dusri tasveer).',
-      'Kinare check karein — subject saaf kata hua nazar aye.',
-      '✓ dabayein.',
+      'Choose the background type (colour, blurred, or another picture).',
+      'Check the edges — the subject should look cleanly cut.',
+      'tap ✓.',
     ],
     tips: [
-      'Background badalne ke liye pehle Cutout saaf hona chahiye — kinare ghum phir kar dekhein.',
+      'For changing the background, the Cutout must be clean first — check the edges all around.',
     ],
   ),
   'pe.portrait': ToolGuideEntry(
     title: 'Portrait',
-    what: 'Chehre aur portrait ke liye khaas behtari — skin smooth, chehra saaf.',
+    what: 'Special improvement for faces and portraits — smooth skin, clear face.',
     steps: [
-      'Portrait kholein — chehra khud pehchana jata hai.',
-      'Sliders se miqdar set karein.',
-      '✓ dabayein.',
+      'Open Portrait — the face is detected automatically.',
+      'Set the amount with the sliders.',
+      'tap ✓.',
     ],
     tips: [
-      'Zyada smooth karne se chehra plastic jaisa lag sakta hai — halki miqdar rakhein.',
+      'Too much smoothing can make the face look like plastic — keep the amount light.',
     ],
   ),
   'pe.sticker': ToolGuideEntry(
     title: 'Sticker',
-    what: 'Photo par sticker lagata hai — jagah, size aur ghumao set hota hai.',
+    what: 'Applies a sticker to the photo — place, size and rotation can be set.',
     steps: [
-      'Sticker chunein — photo par ajayega.',
-      'Ungli se kheench kar jagah, do ungliyon se size set karein.',
-      '✓ dabayein.',
+      'Choose a sticker — it will appear on the photo.',
+      'Drag with a finger to place; set the size with two fingers.',
+      'tap ✓.',
     ],
     tips: [
-      'Sticker select karke delete wale nishan se hataya ja sakta hai.',
+      'A sticker can be removed by selecting it and using the delete mark.',
     ],
   ),
   'pe.text': ToolGuideEntry(
     title: 'Text',
-    what: 'Photo par likhai lagata hai — font, rang, style sab badal sakte hain.',
+    what: 'Applies text to the photo — font, colour and style can all be changed.',
     steps: [
-      'Apna text likhein.',
-      'Style/Colour/Font tabs se look set karein.',
-      'Text box ko kheench kar jagah par rakhein; kinare wale dots se box ki width badlein.',
-      '✓ dabayein.',
+      'Write your text.',
+      'Set the look from the Style/Colour/Font tabs.',
+      'Drag the text box into place; change the box width with the edge dots.',
+      'tap ✓.',
     ],
     tips: [
-      'Urdu text ke liye Nastaliq font chunein — sahi aur khubsurat lage ga.',
+      'For Urdu text, choose the Nastaliq font — it will look right and beautiful.',
     ],
   ),
   'pe.pip': ToolGuideEntry(
     title: 'PIP',
-    what: 'Photo ke upar dusri chhoti photo lagata hai (tasveer mein tasveer).',
+    what: 'Places another small photo on top of the photo (picture in picture).',
     steps: [
-      'PIP se dusri photo chunein.',
-      'Jagah aur size set karein; kinare gol bhi ho sakte hain.',
-      '✓ dabayein.',
+      'Choose the second photo with PIP.',
+      'Set the place and size; the edges can be round too.',
+      'tap ✓.',
     ],
     tips: [
-      'PIP photo ko halki border dein to wo alag saaf nazar ati hai.',
+      'Give the PIP photo a light border and it stands out clearly.',
     ],
   ),
   'pe.remove': ToolGuideEntry(
     title: 'Remove',
-    what: 'Photo se ghair-zaroori cheez ya banda mita deta hai — peeche ki jagah khud bharti hai.',
+    what: 'Erases an unwanted thing or person from the photo — the space behind fills itself.',
     steps: [
-      'Remove kholein — brush se us cheez par rang pherein jo hatani hai.',
-      'Brush ka size set karein, phir Remove/Apply chalanein.',
-      'Natija dekh kar ✓ dabayein.',
+      'Open Remove — paint with the brush over the thing you want to remove.',
+      'Set the brush size, then run Remove/Apply.',
+      'Check the result, then tap ✓.',
     ],
     tips: [
-      'Barri cheez aik dafa mein saaf nahi hoti — do teen dafa dohrayen.',
-      'Ghalat jagah rang jaye to eraser se mask mita sakte hain.',
+      'A big thing does not clean in one go — repeat two or three times.',
+      'If paint lands in the wrong place, you can erase the mask with the eraser.',
     ],
   ),
   'pe.enhance': ToolGuideEntry(
     title: 'Enhance',
-    what: 'Photo ki quality khud behtar karta hai — safai, roshni aur sharpness.',
+    what: 'Automatically improves the photo quality — cleanliness, light and sharpness.',
     steps: [
-      'Enhance kholein aur chalanein.',
-      'Pehle/baad compare karke dekhein.',
-      'Pasand aye to ✓ dabayein.',
+      'Open Enhance and run it.',
+      'Compare before/after and see.',
+      'If you like it, tap ✓.',
     ],
     tips: [
-      'Ye AI tool coins se chalta hai — qeemat pehle dikh jati hai.',
+      'This AI tool runs on coins — the price is shown first.',
     ],
   ),
   'pe.cutout': ToolGuideEntry(
     title: 'Cutout',
-    what: 'Photo ke subject ko background se alag kaat deta hai — peeche transparent ho jata hai.',
+    what: 'Cuts the photo subject out from the background — the back becomes transparent.',
     steps: [
-      'Cutout chalanein — subject khud pehchana jata hai.',
-      'Kinare gaur se dekhein (baal, kinare wale hisay).',
-      '✓ dabayein — ab isay kisi bhi background par laga sakte hain.',
+      'Run Cutout — the subject is detected automatically.',
+      'Look at the edges carefully (hair, edge parts).',
+      'Tap ✓ — now you can place it on any background.',
     ],
     tips: [
-      'Subject aur background ka rang aik jaisa ho to kinare kamzor kat sakte hain.',
-      'Ye AI tool coins se chalta hai.',
+      'If the subject and background colours are the same, the edges can cut weakly.',
+      'This AI tool runs on coins.',
     ],
   ),
   'pe.doodle': ToolGuideEntry(
     title: 'Doodle',
-    what: 'Photo par ungli se drawing/line banana — nishan lagane ya mazaq ke liye.',
+    what: 'Drawing/lines with your finger on the photo — for marking or fun.',
     steps: [
-      'Rang aur brush size chunein.',
-      'Photo par ungli se draw karein.',
-      '✓ dabayein.',
+      'Choose the colour and brush size.',
+      'Draw on the photo with your finger.',
+      'tap ✓.',
     ],
     tips: [
-      'Akhri stroke Undo se wapas ho jata hai.',
+      'The last stroke comes back with Undo.',
     ],
   ),
   'pe.makeup': ToolGuideEntry(
     title: 'Makeup',
-    what: 'Portrait par makeup wale effects — lipstick, blush waghera.',
+    what: 'Makeup effects on a portrait — lipstick, blush, etc.',
     steps: [
-      'Chehre wali photo par Makeup kholein.',
-      'Jo effect chahiye chunein aur miqdar set karein.',
-      '✓ dabayein.',
+      'Open Makeup on a photo with a face.',
+      'Choose the effect you want and set the amount.',
+      'tap ✓.',
     ],
     tips: [
-      'Chehra saaf nazar ana chahiye warna makeup sahi jagah nahi lagta.',
+      'The face should be clearly visible, otherwise the makeup does not land in the right place.',
     ],
   ),
   'pe.crop': ToolGuideEntry(
     title: 'Crop',
-    what: 'Photo ke kinare kaat kar sirf matlooba hissa rakhta hai.',
+    what: 'Cuts the photo edges and keeps only the wanted part.',
     steps: [
-      'Frame ke kinare kheench kar matlooba hissa chunein.',
-      'Tayyar ratio bhi chun sakte hain.',
-      '✓ dabayein.',
+      'Drag the frame edges to choose the part you want.',
+      'You can also choose a ready ratio.',
+      'tap ✓.',
     ],
     tips: [
-      'Crop ke baad photo chhoti ho jati hai — bohat zyada crop se quality girti hai.',
+      'After cropping the photo becomes smaller — too much cropping drops the quality.',
     ],
   ),
   'pe.expand': ToolGuideEntry(
     title: 'Expand',
-    what: 'Photo ke canvas ko bara karta hai — kinare barh jate hain.',
+    what: 'Enlarges the photo canvas — the edges expand.',
     steps: [
-      'Expand kholein aur kitna barhana hai set karein.',
-      'Naye kinaron ka background chunein.',
-      '✓ dabayein.',
+      'Open Expand and set how much to expand.',
+      'Choose the background for the new edges.',
+      'tap ✓.',
     ],
     tips: [
-      'Expand photo ko bara nahi karta, us ke aas paas jagah barhata hai.',
+      'Expand does not enlarge the photo; it adds space around it.',
     ],
   ),
   'pe.frame': ToolGuideEntry(
     title: 'Frame',
-    what: 'Photo ke gird frame/border lagata hai.',
+    what: 'Applies a frame/border around the photo.',
     steps: [
-      'Frame ka design chunein.',
-      'Rang aur motai set karein.',
-      '✓ dabayein.',
+      'Choose the frame design.',
+      'Set the colour and thickness.',
+      'tap ✓.',
     ],
     tips: [
-      'Halki border aksar zyada professional lagti hai.',
+      'A light border often looks more professional.',
     ],
   ),
   'pe.rotate': ToolGuideEntry(
     title: 'Rotate',
-    what: 'Photo ko ghumata hai ya ulta (flip) karta hai.',
+    what: 'Rotates the photo or flips it.',
     steps: [
-      'Rotate se 90° ghumayein, ya slider se halka sa terha seedha karein.',
-      'Flip se aaine wala ulta karein.',
-      '✓ dabayein.',
+      'Rotate 90° with Rotate, or straighten a slight tilt with the slider.',
+      'Flip to mirror it.',
+      'tap ✓.',
     ],
     tips: [
-      'Halki terhi photo slider ke chhote se angle se seedhi ho jati hai.',
+      'A slightly tilted photo straightens with a small angle on the slider.',
     ],
   ),
 };
@@ -977,21 +1011,23 @@ const Map<String, ToolGuideEntry> _peGuides = {
 const ToolGuideEntry _motionGuide = ToolGuideEntry(
   title: 'Motion Graphics Studio',
   what:
-      'Tayyar animated designs ki gallery hai — headlines, naam wali '
-      'pattiyan (lower thirds), counters waghera jo khud harkat karte hain.',
+      'A gallery of ready animated designs — headlines, name '
+      'strips (lower thirds), counters, etc. that move by themselves.',
   steps: [
-    'Gallery mein design chunein — har card par us ki live jhalak chalti hai.',
-    'Category ya search se apni qisam ka design dhunden.',
-    'Design par tap karein — bara preview khul jayega.',
-    'FREE wala foran khulta hai; PRO/COINS wale pehle unlock hote hain (qeemat wahan likhi hai).',
-    'Preview mein "Edit karein" dabayein — Editor khul jayega: layer chunein, text/font/rang, jagah, size, waqt aur animation style badlein.',
-    'Apna logo lagana ho to Logo/Image layer chunein aur photo chunein — template ke sath save ho jayega.',
-    'SAVE dabane se design "My Templates" mein save hota hai — Gallery ki My Templates category se dobara khulta hai.',
-    '"Video par Lagao" dabayein — design video ban kar Video Editor mein PIP overlay lag jayega; phir use apni video par rakh kar export karein.',
+    'Choose a design in the Gallery — a live glimpse runs on every card.',
+    'Find your kind of design by category or search.',
+    'Tap a design — the big preview will open.',
+    'The FREE one opens instantly; PRO/COINS ones unlock first (the price is written there).',
+    'In the preview, tap "Edit" — the Editor will open: choose a layer, change text/font/colour, place, size, timing and animation style.',
+    'If you want to place your logo, choose the Logo/Image layer and pick a photo — it will be saved with the template.',
+    'Tapping SAVE saves the design in "My Templates" — it reopens from the My Templates category of the Gallery.',
+    'Tap "Place on Video" — the design becomes a video and is placed as a PIP overlay in the Video Editor; then place it on your video and export.',
+    'In the Video Editor, the overlay is the PIP layer: set its place/size in the PIP panel, and its timing in "PIP timing" (Start/End) or by dragging its segment on the timeline PIP lane — it then shows only inside that window, in the preview and the export alike.',
   ],
   tips: [
-    'Lagao mein pehle transparent (WebM) video banta hai; agar phone par wo encode na ho to MP4 banta hai aur screen par wazeh likha ata hai ke konsa bana.',
-    'Pro users ke liye PRO designs shamil hain — coins nahi lagte.',
+    'When placing, a transparent (WebM) video is made first; if the phone cannot encode it, an MP4 is made and the screen clearly states which one was made.',
+    'PRO designs are included for Pro users — no coins needed.',
+    'There is one PIP layer: a new "Place on Video" replaces the previous inset, it does not stack a second one.',
   ],
 );
 
@@ -1001,211 +1037,212 @@ const Map<String, ToolGuideEntry> _nsGuides = {
   'ns.template': ToolGuideEntry(
     title: 'Template',
     what:
-        'Poori khabar ka design (template) chunna hai — ribbons, pattiyan '
-        'aur look aik sath badal jata hai.',
+        'Choosing the design (template) of the whole news — ribbons, strips '
+        'and the look all change together.',
     steps: [
-      'Rail mein design cards dekhein aur pasandida par tap karein.',
-      'Breaking template ho to us ki variant bhi chun sakte hain.',
-      'Neeche wale hisay se banner, lower third aur PIP jaisi cheezen set karein.',
-      'Har tabdeeli preview mein foran nazar ati hai aur khud save ho jati hai.',
+      'See the design cards in the rail and tap the one you like.',
+      'If it is a breaking template, you can also choose its variant.',
+      'From the section below, set things like the banner, lower third and PIP.',
+      'Every change shows in the preview immediately and saves by itself.',
     ],
     tips: [
-      'Template badalne se aap ki likhi khabar/ticker nahi udta — sirf design badalta hai.',
+      'Changing the template does not remove your written news/ticker — only the design changes.',
     ],
   ),
   'ns.media': ToolGuideEntry(
     title: 'Media (Clips)',
     what:
-        'Khabar ki video clips yahan lagti hain — jorna, tartib badalna, '
-        'hatana, aur ab Trim/Split bhi.',
+        'The news video clips go here — adding, reordering, '
+        'removing, and now Trim/Split too.',
     steps: [
-      'Add se gallery se clips chunein — wo neeche line (lane) mein lag jayengi.',
-      'Clip ko daba kar select karein; tartib ke liye aage/peeche karein.',
-      'Trim: clip ke shuru/aakhir ke sliders se fazool hissa katein.',
-      'Split: playhead jis jagah ho, clip wahin do ho jayegi.',
-      'Jo clip nahi chahiye use Remove se hatayein.',
+      'Choose clips from the gallery with Add — they will be placed in the line (lane) below.',
+      'Press a clip to select it; move it forward/back to reorder.',
+      'Trim: cut the unwanted part with the sliders at the clip\'s start/end.',
+      'Split: wherever the playhead is, the clip divides right there.',
+      'Remove the clip you do not want with Remove.',
     ],
     tips: [
-      'Export hamesha wahi hisa leta hai jo trim ke andar hai — poori asal file mehfooz rehti hai.',
-      'Clip par tap karne se Media panel khulta hai — yahi is ki settings ki jagah hai.',
-      'Preview ke upar dayein konay mein grid wala button hai — us se safe-area guides (thirds + mehfooz hisay ke nishan) nazar ate hain taake headline/ticker kinaron se takraye nahi. Ye sirf preview ke liye hain, export mein kabhi nahi ate.',
-      'Timeline ab asal time-scale par hai: clips apni lambai ke hisab se jagah lete hain, upar ruler (scale) hai. Header ke − / fit / + se zoom karein; zoom ho to lanes ko left/right ghaseet kar scroll karein.',
-      'Ruler par tap ya drag karne se playhead wahan chala jata hai (scrub). Pehli clip ke andar ho to preview bhi wahin se nazar aye ga; aage ki clips par playhead/readout wahan jata hai lekin preview pehli clip hi dikhata hai — asal video export mein poori chalti hai.',
-      'Split ab playhead ki asal jagah par lagta hai — playhead ko kisi bhi clip par scrub karke Split dabayein, wahi clip wahin kategi.',
-      'Clip ko ghaseet kar trim (B3): timeline mein clip select karein — us ke dono kinaron par sunehray handle ayenge; kinara pakad kar andar/bahar ghaseetein, trim wahin badal jayega.',
-      'Clip ki tartib ghaseet kar (B4): clip ko daba kar rakhein (long press) phir left/right ghaseetein — clip apni jagah badal lega, trim us ke sath hi jayega.',
-      'Marker (B9): header ke bookmark button se playhead wali jagah nishan lagayein; marker sunehri line ki surat mein har lane par dikhega. Usi jagah dobara dabane ya marker par tap karne se hat jata hai.',
-      'Lane controls (B10): har lane ke naam ke sath ankh wala button lane chhupata/dikhata hai (sirf nazar ke liye). A2 ke sath awaz wala button music band/on karta hai — band ho to export mein bhi music nahi ayega.',
+      'The export always takes only the part inside the trim — the full original file stays safe.',
+      'Tapping a clip opens the Media panel — that is where its settings live.',
+      'At the top-right corner of the preview there is a grid button — it shows the safe-area guides (thirds + safe-area marks) so the headline/ticker does not hit the edges. These are for the preview only; they never appear in the export.',
+      'The timeline is now on a real time-scale: clips take space according to their length, and there is a ruler (scale) on top. Zoom with the header − / fit / +; when zoomed, drag the lanes left/right to scroll.',
+      'Tapping or dragging on the ruler moves the playhead there (scrub). If it is inside the first clip, the preview also shows from there; on later clips the playhead/readout goes there but the preview still shows the first clip — the actual video plays fully in the export.',
+      'Split now lands at the playhead\'s actual position — scrub the playhead onto any clip and tap Split; that clip will be cut right there.',
+      'Drag a clip to trim (B3): select the clip on the timeline — gold handles appear on both its edges; grab an edge and drag it in/out, the trim changes right there.',
+      'Each clip block on the V1 lane is a filmstrip of frames from across the clip, so a long clip shows what is inside it. The A1 lane shows the voiceover\'s waveform and the A2 lane the music\'s — cut where the waveform goes quiet.',
+      'Drag to reorder a clip (B4): press and hold the clip (long press), then drag left/right — the clip changes its place, and the trim goes with it.',
+      'Marker (B9): mark the playhead spot with the header bookmark button; the marker shows as a gold line on every lane. Tapping again at the same spot or tapping the marker removes it.',
+      'Lane controls (B10): the eye button next to each lane\'s name hides/shows the lane (view only). The sound button next to A2 turns the music off/on — if off, the music will not be in the export either.',
     ],
   ),
   'ns.elements': ToolGuideEntry(
     title: 'Elements',
     what:
-        'Template ke hison (logo, ribbons, capsule waghera) ki jagah aur '
-        'size bareek se set karna.',
+        'Setting the place and size of the template parts (logo, ribbons, capsule, etc.) '
+        'in fine detail.',
     steps: [
-      'Jo hissa set karna hai use chunein.',
-      'Sliders se us ki jagah (upar/neeche, daen/baen) aur size badlein.',
-      'Asar bare preview mein live nazar aye ga.',
+      'Choose the part you want to set.',
+      'Change its place (up/down, right/left) and size with the sliders.',
+      'The effect will show live in the big preview.',
     ],
     tips: [
-      'Koi hissa ghayab karna ho to us ka switch band kar dein — delete karne ki zaroorat nahi.',
-      'Ghalat ho jaye to element ko reset karke asal jagah wapas la sakte hain.',
+      'If you want to hide a part, turn its switch off — no need to delete it.',
+      'If something goes wrong, you can reset the element and bring it back to its original place.',
     ],
   ),
   'ns.tehreer': ToolGuideEntry(
     title: 'Tehreer (Headline)',
-    what: 'Khabar ki barri headline (surkhi) likhna aur us ka andaaz set karna.',
+    what: 'Writing the news\'s big headline and setting its style.',
     steps: [
-      'Headline wale khane mein apni surkhi likhein.',
-      'Font chunein — Urdu ke liye Nastaliq sab se acha lagta hai.',
-      'Rang aur size set karein; preview mein foran nazar aye ga.',
+      'Write your headline in the headline box.',
+      'Choose a font — for Urdu, Nastaliq looks best.',
+      'Set the colour and size; it will show in the preview immediately.',
     ],
     tips: [
-      'Headline chhoti aur saaf rakhein — lambi tehreer ribbon mein tang ati hai.',
-      'Likhne par poori screen dobara nahi banti — aram se likhte jayein.',
+      'Keep the headline short and clear — long text gets tight in the ribbon.',
+      'While writing, the whole screen does not rebuild — keep writing comfortably.',
     ],
   ),
   'ns.ticker': ToolGuideEntry(
     title: 'Ticker',
     what:
-        'Neeche chalti hui patti (ticker) ki tehreer — jo khabrein line '
-        'mein chalti hain.',
+        'The text of the running strip (ticker) below — the news items that run in a line '
+        'run in a line.',
     steps: [
-      'Ticker ka text likhein — har khabar ko alag line/simbol se jorein.',
-      'Direction chunein: Urdu ke liye aam tor par right-to-left sahi rehta hai.',
-      'Raftaar aur font set karein — preview aur export dono mein aik jaisa chalega.',
+      'Write the ticker text — join each news item with a separate line/symbol.',
+      'Choose the direction: for Urdu, right-to-left is usually right.',
+      'Set the speed and font — it will run the same in the preview and the export.',
     ],
     tips: [
-      'Direction ghalat ho to ticker ulti taraf chalega — export se pehle preview mein dekh lein.',
-      'Bohat lamba ticker aakhir tak parhne mein waqt leta hai — mukhtasar rakhein.',
+      'If the direction is wrong, the ticker will run the wrong way — check it in the preview before export.',
+      'A very long ticker takes time to read to the end — keep it short.',
     ],
   ),
   'ns.ribbons': ToolGuideEntry(
     title: 'Ribbons',
     what:
-        'Channel ki teen pattiyan (upar peeli, darmiyan surkh, neeche '
-        'gehri) — un ka text, rang, size aur on/off yahan se set hota hai.',
+        'The channel\'s three ribbons (top yellow, middle red, bottom '
+        'deep) — their text, colour, size and on/off are set from here.',
     steps: [
-      'Jo ribbon set karni hai use chunein.',
-      'Us ka text, rang aur height set karein.',
-      'Jo ribbon nahi chahiye us ka switch band kar dein.',
+      'Choose the ribbon you want to set.',
+      'Set its text, colour and height.',
+      'Turn off the switch of the ribbon you do not want.',
     ],
     tips: [
-      'Ye channel (preset) ki settings hain — naye projects par khud lag jati hain.',
-      'Har khabar ka apna ticker text Ticker panel mein hota hai, yahan sirf design hai.',
+      'These are the channel (preset) settings — they apply automatically to new projects.',
+      'Each story\'s own ticker text is in the Ticker panel; here is only the design.',
     ],
   ),
   'ns.logo': ToolGuideEntry(
     title: 'Logo (Cube + Parts)',
     what:
-        'Channel ka logo lagata hai — tasveer khud ghumta hua 3D cube ban '
-        'jati hai, ya logo ko us ke apne hison (elements) mein tor kar har '
-        'hisa alag ghumaya ja sakta hai: har hissa aik box + us ke andar ka '
-        'design hai (jaise NEWS wala box, HD wala box), aur har hissa apne '
-        'markaz (pivot — default box ka centre) se, apne waqfay par ghoomta hai.',
+        'Places the channel logo — the picture itself becomes a rotating 3D cube, '
+        'or by breaking the logo into its own parts (elements), each '
+        'part can be rotated separately: each part is a box + the design inside it '
+        'design (like the NEWS box, the HD box), and each part at its own '
+        'centre (pivot — default is the box\'s centre), at its own delay.',
     steps: [
-      'Logo ki tasveer (ya video) chunein — video ka background khud hat jata hai.',
-      'Cube ke liye: ghumao ki speed, direction aur rukh (tilt) set karein; chahein to har rukh (face) par alag tasveer dein.',
-      'Logo Parts ke liye neeche ke buttons tarteeb se istemal karein: Logo → Hisay → Ghumao → Waqt → Glow → Save.',
-      'Hisay tab mein "Auto Hisay tajweez" dabayein — app logo ke elements ke boxes tajweez kar de gi. Tajweez sirf shuruaat hai: box ko ghaseet kar hilayein, us ke kone ko ghaseet kar size theek karein, ya "Naya box banao" se khud box kheench kar hissa banayein.',
-      'Solid background wale logo par tajweez pehle background ko key (saaf) karti hai — us ki sakhti Logo tab ke "Keying mazbooti" slider se tay hoti hai: Halka rakhein to elements ke kinare mehfooz rahte hain, zyada kar dein to background ke qareebi rang bhi hat jate hain. Slider badal kar dobara tajweez karein, asar tab ayega.',
-      'Upar wale bare preview par kisi hisay ko tap karke chunein — wahi hissa gold rang mein highlight hoga, aur Ghumao usi par lage ga.',
-      'Chuna hissa theek karne ke tools Hisay tab mein hain: "Sirf ye hissa (Isolate)" se hissa akela dekh kar check karein ke box ne sahi cheez pakri hai; "Merge" se sath wala box mila kar aik element banayein; "Split" se box do hison mein kaat lein; "Naam badlein" se hisay ko naam dein; "Hissa khatam" se hissa urayein — asal logo ko kuch nahi hota. "Saare saaf (Reset)" se saare boxes saaf ho jate hain.',
-      'Ghumao tab mein chune huay hisay ka Rotate switch, Direction, Speed aur andaaz set karein: Flat (pahiye ki tarah) ya 3D (sikkay ki tarah side se ghumna) — gol hisay (jaise globe) par 3D se ghumao saaf nazar ata hai.',
-      'Andaaz bhi Ghumao tab mein hai: "Poora chakkar" mein hissa purey chakkar ghumta hai; "Jhoolna (Swing)" mein ghari ke pendulum ki tarah aagay-peeche jhoolta hai — zawiya slider se tay karein kitne degree tak jhoolay. Speed swing mein aik purey jhoolay ki muddat hai.',
-      'Pulse bhi Ghumao tab mein hai: on karein to hissa saans ki tarah halka bara-chhota hota rehta hai — taqat slider se kam/zyada karein. Pulse ghumao se alag hai: Rotate band ho tab bhi hissa saans leta rehta hai.',
-      'Ghumne ka markaz (Pivot) bhi Ghumao tab mein hai: sunahra nukta ghaseet kar jahan chahein rakh lein — hissa usi nukte ke gird ghume ga. "Centre par wapas" se markaz dobara box ke centre par aa jata hai.',
-      'Aik hisay ki poori harkat doosre hisay par lagani ho to Ghumao tab ke aakhir mein "Settings copy" hai: pehle hisay par "Is hisay ki settings copy karein" dabayein, phir doosra hissa chunein aur "Copy ki settings yahan lagayein" dabayein. Ghumao, style, speed, andaaz, pulse, narmi, waqfa aur pivot copy hote hain — box aur naam har hisay ka apna hi rehta hai.',
-      'Waqt tab mein har hisay ka start waqfa (delay) set karein — "Sequence lagao" se hisay 0.2 second ke faslay se aik ke baad aik ghumna shuru hote hain, "Sab aik sath (Sync)" se saare waqfay zero ho jate hain. Waqfa 12 second ke loop ke andar hisaab hota hai, is liye loop kabhi nahi tootta.',
-      'Narmi (Easing) bhi Waqt tab mein har hisay ke sath hai: "Narm" par Jhoolna aur Pulse narm sine ki tarah chalte hain (kinaron par aahista), "Barabar" par aik si raftaar se. Poora chakkar hamesha aik si raftaar se ghoomta hai — narmi sirf doolnay wali harkaton (Swing/Pulse) par lagti hai. Glow ki harkat Pulse ho to us ki narmi bhi Waqt tab ke upar alag se milti hai.',
-      'Glow tab mein logo ke peeche chamak wali layer lagti hai (ye layer banti hai, tasveer se katti nahi): Glow on karein, rang chunein — "Auto" par logo ke apne rang ki chamak banti hai, ya apna rang bhi de sakte hain — phir Shadeed (chamak kitni tez) aur Phailao (kitni door tak) set karein. Harkat mein Sabit, Pulse (chamak saans leti hai) ya Aahista ghoomti chunein. Glow sirf hison wale logo par lagta hai.',
-      'Neeche ki plate (Base) bhi Glow tab mein hai: "Kata hua base" (default) mein ghumta hissa uthe to us ki jagah se peeche ki video dikhti hai; "Koi base nahi" mein sirf hisay rehte hain; "Poora logo neeche" (ghost) mein asal logo sabit neeche rehta hai aur hisay us ke upar ghoomte hain — ye dohra asar deta hai.',
-      'Preview ka pas-manzar bhi Glow tab mein hai — Checker, Green ya Kala. Ye sirf preview dekhne ke liye hai, export par is ka koi asar nahi hota; Checker par logo ki khaali jaghein saaf nazar ati hain.',
-      'Roshni ki lehar (Light Sweep) bhi Glow tab mein hai: on karein to aik chamak ki lehar poore logo ke upar se guzarti rehti hai — bilkul TV channel ke idents ki tarah. Lehar sirf logo ki shakal ke andar chamakti hai; us ki raftaar slider se kam/zyada karein.',
-      'Hisay tab ki list mein teer (upar/neeche) se layer ki tarteeb badlein — pehla hissa sab se peeche, aakhri sab se upar rehta hai.',
-      'Parts ki setting mehfooz rakhni ho to Save tab se save karein — 300 coins mein 7 din tak rehti hai.',
-      'Save tab mein Export size bhi hai: green-screen (Permanent Logo) export ke frames 512 (Halka — tez, halka) ya 1024 (Saaf — zyada saaf, thoda bhari) ke bante hain. Default 512 hai.',
+      'Choose the logo picture (or video) — the video\'s background is removed automatically.',
+      'For the cube: set the rotation speed, direction and tilt; if you want, give a different picture on each face.',
+      'For Logo Parts, use the buttons below in order: Logo → Parts → Rotate → Timing → Glow → Save.',
+      'In the Parts tab, tap "Suggest parts automatically" — the app will suggest boxes for the logo\'s elements. The suggestion is only a start: drag the box to move it, drag its corner to fix the size, or draw a box yourself with "Create new box" to make a part.',
+      'On a solid-background logo, the suggestion first keys (cleans) the background — its strength is set by the "Keying strength" slider in the Logo tab: keep it light and the elements\' edges stay safe; increase it and colours close to the background are also removed. Change the slider and suggest again; the effect comes then.',
+      'Tap a part on the big preview above to choose it — that part will highlight in gold, and the rotation will apply to it.',
+      'The tools to fix the chosen part are in the Parts tab: with "Only this part (Isolate)" view the part alone and check the box caught the right thing; with "Merge" join the neighbouring box into one element; with "Split" cut the box into two parts; with "Rename" give the part a name; with "Delete part" remove the part — the original logo is untouched. "Clear all (Reset)" clears all the boxes.',
+      'In the Rotate tab, set the chosen part\'s Rotate switch, Direction, Speed and style: Flat (like a wheel) or 3D (spinning from the side like a coin) — on round parts (like a globe), rotation shows clearly with 3D.',
+      'The style is also in the Rotate tab: in "Full spin" the part rotates a full turn; in "Swing" it swings forward/back like a clock pendulum — set how many degrees it swings with the angle slider. In swing, the speed is the duration of one full swing.',
+      'Pulse is also in the Rotate tab: turn it on and the part keeps gently growing/shrinking like breathing — increase/decrease with the strength slider. Pulse is separate from rotation: even with Rotate off, the part keeps breathing.',
+      'The centre of rotation (Pivot) is also in the Rotate tab: drag the gold dot and place it wherever you want — the part will rotate around that point. With "Back to centre" the centre returns to the box\'s centre.',
+      'To apply one part\'s full movement to another part, at the end of the Rotate tab there is "Settings copy": on the first part tap "Copy this part\'s settings", then choose the second part and tap "Apply the copied settings here". Rotation, style, speed, style-mode, pulse, easing, delay and pivot are copied — the box and name stay each part\'s own.',
+      'In the Timing tab, set each part\'s start delay — with "Apply sequence" the parts start rotating one after another with a 0.2 second gap; with "All together (Sync)" all delays become zero. The delay is counted inside the 12-second loop, so the loop never breaks.',
+      'Easing is also in the Timing tab with every part: on "Soft", Swing and Pulse run like a smooth sine (slow at the edges); on "Even", at a uniform speed. A full spin always rotates at a uniform speed — easing applies only to swinging movements (Swing/Pulse). If the glow\'s movement is Pulse, its easing is also available separately at the top of the Timing tab.',
+      'In the Glow tab, a glowing layer is placed behind the logo (this layer is created, not cut from the picture): turn Glow on, choose a colour — on "Auto" the glow is made from the logo\'s own colour, or you can give your own colour — then set Intensity (how strong the glow is) and Spread (how far it reaches). For movement choose Fixed, Pulse (the glow breathes) or Slowly rotating. Glow applies only to a logo with parts.',
+      'The bottom plate (Base) is also in the Glow tab: in "Cut-out base" (default), when a rotating part lifts, the video behind shows through its place; in "No base" only the parts remain; in "Full logo below" (ghost) the original logo stays fixed below and the parts rotate on top of it — this gives a double effect.',
+      'The preview background is also in the Glow tab — Checker, Green or Black. It is only for viewing the preview; it has no effect on the export. On Checker, the logo\'s empty areas show clearly.',
+      'The light wave (Light Sweep) is also in the Glow tab: turn it on and a wave of shine keeps passing over the whole logo — just like TV channel idents. The wave shines only inside the logo\'s shape; increase/decrease its speed with the slider.',
+      'In the Parts tab list, change the layer order with the arrows (up/down) — the first part stays at the very back, the last at the very top.',
+      'If you want to keep the parts settings, save from the Save tab — it stays for 7 days for 300 coins.',
+      'The Save tab also has the Export size: the green-screen (Permanent Logo) export frames are made at 512 (Light — fast, light) or 1024 (Clear — clearer, a bit heavy). The default is 512.',
     ],
     tips: [
-      'Ghumao nazar na aye to pehle us hisay ka Rotate switch check karein — ON hona chahiye.',
-      'Gol hisay ka Flat ghumao kam nazar ata hai — us par 3D style ya 2 second wali speed rakh kar dekhein.',
-      'Tajweez ghalat box de to ghabrayein nahi — box hilana/size karna hi asal tareeqa hai; flat tasveer se har dafa 100% durust tajweez mumkin nahi hoti.',
-      'Settings save na karein to wo sirf is session ke liye hain — app band karne par khatam.',
+      'If the rotation does not show, first check that part\'s Rotate switch — it should be ON.',
+      'A round part\'s Flat rotation shows less — try the 3D style or the 2-second speed on it.',
+      'If the suggestion gives a wrong box, do not worry — moving/sizing the box is the real method; a 100% correct suggestion from a flat picture is not possible every time.',
+      'If you do not save the settings, they are only for this session — they end when the app closes.',
     ],
   ),
   'ns.reporter': ToolGuideEntry(
     title: 'Reporter',
     what:
-        'Reporter ki naam-patti (name strap) aur us ki photo lagata hai; '
-        'Teleprompter se script parh kar recording bhi yahin se hoti hai.',
+        'Places the reporter\'s name strap and photo; '
+        'Recording by reading the script from the Teleprompter also happens from here.',
     steps: [
-      'Reporter ka naam likhein aur photo lagayein.',
-      'Patti ka andaaz chunein — preview mein nazar aye gi.',
-      'Bolna mushkil ho to Teleprompter kholein: script samne chalega, parh kar record karein — recording khud clips mein shamil ho jati hai.',
+      'Write the reporter\'s name and attach a photo.',
+      'Choose the strap style — it will show in the preview.',
+      'If speaking is difficult, open the Teleprompter: the script will run in front of you, read and record — the recording joins the clips by itself.',
     ],
     tips: [
-      'Recording ke baad tasdeeq ka message tab hi ata hai jab wo asal mein clips mein shamil ho jaye.',
+      'The confirmation message after recording comes only when it has actually joined the clips.',
     ],
   ),
   'ns.audio': ToolGuideEntry(
     title: 'Audio',
     what:
-        'Khabar ki awaz ki settings — background music, Store se liye '
-        'huye sounds, aur volume.',
+        'The news voice settings — background music, sounds taken from the Store '
+        'sounds, and volume.',
     steps: [
-      'Background music chunein (apni file ya Store ki Music).',
-      'Music ka volume awaz se kam rakhein taake khabar saaf sunai de.',
-      'Jo clip ki apni awaz hai us ka volume bhi yahin se set hota hai.',
+      'Choose background music (your file or the Store\'s Music).',
+      'Keep the music volume lower than the voice so the news is heard clearly.',
+      'The volume of the clip\'s own sound is also set from here.',
     ],
     tips: [
-      'Music tez ho to voice dab jati hai — music 15–25% par rakhein.',
+      'If the music is loud the voice gets drowned — keep the music at 15–25%.',
     ],
   ),
   'ns.voice': ToolGuideEntry(
     title: 'Voice (Voiceover)',
     what:
-        'Khabar par bolna: apni awaz record karein, ya tehreer likh kar '
-        'AI awaz banwayein.',
+        'Speaking over the news: record your voice, or write the script and '
+        'create an AI voice.',
     steps: [
-      'Apni awaz: record dabayein, khabar parhein, stop karein.',
-      'AI awaz: script likhein aur awaz banwayein — bani hui awaz mehfooz (cache) rehti hai, dobara par coins nahi lagte.',
-      'Background music ka switch yahin hai — voice ke neeche music rakhna ho to on rakhein.',
-      'Sun kar check karein, phir export karein.',
+      'Your own voice: tap record, read the news, stop.',
+      'AI voice: write the script and create the voice — the created voice stays saved (cached), creating it again costs no coins.',
+      'The background music switch is right here — keep it on if you want music under the voice.',
+      'Listen and check, then export.',
     ],
     tips: [
-      'Record se pehle khamosh jagah chunein — shor awaz mein saaf ata hai.',
-      'AI awaz ki qeemat (coins) button par likhi hoti hai.',
+      'Choose a quiet place before recording — noise comes clearly in the voice.',
+      'The AI voice price (coins) is written on the button.',
     ],
   ),
   'ns.captions': ToolGuideEntry(
     title: 'Captions',
     what:
-        'Video par bolne ke sath chalne wale captions (subtitles) — andaaz '
-        'chunein, captions preview mein bhi nazar ate hain.',
+        'Captions (subtitles) that run with the speech on the video — choose the style '
+        'choose; the captions also show in the preview.',
     steps: [
-      'Captions on karein aur andaaz (style) chunein.',
-      'Font, size aur jagah set karein.',
-      'Preview chala kar dekhein captions sahi waqt par ate hain ya nahi.',
-      'Export mein captions video par pakke (burn) ho kar ayenge.',
+      'Turn captions on and choose the style.',
+      'Set the font, size and place.',
+      'Play the preview and check whether the captions come at the right time.',
+      'In the export, the captions will come burned onto the video.',
     ],
     tips: [
-      'Asal timings wale captions awaz se khud bante hain — lambi video par waqt lag sakta hai.',
-      'Caption ka rang background se alag rakhein warna parha nahi jayega.',
+      'Captions with real timings are created from the voice automatically — a long video can take time.',
+      'Keep the caption colour different from the background, otherwise it will not be readable.',
     ],
   ),
   'ns.export': ToolGuideEntry(
     title: 'Export',
-    what: 'Tayyar khabar ko video file banata hai — quality chunein aur export karein.',
+    what: 'Turns the finished news into a video file — choose the quality and export.',
     steps: [
-      'Quality chunein: 720p muft hai; 1080p/2K par ads ate hain (Pro par nahi).',
-      'Export dabayein — ads pehle ayenge, phir export shuru hoga.',
-      'Progress khatam hone dein — export ke doran app band na karein.',
-      'Bani hui video gallery mein mehfooz ho jati hai.',
+      'Choose the quality: 720p is free; 1080p/2K show ads (not for Pro).',
+      'Tap Export — ads will come first, then the export will start.',
+      'Let the progress finish — do not close the app during the export.',
+      'The created video is saved in the gallery.',
     ],
     tips: [
-      'Export 50–60% par rukta mehsoos ho to thora intezar karein — bhari hisa chal raha hota hai; app band hona ab report ho jata hai.',
-      'Kamzor phone par 720p sab se pur-sukoon rehta hai.',
+      'If the export feels stuck at 50–60%, wait a little — the heavy part is running; an app close is now reported.',
+      'On a weak phone, 720p stays the smoothest.',
     ],
   ),
 };

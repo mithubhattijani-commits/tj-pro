@@ -260,7 +260,7 @@ void main() {
       expect(find.text('Export 1080p'), findsOneWidget);
       expect(find.text('200 coins'), findsNothing);
       expect(find.text('100 coins'), findsOneWidget); // One Click only
-      expect(find.text('FREE • ads ke sath'), findsNWidgets(2));
+      expect(find.text('FREE • with ads'), findsNWidgets(2));
     });
   });
 

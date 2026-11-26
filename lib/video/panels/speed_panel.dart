@@ -30,9 +30,9 @@ class SpeedPanel extends StatelessWidget {
       if (host.proRamp == 'Custom') ..._customRampWidgets(context),
       SectionTitle('Smooth Slow-Mo (AI)'),
       const Text(
-        'RIFE AI har frame ke darmiyan naya frame banata hai '
-        '— 0.5x slow-mo bilkul smooth. Sirf ~10s tak ki '
-        'selected clip par; model pack (rife_v46) chahiye.',
+        'RIFE AI creates a new frame between every two frames '
+        '— 0.5x slow-mo perfectly smooth. Only up to ~10s of the '
+        'on the selected clip; the model pack (rife_v46) is needed.',
         style: TextStyle(color: Colors.grey, fontSize: 12),
       ),
       const SizedBox(height: 6),
@@ -41,7 +41,7 @@ class SpeedPanel extends StatelessWidget {
         child: ElevatedButton.icon(
           onPressed: host.busy ? null : host.applySlowMoAi,
           icon: const Icon(Icons.slow_motion_video),
-          label: const Text('Smooth Slow-Mo (AI) lagayein'),
+          label: const Text('Apply Smooth Slow-Mo (AI)'),
         ),
       ),
       const SizedBox(height: 8),
@@ -60,8 +60,8 @@ class SpeedPanel extends StatelessWidget {
         SectionTitle('Speed curve'),
         ..._rampPresetRail(context),
         const Text(
-          'Curve editor ke liye ramp preset "Custom" chunein — '
-          'phir 3 points ki speed yahan set hoti hai.',
+          'For the curve editor, choose the ramp preset "Custom" — '
+          'then the speed of the 3 points is set here.',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
         const SizedBox(height: 8),
@@ -73,7 +73,7 @@ class SpeedPanel extends StatelessWidget {
               host.panelTab = 'curve';
             }),
             icon: const Icon(Icons.show_chart),
-            label: const Text('Custom ramp on karein'),
+            label: const Text('Turn on custom ramp'),
           ),
         ),
         const Divider(height: 32),
@@ -190,10 +190,10 @@ class SpeedPanel extends StatelessWidget {
         ),
       ),
       const Text(
-        'Curve: pehla third Start speed, darmiyan Middle, aakhri '
+        'Curve: the first third is Start speed, the middle is Middle, the last '
         'third End speed par chalega. Graph par point ko ungli se '
-        'upar/neeche kheench kar bhi speed set hoti hai — preview '
-        'usi speed par chalta hai.',
+        'the speed can also be set by dragging up/down — the preview '
+        'plays at that speed.',
         style: TextStyle(color: Colors.grey, fontSize: 12),
       ),
       const Divider(height: 32),

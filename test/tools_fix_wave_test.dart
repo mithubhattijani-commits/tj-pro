@@ -520,7 +520,7 @@ void main() {
       final rows = coinsPriceRows(config: cfg);
       expect(row(rows, 'AI Enhance (Photo / Video)'), '40 coins');
       expect(row(rows, 'Chroma key'), 'FREE');
-      expect(row(rows, 'Voiceover'), 'Pro ke liye shamil');
+      expect(row(rows, 'Voiceover'), 'Included for Pro');
       // And it equals the service's own resolution of the key.
       final spec = PricingService.specOr(
         PricingService.keyPhotoAi,

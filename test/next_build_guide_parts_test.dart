@@ -152,11 +152,11 @@ void main() {
       await tester.tap(find.byKey(const Key('toolGuideButton-ns.logo')));
       await tester.pumpAndSettle();
       expect(find.text('Logo (Cube + Parts) — Guide'), findsOneWidget);
-      expect(find.text('Ye tool kya karta hai'), findsOneWidget);
-      expect(find.text('Kaise istemal karein — step by step'), findsOneWidget);
+      expect(find.text('What this tool does'), findsOneWidget);
+      expect(find.text('How to use — step by step'), findsOneWidget);
       // Naye (element-model) guide ka asal step — Auto tajweez.
       expect(
-        find.textContaining('Auto Hisay tajweez'),
+        find.textContaining('Suggest parts automatically'),
         findsOneWidget,
       );
     });

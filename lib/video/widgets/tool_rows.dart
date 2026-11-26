@@ -13,6 +13,7 @@ import '../../motion/motion_gallery_screen.dart';
 import '../../news/store_screen.dart';
 import '../../widgets/tool_guide.dart';
 import '../video_editor_controller.dart';
+import 'panel_controls.dart' show showClipLabelPicker;
 
 /// The three tool rails + the open panel's header, sharing the
 /// row/item builders below.
@@ -59,6 +60,8 @@ class ToolRows {
     'reverse': 've.reverse',
     'ease': 've.ease',
     'motion': 'motion',
+    'disable': 've.disable',
+    'label': 've.label',
   };
 
   /// Wraps a rail item so a long-press opens its guide. The
@@ -379,6 +382,34 @@ class ToolRows {
           },
         ),
       ),
+      // v1.16.0 G3 (A23 + C3): appended AFTER the InShot set +
+      // Motion, same as 'motion' — the InShot order is untouched.
+      (
+        'disable',
+        _toolRowItem(
+          icon: hasClip && host.clips[host.selected].disabled
+              ? Icons.visibility
+              : Icons.visibility_off,
+          label: hasClip && host.clips[host.selected].disabled
+              ? 'Enable'
+              : 'Disable',
+          onTap: (busy || !hasClip)
+              ? host.explainToolTap
+              : host.toggleSelectedClipDisabled,
+          dimmed: busy || !hasClip,
+        ),
+      ),
+      (
+        'label',
+        _toolRowItem(
+          icon: Icons.label,
+          label: 'Label',
+          onTap: (busy || !hasClip)
+              ? host.explainToolTap
+              : () => showClipLabelPicker(host),
+          dimmed: busy || !hasClip,
+        ),
+      ),
       // Build 5 (v1.5.7, user ruling): NO News tool here — news
       // ka kaam SIRF News Studio mein hota hai. The Video Editor's
       // news template/text/logo panels are removed; their whole
@@ -548,7 +579,7 @@ class ToolRows {
       child: Row(
         children: [
           IconButton(
-            tooltip: 'Cancel — panel ki changes wapas',
+            tooltip: 'Cancel — revert the panel changes',
             onPressed: host.cancelPanel,
             icon: const Icon(Icons.close, color: Colors.white),
           ),

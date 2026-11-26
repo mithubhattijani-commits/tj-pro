@@ -40,8 +40,8 @@ class StabilizerPanel extends StatelessWidget {
       ]),
       const SizedBox(height: 8),
       const Text(
-        'Stabilization EXPORT par apply hoti hai (vidstab two-pass) '
-        '— preview mein nahi dikhegi.',
+        'Stabilization applies at EXPORT (vidstab two-pass) '
+        '— will not show in the preview.',
         style: TextStyle(color: Colors.grey, fontSize: 12),
       ),
       const Divider(height: 32),

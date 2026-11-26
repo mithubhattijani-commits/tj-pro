@@ -135,7 +135,7 @@ void main() {
       expect(engine.underPressure, isTrue);
       expect(engine.pressureEvents, 1);
       expect(engine.config.value.tier, DeviceTier.mid);
-      expect(engine.diagnosticsLine, contains('dabao'));
+      expect(engine.diagnosticsLine, contains('pressure'));
 
       PerformanceEngine.availableRamProbeForTest = () async => 4096;
       expect(await engine.recheckPressure(), isTrue);

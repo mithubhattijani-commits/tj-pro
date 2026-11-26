@@ -33,7 +33,7 @@ class SplitPanel extends StatelessWidget {
         ),
         iconChoiceItem(host, 
           icon: Icons.horizontal_rule,
-          label: 'Darmiyan se',
+          label: 'From the middle',
           selected: !host.snapOn,
           onTap: () => host.update(() => host.snapOn = false),
         ),
@@ -44,7 +44,7 @@ class SplitPanel extends StatelessWidget {
         child: ElevatedButton.icon(
           onPressed: host.busy || host.clips.isEmpty ? null : host.splitSelectedClip,
           icon: const Icon(Icons.call_split),
-          label: const Text('Split karein'),
+          label: const Text('Split'),
         ),
       ),
       SectionTitle('Multi split'),
@@ -70,7 +70,7 @@ class SplitPanel extends StatelessWidget {
     final start = clip.trimStart;
     final step = clip.effectiveDuration / n;
     if (step < 0.3) {
-      host.setStatus('Clip bohat chhoti hai $n hisson ke liye.');
+      host.setStatus('The clip is too short for $n parts.');
       return;
     }
     host.pushHistory();
@@ -85,7 +85,7 @@ class SplitPanel extends StatelessWidget {
       host.clips.replaceRange(idx, idx + 1, parts);
       host.selected = idx;
     });
-    host.setStatus('Multi split — $n clips ban gaye.');
+    host.setStatus('Multi split — $n clips created.');
     unawaited(host.loadPreview());
   }
   @override
