@@ -96,6 +96,7 @@ import 'fx_pack.dart';
 import 'logo_key_service.dart';
 import '../news/logo_parts.dart';
 import 'logo_loop_service.dart';
+import 'logo_maker_export_service.dart';
 import 'logo_parts_service.dart';
 import 'user_font_service.dart';
 import 'pro_editor.dart';
@@ -1482,6 +1483,37 @@ class ReelExportService {
       // stack (the capsule still renders, unless also removed).
       final logoHidden =
           overrideFor(overrides, NewsElement.logo).hidden;
+      // v1.20.0 (Logo Maker export wiring): when the channel's
+      // Logo Maker settings exist AND differ from the maker's
+      // defaults, the export logo IS the maker's styled render
+      // — its frames through the same image2 slot the cube /
+      // parts loops use, or its styled still through the still
+      // slot, at the same position and timing. The block below
+      // only ever ASSIGNS framesDir/stillPath and suppresses
+      // the historic sources; with default/absent settings it
+      // is skipped wholesale and every line after it runs
+      // exactly as before (byte-identical graph — pinned by
+      // the v1.20.0 parity tests). A removed logo (logoHidden)
+      // is never resurrected by the maker.
+      final makerSettings = logoMakerExportSettings(preset);
+      LogoMakerExportLogo? makerLogo;
+      if (makerSettings != null && !logoHidden) {
+        makerLogo = await LogoMakerExportService.resolveForExport(
+          preset: preset,
+          settings: makerSettings,
+          dir: dir,
+          stamp: stamp,
+        );
+        if (makerLogo == null) {
+          notes.add(
+            'Logo Maker look could not be rendered — exporting '
+            'with the standard logo.',
+          );
+        } else {
+          framesDir = makerLogo.framesDir;
+          stillPath = makerLogo.stillPath;
+        }
+      }
       // Build 12 (point #13): a logo VIDEO source resolves
       // FIRST — its keyed frames (the same frames the preview
       // flipbook plays) feed the graph's frames input; without
@@ -1491,6 +1523,7 @@ class ReelExportService {
       // every other logo source below.
       var videoLogoResolved = false;
       if (!logoHidden &&
+          makerLogo == null &&
           preset.logoMediaKind == 'video' &&
           preset.logoVideoPath != null) {
         videoLogoResolved = true;
@@ -1532,12 +1565,14 @@ class ReelExportService {
           );
         }
       }
-      final mov =
-          (logoHidden || videoLogoResolved) ? null : await svc.cachedLogoMov();
+      final mov = (logoHidden || videoLogoResolved || makerLogo != null)
+          ? null
+          : await svc.cachedLogoMov();
       if (mov != null) {
         movPath = mov.path;
       } else if (!logoHidden &&
           !videoLogoResolved &&
+          makerLogo == null &&
           preset.logoPath != null &&
           await File(preset.logoPath!).exists()) {
         // v1.5.1 (#47): rotation OFF keeps the picked logo a
@@ -1772,6 +1807,61 @@ class ReelExportService {
   }) async {
     final logoOut = p.join(dir.path, 'reel_logo_$stamp.mp4');
     try {
+      // v1.20.0 (Logo Maker export wiring): the same maker
+      // rule as the parity pass — non-default Logo Maker
+      // settings style THIS overlay too, through the same two
+      // commands and the same bug rect (frames via the loop
+      // command, a styled still via the still command). A
+      // failed maker pass falls through to the standard
+      // sources below with a note; default/absent settings
+      // skip the block and nothing here changes.
+      final makerSettings = logoMakerExportSettings(preset);
+      if (makerSettings != null) {
+        final makerLogo = await LogoMakerExportService.resolveForExport(
+          preset: preset,
+          settings: makerSettings,
+          dir: dir,
+          stamp: stamp,
+        );
+        if (makerLogo == null) {
+          notes.add(
+            'Logo Maker look could not be rendered — exporting '
+            'with the standard logo.',
+          );
+        } else {
+          final makerCmd = makerLogo.framesDir != null
+              ? FfmpegService.logoLoopOverlayCommand(
+                  input: input,
+                  output: logoOut,
+                  width: width,
+                  height: height,
+                  topRibbonEnabled: topRibbonEnabled,
+                  framesDir: makerLogo.framesDir,
+                  videoBitrateKbps: settings.videoBitrateKbps,
+                )
+              : FfmpegService.logoStillOverlayCommand(
+                  input: input,
+                  output: logoOut,
+                  width: width,
+                  height: height,
+                  topRibbonEnabled: topRibbonEnabled,
+                  logoPath: makerLogo.stillPath!,
+                  videoBitrateKbps: settings.videoBitrateKbps,
+                );
+          final makerRes = await _runStage(
+            makerCmd,
+            0.70,
+            0.78,
+            expectedMs: reelMs,
+            onProgress: onProgress,
+          );
+          if (makerRes.ok) return logoOut;
+          notes.add(
+            'Logo Maker logo pass failed — exporting with the '
+            'standard logo.',
+          );
+        }
+      }
       // Build 12 (point #13): a logo VIDEO source — keyed
       // frames when they exist (the preview flipbook's own
       // frames), a keyed still when only the colour is known,

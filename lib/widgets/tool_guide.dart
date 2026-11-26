@@ -1196,7 +1196,8 @@ const Map<String, ToolGuideEntry> _nsGuides = {
     ],
     tips: [
       'The 3D Cube and the Parts (elements) controls are not in this maker — they stay in the News Studio Logo tool, exactly as before. Nothing was removed.',
-      'Honest note: the preset, material, depth and spin settings style the preview inside this maker and are saved with the channel. The video export still renders the logo with the Logo tool\'s cube/parts engines — the maker\'s own 3D look reaches the export in a later build.',
+      'Export: when these settings differ from the maker\'s defaults, the video export uses this maker\'s styled logo — depth, material, bevel, shadow and glow, spinning flat at the speed set here, or held as a styled still when the spin is off — in the logo\'s usual place, instead of the cube/parts/default logo for that export. Settings left at the defaults keep the standard export logo, exactly as before.',
+      'One honest limit: at the slowest spin speeds the export loop is capped at 20 seconds, so there the exported spin can turn a little faster than this preview shows.',
       'A very high Depth on a weak phone can make the preview heavy — the maker now renders the still look once and only spins that picture, so normal use stays smooth.',
     ],
   ),
