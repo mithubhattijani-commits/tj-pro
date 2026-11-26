@@ -146,7 +146,7 @@ class _ExportScreenState extends State<ExportScreen> {
   String get _sizeEstimate {
     final label = _settings.estimatedSizeLabel(_durationSec);
     if (label == null) {
-      return 'Size estimate: duration maloom nahi — pehle voiceover '
+      return 'Size estimate: duration unknown — create the voiceover first '
           'banayein ya subtitles hon.';
     }
     return 'Estimated size: $label '
@@ -202,17 +202,17 @@ class _ExportScreenState extends State<ExportScreen> {
         if (!mounted) return;
         setState(() {
           _error = spendResult.error == PricingService.errorProRequired
-              ? 'Chroma key sirf Pro users ke liye hai — chroma '
-                  'band karke export karein ya Pro lein.'
+              ? 'Chroma key is for Pro users only — turn chroma '
+                  'turn it off and export, or get Pro.'
               : spendResult.error == PricingService.errorAdNotCompleted
-                  ? 'Chroma key ke liye ad mukammal nahi hua — '
-                      'export shuru nahi hua.'
+                  ? 'The ad for chroma key did not complete — '
+                      'the export did not start.'
                   : spendResult.error == 'insufficient_balance'
-                      ? 'Coins kam hain — is export ke liye '
-                          '$_exportCostCoins coins chahiye '
+                      ? 'Not enough coins — for this export '
+                          '$_exportCostCoins coins are needed '
                           '(Chroma key). Watch Ads se kamayein.'
-                      : 'Coins nahi kat sake (${spendResult.error}) '
-                          '— export shuru nahi hua.';
+                      : 'Coins could not be charged (${spendResult.error}) '
+                          '— the export did not start.';
           _failedStep = 'Coins';
         });
         return;
@@ -222,7 +222,7 @@ class _ExportScreenState extends State<ExportScreen> {
       _exporting = true;
       _cancelRequested = false;
       _progress = 0;
-      _status = 'Export shuru ho raha hai…';
+      _status = 'Export is starting…';
       _error = null;
       _failedStep = null;
       _notes = const [];
@@ -263,8 +263,8 @@ class _ExportScreenState extends State<ExportScreen> {
       setState(() {
         _exporting = false;
         _progress = 0;
-        _status = 'Export fail ho gaya.';
-        _error = 'Export ke dauraan khata aa gaya: $e';
+        _status = 'Export failed.';
+        _error = 'An error occurred during export: $e';
         _failedStep = 'Export';
       });
       return;
@@ -282,15 +282,15 @@ class _ExportScreenState extends State<ExportScreen> {
       _exporting = false;
       _progress = result.success ? 1.0 : 0;
       _status = _cancelRequested
-          ? 'Export cancel kar diya gaya.'
+          ? 'Export cancelled.'
           : result.success
-              ? 'Gallery mein save ho gaya.'
-              : (result.error ?? 'Export fail ho gaya.');
+              ? 'Saved to the gallery.'
+              : (result.error ?? 'Export failed.');
       _notes = result.notes;
       _savedPath = result.outputPath;
       _savedSizeBytes = size;
       _error = _cancelRequested
-          ? 'Export cancel kar diya gaya.'
+          ? 'Export cancelled.'
           : result.success
               ? null
               : result.error;
@@ -319,7 +319,7 @@ class _ExportScreenState extends State<ExportScreen> {
     if (!_exporting) return;
     setState(() {
       _cancelRequested = true;
-      _status = 'Export cancel ho raha hai…';
+      _status = 'Cancelling export…';
     });
     // Cancels the in-flight ffmpeg pass; the export loop also checks
     // the flag between stages and stops there.
@@ -334,7 +334,7 @@ class _ExportScreenState extends State<ExportScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('File khol nahi saki: $e')),
+          SnackBar(content: Text('The file could not be opened: $e')),
         );
       }
     }
@@ -350,7 +350,7 @@ class _ExportScreenState extends State<ExportScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Share nahi hua: $e')),
+          SnackBar(content: Text('Could not share: $e')),
         );
       }
     }
@@ -360,7 +360,7 @@ class _ExportScreenState extends State<ExportScreen> {
     if (_posterBusy) return;
     setState(() {
       _posterBusy = true;
-      _posterMessage = 'Poster render ho raha hai…';
+      _posterMessage = 'Rendering the poster…';
       _posterPath = null;
     });
     final result = await PosterExportService.renderPoster(
@@ -372,7 +372,7 @@ class _ExportScreenState extends State<ExportScreen> {
     if (!result.success || result.file == null) {
       setState(() {
         _posterBusy = false;
-        _posterMessage = result.error ?? 'Poster render nahi hua.';
+        _posterMessage = result.error ?? 'The poster did not render.';
       });
       return;
     }
@@ -382,8 +382,8 @@ class _ExportScreenState extends State<ExportScreen> {
       _posterBusy = false;
       _posterPath = result.file!.path;
       _posterMessage = saved.ok
-          ? 'Poster gallery mein save ho gaya (${_posterSize.label}).'
-          : 'Poster bana, gallery save nahi hua: ${saved.error}';
+          ? 'Poster saved in the gallery (${_posterSize.label}).'
+          : 'Poster created, gallery save failed: ${saved.error}';
     });
   }
 
@@ -395,7 +395,7 @@ class _ExportScreenState extends State<ExportScreen> {
     if (!mounted) return;
     if (!result.ok) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Share nahi hua: ${result.error}')),
+        SnackBar(content: Text('Share failed: ${result.error}')),
       );
     }
   }
@@ -572,7 +572,7 @@ class _ExportScreenState extends State<ExportScreen> {
                   ),
                   child: Text(
                     _exporting
-                        ? 'Export ho raha hai…'
+                        ? 'Exporting…'
                         : _exportCostCoins > 0
                             ? 'Export • ${_settings.qualityLabel} • '
                                 '$_exportCostCoins coins'
@@ -614,8 +614,8 @@ class _ExportScreenState extends State<ExportScreen> {
             const SizedBox(height: 12),
             Text(
               _failedStep != null
-                  ? 'Fail hua — step: $_failedStep'
-                  : 'Export fail ho gaya.',
+                  ? 'Failed — step: $_failedStep'
+                  : 'Export failed.',
               style: TextStyle(
                 color: Colors.red[300],
                 fontWeight: FontWeight.bold,
@@ -628,7 +628,7 @@ class _ExportScreenState extends State<ExportScreen> {
             OutlinedButton(
               key: const Key('retryExportButton'),
               onPressed: _exporting ? null : _export,
-              child: const Text('Retry karein'),
+              child: const Text('Retry'),
             ),
           ],
           if (_savedPath != null) ...[
@@ -655,7 +655,7 @@ class _ExportScreenState extends State<ExportScreen> {
                   child: OutlinedButton(
                     key: const Key('openExportedButton'),
                     onPressed: _openSaved,
-                    child: const Text('Open karein'),
+                    child: const Text('Open'),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -663,7 +663,7 @@ class _ExportScreenState extends State<ExportScreen> {
                   child: OutlinedButton(
                     key: const Key('shareExportedButton'),
                     onPressed: _shareSaved,
-                    child: const Text('Share karein'),
+                    child: const Text('Share'),
                   ),
                 ),
               ],
@@ -687,8 +687,8 @@ class _ExportScreenState extends State<ExportScreen> {
           ),
           const SizedBox(height: 4),
           const Text(
-            'Current template frame as a poster PNG — gallery mein save '
-            'hota hai, share bhi ho sakta hai.',
+            'Current template frame as a poster PNG — saved in the gallery '
+            'it is saved; it can also be shared.',
             style: TextStyle(color: Colors.grey, fontSize: 12),
           ),
           const SizedBox(height: 8),
@@ -717,7 +717,7 @@ class _ExportScreenState extends State<ExportScreen> {
                   key: const Key('exportPosterButton'),
                   onPressed: _posterBusy ? null : _exportPoster,
                   child: Text(
-                    _posterBusy ? 'Poster ban raha hai…' : 'Poster export',
+                    _posterBusy ? 'Creating the poster…' : 'Poster export',
                   ),
                 ),
               ),
@@ -727,7 +727,7 @@ class _ExportScreenState extends State<ExportScreen> {
                   child: OutlinedButton(
                     key: const Key('sharePosterButton'),
                     onPressed: _sharePoster,
-                    child: const Text('Poster share karein'),
+                    child: const Text('Share poster'),
                   ),
                 ),
               ],
@@ -749,11 +749,11 @@ class _ExportScreenState extends State<ExportScreen> {
           ],
           const Divider(height: 32),
           const Text(
-            'Preview renders 720×1280 tak capped hain; '
-            'project mein zyada se zyada 20 clips; ticker export mein '
-            'static rehta hai (scrolling ticker deferred hai — renderer '
-            'mein ticker-strip output nahi hai); 2K/H.265 device codec '
-            'check ke baghair nahi milte, is liye H.264 hi use hota hai.',
+            'Previews render capped at 720×1280; '
+            'at most 20 clips in the project; in the export the ticker '
+            'stays static (the scrolling ticker is deferred — the renderer '
+            'has no ticker-strip output); 2K/H.265 without a device codec '
+            'check are not given, so H.264 is used.',
             style: TextStyle(color: Colors.grey, fontSize: 11),
           ),
         ],

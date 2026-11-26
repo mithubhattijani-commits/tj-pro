@@ -111,10 +111,10 @@ class _CaptionTranslatorScreenState extends State<CaptionTranslatorScreen> {
         _controllers =
             segments.map((s) => TextEditingController(text: s.text)).toList();
         _translated = false;
-        _status = '${segments.length} lines load ho gaye.';
+        _status = '${segments.length} lines loaded.';
       });
     } catch (_) {
-      _showMessage('SRT mein koi caption nahi mila — dobara check karein.');
+      _showMessage('No caption found in the SRT — check again.');
     }
   }
 
@@ -128,13 +128,13 @@ class _CaptionTranslatorScreenState extends State<CaptionTranslatorScreen> {
       final bytes = await file.readAsBytes();
       _loadFromSrtText(utf8.decode(bytes));
     } catch (e) {
-      _showMessage('SRT file nahi khuli: $e');
+      _showMessage('SRT file did not open: $e');
     }
   }
 
   Future<void> _translate() async {
     if (_segments.isEmpty) {
-      _showMessage('Pehle SRT paste karein ya file chunein.');
+      _showMessage('Paste the SRT first or choose a file.');
       return;
     }
     if (_busy) return;
@@ -142,7 +142,7 @@ class _CaptionTranslatorScreenState extends State<CaptionTranslatorScreen> {
       _busy = true;
       _done = 0;
       _total = _segments.length;
-      _status = 'Translation model check ho raha hai… (pehli dafa ~30 MB download hota hai)';
+      _status = 'Checking the translation model… (the first time ~30 MB downloads)';
     });
     try {
       await CaptionTranslatorService.ensureModels(
@@ -158,7 +158,7 @@ class _CaptionTranslatorScreenState extends State<CaptionTranslatorScreen> {
             setState(() {
               _done = done;
               _total = total;
-              _status = 'Translate ho raha hai… $done/$total';
+              _status = 'Translating… $done/$total';
             });
           }
         },
@@ -170,13 +170,13 @@ class _CaptionTranslatorScreenState extends State<CaptionTranslatorScreen> {
         }
         _busy = false;
         _translated = true;
-        _status = 'Translate ho gaya — kisi bhi line ko edit kar sakte hain.';
+        _status = 'Translated — you can edit any line.';
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _busy = false;
-        _status = 'Translate nahi hua: $e';
+        _status = 'Translation failed: $e';
       });
     }
   }
@@ -195,7 +195,7 @@ class _CaptionTranslatorScreenState extends State<CaptionTranslatorScreen> {
 
   Future<void> _saveTranslated(String kind) async {
     if (!_translated) {
-      _showMessage('Pehle translate karein.');
+      _showMessage('Translate first.');
       return;
     }
     final segments = _currentTranslated();
@@ -219,9 +219,9 @@ class _CaptionTranslatorScreenState extends State<CaptionTranslatorScreen> {
         fileName,
         utf8.encode(content),
       );
-      _showMessage('$kind Download folder mein save ho gaya:\n$path');
+      _showMessage('$kind saved to the Downloads folder:\n$path');
     } catch (e) {
-      _showMessage('$kind save nahi hua: $e');
+      _showMessage('$kind could not be saved: $e');
     }
   }
 
@@ -266,7 +266,7 @@ class _CaptionTranslatorScreenState extends State<CaptionTranslatorScreen> {
             ),
             const Text(
               'On-device ML Kit translation — no server, no coins. Model '
-              'pehli dafa ~30 MB download hota hai, phir offline chalta hai.',
+              'the first time ~30 MB downloads, then it runs offline.',
               style: TextStyle(color: Colors.grey, fontSize: 12),
             ),
             const SizedBox(height: 12),
@@ -277,7 +277,7 @@ class _CaptionTranslatorScreenState extends State<CaptionTranslatorScreen> {
                 maxLines: 6,
                 minLines: 4,
                 decoration: const InputDecoration(
-                  hintText: 'SRT text yahan paste karein…',
+                  hintText: 'Paste SRT text here…',
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -289,7 +289,7 @@ class _CaptionTranslatorScreenState extends State<CaptionTranslatorScreen> {
                       key: const Key('loadSrtButton'),
                       onPressed: () =>
                           _loadFromSrtText(_srtController.text),
-                      child: const Text('SRT load karein'),
+                      child: const Text('Load SRT'),
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -298,15 +298,15 @@ class _CaptionTranslatorScreenState extends State<CaptionTranslatorScreen> {
                       key: const Key('pickSrtButton'),
                       onPressed: _pickSrtFile,
                       icon: const Icon(Icons.upload_file, size: 18),
-                      label: const Text('.srt file chunein'),
+                      label: const Text('Choose a .srt file'),
                     ),
                   ),
                 ],
               ),
             ] else ...[
               Text(
-                '${_segments.length} lines — timings wahi rehte hain, '
-                'sirf text translate hota hai.',
+                '${_segments.length} lines — the timings stay the same, '
+                'only the text is translated.',
                 style: const TextStyle(color: Colors.grey, fontSize: 12),
               ),
               const SizedBox(height: 8),
@@ -325,7 +325,7 @@ class _CaptionTranslatorScreenState extends State<CaptionTranslatorScreen> {
                           ),
                         )
                       : const Icon(Icons.translate),
-                  label: Text(_busy ? 'Translate ho raha hai…' : 'Translate karein'),
+                  label: Text(_busy ? 'Translating…' : 'Translate'),
                   style: FilledButton.styleFrom(
                     backgroundColor: const Color(0xFF7C3AED),
                     padding: const EdgeInsets.symmetric(vertical: 14),
@@ -366,7 +366,7 @@ class _CaptionTranslatorScreenState extends State<CaptionTranslatorScreen> {
                           controller: _controllers[index],
                           maxLines: 2,
                           decoration: const InputDecoration(
-                            labelText: 'Translated line (edit kar sakte hain)',
+                            labelText: 'Translated line (you can edit)',
                             border: OutlineInputBorder(),
                           ),
                         ),
@@ -385,7 +385,7 @@ class _CaptionTranslatorScreenState extends State<CaptionTranslatorScreen> {
                       style: FilledButton.styleFrom(
                         backgroundColor: const Color(0xFF7C3AED),
                       ),
-                      child: const Text('Translated SRT save karein'),
+                      child: const Text('Save translated SRT'),
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -396,7 +396,7 @@ class _CaptionTranslatorScreenState extends State<CaptionTranslatorScreen> {
                       style: FilledButton.styleFrom(
                         backgroundColor: const Color(0xFF7C3AED),
                       ),
-                      child: const Text('Translated ASS save karein'),
+                      child: const Text('Save translated ASS'),
                     ),
                   ),
                 ],
@@ -410,7 +410,7 @@ class _CaptionTranslatorScreenState extends State<CaptionTranslatorScreen> {
                       ? () => Navigator.of(context).pop(_currentTranslated())
                       : null,
                   child: const Text(
-                    'Caption Studio mein dual-language ke tor par lagayein',
+                    'Apply as dual-language in Caption Studio',
                   ),
                 ),
               ),

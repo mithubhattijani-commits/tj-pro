@@ -363,7 +363,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 12),
                 const Text(
-                  'Guest coins login par save rehte hain '
+                  'Guest coins stay saved on login '
                   '(anon → linked).',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: Colors.grey, fontSize: 13),

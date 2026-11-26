@@ -68,33 +68,33 @@ Future<CaptionAlignmentOutcome> alignProjectCaptionsToVoiceover(
   if (voiceoverPath == null || voiceoverPath.isEmpty) {
     return const CaptionAlignmentOutcome(
       applied: false,
-      message: 'Pehle voiceover banayein — asal timings usi se aayenge.',
+      message: 'Create the voiceover first — the real timings come from it.',
     );
   }
   if (!File(voiceoverPath).existsSync()) {
     return const CaptionAlignmentOutcome(
       applied: false,
-      message: 'Voiceover file nahi mili — dobara voiceover banayein.',
+      message: 'Voiceover file not found — create the voiceover again.',
     );
   }
   final duration = project.voiceoverDurationSec;
   if (duration == null || duration <= 0) {
     return const CaptionAlignmentOutcome(
       applied: false,
-      message: 'Voiceover ki length maloom nahi — pehle Sync karein.',
+      message: 'Voiceover length is unknown — Sync first.',
     );
   }
   if (project.subtitles.isEmpty) {
     return const CaptionAlignmentOutcome(
       applied: false,
-      message: 'Pehle subtitles banayein (tehreer se).',
+      message: 'Create subtitles first (from the script).',
     );
   }
   final scriptWords = captionScriptWordsOf(project);
   if (scriptWords.isEmpty) {
     return const CaptionAlignmentOutcome(
       applied: false,
-      message: 'Subtitle lines khaali hain — pehle text likhein.',
+      message: 'Subtitle lines are empty — write the text first.',
     );
   }
   // Same language rule as the Caption Studio's tehreerLangOf.
@@ -110,14 +110,14 @@ Future<CaptionAlignmentOutcome> alignProjectCaptionsToVoiceover(
   } catch (e) {
     return CaptionAlignmentOutcome(
       applied: false,
-      message: 'Whisper transcription nahi ho saki: $e',
+      message: 'Whisper transcription failed: $e',
     );
   }
   if (timed.isEmpty) {
     return const CaptionAlignmentOutcome(
       applied: false,
       message:
-          'Whisper se koi word timing nahi mila — estimate timings hi rahenge.',
+          'No word timing was found from Whisper — the estimate timings will remain.',
     );
   }
   final alignment = ScriptAligner.align(
@@ -132,8 +132,8 @@ Future<CaptionAlignmentOutcome> alignProjectCaptionsToVoiceover(
     return CaptionAlignmentOutcome(
       applied: false,
       message:
-          'Match kamzor hai (${(alignment.matchRate * 100).round()}% words mile) '
-          '— estimate timings hi rahenge. Voiceover saaf ho to dobara try karein.',
+          'The match is weak (${(alignment.matchRate * 100).round()}% words found) '
+          '— the estimate timings will remain. If the voiceover is clear, try again.',
       matchRate: alignment.matchRate,
       matchedWords: alignment.matchedCount,
       totalWords: alignment.totalCount,
@@ -147,7 +147,7 @@ Future<CaptionAlignmentOutcome> alignProjectCaptionsToVoiceover(
   if (retimed.isEmpty) {
     return const CaptionAlignmentOutcome(
       applied: false,
-      message: 'Timings lag nahi sakein — purani timings mehfooz hain.',
+      message: 'Timings could not be applied — the old timings are safe.',
     );
   }
   project.subtitles = retimed;
@@ -156,8 +156,8 @@ Future<CaptionAlignmentOutcome> alignProjectCaptionsToVoiceover(
   return CaptionAlignmentOutcome(
     applied: true,
     message:
-        'Asal timings lag gaye — ${alignment.matchedCount}/${alignment.totalCount} '
-        'words Whisper ke real waqt par (${(alignment.matchRate * 100).round()}% match).',
+        'Real timings applied — ${alignment.matchedCount}/${alignment.totalCount} '
+        'words at Whisper\'s real timing (${(alignment.matchRate * 100).round()}% match).',
     matchRate: alignment.matchRate,
     matchedWords: alignment.matchedCount,
     totalWords: alignment.totalCount,

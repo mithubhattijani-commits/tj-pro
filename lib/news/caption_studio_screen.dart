@@ -218,7 +218,7 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
       _selectedLine = 0;
     });
     _scheduleSave();
-    _showMessage('Draft restore ho gaya.');
+    _showMessage('Draft restored.');
   }
 
   Future<void> _dismissDraft() async {
@@ -250,11 +250,11 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
   void _syncWithVoiceover() {
     final duration = _p.voiceoverDurationSec;
     if (duration == null || duration <= 0) {
-      _showMessage('Pehle voiceover banayein — us ki length se sync hoga.');
+      _showMessage('Create the voiceover first — sync will use its length.');
       return;
     }
     if (_e.lines.isEmpty) {
-      _showMessage('Pehle subtitles banayein (tehreer se).');
+      _showMessage('Create subtitles first (from the script).');
       return;
     }
     setState(() {
@@ -266,7 +266,7 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
     });
     _scheduleSave();
     _showMessage(
-      'Subtitles voiceover se sync ho gaye (${duration.toStringAsFixed(1)}s).',
+      'Subtitles synced with the voiceover (${duration.toStringAsFixed(1)}s).',
     );
   }
 
@@ -298,7 +298,7 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
       }
       _showMessage(outcome.message);
     } catch (e) {
-      if (mounted) _showMessage('Asal timings nahi lag sakein: $e');
+      if (mounted) _showMessage('Real timings could not be applied: $e');
     } finally {
       if (mounted) setState(() => _alignBusy = false);
     }
@@ -348,7 +348,7 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
         if (!mounted) return;
         setState(() {
           _voiceInitialising = false;
-          _voiceError = 'Voice play nahi hui: $e';
+          _voiceError = 'Voice could not play: $e';
         });
         return;
       }
@@ -432,7 +432,7 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
 
   Future<void> _exportTextFile(String kind) async {
     if (_e.lines.isEmpty) {
-      _showMessage('Pehle subtitles banayein (tehreer se).');
+      _showMessage('Create subtitles first (from the script).');
       return;
     }
     final segments = _toCaptionSegments();
@@ -457,15 +457,15 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
         fileName,
         utf8.encode(content),
       );
-      _showMessage('$kind Download folder mein save ho gaya:\n$path');
+      _showMessage('$kind saved to the Downloads folder:\n$path');
     } catch (e) {
-      _showMessage('$kind save nahi hua: $e');
+      _showMessage('$kind could not be saved: $e');
     }
   }
 
   Future<void> _copyText() async {
     if (_e.lines.isEmpty) {
-      _showMessage('Pehle subtitles banayein (tehreer se).');
+      _showMessage('Create subtitles first (from the script).');
       return;
     }
     await Clipboard.setData(
@@ -476,7 +476,7 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
         ),
       ),
     );
-    _showMessage('Captions copy ho gaye (clipboard).');
+    _showMessage('Captions copied (clipboard).');
   }
 
   Future<void> _pickBurnVideo() async {
@@ -489,24 +489,24 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
       if (path == null) return;
       setState(() => _burnVideoPath = path);
     } catch (e) {
-      _showMessage('Video pick nahi hui: $e');
+      _showMessage('Video could not be picked: $e');
     }
   }
 
   Future<void> _burnIn() async {
     final videoPath = _burnVideoPath;
     if (videoPath == null) {
-      _showMessage('Pehle video chunein (Burn-in ke liye).');
+      _showMessage('Choose a video first (for Burn-in).');
       return;
     }
     if (_e.lines.isEmpty) {
-      _showMessage('Pehle subtitles banayein (tehreer se).');
+      _showMessage('Create subtitles first (from the script).');
       return;
     }
     setState(() {
       _burnBusy = true;
       _burnProgress = 0;
-      _status = 'Burn-in chal raha hai…';
+      _status = 'Burn-in in progress…';
     });
     try {
       final ass = _buildAss();
@@ -524,12 +524,12 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
         _burnBusy = false;
         _burnProgress = result.success ? 1.0 : 0.0;
         _status = result.success
-            ? 'Burn-in ho gaya: ${result.outputPath}'
+            ? 'Burn-in done: ${result.outputPath}'
             : result.cancelled
-                ? 'Burn-in cancel kar diya gaya.'
+                ? 'Burn-in cancelled.'
                 : 'Burn-in fail: ${result.error}';
       });
-      if (result.success) _showMessage('Captioned video save ho gaya.');
+      if (result.success) _showMessage('Captioned video saved.');
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -559,7 +559,7 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
       _p.captionDualLanguage = true;
     });
     _scheduleSave();
-    _showMessage('Translations lag gaye (dual-language ON).');
+    _showMessage('Translations applied (dual-language ON).');
   }
 
   Future<void> _addLineDialog() async {
@@ -567,12 +567,12 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
     final text = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Nayi caption line'),
+        title: const Text('New caption line'),
         content: TextField(
           controller: controller,
           autofocus: true,
           decoration: const InputDecoration(
-            hintText: 'Line likhein…',
+            hintText: 'Write the line…',
             border: OutlineInputBorder(),
           ),
         ),
@@ -583,7 +583,7 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
           ),
           FilledButton(
             onPressed: () => Navigator.of(ctx).pop(controller.text),
-            child: const Text('Add karein'),
+            child: const Text('Add'),
           ),
         ],
       ),
@@ -769,7 +769,7 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'Draft mila — pichli editing session save hui thi.',
+                    'Draft found — a previous editing session was saved.',
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 8),
@@ -783,11 +783,11 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
                         style: FilledButton.styleFrom(
                           backgroundColor: const Color(0xFF7C3AED),
                         ),
-                        child: const Text('Draft restore karein'),
+                        child: const Text('Restore draft'),
                       ),
                       TextButton(
                         onPressed: _dismissDraft,
-                        child: const Text('Draft hatayein'),
+                        child: const Text('Delete draft'),
                       ),
                     ],
                   ),
@@ -833,8 +833,8 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
               else
                 const Center(
                   child: Text(
-                    'Abhi koi subtitles nahi — pehle News Maker / AI News '
-                    'Maker mein tehreer se subtitles banayein.',
+                    'No subtitles yet — first in News Maker / AI News '
+                    'Maker, create subtitles from the script.',
                     style: TextStyle(color: Colors.grey),
                     textAlign: TextAlign.center,
                   ),
@@ -844,7 +844,7 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
                 bottom: 8,
                 child: project.voiceoverPath == null
                     ? const Text(
-                        'Voiceover nahi — scrub slider se highlight dekhein.',
+                        'No voiceover — see the highlight with the scrub slider.',
                         style: TextStyle(color: Colors.grey, fontSize: 12),
                       )
                     : Row(
@@ -896,7 +896,7 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
           ),
           Text(
             'Scrub: ${_previewPosition.toStringAsFixed(1)}s / ${totalDuration.toStringAsFixed(1)}s — '
-            'bola hua lafz green (#3AEC70) hota hai.',
+            'the spoken word turns green (#3AEC70).',
             style: const TextStyle(color: Colors.grey, fontSize: 12),
           ),
         ],
@@ -1094,14 +1094,14 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
           ],
         ),
         const Text(
-          'Bebas / Anton / Montserrat / Poppins app mein bundle nahi — '
-          'preview mein system font dikhega, ASS mein family name likha jayega.',
+          'Bebas / Anton / Montserrat / Poppins are not bundled in the app — '
+          'a system font will show in the preview; the family name is written in the ASS.',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
         const Text(
-          'Urdu fonts: Jameel Noori (house font) ke saath Noto Nastaliq, '
-          'Gulzar aur Noto Naskh — ye google_fonts se runtime download + '
-          'cache hote hain (font registry: UrduFonts).',
+          'Urdu fonts: along with Jameel Noori (house font), Noto Nastaliq, '
+          'Gulzar and Noto Naskh — these are downloaded at runtime from google_fonts + '
+          'are downloaded at runtime from google_fonts and cached (font registry: UrduFonts).',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
         SwitchListTile(
@@ -1132,7 +1132,7 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
           key: const Key('dualLanguageSwitch'),
           title: const Text('Dual-language captions'),
           subtitle: const Text(
-            'Har line ke neeche doosri zuban ki line (translator se ya haath se).',
+            'Under each line, the other language\'s line (from the translator or by hand).',
           ),
           value: project.captionDualLanguage,
           onChanged: (v) {
@@ -1167,7 +1167,7 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
             IconButton(
               key: const Key('captionAddButton'),
               icon: const Icon(Icons.add),
-              tooltip: 'Nayi line',
+              tooltip: 'New line',
               onPressed: _addLineDialog,
             ),
           ],
@@ -1182,14 +1182,14 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
               onPressed: _e.lines.isEmpty
                   ? null
                   : () => _edit(() => _e.shiftAll(-0.5)),
-              child: const Text('−0.5s sab'),
+              child: const Text('−0.5s all'),
             ),
             OutlinedButton(
               key: const Key('shiftForwardButton'),
               onPressed: _e.lines.isEmpty
                   ? null
                   : () => _edit(() => _e.shiftAll(0.5)),
-              child: const Text('+0.5s sab'),
+              child: const Text('+0.5s all'),
             ),
             OutlinedButton(
               key: const Key('syncVoiceoverButton'),
@@ -1211,7 +1211,7 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
                     )
                   : const Icon(Icons.hearing_outlined, size: 16),
               label: Text(
-                _alignBusy ? 'Whisper sun raha hai…' : 'Asal timings (Whisper)',
+                _alignBusy ? 'Whisper is listening…' : 'Asal timings (Whisper)',
               ),
             ),
           ],
@@ -1220,14 +1220,14 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
         Text(
           key: const Key('studioTimingStatus'),
           project.captionTimingsStale
-              ? 'Timings: ASAL (Whisper) thay — tehreer ya voiceover '
-                  'badal gaya hai, dobara Asal timings dabayein.'
+              ? 'Timings: they were REAL (Whisper) — the script or voiceover '
+                  'has changed; apply Real timings again.'
               : project.captionTimingSource == 'whisper'
-                  ? 'Timings: ASAL (Whisper) — har lafz apne real '
-                      'waqt par hai.'
+                  ? 'Timings: REAL (Whisper) — every word at its real '
+                      'time.'
                   : 'Timings: ESTIMATE — "Voiceover se sync" length '
-                      'se andaza lagata hai; "Asal timings" Whisper '
-                      'ke real word waqt lagata hai.',
+                      'estimates from it; "Real timings" from Whisper '
+                      'applies the real word timings.',
           style: TextStyle(
             color: project.captionTimingsStale
                 ? const Color(0xFFFFC800)
@@ -1241,8 +1241,8 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
             child: Padding(
               padding: EdgeInsets.all(16),
               child: Text(
-                'Abhi koi subtitles nahi — News Maker / AI News Maker mein '
-                'tehreer likh kar voiceover banayein, phir yahan aayein.',
+                'No subtitles yet — in News Maker / AI News Maker '
+                'write the script and create the voiceover, then come here.',
                 style: TextStyle(color: Colors.grey),
               ),
             ),
@@ -1290,7 +1290,7 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
                         IconButton(
                           key: Key('captionSplit-$index'),
                           icon: const Icon(Icons.call_split, size: 18),
-                          tooltip: 'Line split karein (beech se)',
+                          tooltip: 'Split the line (from the middle)',
                           onPressed: words.length < 2
                               ? null
                               : () => _edit(
@@ -1311,7 +1311,7 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
                             IconButton(
                               key: Key('captionDelete-$index'),
                               icon: const Icon(Icons.delete_outline),
-                              tooltip: 'Line hatayein',
+                              tooltip: 'Remove line',
                               onPressed: () =>
                                   _edit(() => _e.deleteLine(index)),
                             ),
@@ -1424,13 +1424,13 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
         ),
         const SizedBox(height: 8),
         const Text(
-          'Highlight Box style ka peela box ASS mein nahi aata (ASS mein '
-          'us ka equivalent nahi) — line ke colours wahi rehte hain.',
+          'The Highlight Box style\'s yellow box does not come in ASS (ASS has '
+          'it has no equivalent) — the line\'s colours stay the same.',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
         const SizedBox(height: 20),
         const Text(
-          'Video burn-in — captions video mein jalayein',
+          'Video burn-in — burn captions into the video',
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
@@ -1443,7 +1443,7 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
                 icon: const Icon(Icons.video_library, size: 18),
                 label: Text(
                   _burnVideoPath == null
-                      ? 'Video chunein'
+                      ? 'Choose a video'
                       : _burnVideoPath!.split('/').last,
                 ),
               ),
@@ -1482,7 +1482,7 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
                     ),
                   )
                 : const Icon(Icons.local_fire_department),
-            label: Text(_burnBusy ? 'Burn-in chal raha hai…' : 'Video mein burn karein'),
+            label: Text(_burnBusy ? 'Burn-in in progress…' : 'Burn into the video'),
             style: FilledButton.styleFrom(
               backgroundColor: const Color(0xFF7C3AED),
               padding: const EdgeInsets.symmetric(vertical: 14),
@@ -1518,10 +1518,10 @@ class _CaptionStudioScreenState extends State<CaptionStudioScreen> {
         ),
         const SizedBox(height: 8),
         const Text(
-          'Burn-in pehle styled ASS se koshish karta hai (poora style: '
+          'Burn-in first tries with styled ASS (full style: '
           'colours, karaoke, outline, position); fail ho to per-line '
-          'drawtext fallback chalta hai (Urdu us mein shape nahi hoti — '
-          'drawtext ki limit hai).',
+          'the drawtext fallback runs (Urdu does not shape in it — '
+          'that is drawtext\'s limit).',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
       ],

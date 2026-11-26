@@ -11,12 +11,12 @@
 ///   - "Voice banao" REALLY calls [GeminiVoiceService] (chunked
 ///     ≤2000 chars, cache-first — repeats are free, 5/day cap).
 ///     The voice preview player plays the cached WAV back, and
-///     "Dobara" deletes the cached file and re-synthesises (costs
+///     "Regenerate" deletes the cached file and re-synthesises (costs
 ///     new proxy request(s) — the status line says so).
 ///   - Voice controls (Phase 5): speed 0.5–2.0x + pause between
 ///     sentences + background music — applied on-device to the
 ///     voiceover (see `tts_processing.dart`) and saved on the
-///     project, so "Dobara" re-applies them.
+///     project, so "Regenerate" re-applies them.
 ///   - Karaoke sync (Phase 5): once a voiceover exists, the
 ///     project's subtitles are re-timed against the REAL voiceover
 ///     duration (see `karaoke_sync.dart`) — no longer the Phase 4
@@ -105,6 +105,18 @@ import 'widgets/studio_pickers.dart';
 import 'widgets/styled_caption_preview.dart';
 import 'widgets/template_media_preview.dart';
 import 'widgets/voice_preview_player.dart';
+
+/// B7 filmstrip math (v1.16.0 G5, pure): the frame times for a
+/// clip's timeline filmstrip — one frame per ~4 s of clip, at
+/// least 1 and at most [maxFrames], each at its segment's
+/// midpoint so a long clip shows what is inside it, not just
+/// its first frame.
+List<double> nsStripFrameTimes(double durationSec, {int maxFrames = 6}) {
+  if (durationSec <= 0) return const [0.5];
+  final n = (durationSec / 4).ceil().clamp(1, maxFrames);
+  if (n == 1) return [durationSec / 2];
+  return [for (var i = 0; i < n; i++) durationSec * (i + 0.5) / n];
+}
 
 /// B3 drag-trim math (v1.15.0 G5, pure — the regression tests
 /// pin it): dragging clip edge by [dSec] seconds (file seconds
@@ -227,7 +239,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   StudioVoice get _selectedStudioVoice => StudioVoice.byId(_studioVoiceId);
 
   bool _voiceBusy = false;
-  String _voiceStatus = 'Abhi voice nahi bani.';
+  String _voiceStatus = 'No voice has been created yet.';
   int? _voiceRemaining;
 
   // v1.4.0 audio trio (requirements #6): Record / Import /
@@ -484,6 +496,14 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   final Map<String, double> _clipDurations = {};
   final Map<String, String> _clipThumbs = {};
 
+  /// v1.16.0 G5 (B7): per-clip filmstrips (several frames across
+  /// the clip, [nsStripFrameTimes]) + lane waveform PNGs for the
+  /// A1 voice / A2 music lanes (showwavespic, cached per file).
+  /// Decoration only, like the thumbnails — failures are silent.
+  final Map<String, List<String>> _clipStrips = {};
+  final Map<String, String> _nsWaveCache = {};
+  final Set<String> _nsWavePending = {};
+
   /// v1.5.0 (#33): the element selected in the Elements panel /
   /// by tapping the preview (a [NewsElement] id).
   String _selectedElement = NewsElement.media;
@@ -664,8 +684,8 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       if (url.isEmpty) {
         setState(() {
           _fontUrlAvailable = false;
-          _fontStatus = 'Urdu font (Kasheeda): abhi available nahi '
-              '— fallback font use ho raha hai';
+          _fontStatus = 'Urdu font (Kasheeda): not available right now '
+              '— a fallback font is being used';
         });
         return;
       }
@@ -684,7 +704,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         if (!mounted) return;
         setState(() {
           _fontStatus = 'Urdu font (Kasheeda): download fail — '
-              'fallback font use ho raha hai';
+              'the fallback font is in use';
         });
       }
     } catch (e, s) {
@@ -718,8 +738,8 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     if (url.isEmpty) {
       setState(() {
         _fontUrlAvailable = false;
-        _fontStatus = 'Urdu font (Kasheeda): abhi available nahi '
-            '— fallback font use ho raha hai';
+        _fontStatus = 'Urdu font (Kasheeda): not available right now '
+            '— a fallback font is being used';
       });
       return;
     }
@@ -800,12 +820,12 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       // them to real Whisper timings).
       project.captionTimingSource = 'estimate';
       project.captionAlignedHash = '';
-      syncNote = ' Subtitles voiceover se sync ho gaye.';
+      syncNote = ' Subtitles synced with the voiceover.';
     }
     setState(() {
       project.voiceoverPath = path;
       project.voiceoverDurationSec = durationSec;
-      _voiceStatus = '$sourceLabel tayyar hai.$syncNote';
+      _voiceStatus = '$sourceLabel is ready.$syncNote';
     });
     _scheduleSave();
   }
@@ -822,7 +842,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       if (!mounted) return;
       setState(() => _recording = false);
       if (path == null) {
-        _showMessage('Recording save nahi hui.');
+        _showMessage('The recording could not be saved.');
         return;
       }
       final bytes = await File(path).readAsBytes();
@@ -830,12 +850,12 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       await _setProjectVoiceover(
         path,
         dur > 0 ? dur : null,
-        'Apni recording',
+        'Your recording',
       );
       return;
     }
     if (!await _recorder.hasPermission()) {
-      _showMessage('Mic ki permission chahiye recording ke liye.');
+      _showMessage('Mic permission is needed for recording.');
       return;
     }
     final docs = await getApplicationDocumentsDirectory();
@@ -852,7 +872,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     if (!mounted) return;
     setState(() {
       _recording = true;
-      _voiceStatus = 'Recording ho rahi hai… Stop dabayein jab ho jaye.';
+      _voiceStatus = 'Recording… tap Stop when done.';
     });
   }
 
@@ -881,10 +901,10 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       await _setProjectVoiceover(
         dest,
         dur > 0 ? dur : null,
-        'Import ki gayi audio (${p.basename(src.path)})',
+        'Imported audio (${p.basename(src.path)})',
       );
     } catch (e) {
-      _showMessage('Audio import nahi hui: $e');
+      _showMessage('Audio could not be imported: $e');
     }
   }
 
@@ -900,12 +920,12 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     if (project == null || _voiceBusy) return;
     final text = _tehreerController.text.trim();
     if (text.isEmpty) {
-      _showMessage('Pehle tehreer likhein.');
+      _showMessage('Write the script first.');
       return;
     }
     setState(() {
       _voiceBusy = true;
-      _voiceStatus = 'Free TTS se voice ban rahi hai…';
+      _voiceStatus = 'Creating the voice with Free TTS…';
     });
     try {
       final result = await TtsStudioService().generate(
@@ -930,13 +950,13 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           if (!mounted) return;
           final String failLine =
               spendResult.error == PricingService.errorProRequired
-                  ? 'Voiceover sirf Pro users ke liye hai.'
+                  ? 'Voiceover is for Pro users only.'
                   : spendResult.error ==
                           PricingService.errorAdNotCompleted
-                      ? 'Ad mukammal nahi hua — voiceover nahi bana.'
-                      : 'Voiceover ke liye '
+                      ? 'The ad did not complete — the voiceover was not created.'
+                      : 'For the voiceover, '
                           '${PricingService.coinsOr(PricingService.keyNsVoiceover, CoinCosts.voiceover)} '
-                          'coins chahiye — balance kam hai. '
+                          'coins are needed — balance is low. '
                           'Watch Ads se coins kamayein.';
           setState(() {
             _voiceBusy = false;
@@ -948,7 +968,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       }
       final path = result.filePath;
       if (path == null) {
-        throw Exception('Audio file save nahi hui.');
+        throw Exception('The audio file could not be saved.');
       }
       if (!mounted) return;
       setState(() => _voiceBusy = false);
@@ -961,7 +981,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       if (!mounted) return;
       setState(() {
         _voiceBusy = false;
-        _voiceStatus = 'Free TTS voice nahi bani: $e';
+        _voiceStatus = 'Free TTS voice was not created: $e';
       });
     }
   }
@@ -1315,7 +1335,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                 ),
                 label: FittedBox(
                   fit: BoxFit.scaleDown,
-                  child: Text(ov.hidden ? 'Show (wapas)' : 'Remove (hide)'),
+                  child: Text(ov.hidden ? 'Show (restore)' : 'Remove (hide)'),
                 ),
               ),
             ),
@@ -1361,8 +1381,8 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           icon: const Icon(Icons.branding_watermark, size: 18),
           label: Text(
             (_preset?.watermarkEnabled ?? false)
-                ? 'Watermark ON (band karein)'
-                : 'Watermark OFF (lagayein)',
+                ? 'Watermark ON (turn off)'
+                : 'Watermark OFF (apply)',
           ),
         ),
       ],
@@ -1447,7 +1467,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       _showMessage(outcome.message);
     } catch (e) {
       if (mounted) {
-        _showMessage('Asal timings nahi lag sakein: $e');
+        _showMessage('Real timings could not be applied: $e');
       }
     } finally {
       if (mounted) setState(() => _alignBusy = false);
@@ -1456,7 +1476,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
 
   /// Real voiceover build through the Gemini proxy (see the file
   /// header + GeminiVoiceService: chunked, cache-first, 5/day cap).
-  /// [regenerate] ("Dobara") deletes the cached file first, so the
+  /// [regenerate] ("Regenerate") deletes the cached file first, so the
   /// next synthesize costs new proxy request(s).
   ///
   /// COINS (Phase 10): a NEW voiceover costs 50 coins
@@ -1471,12 +1491,12 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     if (project == null || _voiceBusy) return;
     final text = _tehreerController.text.trim();
     if (text.isEmpty) {
-      _showMessage('Pehle tehreer likhein.');
+      _showMessage('Write the script first.');
       return;
     }
     setState(() {
       _voiceBusy = true;
-      _voiceStatus = 'Voice ban rahi hai…';
+      _voiceStatus = 'Creating voice…';
     });
     try {
       final controls = TtsControls(
@@ -1504,13 +1524,13 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           if (!mounted) return;
           final String failLine =
               spendResult.error == PricingService.errorProRequired
-                  ? 'Voiceover sirf Pro users ke liye hai.'
+                  ? 'Voiceover is for Pro users only.'
                   : spendResult.error ==
                           PricingService.errorAdNotCompleted
-                      ? 'Ad mukammal nahi hua — voiceover nahi bana.'
-                      : 'Voiceover ke liye '
+                      ? 'The ad did not complete — the voiceover was not created.'
+                      : 'For the voiceover, '
                           '${PricingService.coinsOr(PricingService.keyNsVoiceover, CoinCosts.voiceover)} '
-                          'coins chahiye — balance kam hai. '
+                          'coins are needed — balance is low. '
                           'Watch Ads se coins kamayein.';
           setState(() {
             _voiceBusy = false;
@@ -1543,7 +1563,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         project.subtitles = syncSubtitlesToVoiceover(text, duration);
         project.captionTimingSource = 'estimate';
         project.captionAlignedHash = '';
-        syncNote = ' Subtitles voiceover se sync ho gaye.';
+        syncNote = ' Subtitles synced with the voiceover.';
       }
       setState(() {
         _voiceBusy = false;
@@ -1551,10 +1571,10 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         project.voiceoverDurationSec = duration;
         _voiceRemaining = remaining;
         _voiceStatus = result.cached
-            ? 'Cached voice — 0 nayi calls (same tehreer).$syncNote'
+            ? 'Cached voice — 0 new calls (same script).$syncNote'
             : result.usedDeviceFallback
-                ? 'Device voice use hui (proxy/cap issue) — 0 proxy calls.$syncNote'
-                : 'Nayi voice — ${result.proxyRequests} request(s) use hui.$syncNote';
+                ? 'Device voice used (proxy/cap issue) — 0 proxy calls.$syncNote'
+                : 'New voice — ${result.proxyRequests} request(s) used.$syncNote';
       });
       _scheduleSave();
     } catch (e, s) {
@@ -1564,7 +1584,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       if (!mounted) return;
       setState(() {
         _voiceBusy = false;
-        _voiceStatus = 'Voice nahi ban saki: $e';
+        _voiceStatus = 'Could not create the voice: $e';
       });
     }
   }
@@ -1573,7 +1593,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     final data = await Clipboard.getData('text/plain');
     final text = data?.text?.trim() ?? '';
     if (text.isEmpty) {
-      _showMessage('Clipboard khaali hai — pehle text copy karein.');
+      _showMessage('Clipboard is empty — copy some text first.');
       return;
     }
     setState(() => _tickerController.text = text);
@@ -1586,7 +1606,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     final data = await Clipboard.getData('text/plain');
     final text = data?.text?.trim() ?? '';
     if (text.isEmpty) {
-      _showMessage('Clipboard khaali hai — pehle text copy karein.');
+      _showMessage('Clipboard is empty — copy some text first.');
       return;
     }
     setState(() => _englishTickerController.text = text);
@@ -2091,7 +2111,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   }
 
   /// One Library picker (Text Styles / Transitions / Effects):
-  /// 'Koi nahi' + one chip per valid Drive item. An empty library
+  /// 'None' + one chip per valid Drive item. An empty library
   /// shows the honest note instead of a dead control.
   Widget _libraryPicker({
     required String keyPrefix,
@@ -2114,7 +2134,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         children: [
           ChoiceChip(
             key: Key('$keyPrefix-none'),
-            label: const Text('Koi nahi'),
+            label: const Text('None'),
             selected: selectedId.isEmpty,
             onSelected: (_) => onChanged(''),
           ),
@@ -2259,8 +2279,88 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           // Thumbnails are decoration — never an error path.
         }
       }
+      // v1.16.0 G5 (B7): the filmstrip — several frames across
+      // the clip so a long clip shows what is inside it. Only
+      // for probed videos; a single-frame strip is pointless
+      // (the plain thumbnail already covers it).
+      if (!_clipStrips.containsKey(path)) {
+        final d = _clipDurations[path];
+        if (d != null && d > 0) {
+          try {
+            final td = Directory(
+                p.join((await getTemporaryDirectory()).path, 'maker_thumbs'));
+            if (!await td.exists()) await td.create(recursive: true);
+            final times = nsStripFrameTimes(d);
+            if (times.length > 1) {
+              final frames = <String>[];
+              var okAll = true;
+              for (var fi = 0; fi < times.length; fi++) {
+                final out = p.join(
+                  td.path,
+                  'mts_${path.hashCode.toUnsigned(31).toRadixString(36)}_$fi.jpg',
+                );
+                if (!await File(out).exists()) {
+                  final res = await FfmpegService.run(
+                    '-y -ss ${times[fi].toStringAsFixed(2)} '
+                    '-i ${FfmpegService.q(path)} '
+                    '-frames:v 1 -vf scale=96:-1 -q:v 5 '
+                    '${FfmpegService.q(out)}',
+                  );
+                  if (!res.ok) {
+                    okAll = false;
+                    break;
+                  }
+                }
+                frames.add(out);
+              }
+              if (okAll && frames.length > 1) {
+                _clipStrips[path] = frames;
+                changed = true;
+              }
+            }
+          } catch (_) {
+            // Filmstrips are decoration — never an error path.
+          }
+        }
+      }
     }
     if (changed && mounted) setState(() {});
+  }
+
+  /// v1.16.0 G5 (B7): a lane waveform PNG for an audio file
+  /// (voiceover / store music), rendered once via showwavespic
+  /// and cached in the temp dir. Silent failure: no waveform,
+  /// the lane keeps its plain look.
+  Future<void> _ensureNsWave(String audioPath, {required bool voice}) async {
+    final key = '${voice ? 'vo' : 'mu'}|$audioPath';
+    if (_nsWaveCache.containsKey(key) || _nsWavePending.contains(key)) {
+      return;
+    }
+    _nsWavePending.add(key);
+    try {
+      final dir = await getTemporaryDirectory();
+      final out = p.join(
+        dir.path,
+        'ns_wave_${voice ? 'vo' : 'mu'}_${audioPath.hashCode.toUnsigned(31).toRadixString(36)}.png',
+      );
+      if (await File(out).exists()) {
+        _nsWaveCache[key] = out;
+        if (mounted) setState(() {});
+        return;
+      }
+      final result = await FfmpegService.run(
+        '-y -i ${FfmpegService.q(audioPath)} -filter_complex '
+        '"showwavespic=s=800x48:colors=${voice ? '0xFFC800' : '0x90CAF9'}" '
+        '-frames:v 1 ${FfmpegService.q(out)}',
+      );
+      _nsWaveCache[key] =
+          (result.ok && await File(out).exists()) ? out : '';
+      if (mounted) setState(() {});
+    } catch (_) {
+      _nsWaveCache[key] = '';
+    } finally {
+      _nsWavePending.remove(key);
+    }
   }
 
   String _fmtDur(double sec) {
@@ -2383,7 +2483,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             const Color(0xFFAEB4BD),
             () async {
               await _saveNow();
-              _showMessage('Project save ho gaya.');
+              _showMessage('Project saved.');
             },
           ),
           InkWell(
@@ -2454,7 +2554,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               itemBuilder: (ctx) => const [
                 PopupMenuItem(
                   value: 'projects',
-                  child: Text('Projects — kholein / naya / delete'),
+                  child: Text('Projects — open / new / delete'),
                 ),
                 PopupMenuItem(
                   value: 'ai',
@@ -2570,7 +2670,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                 Icons.add_circle_outline,
                 color: Color(0xFFFFC800),
               ),
-              title: const Text('Naya project'),
+              title: const Text('New project'),
               onTap: () {
                 Navigator.of(ctx).pop();
                 unawaited(_newProject());
@@ -2581,7 +2681,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               const Padding(
                 padding: EdgeInsets.all(16),
                 child: Text(
-                  'Abhi koi project nahi.',
+                  'No project yet.',
                   style: TextStyle(color: Colors.grey),
                 ),
               )
@@ -2783,8 +2883,8 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               ),
             ),
             const Text(
-              'Tool line se tool chunein — timeline ki lanes bhi '
-              'wahi tool kholti hain.',
+              'Choose a tool from the tool line — the timeline\'s lanes also '
+              'open the same tool.',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(color: Color(0xFF5E646F), fontSize: 11),
@@ -2903,6 +3003,14 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         clipsTotal > 0 ? clipsTotal : (project.voiceoverDurationSec ?? 0);
     final hasVoice = project.voiceoverPath != null &&
         project.voiceoverPath!.isNotEmpty;
+    // v1.16.0 G5 (B7): lane waveforms — cached renders; the
+    // ensure calls are no-ops once rendered or in flight.
+    if (hasVoice) {
+      unawaited(_ensureNsWave(project.voiceoverPath!, voice: true));
+    }
+    if (project.storeMusicPath != null) {
+      unawaited(_ensureNsWave(project.storeMusicPath!, voice: false));
+    }
     final tickerText = project.tickerText.trim().isNotEmpty
         ? project.tickerText.trim()
         : project.englishTickerText.trim();
@@ -3014,7 +3122,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                     const BoxConstraints(minWidth: 26, minHeight: 26),
                 icon: const Icon(Icons.remove, size: 16),
                 color: const Color(0xFFC4C9D0),
-                tooltip: 'Timeline chhota',
+                tooltip: 'Zoom out timeline',
                 onPressed: layoutTotal > 0 ? () => _nsZoomBy(1 / 1.5) : null,
               ),
               IconButton(
@@ -3028,7 +3136,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                     const BoxConstraints(minWidth: 26, minHeight: 26),
                 icon: const Icon(Icons.fit_screen, size: 15),
                 color: const Color(0xFFC4C9D0),
-                tooltip: 'Sab nazar aye (fit)',
+                tooltip: 'Show all (fit)',
                 onPressed: layoutTotal > 0 ? _nsZoomFit : null,
               ),
               IconButton(
@@ -3042,7 +3150,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                     const BoxConstraints(minWidth: 26, minHeight: 26),
                 icon: const Icon(Icons.add, size: 16),
                 color: const Color(0xFFC4C9D0),
-                tooltip: 'Timeline bara',
+                tooltip: 'Zoom in timeline',
                 onPressed: layoutTotal > 0 ? () => _nsZoomBy(1.5) : null,
               ),
               // v1.15.0 G5 (B9): marker at the playhead position.
@@ -3060,7 +3168,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                     const BoxConstraints(minWidth: 26, minHeight: 26),
                 icon: const Icon(Icons.bookmark_add_outlined, size: 16),
                 color: const Color(0xFFFFC800),
-                tooltip: 'Marker lagayein / hatayein',
+                tooltip: 'Add / remove marker',
                 onPressed: layoutTotal > 0
                     ? () {
                         setState(() {
@@ -3215,39 +3323,72 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                             _activeTool = 'voice';
                             _timelineTab = 'voice';
                           }),
-                          child: Container(
-                            height: 24,
-                            alignment: Alignment.centerLeft,
-                            padding:
-                                const EdgeInsets.symmetric(horizontal: 8),
-                            decoration: BoxDecoration(
-                              color: hasVoice
-                                  ? const Color(0x1AFFC800)
-                                  : const Color(0x0DFFFFFF),
-                              borderRadius: BorderRadius.circular(5),
-                              border: Border.all(
-                                color: hasVoice
-                                    ? const Color(0x40FFC800)
-                                    : const Color(0x14FFFFFF),
+                          // v1.16.0 G5 (B7): the voiceover's real
+                          // waveform under the label, spanning the
+                          // voiceover's own duration on the scale.
+                          child: Stack(
+                            children: [
+                              Container(
+                                height: 24,
+                                decoration: BoxDecoration(
+                                  color: hasVoice
+                                      ? const Color(0x1AFFC800)
+                                      : const Color(0x0DFFFFFF),
+                                  borderRadius: BorderRadius.circular(5),
+                                  border: Border.all(
+                                    color: hasVoice
+                                        ? const Color(0x40FFC800)
+                                        : const Color(0x14FFFFFF),
+                                  ),
+                                ),
                               ),
-                            ),
-                            child: Text(
-                              hasVoice
-                                  ? 'VO \u2022 Voiceover'
-                                      '${project.voiceoverDurationSec != null ? ' \u2022 ${_fmtDur(project.voiceoverDurationSec!)}' : ''}'
-                                  : 'Voiceover nahi \u2014 Voice tool se banayein',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 10.5,
-                                fontWeight: hasVoice
-                                    ? FontWeight.w600
-                                    : FontWeight.normal,
-                                color: hasVoice
-                                    ? const Color(0xFFFFC800)
-                                    : const Color(0xFF5E646F),
+                              if (hasVoice &&
+                                  project.voiceoverDurationSec != null &&
+                                  (_nsWaveCache[
+                                              'vo|${project.voiceoverPath}'] ??
+                                          '')
+                                      .isNotEmpty)
+                                Positioned(
+                                  left: 0,
+                                  top: 0,
+                                  bottom: 0,
+                                  width: project.voiceoverDurationSec! *
+                                      pps,
+                                  child: Opacity(
+                                    opacity: 0.85,
+                                    child: Image.file(
+                                      File(_nsWaveCache[
+                                          'vo|${project.voiceoverPath}']!),
+                                      fit: BoxFit.fill,
+                                      errorBuilder: (_, _, _) =>
+                                          const SizedBox.shrink(),
+                                    ),
+                                  ),
+                                ),
+                              Container(
+                                height: 24,
+                                alignment: Alignment.centerLeft,
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8),
+                                child: Text(
+                                  hasVoice
+                                      ? 'VO \u2022 Voiceover'
+                                          '${project.voiceoverDurationSec != null ? ' \u2022 ${_fmtDur(project.voiceoverDurationSec!)}' : ''}'
+                                      : 'No voiceover — create one from the Voice tool',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 10.5,
+                                    fontWeight: hasVoice
+                                        ? FontWeight.w600
+                                        : FontWeight.normal,
+                                    color: hasVoice
+                                        ? const Color(0xFFFFC800)
+                                        : const Color(0xFF5E646F),
+                                  ),
+                                ),
                               ),
-                            ),
+                            ],
                           ),
                           ),
                         ),
@@ -3262,26 +3403,58 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                               ? _nsLaneHiddenStrip()
                               : InkWell(
                           onTap: () => setState(() => _activeTool = 'audio'),
-                          child: Container(
-                            height: 24,
-                            alignment: Alignment.centerLeft,
-                            padding:
-                                const EdgeInsets.symmetric(horizontal: 8),
-                            decoration: BoxDecoration(
-                              color: const Color(0x0DFFFFFF),
-                              borderRadius: BorderRadius.circular(5),
-                              border: Border.all(
-                                  color: const Color(0x14FFFFFF)),
-                            ),
-                            child: Text(
-                              _selectedMusicLabel(project),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 10.5,
-                                color: Color(0xFFC4C9D0),
+                          // v1.16.0 G5 (B7): the store music's
+                          // waveform under the label (built-in
+                          // asset music has no file to render —
+                          // the label alone shows, as before).
+                          child: Stack(
+                            children: [
+                              Container(
+                                height: 24,
+                                decoration: BoxDecoration(
+                                  color: const Color(0x0DFFFFFF),
+                                  borderRadius: BorderRadius.circular(5),
+                                  border: Border.all(
+                                      color: const Color(0x14FFFFFF)),
+                                ),
                               ),
-                            ),
+                              if (project.storeMusicPath != null &&
+                                  (_nsWaveCache[
+                                              'mu|${project.storeMusicPath}'] ??
+                                          '')
+                                      .isNotEmpty)
+                                Positioned(
+                                  left: 0,
+                                  right: 0,
+                                  top: 0,
+                                  bottom: 0,
+                                  child: Opacity(
+                                    opacity: 0.55,
+                                    child: Image.file(
+                                      File(_nsWaveCache[
+                                          'mu|${project.storeMusicPath}']!),
+                                      fit: BoxFit.fill,
+                                      errorBuilder: (_, _, _) =>
+                                          const SizedBox.shrink(),
+                                    ),
+                                  ),
+                                ),
+                              Container(
+                                height: 24,
+                                alignment: Alignment.centerLeft,
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8),
+                                child: Text(
+                                  _selectedMusicLabel(project),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 10.5,
+                                    color: Color(0xFFC4C9D0),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                           ),
                         ),
@@ -3318,7 +3491,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                             ),
                             child: Text(
                               tickerText.isEmpty
-                                  ? 'Ticker khaali hai'
+                                  ? 'Ticker is empty'
                                   : tickerText,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
@@ -3492,8 +3665,8 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                       ? const Color(0xFFE5484D)
                       : const Color(0xFF8A919C),
                   tooltip: musicMuted
-                      ? 'Music band hai — export mein bhi nahi ayega'
-                      : 'Music on hai',
+                      ? 'Music is off — it will not come in the export either'
+                      : 'Music is on',
                   onPressed: onToggleMusic,
                 ),
             ],
@@ -3526,7 +3699,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             borderRadius: BorderRadius.circular(6),
           ),
           child: const Text(
-            '+ Media se clip add karein',
+            'Add a clip from + Media',
             style: TextStyle(fontSize: 11.5, color: Color(0xFF5E646F)),
           ),
         ),
@@ -3585,7 +3758,28 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        if (_clipThumbs[project.clipPaths[i]] != null)
+                        // v1.16.0 G5 (B7): a filmstrip of frames
+                        // across the clip when it was generated;
+                        // otherwise the single first-frame thumb.
+                        if (_clipStrips[project.clipPaths[i]] != null)
+                          Row(
+                            children: [
+                              for (final f
+                                  in _clipStrips[project.clipPaths[i]]!)
+                                Expanded(
+                                  child: Image.file(
+                                    File(f),
+                                    fit: BoxFit.cover,
+                                    height: h,
+                                    errorBuilder: (_, _, _) =>
+                                        Container(
+                                            color:
+                                                const Color(0xFF171B24)),
+                                  ),
+                                ),
+                            ],
+                          )
+                        else if (_clipThumbs[project.clipPaths[i]] != null)
                           Image.file(
                             File(_clipThumbs[project.clipPaths[i]]!),
                             fit: BoxFit.cover,
@@ -4152,7 +4346,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           ),
         const SizedBox(height: 4),
         const Text(
-          'Naya preset banana ya delete karna: upar Templates '
+          'To create or delete a preset: Templates above '
           'Library card se.',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
@@ -4222,7 +4416,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           key: const Key('studioLowerSubtitleField'),
           controller: _ltSubtitleController,
           decoration: const InputDecoration(
-            labelText: 'Subtitle (sheher / tafseel)',
+            labelText: 'Subtitle (city / detail)',
             border: OutlineInputBorder(),
           ),
           onChanged: (v) =>
@@ -4371,8 +4565,8 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               Expanded(
                 child: Text(
                   _project?.pipVideoPath == null
-                      ? 'PIP video: koi nahi chuna — export mein PIP '
-                          'nahi aye ga'
+                      ? 'PIP video: none chosen — PIP will not come '
+                          'will not come'
                       : 'PIP video: '
                           '${p.basename(_project!.pipVideoPath!)}',
                   maxLines: 1,
@@ -4387,13 +4581,13 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               OutlinedButton(
                 key: const Key('studioPipPickButton'),
                 onPressed: _pickPipVideo,
-                child: const Text('Video chunein'),
+                child: const Text('Choose a video'),
               ),
               if (_project?.pipVideoPath != null)
                 IconButton(
                   key: const Key('studioPipRemoveButton'),
                   icon: const Icon(Icons.clear, size: 18),
-                  tooltip: 'PIP video hatayein',
+                  tooltip: 'Remove PIP video',
                   onPressed: () {
                     setState(() => _project?.pipVideoPath = null);
                     _scheduleSave();
@@ -4415,7 +4609,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     if (!mounted) return;
     setState(() => project.pipVideoPath = picked.first.path);
     _scheduleSave();
-    _showMessage('PIP video chun liya gaya — export mein inset aye ga.');
+    _showMessage('PIP video chosen — the inset will come in the export.');
   }
 
   /// Chroma key (preset-level): enable, background kind (the
@@ -4485,8 +4679,8 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             ],
           ),
           const Text(
-            'Visual chroma effect reel export mein lagta hai — '
-            'chroma key wala export 50 coins ka hota hai '
+            'The visual chroma effect applies in the reel export — '
+            'a chroma key export costs 50 coins '
             '(resolution ke ilawa).',
             style: TextStyle(color: Colors.grey, fontSize: 12),
           ),
@@ -4546,7 +4740,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     return _panelShell('Media', [
       // Build 12 (point #14d): ONE unified media picker — the
       // old three separate add buttons (gallery video / files /
-      // photo) are one "Media add karein" entry that opens the
+      // photo) are one "Add media" entry that opens the
       // source sheet; every source capability is unchanged.
       ClipPickerList(
         unifiedPicker: true,
@@ -4581,7 +4775,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           setState(() => project.effectId = id);
           _scheduleSave();
         },
-        emptyNote: 'Abhi koi Library effect nahi.',
+        emptyNote: 'No Library effect yet.',
       ),
     ]);
   }
@@ -4637,14 +4831,14 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         const SizedBox(height: 6),
         if (isPhoto)
           const Text(
-            'Photo clip ka trim/split nahi hota — photo hamesha '
-            '5 second ka segment banta hai.',
+            'A photo clip has no trim/split — a photo always '
+            'a 5-second segment is made.',
             style: TextStyle(color: Colors.grey, fontSize: 12),
           )
         else if (fileDur == null)
           const Text(
-            'Clip ki duration abhi maloom nahi ho rahi — ek lamha '
-            'ruk kar panel dobara kholein.',
+            'The clip\'s duration is not known yet — wait a moment '
+            'wait and open the panel again.',
             style: TextStyle(color: Colors.grey, fontSize: 12),
           )
         else ...[
@@ -4703,7 +4897,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             ],
           ),
           Text(
-            'Use ho raha hissa: ${_fmtDur(trim.startSec)} — '
+            'Used portion: ${_fmtDur(trim.startSec)} — '
             '${_fmtDur(trim.endSec ?? fileDur)} '
             '(${_fmtDur(effDur ?? 0)} lamba)',
             style: const TextStyle(color: Colors.grey, fontSize: 12),
@@ -4724,7 +4918,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                   _setNsClipTrim(project, i, ClipTrim.full);
                   setState(
                     () => _clipEditStatus = 'Trim reset — poora clip '
-                        'use hoga.',
+                        'will be used.',
                   );
                 },
                 child: const Text('Trim reset'),
@@ -4860,9 +5054,9 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     final fileDur = _clipDurations[project.clipPaths[i]];
     if (fileDur == null) {
       setState(
-        () => _clipEditStatus = 'Clip ki duration abhi maloom '
-            'nahi — split nahi ho saka. Ek lamha ruk kar dobara '
-            'try karein.',
+        () => _clipEditStatus = 'The clip\'s duration is not known '
+            'no — the split could not happen. Wait a moment and again '
+            'try again.',
       );
       return;
     }
@@ -4870,9 +5064,9 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     final effDur = trim.effectiveDuration(fileDur);
     if (effDur < 0.3) {
       setState(
-        () => _clipEditStatus = 'Clip ka use ho raha hissa bohat '
-            'chhota hai (${_fmtDur(effDur)}) — split nahi ho '
-            'sakta.',
+        () => _clipEditStatus = 'The clip\'s used portion is very '
+            'is small (${_fmtDur(effDur)}) — the split cannot '
+            'happen.',
       );
       return;
     }
@@ -4898,9 +5092,9 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       project.clipTrims = trims;
       _selectedClipIndex = i + 1;
       _clipEditStatus = atPlayhead
-          ? 'Split ho gaya — playhead par kata, 2 clips ban gaye.'
-          : 'Split ho gaya — playhead is clip ke andar nahi tha, '
-              'is liye darmiyan (midpoint) se kata.';
+          ? 'Split done — cut at the playhead, 2 clips created.'
+          : 'Split done — the playhead was not inside this clip, '
+              'so it was cut from the middle (midpoint).';
     });
     _scheduleSave();
   }
@@ -4928,7 +5122,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         textAlign: TextAlign.right,
         textDirection: TextDirection.rtl,
         decoration: const InputDecoration(
-          hintText: 'Tehreer yahan likhein ya paste karein…',
+          hintText: 'Write or paste the script here…',
           border: OutlineInputBorder(),
         ),
         // P2: debounced rebuild (see _textFieldChanged) — the
@@ -4963,7 +5157,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           setState(() => project.headlineStyleId = id);
           _scheduleSave();
         },
-        emptyNote: 'Abhi koi Library text style nahi.',
+        emptyNote: 'No Library text style yet.',
       ),
     ]);
   }
@@ -4991,7 +5185,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               key: const Key('tickerField'),
               controller: _tickerController,
               decoration: const InputDecoration(
-                hintText: 'Urdu ticker text paste karein…',
+                hintText: 'Paste Urdu ticker text…',
                 border: OutlineInputBorder(),
               ),
               onChanged: (_) => _textFieldChanged(),
@@ -5022,7 +5216,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               key: const Key('englishTickerField'),
               controller: _englishTickerController,
               decoration: const InputDecoration(
-                hintText: 'English ticker text paste karein…',
+                hintText: 'Paste English ticker text…',
                 border: OutlineInputBorder(),
               ),
               onChanged: (_) => _textFieldChanged(),
@@ -5130,7 +5324,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           setState(() => project.tickerStyleId = id);
           _scheduleSave();
         },
-        emptyNote: 'Abhi koi Library text style nahi.',
+        emptyNote: 'No Library text style yet.',
       ),
       // Build 13 (point #19): the ticker's motion + geometry
       // controls, in this same linear panel — project-level
@@ -5156,8 +5350,8 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       ),
       SwitchListTile(
         key: const Key('tickerLoopSwitch'),
-        title: const Text('Ticker loop (lagatar ghumta rahe)'),
-        subtitle: const Text('Band = ticker ek dafa chal kar ruk jayega'),
+        title: const Text('Ticker loop (keeps rotating continuously)'),
+        subtitle: const Text('Off = the ticker plays once and stops'),
         value: project.tickerLoop,
         onChanged: (v) {
           setState(() => project.tickerLoop = v);
@@ -5199,7 +5393,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         ),
       ),
       const Text(
-        'Ticker band colour (neeche wali patti)',
+        'Ticker band colour (the bottom strip)',
         style: TextStyle(fontWeight: FontWeight.bold),
       ),
       const SizedBox(height: 6),
@@ -5298,7 +5492,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       const SizedBox(height: 4),
       const Text(
         'Channel ke default ribbons — naye projects inhi se '
-        'bante hain.',
+        'are created.',
         style: TextStyle(color: Colors.grey, fontSize: 12),
       ),
       const SizedBox(height: 8),
@@ -5525,24 +5719,24 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         statusText = _logoVideoStatus;
       } else if (!hasVideo) {
         statusText =
-            'Logo video (MP4 / MOV) — solid background khud '
-            'detect ho kar hat jayega.';
+            'Logo video (MP4 / MOV) — the solid background itself '
+            'will be detected and removed.';
       } else if (preset.logoVideoKeyColor != null) {
         statusText =
-            'Background hat gaya — rang '
+            'Background removed — colour '
             '${LogoKeyService.displayHex(preset.logoVideoKeyColor!)} '
-            'auto-detect hua; preview mein keyed logo chal '
-            'raha hai.';
+            'was auto-detected; in the preview the keyed logo runs '
+            'is in progress.';
       } else {
         statusText =
-            'Solid background nahi mila — video baghair key '
-            'ke lage ga.';
+            'No solid background found — the video without key '
+            'will be applied.';
       }
     } else {
       statusText = hasLogo
-          ? '3D Cube logo — ye tasveer cube ban kar lagataar '
+          ? '3D Cube logo — this picture becomes a cube and '
               'full 360° ghoomegi.'
-          : 'Default channel logo (cube) — apni tasveer dein '
+          : 'Default channel logo (cube) — give your own picture '
               'to wohi cube banegi.';
     }
     return _panelShell('Logo', [
@@ -5620,10 +5814,10 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                       fit: BoxFit.scaleDown,
                       child: Text(
                         _logoVideoBusy
-                            ? 'Check ho raha hai…'
+                            ? 'Checking…'
                             : hasVideo
                                 ? 'Video badlein'
-                                : 'Logo video chunein',
+                                : 'Choose logo video',
                       ),
                     ),
                     style: FilledButton.styleFrom(
@@ -5640,7 +5834,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                     label: FittedBox(
                       fit: BoxFit.scaleDown,
                       child: Text(
-                        hasLogo ? 'Logo badlein' : 'Logo chunein',
+                        hasLogo ? 'Logo badlein' : 'Choose logo',
                       ),
                     ),
                     style: FilledButton.styleFrom(
@@ -5669,7 +5863,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               icon: const Icon(Icons.delete_outline, size: 18),
               label: const FittedBox(
                 fit: BoxFit.scaleDown,
-                child: Text('Hatayein'),
+                child: Text('Remove'),
               ),
             ),
           ],
@@ -5691,7 +5885,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       // pedestal, and a picture per face. All of them write the
       // preset, so preview and export render the same cube.
       const Text(
-        'Cube View — cube kis tarah nazar aye',
+        'Cube View — how the cube appears',
         style: TextStyle(fontWeight: FontWeight.bold),
       ),
       const SizedBox(height: 6),
@@ -5700,9 +5894,9 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         child: Row(
           children: [
             for (final (id, label, tilt) in const [
-              ('samne', 'Samne', 0.0),
-              ('upar', 'Upar Se', 0.85),
-              ('neeche', 'Neeche Se', -0.85),
+              ('samne', 'Front', 0.0),
+              ('upar', 'From Above', 0.85),
+              ('neeche', 'From Below', -0.85),
             ]) ...[
               ChoiceChip(
                 key: Key('logoView-$id'),
@@ -5717,7 +5911,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         ),
       ),
       _elementSlider(
-        label: 'Tilt (upar / neeche)',
+        label: 'Tilt (up / down)',
         value: preset.logoCubeTilt,
         min: -1.2,
         max: 1.2,
@@ -5758,13 +5952,13 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       ),
       SwitchListTile(
         key: const Key('logoPedestalSwitch'),
-        title: const Text('Pedestal (cube ke neeche base)'),
+        title: const Text('Pedestal (base under the cube)'),
         value: preset.logoCubePedestal,
         onChanged: (v) =>
             _updatePreset(() => preset.logoCubePedestal = v),
       ),
       const Text(
-        'Cube Faces — har side ki alag tasveer (khali = main logo)',
+        'Cube Faces — a separate picture for each side (empty = main logo)',
         style: TextStyle(fontWeight: FontWeight.bold),
       ),
       const SizedBox(height: 6),
@@ -5847,21 +6041,21 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     final selPart = selIdx >= 0 ? parts[selIdx] : null;
     return [
       const Text(
-        'Logo Parts — logo ke apne hisay (elements)',
+        'Logo Parts — the logo\'s own parts (elements)',
         style: TextStyle(fontWeight: FontWeight.bold),
       ),
       const SizedBox(height: 4),
       const Text(
-        'Har hissa = aik box + us ke andar ka design (text apne box ke '
-        'sath aik hissa). Har hissa apne markaz (pivot) se, apni speed '
-        'aur andaaz (Flat / 3D) mein ghoomta hai — bilkul professional '
-        'logos ki tarah.',
+        'Each part = one box + the design inside it (text with its own box '
+        'is one part). Each part, from its own centre (pivot), at its own speed '
+        'and style (Flat / 3D) — just like professional '
+        'like logos.',
         style: TextStyle(fontSize: 12, color: Colors.grey),
       ),
       const SizedBox(height: 8),
       if (preset.logoPath == null)
         const Text(
-          'Pehle upar se logo select karein — parts usi logo ke banein ge.',
+          'Select the logo from above first — the parts will be made of that logo.',
           style: TextStyle(fontSize: 12, color: Colors.grey),
         )
       else ...[
@@ -5961,7 +6155,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                             borderRadius: BorderRadius.circular(20),
                           ),
                           child: const Text(
-                            'Isolate — sirf ye hissa',
+                            'Isolate — only this part',
                             style: TextStyle(
                               fontSize: 10,
                               fontWeight: FontWeight.bold,
@@ -6014,7 +6208,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Chuna hua hissa: ${selPart.name}',
+                  'Chosen part: ${selPart.name}',
                   style: const TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
@@ -6031,8 +6225,8 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             for (final (id, icon, label) in const [
               ('logo', Icons.image_outlined, 'Logo'),
               ('hisay', Icons.call_split, 'Hisay'),
-              ('ghumao', Icons.rotate_right, 'Ghumao'),
-              ('waqt', Icons.schedule, 'Waqt'),
+              ('ghumao', Icons.rotate_right, 'Rotate'),
+              ('waqt', Icons.schedule, 'Timing'),
               ('glow', Icons.auto_awesome, 'Glow'),
               ('save', Icons.save_outlined, 'Save'),
             ]) ...[
@@ -6121,11 +6315,11 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             Expanded(
               child: Text(
                 preset.logoParts.isEmpty
-                    ? 'Parts isi logo ke banein ge. Hisay tab mein ja kar '
-                        'Auto tajweez dabayein ya khud box banayein.'
-                    : '${preset.logoParts.length} hisay isi logo ke hain. '
-                        'Logo badalna ho to upar wale hisay se badlein — '
-                        'phir Hisay dobara banane honge.',
+                    ? 'Parts will be made of this logo. Go to the Parts tab and '
+                        'Tap Auto suggest or create a box yourself.'
+                    : '${preset.logoParts.length} parts belong to this logo. '
+                        'To change the logo, change it from the section above — '
+                        'then the Parts will have to be created again.',
                 style: const TextStyle(fontSize: 12, color: Colors.grey),
               ),
             ),
@@ -6135,8 +6329,8 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           const Padding(
             padding: EdgeInsets.only(top: 6),
             child: Text(
-              'Logo badal gaya hai — ye parts puranay logo ke hain. '
-              'Hisay tab se dobara tajweez karein.',
+              'The logo has changed — these parts belong to the old logo. '
+              'Suggest again from the Parts tab.',
               style: TextStyle(fontSize: 12, color: Color(0xFFFFC800)),
             ),
           ),
@@ -6146,13 +6340,13 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         // sakht ho — Auto tajweez isi keying se hisay dhoondti
         // hai. Default wahi mazbooti hai jo hamesha thi. ---
         Text(
-          'Keying mazbooti: '
+          'Keying strength: '
           '${(preset.logoPartsScene.keyingStrength * 100).round()}%',
           style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
         ),
         Row(
           children: [
-            const Text('Halka', style: TextStyle(fontSize: 11)),
+            const Text('Light', style: TextStyle(fontSize: 11)),
             Expanded(
               child: Slider(
                 key: const Key('logoKeyingStrength'),
@@ -6166,15 +6360,15 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                 ),
               ),
             ),
-            const Text('Zyada saaf', style: TextStyle(fontSize: 11)),
+            const Text('Clearer', style: TextStyle(fontSize: 11)),
           ],
         ),
         const Text(
-          'Solid background wale logo par Auto tajweez pehle '
-          'background ko key karti hai. Halka = kinare mehfooz '
-          'rahte hain; zyada = background ke qareebi rang bhi '
-          'hat jate hain. Slider badal kar Hisay tab se dobara '
-          'tajweez karein — asar tab nazar ayega.',
+          'On a solid-background logo, Auto suggest first '
+          'keys the background. Light = the edges stay safe '
+          'stay; more = colours close to the background also '
+          'are removed. Change the slider and from the Parts tab again '
+          'suggest — the effect will show then.',
           style: TextStyle(fontSize: 12, color: Colors.grey),
         ),
       ],
@@ -6198,10 +6392,10 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               icon: const Icon(Icons.auto_awesome_outlined, size: 18),
               label: Text(
                 _partsBusy
-                    ? 'Tajweez ho rahi hai…'
+                    ? 'Suggesting…'
                     : parts.isEmpty
-                        ? 'Auto Hisay tajweez'
-                        : 'Dobara tajweez',
+                        ? 'Suggest parts automatically'
+                        : 'Suggest again',
               ),
             ),
             OutlinedButton.icon(
@@ -6209,7 +6403,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               onPressed: () =>
                   setState(() => _partsDrawMode = !_partsDrawMode),
               icon: const Icon(Icons.crop_free, size: 18),
-              label: Text(_partsDrawMode ? 'Box banana band' : 'Naya box banao'),
+              label: Text(_partsDrawMode ? 'Box banana band' : 'Create new box'),
               style: _partsDrawMode
                   ? OutlinedButton.styleFrom(
                       backgroundColor: const Color(0xFFFFC800),
@@ -6229,17 +6423,17 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         Text(
           _partsDrawMode
               ? 'Preview par ungli ghaseet kar box banayein — chorhte hi '
-                  'hissa ban jayega.'
-              : 'Preview par kisi hisay ko tap karke chunein. Chune huay '
-                  'box ko ghaseet kar hilayein, us ke kone (neeche-dayein) '
-                  'ko ghaseet kar size badlein. Tajweez sirf shuruaat hai — '
-                  'har box aap khud theek kar sakte hain.',
+                  'will become a part.'
+              : 'Tap a part on the preview to choose it. Drag the chosen '
+                  'box to move it, drag its corner (bottom-right) '
+                  'to change the size. The suggestion is only a start — '
+                  'you can fix every box yourself.',
           style: const TextStyle(fontSize: 12, color: Colors.grey),
         ),
         const SizedBox(height: 8),
         if (parts.isEmpty)
           const Text(
-            'Abhi koi hissa nahi hai.',
+            'No part yet.',
             style: TextStyle(fontSize: 12, color: Colors.grey),
           )
         else ...[
@@ -6248,7 +6442,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           const SizedBox(height: 4),
           // --- Chune huay hisay ke tools (Options 9–13) ---
           const Text(
-            'Chuna hissa theek karein:',
+            'Fix the chosen part:',
             style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 6),
@@ -6270,7 +6464,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                 label: Text(
                   selIdx >= 0 && _isolatePartId == parts[selIdx].id
                       ? 'Isolate band'
-                      : 'Sirf ye hissa (Isolate)',
+                      : 'Only this part (Isolate)',
                 ),
                 style: selIdx >= 0 && _isolatePartId == parts[selIdx].id
                     ? OutlinedButton.styleFrom(
@@ -6284,7 +6478,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                 onPressed:
                     parts.length < 2 ? null : () => _mergeSelectedPart(preset),
                 icon: const Icon(Icons.merge_type, size: 16),
-                label: const Text('Sath wala milao (Merge)'),
+                label: const Text('Join the neighbour (Merge)'),
               ),
               OutlinedButton.icon(
                 key: const Key('logoPartSplitButton'),
@@ -6303,15 +6497,15 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                 key: const Key('logoPartDeleteButton'),
                 onPressed: selIdx < 0 ? null : () => _deleteSelectedPart(preset),
                 icon: const Icon(Icons.delete_outline, size: 16),
-                label: const Text('Hissa khatam'),
+                label: const Text('Delete part'),
               ),
             ],
           ),
           const SizedBox(height: 4),
           const Text(
-            'Merge = chuna hissa aur us ke sath wala box aik element ban '
-            'jate hain. Split = box dayein-bayein do hison mein kat jata '
-            'hai. Hissa khatam karne se asal logo ko kuch nahi hota.',
+            'Merge = the chosen part and the neighbouring box become one element. '
+            'become. Split = the box is cut left-right into two parts. '
+            'it is. Deleting a part does nothing to the original logo.',
             style: TextStyle(fontSize: 12, color: Colors.grey),
           ),
         ],
@@ -6369,7 +6563,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           ),
           IconButton(
             key: Key('logoPartLayerDown-$i'),
-            tooltip: 'Peeche (neeche layer)',
+            tooltip: 'Back (lower layer)',
             icon: const Icon(Icons.arrow_downward, size: 18),
             onPressed: i == 0
                 ? null
@@ -6383,7 +6577,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           ),
           IconButton(
             key: Key('logoPartLayerUp-$i'),
-            tooltip: 'Upar (agay layer)',
+            tooltip: 'Forward (upper layer)',
             icon: const Icon(Icons.arrow_upward, size: 18),
             onPressed: i == last
                 ? null
@@ -6406,7 +6600,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   Widget _partsGhumaoTab(ChannelPreset preset, int selIdx) {
     if (selIdx < 0) {
       return const Text(
-        'Abhi koi hissa nahi — pehle Hisay tab se hisay banayein.',
+        'No parts yet — create parts from the Parts tab first.',
         style: TextStyle(fontSize: 12, color: Colors.grey),
       );
     }
@@ -6417,7 +6611,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       children: [
         Row(
           children: [
-            Expanded(child: Text('${part.name} — ghumao')),
+            Expanded(child: Text('${part.name} — rotation')),
             Switch(
               key: Key('logoPartRotate-$i'),
               value: part.rotate,
@@ -6561,9 +6755,9 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         ),
         const SizedBox(height: 4),
         const Text(
-          'Flat = pahiye ki tarah apni satah mein; 3D = sikkay ki tarah '
-          'side se sikkar kar. Har hissa apne markaz (pivot) se ghoomta hai. '
-          'Swing mein Speed aik jhoolay ki muddat hai (aagay-peeche = aik chakkar).',
+          'Flat = in its own plane like a wheel; 3D = shrinking from the side '
+          'from the side. Each part rotates from its own centre (pivot). '
+          'In Swing, Speed is the duration of one swing (forward-back = one cycle).',
           style: TextStyle(fontSize: 12, color: Colors.grey),
         ),
         const SizedBox(height: 10),
@@ -6681,9 +6875,9 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'Sunahra nukta ghaseet kar wahan rakhein jahan se '
-                    'hissa ghume — aam tor par centre hi sahi rehta hai. '
-                    'Bare preview mein asar foran nazar ayega.',
+                    'Drag the gold dot and place it where the '
+                    'the part rotates from — usually the centre is right. '
+                    'The effect will show immediately in the big preview.',
                     style: TextStyle(fontSize: 12, color: Colors.grey),
                   ),
                   const SizedBox(height: 6),
@@ -6696,7 +6890,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                               i,
                               (e) => e.copyWith(pivotDx: 0, pivotDy: 0),
                             ),
-                    child: const Text('Centre par wapas'),
+                    child: const Text('Back to centre'),
                   ),
                 ],
               ),
@@ -6725,11 +6919,11 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                 setState(() => _copiedPartAnimId = part.id);
                 _showMessage(
                   '${part.name} ki animation settings copy ho gayin — '
-                  'ab doosra hissa chun kar yahan lagayein.',
+                  'now choose the second part and apply here.',
                 );
               },
               icon: const Icon(Icons.copy_all_outlined, size: 16),
-              label: const Text('Is hisay ki settings copy karein'),
+              label: const Text('Copy this part\'s settings'),
             ),
             if (_copiedPartAnimId != null &&
                 _copiedPartAnimId != part.id &&
@@ -6750,16 +6944,16 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                 },
                 icon: const Icon(Icons.content_paste, size: 16),
                 label: Text(
-                  'Copy ki settings yahan lagayein '
+                  'Apply the copied settings here '
                   '(${preset.logoParts.firstWhere((e) => e.id == _copiedPartAnimId).name})',
                 ),
               ),
           ],
         ),
         const Text(
-          'Sirf harkat copy hoti hai — ghumao, style, speed, andaaz, '
-          'pulse, narmi, waqfa aur pivot. Hisay ka box aur naam '
-          'uska apna hi rehta hai.',
+          'Only the movement is copied — rotation, style, speed, style-mode, '
+          'pulse, easing, delay and pivot. The part\'s box and name '
+          'stays its own.',
           style: TextStyle(fontSize: 12, color: Colors.grey),
         ),
       ],
@@ -6772,7 +6966,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     final parts = preset.logoParts;
     if (parts.isEmpty) {
       return const Text(
-        'Abhi koi hissa nahi — pehle Hisay tab se hisay banayein.',
+        'No parts yet — create parts from the Parts tab first.',
         style: TextStyle(fontSize: 12, color: Colors.grey),
       );
     }
@@ -6781,10 +6975,10 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
-          'Har hisa apna chakkar kab shuru kare — yehi professional '
-          'logos ki pehchan hai: pehle frame, phir text, phir ribbon. '
-          'Waqfa 12 second ke loop ke andar hisaab hota hai, is liye '
-          'loop kabhi nahi tootta.',
+          'When each part starts its turn — this is the mark of professional '
+          'logos\' identity: first the frame, then the text, then the ribbon. '
+          'The delay is counted inside the 12-second loop, so '
+          'the loop never breaks.',
           style: TextStyle(fontSize: 12, color: Colors.grey),
         ),
         const SizedBox(height: 8),
@@ -6798,7 +6992,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                 () => preset.logoParts = staggerLogoPartDelays(parts),
               ),
               icon: const Icon(Icons.format_list_numbered, size: 16),
-              label: const Text('Sequence lagao (0.2s fasla)'),
+              label: const Text('Apply sequence (0.2s gap)'),
             ),
             OutlinedButton.icon(
               key: const Key('logoPartsSyncButton'),
@@ -6806,7 +7000,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                 () => preset.logoParts = syncLogoPartDelays(parts),
               ),
               icon: const Icon(Icons.groups, size: 16),
-              label: const Text('Sab aik sath (Sync)'),
+              label: const Text('All together (Sync)'),
             ),
           ],
         ),
@@ -6822,7 +7016,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             runSpacing: 6,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              const Text('Glow ki narmi:', style: TextStyle(fontSize: 12)),
+              const Text('Glow easing:', style: TextStyle(fontSize: 12)),
               for (final (id, label) in const [
                 (kLogoEasingLinear, 'Barabar'),
                 (kLogoEasingSmooth, 'Narm'),
@@ -6839,16 +7033,16 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             ],
           ),
           const Text(
-            'Glow ki saans (Pulse) kaisi ho — Barabar (aik si raftaar) '
-            'ya Narm (kinaron par narm). Hison ki apni narmi neeche '
-            'har hisay ke sath hai.',
+            'How the glow\'s breathing (Pulse) should be — Even (uniform speed) '
+            'or Soft (soft at the edges). The parts\' own easing below '
+            'is with every part.',
             style: TextStyle(fontSize: 12, color: Colors.grey),
           ),
         ],
         const SizedBox(height: 10),
         for (var i = 0; i < parts.length; i++) ...[
           Text(
-            '${parts[i].name} — waqfa '
+            '${parts[i].name} — delay '
             '${parts[i].delaySec == 0 ? 'nahi (foran)' : '${parts[i].delaySec}s'}',
             style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
           ),
@@ -6861,7 +7055,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                   ChoiceChip(
                     key: Key('logoPartDelay-$i-${(v * 10).round()}'),
                     label: Text(v == 0
-                        ? 'Foran'
+                        ? 'Instant'
                         : v == v.roundToDouble()
                             ? '${v.toInt()}s'
                             : '${v}s'),
@@ -6884,7 +7078,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           // hai — narmi sirf doolnay wali harkaton par hai. ---
           Row(
             children: [
-              const Text('Narmi:', style: TextStyle(fontSize: 12)),
+              const Text('Easing:', style: TextStyle(fontSize: 12)),
               const SizedBox(width: 6),
               for (final (id, label) in const [
                 (kLogoEasingLinear, 'Barabar'),
@@ -6904,7 +7098,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               ],
               const Expanded(
                 child: Text(
-                  'Jhoolay/Pulse ki harkat — Barabar ya Narm',
+                  'Swing/Pulse movement — Even or Soft',
                   style: TextStyle(fontSize: 11, color: Colors.grey),
                 ),
               ),
@@ -6942,7 +7136,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           children: [
             const Expanded(
               child: Text(
-                'Glow — logo ke peeche chamak',
+                'Glow — shine behind the logo',
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
               ),
             ),
@@ -6954,23 +7148,23 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           ],
         ),
         const Text(
-          'Glow tasveer se kata nahi jata — app logo ki shakal ko '
-          'dhundla karke peeche aik chamak wali layer bana deti hai, '
-          'bilkul channel logos ki tarah.',
+          'The glow is not cut from the picture — the app blurs the logo\'s shape '
+          'and makes a glowing layer behind it, '
+          'just like channel logos.',
           style: TextStyle(fontSize: 12, color: Colors.grey),
         ),
         if (preset.logoParts.isEmpty) ...[
           const SizedBox(height: 6),
           const Text(
-            'Note: glow hison wale logo ke peeche lagta hai — pehle '
-            'Hisay tab se hisay banayein, phir yahan ki settings un '
-            'ke sath hi chalengi (aur save bhi unhi ke sath hogi).',
+            'Note: the glow applies behind a logo with parts — first '
+            'Create parts from the Parts tab; then the settings here '
+            'will run with them (and will also be saved with them).',
             style: TextStyle(fontSize: 12, color: Colors.grey),
           ),
         ],
         if (scene.glowOn) ...[
           const SizedBox(height: 8),
-          const Text('Glow ka rang:', style: TextStyle(fontSize: 12)),
+          const Text('Glow colour:', style: TextStyle(fontSize: 12)),
           const SizedBox(height: 4),
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
@@ -6978,7 +7172,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               children: [
                 ChoiceChip(
                   key: const Key('logoGlowColor-auto'),
-                  label: const Text('Auto (logo ka rang)'),
+                  label: const Text('Auto (logo colour)'),
                   selected: scene.glowColorArgb == null,
                   onSelected: (_) =>
                       setScene(scene.copyWith(clearGlowColor: true)),
@@ -7004,7 +7198,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                       setScene(scene.copyWith(glowColorArgb: picked));
                     }
                   },
-                  child: const Text('Apna rang…'),
+                  child: const Text('Your colour…'),
                 ),
               ],
             ),
@@ -7051,7 +7245,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             scrollDirection: Axis.horizontal,
             child: Row(
               children: [
-                const Text('Harkat:', style: TextStyle(fontSize: 12)),
+                const Text('Movement:', style: TextStyle(fontSize: 12)),
                 const SizedBox(width: 6),
                 for (final (id, label) in const [
                   (kLogoGlowMotionStatic, 'Sabit'),
@@ -7080,7 +7274,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           children: [
             const Expanded(
               child: Text(
-                'Roshni ki lehar (Light Sweep)',
+                'Light Sweep',
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
               ),
             ),
@@ -7092,16 +7286,16 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           ],
         ),
         const Text(
-          'Aik chamak ki lehar poore logo ke upar se guzarti '
-          'rehti hai — bilkul TV channel ke idents ki tarah. '
-          'Lehar sirf logo ki shakal par chamakti hai, bahir nahi.',
+          'A wave of shine keeps passing over the whole logo '
+          'stays — just like TV channel idents. '
+          'The wave shines only on the logo\'s shape, not outside.',
           style: TextStyle(fontSize: 12, color: Colors.grey),
         ),
         if (scene.sweepOn)
           Row(
             children: [
               Text(
-                'Lehar ki raftaar: ${(scene.sweepSpeed * 100).round()}%',
+                'Wave speed: ${(scene.sweepSpeed * 100).round()}%',
                 style: const TextStyle(fontSize: 12),
               ),
               Expanded(
@@ -7118,7 +7312,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           ),
         const SizedBox(height: 12),
         const Text(
-          'Neeche ki plate (Base):',
+          'Bottom plate (Base):',
           style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: 4),
@@ -7127,9 +7321,9 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           child: Row(
             children: [
               for (final (id, label) in const [
-                (kLogoPartsBaseCut, 'Kata hua base'),
-                (kLogoPartsBaseNone, 'Koi base nahi'),
-                (kLogoPartsBaseGhost, 'Poora logo neeche'),
+                (kLogoPartsBaseCut, 'Cut-out base'),
+                (kLogoPartsBaseNone, 'No base'),
+                (kLogoPartsBaseGhost, 'Full logo below'),
               ]) ...[
                 ChoiceChip(
                   key: Key('logoPartsBase-$id'),
@@ -7143,9 +7337,9 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           ),
         ),
         const Text(
-          'Kata hua base: ghumta hissa uthe to us ki jagah se peeche ki '
-          'video dikhti hai. Poora logo neeche (ghost): asal logo sabit '
-          'neeche rehta hai aur hisay us ke upar ghoomte hain — dohra asar.',
+          'Cut-out base: when a rotating part lifts, the video behind '
+          'video shows. Full logo below (ghost): the original logo stays fixed '
+          'stays below and the parts rotate above it — a double effect.',
           style: TextStyle(fontSize: 12, color: Colors.grey),
         ),
         const SizedBox(height: 12),
@@ -7175,8 +7369,8 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           ),
         ),
         const Text(
-          'Ye sirf preview ke liye hai — export par koi asar nahi. '
-          'Checker par logo ki asal halat (khaali jaghein) saaf dikhti hai.',
+          'This is only for the preview — no effect on the export. '
+          'On Checker, the logo\'s real state (empty areas) shows clearly.',
           style: TextStyle(fontSize: 12, color: Colors.grey),
         ),
       ],
@@ -7215,7 +7409,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                 ],
               );
           return AlertDialog(
-            title: const Text('Glow ka apna rang'),
+            title: const Text('The glow\'s own colour'),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -7241,7 +7435,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               ),
               TextButton(
                 onPressed: () => Navigator.pop(ctx, argb),
-                child: const Text('Yehi rang'),
+                child: const Text('This colour'),
               ),
             ],
           );
@@ -7264,9 +7458,9 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         Text(
           saveState == LogoPartsSaveState.active
               ? (savedCurrent
-                  ? 'Save shuda hai — ${logoPartsSaveDaysLeft(preset.logoPartsSavedAtMs, now)} din baqi hain.'
-                  : 'Save shuda settings se tabdeeli ho gayi hai — dobara save par ${PricingService.coinsOr(PricingService.keyLogoPartsSave, kLogoPartsSavePriceCoins)} coins lagein ge.')
-              : 'Ye settings sirf is session ke liye hain. Save karein to 7 din tak mehfooz rahengi — us ke baad khatam, dobara banana hoga.',
+                  ? 'Saved — ${logoPartsSaveDaysLeft(preset.logoPartsSavedAtMs, now)} days remaining.'
+                  : 'The settings have changed from the saved ones — saving again will cost ${PricingService.coinsOr(PricingService.keyLogoPartsSave, kLogoPartsSavePriceCoins)} coins.')
+              : 'These settings are only for this session. If you save them, they stay safe for 7 days — after that they end and you will have to create them again.',
           style: const TextStyle(fontSize: 12, color: Colors.grey),
         ),
         const SizedBox(height: 6),
@@ -7292,7 +7486,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           runSpacing: 6,
           children: [
             for (final (size, label) in const [
-              (kLogoPartsExportSizeDefault, '512 — Halka'),
+              (kLogoPartsExportSizeDefault, '512 — Light'),
               (kLogoPartsExportSizeLarge, '1024 — Saaf'),
             ])
               ChoiceChip(
@@ -7307,8 +7501,8 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           ],
         ),
         const Text(
-          '1024 par frames zyada saaf bante hain lekin export '
-          'thoda bhari hota hai; 512 halka aur tez hai.',
+          'At 1024 the frames are clearer but the export '
+          'is a bit heavy; 512 is light and fast.',
           style: TextStyle(fontSize: 12, color: Colors.grey),
         ),
       ],
@@ -7337,13 +7531,13 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       });
       _showMessage(
         parts.isEmpty
-            ? 'Hisay tajweez nahi ho sakay — "Naya box banao" se khud box kheench kar hissa banayein.'
-            : '${parts.length} hisay tajweez ho gaye — boxes ko ghaseet kar theek kar lein, phir Ghumao set karein.',
+            ? 'Parts could not be suggested — draw a box yourself with "Create new box" to make a part.'
+            : '${parts.length} parts suggested — drag the boxes to fix them, then set the rotation.',
       );
     } catch (e) {
       if (!mounted) return;
       setState(() => _partsBusy = false);
-      _showMessage('Tajweez fail ho gayi: $e');
+      _showMessage('Suggestion failed: $e');
     }
   }
 
@@ -7356,13 +7550,13 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     );
     switch (s.kind) {
       case PriceKind.coins:
-        return 'Save karein — ${s.coins} coins (7 din)';
+        return 'Save — ${s.coins} coins (7 days)';
       case PriceKind.free:
-        return 'Save karein — FREE (7 din)';
+        return 'Save — FREE (7 days)';
       case PriceKind.pro:
-        return 'Save karein — sirf Pro (7 din)';
+        return 'Save — Pro only (7 days)';
       case PriceKind.ad:
-        return 'Save karein — ad dekh kar (7 din)';
+        return 'Save — watch an ad (7 days)';
     }
   }
 
@@ -7390,7 +7584,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       preset.logoParts = list;
       _selectedPartId = merged.id;
     });
-    _showMessage('Do hisay mil kar aik element ban gaye: ${merged.name}');
+    _showMessage('Two parts joined into one element: ${merged.name}');
   }
 
   /// SPLIT (Option 11): the selected box is cut into
@@ -7468,10 +7662,10 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Saare hisay saaf karein?'),
+        title: const Text('Clear all parts?'),
         content: const Text(
-          'Saare boxes khatam ho jayenge. Asal logo mehfooz rahe ga — '
-          'hisay dobara tajweez ya draw kar sakte hain.',
+          'All boxes will be removed. The original logo will stay safe — '
+          'you can suggest or draw the parts again.',
         ),
         actions: [
           TextButton(
@@ -7480,7 +7674,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           ),
           FilledButton(
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Saaf karein'),
+            child: const Text('Clear'),
           ),
         ],
       ),
@@ -7514,7 +7708,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         if (PricingService.passesPro) {
           _applyPartsSave(preset);
         } else {
-          _showMessage('Logo Parts save sirf Pro users ke liye hai.');
+          _showMessage('Logo Parts save is for Pro users only.');
         }
         return;
       case PriceKind.ad:
@@ -7523,9 +7717,9 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           builder: (ctx) => AlertDialog(
             title: const Text('Logo Parts Save'),
             content: const Text(
-              'Aik rewarded ad dekh kar parts save karein.\n'
-              'Save 7 din tak valid rahe ga — us ke baad settings '
-              'khatam ho jayengi.',
+              'Watch a rewarded ad to save the parts.\n'
+              'The save will stay valid for 7 days — after that the settings '
+              'will end.',
             ),
             actions: [
               TextButton(
@@ -7534,7 +7728,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               ),
               TextButton(
                 onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('Ad Dekhein — Save'),
+                child: const Text('Watch Ad — Save'),
               ),
             ],
           ),
@@ -7543,7 +7737,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         final bool watched = await PricingService.watchUnlockAd();
         if (!mounted) return;
         if (!watched) {
-          _showMessage('Ad mukammal nahi hua — parts save nahi hue.');
+          _showMessage('The ad did not complete — the parts were not saved.');
           return;
         }
         _applyPartsSave(preset);
@@ -7558,9 +7752,9 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       builder: (ctx) => AlertDialog(
         title: const Text('Logo Parts Save'),
         content: Text(
-          'Parts settings save karne ke $price coins '
-          'lagein ge.\nSave 7 din tak valid rahe ga — us ke baad settings '
-          'khatam ho jayengi.\nAap ka balance: $balance coins.',
+          '$price coins will be charged to save the parts settings. '
+          'will be charged.\nThe save will stay valid for 7 days — after that the settings '
+          'will end.\nYour balance: $balance coins.',
         ),
         actions: [
           TextButton(
@@ -7586,7 +7780,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       _showMessage(
         res.error == 'insufficient_balance'
             ? AiToolCharge.insufficientMessage
-            : 'Payment nahi ho saka — dobara try karein.',
+            : 'Payment could not be completed — try again.',
       );
       return;
     }
@@ -7604,7 +7798,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       preset.logoPartsSavedAtMs = now;
     });
     unawaited(persistPresetChange(preset));
-    _showMessage('Parts save ho gaye — 7 din tak valid hain.');
+    _showMessage('Parts saved — valid for 7 days.');
   }
 
   /// Build 13 (point 6): the Permanent Logo section — a
@@ -7628,8 +7822,8 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Permanent Logo ON hai — aap ka animated logo akela '
-                  'green screen par export ho sakta hai.',
+                  'Permanent Logo is ON — your animated logo alone '
+                  'can be exported on a green screen.',
                   style: TextStyle(fontSize: 12, color: Colors.grey),
                 ),
                 const SizedBox(height: 8),
@@ -7639,7 +7833,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                   icon: const Icon(Icons.movie_creation_outlined, size: 18),
                   label: Text(
                     _permBusy
-                        ? 'Export ho raha hai…'
+                        ? 'Exporting…'
                         : 'Green Screen Logo Export',
                   ),
                 ),
@@ -7657,10 +7851,10 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               ),
               const SizedBox(height: 6),
               const Text(
-                'Tareeqa: Rs 200 is Easypaisa number par bhejein aur '
-                'reference mein apna login email likhein. Phir payment '
-                'ka screenshot isi number par WhatsApp kar dein — owner '
-                'verify karke aap ka Permanent Logo on kar de ga.',
+                'Method: send Rs 200 to this Easypaisa number and '
+                'write your login email in the reference. Then after the payment '
+                'WhatsApp its screenshot to this number — the owner '
+                'is verified, your Permanent Logo will be turned on.',
                 style: TextStyle(fontSize: 12, color: Colors.grey),
               ),
               const SizedBox(height: 6),
@@ -7669,7 +7863,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                 onPressed: () =>
                     unawaited(PermanentLogoService.instance.refresh()),
                 icon: const Icon(Icons.refresh, size: 16),
-                label: const Text('Dobara check karein'),
+                label: const Text('Check again'),
               ),
             ],
           );
@@ -7685,7 +7879,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     final preset = _preset;
     if (preset == null) return;
     if (preset.logoPath == null && preset.logoParts.isEmpty) {
-      _showMessage('Pehle logo select karein.');
+      _showMessage('Select the logo first.');
       return;
     }
     setState(() => _permBusy = true);
@@ -7734,17 +7928,17 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       if (!mounted) return;
       if (!res.ok) {
         setState(() => _permBusy = false);
-        _showMessage('Export fail ho gaya — dobara try karein.');
+        _showMessage('Export failed — try again.');
         return;
       }
       await Gal.putVideo(outFile);
       if (!mounted) return;
       setState(() => _permBusy = false);
-      _showMessage('Permanent logo gallery mein save ho gaya.');
+      _showMessage('Permanent logo saved in the gallery.');
     } catch (e) {
       if (!mounted) return;
       setState(() => _permBusy = false);
-      _showMessage('Export fail ho gaya: $e');
+      _showMessage('Export failed: $e');
     }
   }
 
@@ -7832,9 +8026,9 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           face: dest,
         };
       });
-      _showMessage('Cube ki $face side par tasveer lag gayi.');
+      _showMessage('The picture was placed on the cube\'s $face side.');
     } catch (e) {
-      _showMessage('Face ki tasveer nahi lagi: $e');
+      _showMessage('The face picture was not placed: $e');
     }
   }
 
@@ -7859,9 +8053,9 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       await persistPresetChange(preset);
       if (!mounted) return;
       setState(() {});
-      _showMessage('Logo lag gaya — preview mein dekhein.');
+      _showMessage('Logo placed — see it in the preview.');
     } catch (e) {
-      _showMessage('Logo nahi laga: $e');
+      _showMessage('Logo was not placed: $e');
     }
   }
 
@@ -7891,7 +8085,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       if (!mounted) return;
       setState(() {
         _logoVideoBusy = true;
-        _logoVideoStatus = 'Background check ho raha hai…';
+        _logoVideoStatus = 'Checking the background…';
       });
       final videoFile = File(dest);
       final workDir = Directory(p.join(dir.path, 'keywork_$stamp'));
@@ -7917,9 +8111,9 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         );
         if (still != null) preset.logoVideoStillPath = still.path;
         _logoVideoStatus =
-            'Background hat gaya '
+            'Background removed '
             '(${LogoKeyService.displayHex(detection.argb)}) — '
-            'keyed logo tayyar hai.';
+            'the keyed logo is ready.';
       } else {
         final still = await LogoKeyService.extractStill(
           video: videoFile,
@@ -7927,8 +8121,8 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         );
         if (still != null) preset.logoVideoStillPath = still.path;
         _logoVideoStatus =
-            'Solid background nahi mila — video baghair key '
-            'ke lage ga.';
+            'No solid background found — the video without key '
+            'will be applied.';
       }
       await persistPresetChange(preset);
       if (!mounted) return;
@@ -7938,7 +8132,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       if (mounted) {
         setState(() => _logoVideoBusy = false);
       }
-      _showMessage('Logo video nahi laga: $e');
+      _showMessage('Logo video was not placed: $e');
     }
   }
 
@@ -7980,7 +8174,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         key: const Key('reporterNameField'),
         controller: _reporterNameController,
         decoration: const InputDecoration(
-          hintText: 'Reporter ka naam likhein…',
+          hintText: 'Write the reporter\'s name…',
           border: OutlineInputBorder(),
         ),
         onChanged: (v) {
@@ -8005,7 +8199,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             errorBuilder: (context, error, stack) =>
                 const Icon(Icons.subtitles_outlined, size: 20),
           ),
-          label: const Text('Teleprompter — script parh kar record karein'),
+          label: const Text('Teleprompter — read the script and record'),
         ),
       ),
       const SizedBox(height: 14),
@@ -8045,7 +8239,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                   label: FittedBox(
                     fit: BoxFit.scaleDown,
                     child: Text(
-                      photo == null ? 'Photo lagayen' : 'Photo badlein',
+                      photo == null ? 'Attach photo' : 'Photo badlein',
                     ),
                   ),
                   style: FilledButton.styleFrom(
@@ -8095,7 +8289,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       if (photo != null && _reporterShowBgChoices) ...[
         const SizedBox(height: 10),
         const Text(
-          'Background colour chunein:',
+          'Choose a background colour:',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
         const SizedBox(height: 6),
@@ -8209,7 +8403,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                   _scheduleSave();
                 },
           icon: const Icon(Icons.person_remove_outlined, size: 18),
-          label: const Text('Reporter hatayein'),
+          label: const Text('Remove reporter'),
         ),
       ],
     ]);
@@ -8239,15 +8433,15 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     final res = project.addClips([path]);
     if (wasAlreadyThere) {
       _showMessage(
-        'Ye recording pehle se clips mein hai — dobara add nahi hui.',
+        'This recording is already in the clips — it was not added again.',
       );
       return;
     }
     if (res.droppedByCap > 0 || !res.clips.contains(path)) {
       _showMessage(
-        'Recording clips mein add nahi hui — clips ki had '
-        '(${NewsProject.maxClips}) poori hai. Pehle koi clip '
-        'hatayein.',
+        'The recording was not added to the clips — the clips limit '
+        '(${NewsProject.maxClips}) is full. First remove a clip '
+        'remove one.',
       );
       return;
     }
@@ -8256,9 +8450,9 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     if (!mounted) return;
     if (project.clipPaths.contains(path)) {
       unawaited(_probeClips());
-      _showMessage('Reporter recording clips mein shamil ho gayi.');
+      _showMessage('The reporter recording joined the clips.');
     } else {
-      _showMessage('Recording add nahi ho saki — dobara try karein.');
+      _showMessage('The recording could not be added — try again.');
     }
   }
 
@@ -8270,13 +8464,13 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     final copied = await copyReporterPhoto(picked.first.path!);
     if (!mounted) return;
     if (copied == null) {
-      _showMessage('Photo copy nahi hui — dobara try karein.');
+      _showMessage('Photo could not be copied — try again.');
       return;
     }
     setState(() {
       project.reporterPhotoPath = copied;
-      _reporterStatus = 'Photo lag gaya — block preview mein '
-          'logo ke opposite aa gaya hai.';
+      _reporterStatus = 'Photo placed — in the block preview '
+          'has come opposite the logo.';
     });
     _scheduleSave();
   }
@@ -8287,22 +8481,22 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     if (project == null || photo == null || _reporterBusy) return;
     setState(() {
       _reporterBusy = true;
-      _reporterStatus = 'Background remove ho raha hai — pehli '
-          'dafa model pack download hoga, thora waqt lagega…';
+      _reporterStatus = 'Background is being removed — the first '
+          'time the model pack will download; it will take a little time…';
     });
     try {
       final out = await reporterRemoveBackground(photo);
       if (!mounted) return;
       setState(() {
         project.reporterPhotoPath = out;
-        _reporterStatus = 'Background remove ho gaya.';
+        _reporterStatus = 'Background removed.';
       });
       _scheduleSave();
     } on ReporterBgException catch (e) {
       if (mounted) setState(() => _reporterStatus = e.message);
     } catch (e) {
       if (mounted) {
-        setState(() => _reporterStatus = 'BG remove nahi hua: $e');
+        setState(() => _reporterStatus = 'BG remove failed: $e');
       }
     } finally {
       if (mounted) setState(() => _reporterBusy = false);
@@ -8315,7 +8509,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     if (project == null || photo == null || _reporterBusy) return;
     setState(() {
       _reporterBusy = true;
-      _reporterStatus = 'Background badla ja raha hai…';
+      _reporterStatus = 'Changing the background…';
     });
     try {
       final out = await reporterReplaceBackground(
@@ -8325,7 +8519,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       if (!mounted) return;
       setState(() {
         project.reporterPhotoPath = out;
-        _reporterStatus = 'Background badal gaya.';
+        _reporterStatus = 'Background changed.';
         _reporterShowBgChoices = false;
       });
       _scheduleSave();
@@ -8333,7 +8527,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       if (mounted) setState(() => _reporterStatus = e.message);
     } catch (e) {
       if (mounted) {
-        setState(() => _reporterStatus = 'BG replace nahi hua: $e');
+        setState(() => _reporterStatus = 'Background replace failed: $e');
       }
     } finally {
       if (mounted) setState(() => _reporterBusy = false);
@@ -8348,7 +8542,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     if (picked.isEmpty || picked.first.path == null) return;
     setState(() {
       _reporterBusy = true;
-      _reporterStatus = 'Background photo lagayi ja rahi hai…';
+      _reporterStatus = 'Applying the background photo…';
     });
     try {
       final out = await reporterReplaceBackground(
@@ -8358,7 +8552,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       if (!mounted) return;
       setState(() {
         project.reporterPhotoPath = out;
-        _reporterStatus = 'Background photo lag gayi.';
+        _reporterStatus = 'Background photo applied.';
         _reporterShowBgChoices = false;
       });
       _scheduleSave();
@@ -8366,7 +8560,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       if (mounted) setState(() => _reporterStatus = e.message);
     } catch (e) {
       if (mounted) {
-        setState(() => _reporterStatus = 'BG replace nahi hua: $e');
+        setState(() => _reporterStatus = 'Background replace failed: $e');
       }
     } finally {
       if (mounted) setState(() => _reporterBusy = false);
@@ -8458,7 +8652,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               SizedBox(width: 6),
               Expanded(
                 child: Text(
-                  'Recording ho rahi hai…',
+                  'Recording…',
                   style: TextStyle(color: Colors.redAccent, fontSize: 12),
                 ),
               ),
@@ -8486,7 +8680,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           children: [
             ChoiceChip(
               key: const Key('audioMusic-none'),
-              label: const Text('Koi nahi'),
+              label: const Text('None'),
               selected: project.backgroundMusicAsset == null &&
                   project.storeMusicPath == null,
               onSelected: (_) {
@@ -8533,9 +8727,9 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           errorBuilder: (context, error, stack) =>
               const Icon(Icons.graphic_eq, size: 22),
         ),
-        title: const Text('Auto Ducking (music awaz ke neeche)'),
+        title: const Text('Auto Ducking (music under the voice)'),
         subtitle: const Text(
-          'Voiceover ke neeche music khud halka ho jata hai',
+          'The music under the voiceover lightens by itself',
         ),
         value: project.musicDucking,
         onChanged: (v) {
@@ -8558,8 +8752,8 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           children: [
             const Expanded(
               child: Text(
-                'Abhi koi store audio owned nahi — Store se '
-                'music / sound effect lein, woh yahan aa jayega.',
+                'No store audio owned yet — take music / sound effects '
+                'take music / a sound effect from the Store; it will come here.',
                 style: TextStyle(color: Colors.grey, fontSize: 12),
               ),
             ),
@@ -8575,7 +8769,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                 );
                 unawaited(_loadStoreAudio());
               },
-              child: const Text('Store kholein'),
+              child: const Text('Open Store'),
             ),
           ],
         )
@@ -8596,7 +8790,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     final track =
         BuiltInNewsMusic.fromAsset(project.backgroundMusicAsset);
     if (track != null) return 'Selected: ${track.label} (built-in)';
-    return 'Selected: koi music nahi';
+    return 'Selected: no music';
   }
 
   /// One owned store-audio row in the Audio panel: play/pause
@@ -8669,7 +8863,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                     });
                     _scheduleSave();
                   },
-            child: Text(selected ? 'Laga hua' : 'Lagayen'),
+            child: Text(selected ? 'Applied' : 'Apply'),
           ),
         ],
       ),
@@ -8727,7 +8921,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         textAlign: TextAlign.right,
         textDirection: TextDirection.rtl,
         decoration: const InputDecoration(
-          hintText: 'Tehreer yahan likhein ya paste karein…',
+          hintText: 'Write or paste the script here…',
           border: OutlineInputBorder(),
         ),
         // P2: debounced rebuild (see _textFieldChanged) — the
@@ -8741,7 +8935,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           key: const Key('voiceBuildButton'),
           onPressed: _voiceBusy ? null : _buildSelectedVoice,
           icon: const Icon(Icons.record_voice_over, size: 19),
-          label: Text(_voiceBusy ? 'Voice ban rahi hai…' : 'Voice banayein'),
+          label: Text(_voiceBusy ? 'Creating voice…' : 'Voice banayein'),
           style: FilledButton.styleFrom(
             backgroundColor: const Color(0xFFFFC800),
             foregroundColor: Colors.black,
@@ -8754,7 +8948,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       ),
       const SizedBox(height: 14),
       const Text(
-        'Awaz chunein',
+        'Choose a voice',
         style: TextStyle(fontWeight: FontWeight.bold),
       ),
       const SizedBox(height: 6),
@@ -8792,7 +8986,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         ),
       ),
       _voiceSliderRow(
-        label: 'Pause (sentences ke beech)',
+        label: 'Pause (between sentences)',
         valueText: '${project.voicePauseSec.toStringAsFixed(1)}s',
         slider: Slider(
           key: const Key('voicePauseSlider'),
@@ -8813,7 +9007,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       // ya na lage. Wired in ReelExportService step 2b.
       SwitchListTile(
         key: const Key('voiceMusicSwitch'),
-        title: const Text('Background music (export mein)'),
+        title: const Text('Background music (in export)'),
         subtitle: Text(
           project.storeMusicPath != null
               ? 'Music: ${project.storeMusicName ?? 'Store music'}'
@@ -8822,7 +9016,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                       ) !=
                       null
                   ? 'Music: ${BuiltInNewsMusic.fromAsset(project.backgroundMusicAsset)!.label}'
-                  : 'Music: koi select nahi (Audio tool se chunein)',
+                  : 'Music: none selected (choose from the Audio tool)',
           style: const TextStyle(fontSize: 12),
         ),
         value: project.voiceMusicEnabled,
@@ -8836,9 +9030,9 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       // mein lagta hai — export bed se alag cheez hai.
       SwitchListTile(
         key: const Key('voicePadSwitch'),
-        title: const Text('AI voice ke peeche soft pad'),
+        title: const Text('Soft pad behind the AI voice'),
         subtitle: const Text(
-          'Voice banate waqt halki music mix hoti hai',
+          'Light music mixes while the voice is created',
           style: TextStyle(fontSize: 12),
         ),
         value: project.voiceMusic,
@@ -8855,10 +9049,10 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         ),
       ],
       // v1.5.0 (#18): the status line renders ONLY for a real
-      // status — the default 'Abhi voice nahi bani.' text is NOT
+      // status — the default 'No voice has been created yet.' text is NOT
       // repeated here; the VoicePreviewPlayer's empty card below
       // is the one place that message lives.
-      if (_voiceStatus != 'Abhi voice nahi bani.') ...[
+      if (_voiceStatus != 'No voice has been created yet.') ...[
         const SizedBox(height: 8),
         Text(
           _voiceStatus,
@@ -8870,7 +9064,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         Padding(
           padding: const EdgeInsets.only(top: 2),
           child: Text(
-            'Aaj ki voice limit: $_voiceRemaining / 5 baaki',
+            'Today\'s voice limit: $_voiceRemaining / 5 left',
             style: const TextStyle(color: Colors.grey, fontSize: 12),
           ),
         ),
@@ -8879,7 +9073,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           padding: const EdgeInsets.only(top: 2),
           child: Text(
             'Pro active: AI voice ki roz limit '
-            '${ProService.instance.limitFor(5, 25)}/day hai.',
+            '${ProService.instance.limitFor(5, 25)}/day.',
             style: const TextStyle(color: Colors.amber, fontSize: 12),
           ),
         ),
@@ -8923,9 +9117,9 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           Expanded(
             child: Text(
               project.subtitles.isEmpty
-                  ? 'Abhi koi subtitles nahi — voiceover banayein, '
-                      'phir subtitles us ki real length se sync '
-                      'honge.'
+                  ? 'No subtitles yet — create the voiceover, '
+                      'then the subtitles will sync with its real length '
+                      'will be.'
                   : 'Subtitles: ${project.subtitles.length} lines'
                       '${project.voiceoverDurationSec == null ? ' (basic split — voiceover se sync nahi)' : ' — voiceover se synced (${project.voiceoverDurationSec!.toStringAsFixed(1)}s)'}',
               style: const TextStyle(color: Colors.grey, fontSize: 12),
@@ -8960,14 +9154,14 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
             child: Text(
               key: const Key('captionTimingStatus'),
               project.captionTimingsStale
-                  ? 'Timings: ASAL (Whisper) thay — tehreer ya '
-                      'voiceover badal gaya hai, dobara Asal '
-                      'timings dabayein.'
+                  ? 'Timings: they were REAL (Whisper) — the script or '
+                      'the voiceover changed; apply Real '
+                      'apply the timings.'
                   : project.captionTimingSource == 'whisper'
-                      ? 'Timings: ASAL (Whisper) — har lafz apne '
-                          'real waqt par hai.'
+                      ? 'Timings: REAL (Whisper) — every word at its '
+                          'at its real time.'
                       : 'Timings: ESTIMATE — voiceover ki length '
-                          'se andaza lagaya gaya hai.',
+                          'has been estimated from it.',
               style: TextStyle(
                 color: project.captionTimingsStale
                     ? const Color(0xFFFFC800)
@@ -8998,7 +9192,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
                   : const Icon(Icons.hearing_outlined, size: 17),
               label: Text(
                 _alignBusy
-                    ? 'Whisper sun raha hai…'
+                    ? 'Whisper is listening…'
                     : 'Asal timings (Whisper)',
               ),
             ),
@@ -9033,13 +9227,13 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       const SizedBox(height: 6),
       Text(
         project.voiceoverDurationSec == null
-            ? 'Har lafz ka apna time hota hai — voiceover banne '
-                'ke baad subtitles us ki REAL length se sync '
-                'hote hain, phir ye style export mein word-by-'
-                'word burn hoga. Abhi timings estimate hain.'
+            ? 'Every word has its own time — after the voiceover is created '
+                'after it, the subtitles sync with its REAL length '
+                'happen, then this style will burn word-by-'
+                'word burn. Right now the timings are estimates.'
             : 'Word timings voiceover ki real length se synced '
-                'hain — export mein ye style har lafz ko us ke '
-                'time par highlight / pop karega.',
+                'they are — in the export this style will highlight / pop every word at its '
+                'time.',
         style: const TextStyle(color: Colors.grey, fontSize: 12),
       ),
     ]);
@@ -9051,7 +9245,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   Widget _exportPanel(ChannelPreset preset, NewsProject project) {
     return _panelShell('Export', [
       const Text(
-        'Transition (Library) — clips ke beech',
+        'Transition (Library) — between clips',
         style: TextStyle(fontWeight: FontWeight.bold),
       ),
       const SizedBox(height: 6),
@@ -9063,7 +9257,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
           setState(() => project.transitionId = id);
           _scheduleSave();
         },
-        emptyNote: 'Abhi koi Library transition nahi.',
+        emptyNote: 'No Library transition yet.',
       ),
       const SizedBox(height: 16),
       ReelExportCard(project: project, preset: preset),
@@ -9088,7 +9282,7 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               : const Icon(Icons.image_outlined, size: 18),
           label: const FittedBox(
             fit: BoxFit.scaleDown,
-            child: Text('Template frame (poster) save karein'),
+            child: Text('Save template frame (poster)'),
           ),
         ),
       ),
@@ -9138,9 +9332,9 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         includeIntroMarker: true,
       );
       await Gal.putImage(file.path);
-      _showMessage('Template frame gallery mein save ho gaya.');
+      _showMessage('Template frame saved in the gallery.');
     } catch (e) {
-      _showMessage('Template frame save nahi hua: $e');
+      _showMessage('Template frame could not be saved: $e');
     } finally {
       if (mounted) setState(() => _frameExporting = false);
     }

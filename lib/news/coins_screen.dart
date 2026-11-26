@@ -28,7 +28,7 @@ List<(String, String)> coinsPriceRows({RemoteConfig? config}) {
     return switch (s.kind) {
       PriceKind.free => 'FREE',
       PriceKind.coins => '${s.coins} coins',
-      PriceKind.pro => 'Pro ke liye shamil',
+      PriceKind.pro => 'Included for Pro',
       PriceKind.ad => 'Ad dekh kar',
     };
   }
@@ -62,8 +62,8 @@ List<(String, String)> coinsPriceRows({RemoteConfig? config}) {
       ),
     ),
     ('Export 720p', 'FREE'),
-    ('Export 1080p', 'FREE • ads ke sath'),
-    ('Export 4K', 'FREE • ads ke sath'),
+    ('Export 1080p', 'FREE • with ads'),
+    ('Export 4K', 'FREE • with ads'),
   ];
 }
 

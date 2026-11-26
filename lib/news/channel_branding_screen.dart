@@ -155,7 +155,7 @@ class _ChannelBrandingScreenState extends State<ChannelBrandingScreen> {
     );
     setState(() => _preset = working);
     _showMessage(
-      'Branding save ho gayi — naye projects par lagoo hogi.',
+      'Branding saved — it will apply to new projects.',
     );
   }
 
@@ -221,7 +221,7 @@ class _ChannelBrandingScreenState extends State<ChannelBrandingScreen> {
           const SizedBox(height: 16),
         ],
         const Text(
-          'Live preview — branding yahan se naye projects par lagoo hoti hai',
+          'Live preview — branding applies to new projects from here',
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
@@ -288,7 +288,7 @@ class _ChannelBrandingScreenState extends State<ChannelBrandingScreen> {
           keyPrefix: 'brandingRibbonColor-bottom',
         ),
         const Text(
-          'Ribbon content fixed hai — top = current story, middle '
+          'Ribbon content is fixed — top = current story, middle '
           'Urdu = national news, bottom English = international.',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
@@ -299,8 +299,8 @@ class _ChannelBrandingScreenState extends State<ChannelBrandingScreen> {
         ),
         const SizedBox(height: 4),
         const Text(
-          'Khaali handle kahin nahi dikhega — sirf bhare hue handles '
-          'preview footer aur export end card par aate hain.',
+          'An empty handle will not show anywhere — only filled handles '
+          'come on the preview footer and the export end card.',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
         const SizedBox(height: 8),
@@ -353,7 +353,7 @@ class _ChannelBrandingScreenState extends State<ChannelBrandingScreen> {
                 const SizedBox(height: 8),
                 if (handles.length <= 1)
                   const Text(
-                    'Koi handle nahi — end card par sirf channel ka '
+                    'No handle — on the end card only the channel\'s '
                     'naam dikhega.',
                     style: TextStyle(color: Colors.grey),
                   )
@@ -374,12 +374,12 @@ class _ChannelBrandingScreenState extends State<ChannelBrandingScreen> {
         const SizedBox(height: 4),
         const Text(
           'Channel mark (logo, ya brand colour par initial) export '
-          'mein corner par lagta hai.',
+          'applies in the corner.',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
         SwitchListTile(
           key: const Key('brandingWatermarkSwitch'),
-          title: const Text('Watermark on karein'),
+          title: const Text('Turn watermark on'),
           value: working.watermarkEnabled,
           onChanged: (v) =>
               setState(() => working.watermarkEnabled = v),
@@ -438,8 +438,8 @@ class _ChannelBrandingScreenState extends State<ChannelBrandingScreen> {
         ),
         const SizedBox(height: 8),
         const Text(
-          'Save karne par ye branding naye projects, template '
-          'previews aur reel exports par lagoo ho jati hai.',
+          'On saving, this branding applies to new projects, template '
+          'previews and reel exports.',
           style: TextStyle(color: Colors.grey, fontSize: 12),
           textAlign: TextAlign.center,
         ),

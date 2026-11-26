@@ -73,7 +73,7 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Report bhej di gayi — shukriya!'),
+          content: Text('Report sent — thank you!'),
         ),
       );
       Navigator.of(context).pop();
@@ -82,8 +82,8 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
     setState(() {
       _sending = false;
       _error =
-          'Report nahi gayi — network ka masla lagta hai. Aap ki '
-          'likhi hui report yahin mehfooz hai, phir koshish karein.';
+          'Report did not send — it looks like a network issue. Your '
+          'written report is safe here; try again.';
     });
     await FeedbackService.saveDraft(_controller.text);
   }
@@ -102,18 +102,18 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
                 Icon(Icons.bug_report_outlined, size: 20),
                 SizedBox(width: 8),
                 Text(
-                  'Koi masla ya khata?',
+                  'Any problem or error?',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                 ),
               ],
             ),
             const SizedBox(height: 6),
             const Text(
-              'Apne alfaz mein likh dein ke kya hua. Khaali chhor '
-              'kar bhi bhej sakte hain — report ke sath app ki '
-              'aakhri diagnostics (konsi screen, kya error) khud '
-              'ba khud chali jayengi. Aap ki koi private maloomat '
-              'nahi jati.',
+              'Write in your own words what happened. You can also send it '
+              'empty and send it — along with the report, the app\'s '
+              'the latest diagnostics (which screen, what error) will go '
+              'by themselves. No private information of yours '
+              'does not go.',
               style: TextStyle(color: Colors.grey, fontSize: 13),
             ),
             const SizedBox(height: 14),
@@ -124,7 +124,7 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
               maxLines: 8,
               maxLength: 2000,
               decoration: const InputDecoration(
-                hintText: 'Yahan likhein… (khaali bhi chalega)',
+                hintText: 'Write here… (empty is fine too)',
                 border: OutlineInputBorder(),
               ),
             ),
@@ -146,7 +146,7 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : const Icon(Icons.send_outlined, size: 18),
-              label: Text(_sending ? 'Bhej rahe hain…' : 'Report bhejo'),
+              label: Text(_sending ? 'Sending…' : 'Report bhejo'),
               style: ElevatedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 13),
               ),

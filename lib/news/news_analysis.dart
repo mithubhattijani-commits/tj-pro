@@ -392,16 +392,16 @@ List<String> hashtagProblems(List<String> tags) {
     final t = tag.trim();
     if (t.isEmpty) continue;
     if (!t.startsWith('#')) {
-      problems.add('"$t" — # se shuru nahi hota');
+      problems.add('"$t" — does not start with #');
     } else if (!isRomanHashtag(t)) {
-      problems.add('"$t" — sirf English/Roman letters allowed');
+      problems.add('"$t" — only English/Roman letters allowed');
     }
   }
   final nonEmpty = tags.where((t) => t.trim().isNotEmpty).length;
   if (nonEmpty < 5) {
-    problems.add('Hashtags 5 se kam hain ($nonEmpty) — 5–6 likhein');
+    problems.add('Hashtags are fewer than 5 ($nonEmpty) — write 5–6');
   } else if (nonEmpty > 6) {
-    problems.add('Hashtags 6 se zyada hain ($nonEmpty) — 5–6 likhein');
+    problems.add('Hashtags are more than 6 ($nonEmpty) — write 5–6');
   }
   return problems;
 }

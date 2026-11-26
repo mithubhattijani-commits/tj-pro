@@ -184,7 +184,7 @@ enum ChromaBackgroundKind {
 
   /// A gallery-picked image — its path lives in
   /// [ChannelPreset.chromaBackgroundPath].
-  gallery('gallery', 'Apna background', null);
+  gallery('gallery', 'Your background', null);
 
   const ChromaBackgroundKind(this.id, this.label, this.assetPath);
   final String id;
@@ -416,7 +416,7 @@ class ChannelPreset {
 
   /// Build 13 (point #19): the cube VIEW tilt (radians about
   /// the screen X axis, the painter's tilt). DEFAULT 0.0 =
-  /// 'Samne' — the cube faces the viewer squarely (the user's
+  /// 'Front' — the cube faces the viewer squarely (the user's
   /// complaint was the old fixed 0.42 tilt showing the top
   /// face). Presets: Samne 0.0, Upar Se +0.85, Neeche Se -0.85;
   /// the slider range is -1.2..1.2.
