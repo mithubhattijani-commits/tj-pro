@@ -66,7 +66,7 @@ import '../services/caption_styles.dart';
 import '../services/crash_guard.dart';
 import '../services/feature_gate.dart';
 import '../services/model_pack_service.dart';
-import '../services/onnx_image_service.dart';
+import '../services/onnx_isolate.dart';
 import '../services/photo_pipeline.dart';
 import '../services/photo_pipeline.dart' as photo_pipeline;
 
@@ -999,14 +999,32 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen>
     }
   }
 
+  /// Write PNG [bytes] as the new working file (the off-thread
+  /// ops already encoded them — no UI-isolate encode here).
+  Future<void> _replaceWorkingBytes(Uint8List bytes) async {
+    final dir = await getTemporaryDirectory();
+    final f = File(
+      p.join(
+        dir.path,
+        'pve_photo_${DateTime.now().millisecondsSinceEpoch}.png',
+      ),
+    );
+    await f.writeAsBytes(bytes);
+    _setWorkingFile(f);
+  }
+
   /// Run an ONNX image op: ensure its pack first (progress dialog
-  /// when missing), then run the service on the decoded photo and
-  /// push the result through the undo history.
-  Future<bool> _runOnnx(
+  /// when missing), then run the op OFF the UI thread
+  /// (v1.17.0 G1, Point #37a — the old on-thread decode +
+  /// synchronous inference + encode chain was the same ANR
+  /// class as the Reporter BG freeze) and push the result
+  /// through the undo history.
+  Future<bool> _runOnnxOffThread(
     String label,
     String packId,
-    Future<img.Image?> Function(img.Image image) run,
-  ) async {
+    String op, {
+    List<StrokePath>? strokes,
+  }) async {
     if (_workingFile == null || _busy) return false;
     bool ready;
     try {
@@ -1028,12 +1046,17 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen>
       }
     }
     return _runEnhance(label, () async {
-      final image = await _decodeWorking();
-      final out = await run(image);
+      final bytes = await _workingFile!.readAsBytes();
+      final out = await runOnnxOpOffThread(
+        op: op,
+        packId: packId,
+        inputBytes: bytes,
+        strokes: strokes,
+      );
       if (out == null) {
         throw Exception('No result from the AI model.');
       }
-      await _replaceWorking(out);
+      await _replaceWorkingBytes(out);
     });
   }
 
@@ -1056,14 +1079,14 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen>
   /// HQ Cutout (v1.4.0): BiRefNet fp16 matte via ONNX — a sharper
   /// edge than ML Kit segmentation, which stays the default.
   Future<void> _hqCutout() async {
-    final ok = await _runOnnx('HQ Cutout', 'birefnet_fp16', (image) async {
-      final matte = await OnnxImageService.instance.alphaMatte(
-        'birefnet_fp16',
-        image,
-      );
-      if (matte == null) return null;
-      return applyAlphaMatte(image, matte);
-    });
+    // v1.17.0 (G1): matte + composite run in ONE background
+    // isolate job (kOnnxOpMatteCutout) — previously this exact
+    // chain ran on the UI isolate (Point #37a ANR class).
+    final ok = await _runOnnxOffThread(
+      'HQ Cutout',
+      'birefnet_fp16',
+      kOnnxOpMatteCutout,
+    );
     if (ok) setState(() => _hasTransparency = true);
   }
 
@@ -1165,9 +1188,11 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen>
   /// Portrait > Bokeh (v1.4.0): Depth Anything V2 Small depth-
   /// guided background blur via ONNX.
   Future<void> _portraitBokeh() async {
-    await _runOnnx('Applying bokeh', 'depth_v2_small', (image) {
-      return OnnxImageService.instance.depthBokeh(image);
-    });
+    await _runOnnxOffThread(
+      'Applying bokeh',
+      'depth_v2_small',
+      kOnnxOpBokeh,
+    );
   }
 
   Future<void> _sharpen() async {
@@ -1230,9 +1255,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen>
       ),
     );
     if (go != true) return;
-    await _runOnnx('AI Enhance HD', 'esrgan', (image) {
-      return OnnxImageService.instance.enhanceEsrgan(image);
-    });
+    await _runOnnxOffThread('AI Enhance HD', 'esrgan', kOnnxOpEsrgan);
   }
 
   /// InShot-style HSL apply. After a successful Apply the sliders
@@ -1276,9 +1299,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen>
   /// packs — Udnie / Mosaic / Rain Princess. (Candy is banned —
   /// eye artifact, per the tool-test verdict.)
   Future<void> _applyArtisticStyle(String packId, String label) async {
-    await _runOnnx(label, packId, (image) {
-      return OnnxImageService.instance.artisticStyle(packId, image);
-    });
+    await _runOnnxOffThread(label, packId, kOnnxOpStyle);
   }
 
   /// Canvas > Apply: extend the canvas to the chosen ratio with a
@@ -1367,10 +1388,14 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen>
       return;
     }
     final strokes = List<StrokePath>.from(_strokes);
-    final ok = await _runOnnx('Removing object', 'migan', (image) async {
-      final mask = maskFromStrokes(image.width, image.height, strokes);
-      return OnnxImageService.instance.removeWithMigan(image, mask);
-    });
+    // The mask is built inside the isolate job from the strokes
+    // (it needs the decoded size, which only exists there).
+    final ok = await _runOnnxOffThread(
+      'Removing object',
+      'migan',
+      kOnnxOpMigan,
+      strokes: strokes,
+    );
     if (ok) {
       setState(() {
         _strokes.clear();

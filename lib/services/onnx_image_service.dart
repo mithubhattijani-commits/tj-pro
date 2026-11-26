@@ -52,6 +52,33 @@ class OnnxImageService {
   /// Shared instance (the contract API).
   static final OnnxImageService instance = OnnxImageService._();
 
+  /// v1.17.0 (G1, Point #37a): the model file each pack's image
+  /// ops run — the single place the file names live, so the
+  /// off-thread runner (onnx_isolate.dart) resolves the same file
+  /// the on-thread path would. Null = not an ONNX image pack.
+  static String? modelFileNameForPack(String packId) {
+    switch (packId) {
+      case 'birefnet_fp16':
+        return 'model_fp16.onnx';
+      case 'modnet':
+        return 'model.onnx';
+      case 'esrgan':
+        return 'realesr-general-x4v3.onnx';
+      case 'migan':
+        return 'migan_pipeline_v2.onnx';
+      case 'depth_v2_small':
+        return 'model_int8.onnx';
+      case 'fns_udnie':
+        return 'udnie-9.onnx';
+      case 'fns_mosaic':
+        return 'mosaic-9.onnx';
+      case 'fns_rain':
+        return 'rain-princess-9.onnx';
+      default:
+        return null;
+    }
+  }
+
   static const List<double> _imagenetMean = <double>[0.485, 0.456, 0.406];
   static const List<double> _imagenetStd = <double>[0.229, 0.224, 0.225];
 
@@ -171,8 +198,12 @@ class OnnxImageService {
     return out;
   }
 
-  Future<Float32List?> _runSingleInput(File model, Float32List data,
-      List<int> shape) async {
+  // Static + synchronous (v1.17.0 G1): the *WithModel cores run
+  // in background isolates, so the shared plumbing must not need
+  // an instance, and the FFI run itself is a blocking call — it
+  // is only ever invoked from a background isolate now.
+  static Float32List? _runSingleInputSync(File model, Float32List data,
+      List<int> shape) {
     _ensureEnv();
     OrtSession? session;
     final OrtRunOptions runOptions = OrtRunOptions();
@@ -214,10 +245,21 @@ class OnnxImageService {
   /// to 512 — the output is then at most 2048 px on the long edge.
   /// Returns null when the pack is missing or inference fails.
   Future<img.Image?> enhanceEsrgan(img.Image input) async {
+    final File? model = await ModelPackService.instance
+        .packFile('esrgan', 'realesr-general-x4v3.onnx');
+    if (model == null) return null;
+    return enhanceEsrganWithModelSync(model, input);
+  }
+
+  /// The ESRGAN core with the model file already resolved —
+  /// static + isolate-safe (no platform channels inside), so the
+  /// off-thread runner (onnx_isolate.dart) executes the SAME math
+  /// in a background isolate (v1.17.0 G1, Point #37a).
+  static img.Image? enhanceEsrganWithModelSync(
+    File model,
+    img.Image input,
+  ) {
     try {
-      final File? model = await ModelPackService.instance
-          .packFile('esrgan', 'realesr-general-x4v3.onnx');
-      if (model == null) return null;
       img.Image work = input;
       final int longEdge = math.max(input.width, input.height);
       if (longEdge > 512) {
@@ -234,7 +276,7 @@ class OnnxImageService {
       final Float32List data =
           _toChwFloat(work, (double v, int c) => v);
       final Float32List? out =
-          await _runSingleInput(model, data, <int>[1, 3, h, w]);
+          _runSingleInputSync(model, data, <int>[1, 3, h, w]);
       if (out == null) return null;
       final int ow = w * 4;
       final int oh = h * 4;
@@ -262,10 +304,20 @@ class OnnxImageService {
     img.Image input,
     img.Image removeMask,
   ) async {
+    final File? model = await ModelPackService.instance
+        .packFile('migan', 'migan_pipeline_v2.onnx');
+    if (model == null) return null;
+    return removeWithMiganWithModelSync(model, input, removeMask);
+  }
+
+  /// The MI-GAN core with the model file already resolved —
+  /// static + isolate-safe, see [enhanceEsrganWithModel].
+  static img.Image? removeWithMiganWithModelSync(
+    File model,
+    img.Image input,
+    img.Image removeMask,
+  ) {
     try {
-      final File? model = await ModelPackService.instance
-          .packFile('migan', 'migan_pipeline_v2.onnx');
-      if (model == null) return null;
       const int size = 512;
       final img.Image work = img.copyResize(
         input,
@@ -349,15 +401,30 @@ class OnnxImageService {
   /// battery's edge fix applied (1 px erode + blue-fringe despill).
   /// Returns null for any other pack id / on any failure.
   Future<img.Image?> alphaMatte(String packId, img.Image input) async {
+    final bool isBiref = packId == 'birefnet_fp16';
+    if (!isBiref && packId != 'modnet') return null;
+    final File? model = await ModelPackService.instance.packFile(
+      packId,
+      isBiref ? 'model_fp16.onnx' : 'model.onnx',
+    );
+    if (model == null) return null;
+    return alphaMatteWithModelSync(model, isBiref: isBiref, input: input);
+  }
+
+  /// The matting core with the model file already resolved —
+  /// static + isolate-safe, see [enhanceEsrganWithModel]. This is
+  /// the function whose synchronous ONNX run + per-pixel loops
+  /// froze the whole app on the UI isolate (Point #37a ANR); it
+  /// must only ever be awaited from a background isolate or from
+  /// a context where a multi-second block is acceptable (the
+  /// export matte loop now uses the off-thread runner too).
+  static img.Image? alphaMatteWithModelSync(
+    File model, {
+    required bool isBiref,
+    required img.Image input,
+  }) {
     try {
-      final bool isBiref = packId == 'birefnet_fp16';
-      if (!isBiref && packId != 'modnet') return null;
       final int size = isBiref ? 1024 : 512;
-      final File? model = await ModelPackService.instance.packFile(
-        packId,
-        isBiref ? 'model_fp16.onnx' : 'model.onnx',
-      );
-      if (model == null) return null;
       final img.Image work = img.copyResize(
         input,
         width: size,
@@ -372,7 +439,7 @@ class OnnxImageService {
             )
           : _toChwFloat(work, (double v, int c) => (v - 0.5) / 0.5);
       final Float32List? raw =
-          await _runSingleInput(model, data, <int>[1, 3, size, size]);
+          _runSingleInputSync(model, data, <int>[1, 3, size, size]);
       if (raw == null || raw.length < size * size) return null;
       // Matte at model resolution (BiRefNet logits need a sigmoid;
       // MODNet already outputs 0..1 alpha).
@@ -460,10 +527,19 @@ class OnnxImageService {
   /// by a blur so the transition follows the depth edges).
   /// Returns null on any failure.
   Future<img.Image?> depthBokeh(img.Image input) async {
+    final File? model = await ModelPackService.instance
+        .packFile('depth_v2_small', 'model_int8.onnx');
+    if (model == null) return null;
+    return depthBokehWithModelSync(model, input);
+  }
+
+  /// The depth-bokeh core with the model file already resolved —
+  /// static + isolate-safe, see [enhanceEsrganWithModel].
+  static img.Image? depthBokehWithModelSync(
+    File model,
+    img.Image input,
+  ) {
     try {
-      final File? model = await ModelPackService.instance
-          .packFile('depth_v2_small', 'model_int8.onnx');
-      if (model == null) return null;
       const int inW = 518;
       int inH = ((input.height * inW / input.width) / 14).floor() * 14;
       if (inH < 14) inH = 14;
@@ -478,7 +554,7 @@ class OnnxImageService {
         (double v, int c) => (v - _imagenetMean[c]) / _imagenetStd[c],
       );
       final Float32List? raw =
-          await _runSingleInput(model, data, <int>[1, 3, inH, inW]);
+          _runSingleInputSync(model, data, <int>[1, 3, inH, inW]);
       if (raw == null || raw.length < inW * inH) return null;
       double dMin = raw[0];
       double dMax = raw[0];
@@ -544,17 +620,26 @@ class OnnxImageService {
   /// input size. Labelled "Artistic Styles" in the UI — these are
   /// painterly transfers, not a cartoonizer. Null on any failure.
   Future<img.Image?> artisticStyle(String packId, img.Image input) async {
+    final String? fileName = switch (packId) {
+      'fns_udnie' => 'udnie-9.onnx',
+      'fns_mosaic' => 'mosaic-9.onnx',
+      'fns_rain' => 'rain-princess-9.onnx',
+      _ => null,
+    };
+    if (fileName == null) return null;
+    final File? model =
+        await ModelPackService.instance.packFile(packId, fileName);
+    if (model == null) return null;
+    return artisticStyleWithModelSync(model, input);
+  }
+
+  /// The style core with the model file already resolved —
+  /// static + isolate-safe, see [enhanceEsrganWithModel].
+  static img.Image? artisticStyleWithModelSync(
+    File model,
+    img.Image input,
+  ) {
     try {
-      final String? fileName = switch (packId) {
-        'fns_udnie' => 'udnie-9.onnx',
-        'fns_mosaic' => 'mosaic-9.onnx',
-        'fns_rain' => 'rain-princess-9.onnx',
-        _ => null,
-      };
-      if (fileName == null) return null;
-      final File? model =
-          await ModelPackService.instance.packFile(packId, fileName);
-      if (model == null) return null;
       const int size = 224;
       final img.Image work = img.copyResize(
         input,
@@ -565,7 +650,7 @@ class OnnxImageService {
       final Float32List data =
           _toChwFloat(work, (double v, int c) => v * 255.0);
       final Float32List? out =
-          await _runSingleInput(model, data, <int>[1, 3, size, size]);
+          _runSingleInputSync(model, data, <int>[1, 3, size, size]);
       if (out == null || out.length < 3 * size * size) return null;
       final img.Image styled = _imageFromChw(out, size, size);
       return img.copyResize(

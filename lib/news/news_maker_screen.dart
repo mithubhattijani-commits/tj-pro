@@ -513,6 +513,10 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
   ElementOverride? _panInitOverride;
   bool _panResizing = false;
 
+  /// v1.17.0 (G4): the grabbed element's scale when the current
+  /// scale gesture started (the pinch base).
+  double? _scaleBase;
+
   @override
   void initState() {
     super.initState();
@@ -1103,17 +1107,39 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
               behavior: HitTestBehavior.opaque,
               onTapUp: (d) =>
                   _elementTap(project, rects, d.localPosition),
-              onPanStart: (d) =>
-                  _elementPanStart(project, rects, d.localPosition),
-              onPanUpdate: (d) =>
-                  _elementPanUpdate(project, pw, ph, d.localPosition),
-              onPanEnd: (_) {
+              // v1.17.0 (G4, Points #35/#36): ONE scale recognizer
+              // covers both jobs the old pan handlers did — a
+              // one-finger drag moves (or corner-resizes) the hit
+              // element, and a TWO-finger pinch scales it (the
+              // media included: preview pinch-zoom). The handlers
+              // below keep the old math; the focal point plays
+              // the role the pan position did.
+              onScaleStart: (d) =>
+                  _elementPanStart(project, rects, d.localFocalPoint),
+              onScaleUpdate: (d) => _elementScaleUpdate(
+                project,
+                pw,
+                ph,
+                d.localFocalPoint,
+                d.scale,
+              ),
+              onScaleEnd: (_) {
                 _panStart = null;
                 _panInitOverride = null;
+                _scaleBase = null;
               },
             ),
           ),
-          if (selRect != null && !selOv.hidden)
+          // v1.17.0 (G4, Point #35a): the gold selection frame
+          // used to be PERMANENT — the selection defaults to the
+          // media element, so a yellow frame sat on the preview
+          // forever ("ye na ho"). It now renders ONLY while the
+          // Elements tool is open (where element editing lives)
+          // or while a drag/pinch gesture is in progress. The
+          // default preview is clean.
+          if (selRect != null &&
+              !selOv.hidden &&
+              (_activeTool == 'elements' || _panStart != null))
             Positioned.fromRect(
               rect: selRect,
               child: IgnorePointer(
@@ -1185,9 +1211,38 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
         _selectedElement = hit;
         // v1.5.1: tapping the logo / reporter in the preview
         // opens their own tool panels (NS6/NS7 behaviour).
-        if (hit == NewsElement.logo) _activeTool = 'logo';
-        if (hit == NewsElement.reporter) _activeTool = 'reporter';
+        // v1.17.0 (G4, Point #35b): EVERY element now opens its
+        // own tool — before this, only logo/reporter did and
+        // the rest merely selected, so tapping the headline,
+        // the ticker, a ribbon or the media went nowhere.
+        final tool = _toolForElement(hit);
+        if (tool != null) _activeTool = tool;
       });
+    }
+  }
+
+  /// The dock tool that edits [element] (Point #35b mapping).
+  static String? _toolForElement(String element) {
+    switch (element) {
+      case NewsElement.media:
+        return 'media';
+      case NewsElement.headlineText:
+        return 'tehreer';
+      case NewsElement.tickerText:
+        return 'ticker';
+      case NewsElement.topRibbon:
+      case NewsElement.middleRibbon:
+      case NewsElement.bottomRibbon:
+        return 'ribbons';
+      case NewsElement.logo:
+        return 'logo';
+      case NewsElement.reporter:
+        return 'reporter';
+      case NewsElement.capsule:
+      case NewsElement.overlay:
+        return 'elements';
+      default:
+        return null;
     }
   }
 
@@ -1209,10 +1264,36 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     }
     _panStart = pos;
     _panInitOverride = _elementOv(project, sel);
+    _scaleBase = _panInitOverride?.scale;
     final r = rects[sel];
     _panResizing = r != null &&
         (r.bottomRight - pos).distance < 30 &&
         !_panInitOverride!.hidden;
+  }
+
+  /// v1.17.0 (G4, Point #36a): the scale-gesture update — a
+  /// pinch (scale != 1) resizes the grabbed element from the
+  /// scale it had when the gesture started; a plain drag keeps
+  /// the old move / corner-resize math.
+  void _elementScaleUpdate(
+    NewsProject project,
+    double pw,
+    double ph,
+    Offset pos,
+    double scale,
+  ) {
+    final init = _panInitOverride;
+    if (init == null) return;
+    if (scale != 1.0) {
+      final base = _scaleBase ?? init.scale;
+      final next = (base * scale).clamp(0.4, 2.5).toDouble();
+      _setElementOverride(
+        _selectedElement,
+        init.copyWith(scale: next),
+      );
+      return;
+    }
+    _elementPanUpdate(project, pw, ph, pos);
   }
 
   void _elementPanUpdate(
@@ -8481,11 +8562,23 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
     if (project == null || photo == null || _reporterBusy) return;
     setState(() {
       _reporterBusy = true;
-      _reporterStatus = 'Background is being removed — the first '
-          'time the model pack will download; it will take a little time…';
+      _reporterStatus = 'Background is being removed…';
     });
     try {
-      final out = await reporterRemoveBackground(photo);
+      // v1.17.0 (G1, Point #37a): the pack download reports
+      // real progress into the status line (it used to run
+      // invisibly at click time), and the matte itself now
+      // runs off the UI thread — no more ANR freeze.
+      final out = await reporterRemoveBackground(
+        photo,
+        onProgress: (v) {
+          if (!mounted || !_reporterBusy) return;
+          setState(() {
+            _reporterStatus =
+                'Downloading the AI model — ${(v * 100).round()}%…';
+          });
+        },
+      );
       if (!mounted) return;
       setState(() {
         project.reporterPhotoPath = out;
@@ -8515,6 +8608,13 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       final out = await reporterReplaceBackground(
         photo,
         colorArgb: argb,
+        onProgress: (v) {
+          if (!mounted || !_reporterBusy) return;
+          setState(() {
+            _reporterStatus =
+                'Downloading the AI model — ${(v * 100).round()}%…';
+          });
+        },
       );
       if (!mounted) return;
       setState(() {
@@ -8548,6 +8648,13 @@ class _NewsMakerScreenState extends State<NewsMakerScreen> {
       final out = await reporterReplaceBackground(
         photo,
         bgImagePath: picked.first.path!,
+        onProgress: (v) {
+          if (!mounted || !_reporterBusy) return;
+          setState(() {
+            _reporterStatus =
+                'Downloading the AI model — ${(v * 100).round()}%…';
+          });
+        },
       );
       if (!mounted) return;
       setState(() {

@@ -111,6 +111,12 @@ class VideoEditorSession {
         'volume': clip.volume,
         'muted': clip.muted,
         'detachedAudioPath': clip.detachedAudioPath,
+        // v1.17.0 G5: a stabilization bake must survive an
+        // editor reopen — re-rendering it would defeat the
+        // apply-time bake entirely.
+        'stabBakedPath': clip.stabBakedPath,
+        'stabBakedFor': clip.stabBakedFor,
+        'stabBakedLevel': clip.stabBakedLevel,
       };
 
   /// A session map → [VideoClip]; null when the map lacks a
@@ -140,6 +146,12 @@ class VideoEditorSession {
     clip.muted = map['muted'] == true;
     final detached = map['detachedAudioPath'];
     clip.detachedAudioPath = detached is String ? detached : null;
+    final stabPath = map['stabBakedPath'];
+    clip.stabBakedPath = stabPath is String ? stabPath : null;
+    final stabFor = map['stabBakedFor'];
+    clip.stabBakedFor = stabFor is String ? stabFor : null;
+    final stabLevel = map['stabBakedLevel'];
+    clip.stabBakedLevel = stabLevel is num ? stabLevel.toInt() : 0;
     return clip;
   }
 }

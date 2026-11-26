@@ -1258,6 +1258,22 @@ List<String> stabilizeCommands({
 /// result reports engine='deshake'. Any other detect failure returns
 /// ok=false with engine='vidstab' and no fallback, so a real error
 /// is never masked as a "different engine success".
+/// The Stabilizer level → vidstab (shakiness, smoothing)
+/// mapping. ONE source for the apply-time bake (v1.17.0 G5) —
+/// these are the exact values the old export-time pass used
+/// (Low 3/15, Standard 5/30, Most 8/60).
+(int, int) stabParamsForLevel(int level) {
+  switch (level) {
+    case 1:
+      return (3, 15);
+    case 3:
+      return (8, 60);
+    case 2:
+    default:
+      return (5, 30);
+  }
+}
+
 Future<StabilizeResult> runStabilized({
   required String input,
   required String output,

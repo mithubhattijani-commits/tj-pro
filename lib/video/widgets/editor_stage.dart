@@ -19,6 +19,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:video_player/video_player.dart';
+import '../../services/font_registry.dart';
 import '../../services/fx_pack.dart';
 import '../../services/pro_editor.dart';
 import '../../theme.dart';
@@ -1399,21 +1400,31 @@ class StageCanvas extends StatelessWidget {
                 angle: pose.rotationDeg * math.pi / 180,
                 child: Transform.scale(
                   scale: pose.scale.clamp(0.1, 3.0),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 3,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.black54,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Text(
-                      label,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 15,
-                        fontWeight: FontWeight.bold,
+                  // v1.17.0 (G3, Point #34a): the title/sticker
+                  // chip is tappable like every other stage layer
+                  // — a tap selects it and opens its editing tab.
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () {
+                      host.update(() => host.stageLayer = 'title');
+                      host.openToolTab('text', 'titles');
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        label,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                   ),
@@ -1426,42 +1437,8 @@ class StageCanvas extends StatelessWidget {
     );
   }
 
-  Widget _stageTextLayer(Size frameSize) {
-    final selected = host.stageLayer == 'text';
-    return Positioned(
-      left: 0,
-      right: 0,
-      bottom: frameSize.height * 0.055,
-      child: Center(
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () {
-            host.update(() => host.stageLayer = 'text');
-            host.openToolTab('text', 'text');
-          },
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            decoration: selected
-                ? BoxDecoration(
-                    border: Border.all(color: TjProTheme.gold, width: 1.5),
-                    borderRadius: BorderRadius.circular(4),
-                  )
-                : null,
-            child: Text(
-              host.text,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-                shadows: [Shadow(color: Colors.black, blurRadius: 6)],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  Widget _stageTextLayer(Size frameSize) =>
+      StageTextLayer(host: host, frameSize: frameSize);
 
   Widget _pipPreviewLayer(Size stage) {
     // v1.16.0 G2 (Motion M3): the PIP window — outside
@@ -1711,5 +1688,84 @@ class RenderBlendLayer extends RenderProxyBox {
     context.canvas.saveLayer(offset & size, Paint()..blendMode = _mode);
     super.paint(context, offset);
     context.canvas.restore();
+  }
+}
+
+/// v1.17.0 (G3, Point #34): the stage text overlay as its own
+/// stateful layer — it renders the Text tool's REAL style state
+/// (font / size scale / colour / background pill — none of
+/// which existed before this build, so the preview could only
+/// ever show one hard-coded style), selects on tap with a
+/// generous hit band, and PINCHES: a two-finger scale writes
+/// [VideoEditorController.textSizeScale], the same value the
+/// panel's Size slider edits and the export's drawtext uses.
+class StageTextLayer extends StatefulWidget {
+  const StageTextLayer({super.key, required this.host, required this.frameSize});
+
+  final VideoEditorController host;
+  final Size frameSize;
+
+  @override
+  State<StageTextLayer> createState() => _StageTextLayerState();
+}
+
+class _StageTextLayerState extends State<StageTextLayer> {
+  double? _pinchBase;
+
+  @override
+  Widget build(BuildContext context) {
+    final host = widget.host;
+    final selected = host.stageLayer == 'text';
+    var style = TextStyle(
+      color: Color(host.textColorArgb),
+      fontSize: 22 * host.textSizeScale,
+      fontWeight: FontWeight.bold,
+      shadows: const [Shadow(color: Colors.black, blurRadius: 6)],
+    );
+    if (host.textFontId.isNotEmpty) {
+      style = UrduFonts.byId(host.textFontId).apply(style);
+    }
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: widget.frameSize.height * 0.055,
+      child: Center(
+        child: GestureDetector(
+          key: const Key('stageTextLayer'),
+          behavior: HitTestBehavior.opaque,
+          onTap: () {
+            host.update(() => host.stageLayer = 'text');
+            host.openToolTab('text', 'text');
+          },
+          onScaleStart: (details) {
+            _pinchBase = host.textSizeScale;
+            if (host.stageLayer != 'text') {
+              host.update(() => host.stageLayer = 'text');
+            }
+          },
+          onScaleUpdate: (details) {
+            if (_pinchBase == null || details.scale == 1.0) return;
+            final next = (_pinchBase! * details.scale).clamp(0.4, 3.0);
+            host.update(() => host.textSizeScale = next);
+          },
+          onScaleEnd: (_) => _pinchBase = null,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: host.textBgPill ? Colors.black54 : null,
+              border: selected
+                  ? Border.all(color: TjProTheme.gold, width: 1.5)
+                  : null,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              host.text,
+              textAlign: TextAlign.center,
+              style: style,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

@@ -34,6 +34,7 @@ import 'services/hero_banner_cache.dart';
 import 'services/performance_engine.dart';
 import 'services/referral_service.dart';
 import 'services/remote_config_service.dart';
+import 'services/first_run_prep_service.dart';
 import 'services/unity_ads_service.dart';
 import 'services/update_service.dart';
 
@@ -44,6 +45,7 @@ import 'widgets/banner_ad_widget.dart';
 import 'widgets/help_whatsapp_button.dart';
 import 'widgets/hero_aspect.dart';
 import 'widgets/update_ui.dart';
+import 'widgets/tools_prep_screen.dart';
 
 /// Shared Remote Config instance: fetched once at startup; the home
 /// screen listens to [RemoteConfigService.notifier] so a fresh fetch
@@ -775,6 +777,29 @@ class _HomeScreenState extends State<HomeScreen> {
       // The update prompt is a nicety — never an error path.
       // Build 7: recorded with its boundary tag (no banner).
       CrashGuard.captureHandled(e, s, source: 'home.update');
+    }
+    // v1.17.0 (G5, Point #37d): one-time tools preparation —
+    // when any AI model/asset is missing on disk, offer the
+    // "Preparing your tools" screen ONCE per launch so no tool
+    // ever stalls on a download mid-use. Fail-soft: a prep
+    // problem must never disturb Home.
+    try {
+      if (!FirstRunPrepService.offeredThisProcess && mounted) {
+        FirstRunPrepService.offeredThisProcess = true;
+        final kasheedaUrl = remoteConfigService.config.kasheedaFontUrl;
+        final complete = await FirstRunPrepService.isComplete(
+          kasheedaUrl: kasheedaUrl,
+        );
+        if (!complete && mounted) {
+          await Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => ToolsPrepScreen(kasheedaUrl: kasheedaUrl),
+            ),
+          );
+        }
+      }
+    } catch (e, s) {
+      CrashGuard.captureHandled(e, s, source: 'home.tools_prep');
     }
   }
 

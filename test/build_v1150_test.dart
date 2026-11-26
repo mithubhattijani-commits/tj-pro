@@ -316,15 +316,13 @@ void main() {
       expect(sw, findsOneWidget);
       await tester.tap(sw);
       await _frames(tester);
-      expect(find.byKey(const Key('panelDrillDown')), findsOneWidget);
-      // Section chips in the line; first section is showing.
-      expect(find.text('PIP position'), findsOneWidget);
+      // v1.17.0 (Point #33): EXACTLY ONE chip line per panel —
+      // the tab rail above is that line, so the tab body now
+      // renders FLAT and no second drill rail stacks under the
+      // tabs (v1.15.0 drilled here; the user's #33 screenshot
+      // rejected the double rail as a 2-up grid).
+      expect(find.byKey(const Key('panelDrillDown')), findsNothing);
       expect(find.text('PIP video overlay'), findsOneWidget);
-      // Swap to the Position section: only its controls show.
-      await tester.tap(find.text('PIP position'));
-      await _frames(tester);
-      expect(find.text('topLeft'), findsOneWidget);
-      expect(find.text('PIP video overlay'), findsNothing);
       _noError(tester, 'PIP drill swap');
       await tester.pump(const Duration(seconds: 10));
     });

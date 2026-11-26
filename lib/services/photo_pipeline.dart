@@ -2084,13 +2084,15 @@ img.Image addBorder(img.Image src, int widthPx, int argb) {
   );
 }
 
-Uint8List _alphaMatteJob(List<dynamic> args) {
-  final bytes = args[0] as Uint8List;
-  final matteBytes = args[1] as Uint8List;
+/// The matte-alpha composite on raw RGBA bytes: the source's
+/// RGB with the matte's alpha. The contract matte carries its
+/// values in the ALPHA channel; if a model build ever ships
+/// alpha=255 everywhere, fall back to the red channel so the
+/// cutout still works. Public + synchronous (v1.17.0 G1) so the
+/// background-isolate jobs (onnx_isolate, reporter BG) share
+/// this ONE implementation with [applyAlphaMatte].
+Uint8List compositeMatteAlphaBytes(Uint8List bytes, Uint8List matteBytes) {
   final out = Uint8List.fromList(bytes);
-  // The contract matte carries its values in the ALPHA channel. If
-  // a model build ever ships alpha=255 everywhere, fall back to the
-  // red channel so the cutout still works.
   var alphaVaries = false;
   for (var i = 3; i < matteBytes.length; i += 4) {
     if (matteBytes[i] < 250) {
@@ -2102,6 +2104,13 @@ Uint8List _alphaMatteJob(List<dynamic> args) {
     out[i + 3] = alphaVaries ? matteBytes[i + 3] : matteBytes[i];
   }
   return out;
+}
+
+Uint8List _alphaMatteJob(List<dynamic> args) {
+  return compositeMatteAlphaBytes(
+    args[0] as Uint8List,
+    args[1] as Uint8List,
+  );
 }
 
 /// Apply an AI alpha matte (OnnxImageService.alphaMatte result) to

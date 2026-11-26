@@ -427,6 +427,10 @@ List<Widget> legacyPanelChildren(VideoEditorController host, BuildContext contex
       return LegacyGradingOnePanel(host).buildChildren(context);
     case 'text':
     default:
-      return LegacyTextPanel(host).buildChildren(context);
+      // v1.17.0 (G3): the text panel is stateful now (its field
+      // keeps a controller) — hand back the widget itself; the
+      // zone renders it whole (the Text tool has tabs, so the
+      // one-line rule keeps the body flat anyway).
+      return [LegacyTextPanel(host)];
   }
 }

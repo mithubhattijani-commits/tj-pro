@@ -116,6 +116,12 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
   String _aspect = 'Original';
   bool _crossfade = false;
   String _text = '';
+  // v1.17.0 (G3, Point #34): Text overlay style state (see the
+  // controller interface for the diagnosis note).
+  String _textFontId = '';
+  double _textSizeScale = 1.0;
+  int _textColorArgb = 0xFFFFFFFF;
+  bool _textBgPill = false;
   String? _musicPath;
   // Music track gain (1.0 = unchanged); applied to the music audio only.
   double _musicVolume = 1.0;
@@ -327,9 +333,17 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
 
   /// Stabilizer level (v1.5.0): 0 = Original (off), 1 = Low,
   /// 2 = Standard, 3 = Most Stable. [_proStabilize] stays the
-  /// export switch (level > 0); the level maps to vidstab
-  /// shakiness/smoothing at the export call site.
+  /// export switch (level > 0).
+  ///
+  /// v1.17.0 (G5, Point #37b/c): the level maps to vidstab
+  /// shakiness/smoothing at BAKE time — picking a level renders
+  /// every clip immediately (see [_bakeStabilization]); the
+  /// export only substitutes the baked files and never runs a
+  /// stabilization pass of its own.
   int _stabLevel = 0;
+  bool _stabBaking = false;
+  double _stabBakeProgress = 0;
+  bool _stabBakeCancel = false;
 
   /// AI Cut panel state: silence threshold (dB, negative) + minimum
   /// silence length (seconds) + the last scan's silence ranges.
@@ -2651,6 +2665,9 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
           'det': c.detachedAudioPath,
           'dis': c.disabled,
           'lbl': c.colorLabel,
+          'stb': c.stabBakedPath,
+          'stf': c.stabBakedFor,
+          'stl': c.stabBakedLevel,
         },
     ],
     'sel': _selected,
@@ -2661,6 +2678,10 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
     'music': _musicPath,
     'musicVol': _musicVolume,
     'text': _text,
+    'textFont': _textFontId,
+    'textSize': _textSizeScale,
+    'textColor': _textColorArgb,
+    'textBg': _textBgPill,
     // A1 (v1.12): markers + beats ride the undo history too, so
     // undoing a clip op never strands them.
     'markers': _markers,
@@ -2703,6 +2724,11 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       // defaults (enabled, no label) apply.
       c.disabled = e['dis'] as bool? ?? false;
       c.colorLabel = (e['lbl'] as num?)?.toInt() ?? 0;
+      // v1.17.0 G5: bake pointers ride along too; old snapshots
+      // lack them and simply have no bake.
+      c.stabBakedPath = e['stb'] as String?;
+      c.stabBakedFor = e['stf'] as String?;
+      c.stabBakedLevel = (e['stl'] as num?)?.toInt() ?? 0;
       clips.add(c);
     }
     setState(() {
@@ -2720,6 +2746,10 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       _musicPath = m['music'] as String?;
       _musicVolume = (m['musicVol'] as num?)?.toDouble() ?? 1;
       _text = m['text'] as String? ?? '';
+      _textFontId = m['textFont'] as String? ?? '';
+      _textSizeScale = (m['textSize'] as num?)?.toDouble() ?? 1.0;
+      _textColorArgb = (m['textColor'] as num?)?.toInt() ?? 0xFFFFFFFF;
+      _textBgPill = m['textBg'] as bool? ?? false;
       _markers = ((m['markers'] as List?) ?? const [])
           .map((e) => (e as num).toDouble())
           .toList();
@@ -2778,6 +2808,10 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
         'aspect': _aspect,
         'crossfade': _crossfade,
         'text': _text,
+        'textFont': _textFontId,
+        'textSize': _textSizeScale,
+        'textColor': _textColorArgb,
+        'textBg': _textBgPill,
         'musicVolume': _musicVolume,
         'musicMuted': _musicMuted,
         'pipLaneLocked': _pipLaneLocked,
@@ -2903,6 +2937,10 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
       _aspect = m['aspect'] as String? ?? 'Original';
       _crossfade = m['crossfade'] as bool? ?? false;
       _text = m['text'] as String? ?? '';
+      _textFontId = m['textFont'] as String? ?? '';
+      _textSizeScale = (m['textSize'] as num?)?.toDouble() ?? 1.0;
+      _textColorArgb = (m['textColor'] as num?)?.toInt() ?? 0xFFFFFFFF;
+      _textBgPill = m['textBg'] as bool? ?? false;
       _musicVolume = d('musicVolume');
       // v1.16.0 G3 (A3): old snapshots lack both keys.
       _musicMuted = m['musicMuted'] as bool? ?? false;
@@ -5283,12 +5321,23 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
                               // in ONE line, only the chosen
                               // section below — instead of one long
                               // scrolling panel.
+                              //
+                              // Point #33 (v1.17.0 G2): EXACTLY ONE
+                              // chip line per open panel. When the
+                              // tool has sub-tabs (the PanelTabRow
+                              // above), the tab rail IS that line —
+                              // the body renders FLAT and no second
+                              // drill rail stacks under it (the
+                              // double rail was the user's Effects
+                              // screenshot: tabs + section chips =
+                              // a 2-up grid eating the panel).
                               child: Builder(
                                 builder: (context) {
                                   final children =
                                       toolPanelChildren(this, context);
-                                  if (PanelDrillDown.appliesTo(
-                                      children)) {
+                                  if (panelTabs(this).length < 2 &&
+                                      PanelDrillDown.appliesTo(
+                                          children)) {
                                     return PanelDrillDown(
                                       this,
                                       key: ValueKey<String>(
@@ -6130,6 +6179,115 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
   @override
   set stabLevel(int value) => _stabLevel = value;
   @override
+  bool get stabBaking => _stabBaking;
+  @override
+  double get stabBakeProgress => _stabBakeProgress;
+
+  bool _stabBakeUsable(VideoClip c) =>
+      c.stabBakeMatches(c.file.path, _stabLevel) &&
+      File(c.stabBakedPath!).existsSync();
+
+  @override
+  int get stabBakedClipCount =>
+      _clips.where((c) => !c.isPhoto && _stabBakeUsable(c)).length;
+  @override
+  int get stabPendingClipCount =>
+      _clips.where((c) => !c.isPhoto && !_stabBakeUsable(c)).length;
+  @override
+  void cancelStabBake() => _stabBakeCancel = true;
+
+  /// v1.17.0 (G5, Point #37b/c): render the stabilization of
+  /// every unbaked clip NOW, one clip at a time, with progress
+  /// on the editor status line and in the Stabilizer panel.
+  /// Each finished bake is stored next to the app support dir
+  /// (survives sessions; the session snapshot carries the
+  /// pointers) and is reused by the export verbatim. A clip
+  /// whose bake fails keeps its original file and the failure
+  /// is reported honestly — nothing is faked, and the export
+  /// later notes the missing bake instead of re-processing.
+  @override
+  Future<void> bakeStabilization() async {
+    if (_stabBaking || _stabLevel <= 0) return;
+    final targets = <int>[
+      for (var i = 0; i < _clips.length; i++)
+        if (!_clips[i].isPhoto && !_stabBakeUsable(_clips[i])) i,
+    ];
+    if (targets.isEmpty) return;
+    final support = await getApplicationSupportDirectory();
+    final bakeDir = Directory(p.join(support.path, 'stab_bakes'));
+    await bakeDir.create(recursive: true);
+    final workDir = Directory(p.join(support.path, 'stab_work'));
+    await workDir.create(recursive: true);
+    final (shakiness, smoothing) = stabParamsForLevel(_stabLevel);
+    setState(() {
+      _stabBaking = true;
+      _stabBakeCancel = false;
+      _stabBakeProgress = 0;
+    });
+    var done = 0;
+    String? failure;
+    for (final i in targets) {
+      if (_stabBakeCancel) break;
+      final clip = _clips[i];
+      final stamp =
+          '${clip.file.path.hashCode & 0x7fffffff}_${_stabLevel}_'
+          '${await clip.file.length().catchError((_) => 0)}';
+      final out = p.join(bakeDir.path, 'stab_$stamp.mp4');
+      try {
+        final result = await runStabilized(
+          input: clip.file.path,
+          output: out,
+          workDir: workDir,
+          shakiness: shakiness,
+          smoothing: smoothing,
+          expectedMs: clip.duration.inMilliseconds,
+          onProgress: (v) {
+            if (!mounted) return;
+            setState(() {
+              _stabBakeProgress = (done + v) / targets.length;
+            });
+          },
+          onStep: (t) => _setStatus(t),
+        );
+        if (result.ok && await File(out).exists()) {
+          clip.stabBakedPath = out;
+          clip.stabBakedFor = clip.file.path;
+          clip.stabBakedLevel = _stabLevel;
+          done++;
+        } else {
+          failure = 'Clip ${i + 1} could not be stabilized.';
+          break;
+        }
+      } catch (e) {
+        failure = 'Clip ${i + 1} could not be stabilized: $e';
+        break;
+      }
+      if (mounted) {
+        setState(() => _stabBakeProgress = done / targets.length);
+      }
+    }
+    if (!mounted) return;
+    setState(() => _stabBaking = false);
+    unawaited(_saveSessionSnapshot());
+    if (_stabBakeCancel) {
+      _setStatus(
+        'Stabilization bake stopped — $done of ${targets.length} '
+        'clip(s) baked. Bake again any time from the Stabilizer '
+        'tool.',
+      );
+    } else if (failure != null) {
+      _setStatus(
+        '$failure ${done > 0 ? '$done clip(s) baked. ' : ''}'
+        'Unbaked clips export without stabilization.',
+      );
+    } else {
+      _setStatus(
+        'Stabilization baked for all clips — the export is now '
+        'assembly only.',
+      );
+    }
+  }
+  @override
   Rect get stageFrameRect => _stageFrameRect;
   @override
   set stageFrameRect(Rect value) => _stageFrameRect = value;
@@ -6181,6 +6339,22 @@ class _VideoEditorScreenState extends State<VideoEditorScreen>
   String get text => _text;
   @override
   set text(String value) => _text = value;
+  @override
+  String get textFontId => _textFontId;
+  @override
+  set textFontId(String value) => _textFontId = value;
+  @override
+  double get textSizeScale => _textSizeScale;
+  @override
+  set textSizeScale(double value) => _textSizeScale = value;
+  @override
+  int get textColorArgb => _textColorArgb;
+  @override
+  set textColorArgb(int value) => _textColorArgb = value;
+  @override
+  bool get textBgPill => _textBgPill;
+  @override
+  set textBgPill(bool value) => _textBgPill = value;
   @override
   double get tfOpacity => _tfOpacity;
   @override

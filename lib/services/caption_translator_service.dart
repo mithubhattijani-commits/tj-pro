@@ -22,6 +22,24 @@ class CaptionTranslatorService {
     throw Exception('Translation supports Urdu and English only.');
   }
 
+  /// v1.17.0 (G5, Point #37d): true when both the Urdu and
+  /// English ML Kit models are already on disk — the first-run
+  /// preparation verifies this instead of trusting a flag.
+  static Future<bool> modelsReady() async {
+    try {
+      final manager = OnDeviceTranslatorModelManager();
+      final ur = await manager.isModelDownloaded(
+        TranslateLanguage.urdu.bcpCode,
+      );
+      if (!ur) return false;
+      return await manager.isModelDownloaded(
+        TranslateLanguage.english.bcpCode,
+      );
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Download the two language models if missing. Returns normally
   /// once both are ready; throws when the download fails (offline,
   /// Play services missing, …). Mobile data is allowed.

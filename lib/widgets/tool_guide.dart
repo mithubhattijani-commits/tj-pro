@@ -557,8 +557,9 @@ const Map<String, ToolGuideEntry> _veGuides = {
         'Applies text on the video — plain Text, ready Motion Titles, and '
         'Captions that are created automatically from speech.',
     steps: [
-      'Text tab: write new text, set the font, colour and size.',
-      'Drag the text with your finger to the right place.',
+      'Text tab: write the text, then set its Font, Size, Colour and Background pill.',
+      'Tap the text on the preview to select it — the Text tab opens with all its options.',
+      'Pinch the text on the preview with two fingers to make it bigger or smaller (the Size slider moves with it).',
       'Titles tab: choose a ready animated title and write your words.',
       'Captions tab: create captions automatically from the video\'s voice (Urdu AI is also available).',
       'Once captions exist, the timeline shows a CC lane: every caption is a strip at its time — tap a strip to jump to it and edit it.',
@@ -566,6 +567,7 @@ const Map<String, ToolGuideEntry> _veGuides = {
     tips: [
       'Captions take a little time to create — if the video is long, be patient.',
       'If the text does not show, check whether it is inside the clip\'s time.',
+      'The Kasheeda font exports exactly as it previews; other fonts style the preview and the export uses the system font.',
       'Every video clip block shows its real audio waveform at the bottom — a flat line means silence there.',
     ],
   ),
@@ -674,13 +676,14 @@ const Map<String, ToolGuideEntry> _veGuides = {
     title: 'Stabilizer',
     what: 'Smooths a video made shaky by hand movement — the jerks reduce.',
     steps: [
-      'Select the clip and open Stabilizer.',
-      'Run Stabilize — analysis and processing will happen.',
-      'Check the result, then tap ✓.',
+      'Open Stabilizer and pick a level (Low, Standard or Most Stable).',
+      'The clips are stabilized RIGHT AWAY, one by one, with progress — this is the bake.',
+      'Export afterwards is assembly only: no stabilization is processed at export time, so exports stay fast.',
     ],
     tips: [
       'In Stabilize the edges get slightly cut — that is part of the process.',
       'A very shaky video does not become fully smooth.',
+      'A clip added after baking is not baked yet — the panel shows it and offers Bake now; an unbaked clip exports without stabilization and the export says so.',
     ],
   ),
   've.cutout': ToolGuideEntry(
@@ -921,6 +924,7 @@ const Map<String, ToolGuideEntry> _peGuides = {
     what: 'Cuts the photo subject out from the background — the back becomes transparent.',
     steps: [
       'Run Cutout — the subject is detected automatically.',
+      'The AI runs in the background with progress — the app stays responsive while it works.',
       'Look at the edges carefully (hair, edge parts).',
       'Tap ✓ — now you can place it on any background.',
     ],
@@ -1019,6 +1023,7 @@ const ToolGuideEntry _motionGuide = ToolGuideEntry(
     'Tap a design — the big preview will open.',
     'The FREE one opens instantly; PRO/COINS ones unlock first (the price is written there).',
     'In the preview, tap "Edit" — the Editor will open: choose a layer, change text/font/colour, place, size, timing and animation style.',
+    'In the Editor you can also tap a layer directly on the preview — it is selected and brought to the front — and pinch with two fingers to resize it.',
     'If you want to place your logo, choose the Logo/Image layer and pick a photo — it will be saved with the template.',
     'Tapping SAVE saves the design in "My Templates" — it reopens from the My Templates category of the Gallery.',
     'Tap "Place on Video" — the design becomes a video and is placed as a PIP overlay in the Video Editor; then place it on your video and export.',
@@ -1084,10 +1089,13 @@ const Map<String, ToolGuideEntry> _nsGuides = {
       'Choose the part you want to set.',
       'Change its place (up/down, right/left) and size with the sliders.',
       'The effect will show live in the big preview.',
+      'You can also work directly on the preview: tap any part (headline, ticker, ribbon, logo, media) to open its own tool, drag it to move it, and pinch with two fingers to resize it.',
     ],
     tips: [
       'If you want to hide a part, turn its switch off — no need to delete it.',
       'If something goes wrong, you can reset the element and bring it back to its original place.',
+      'The gold frame around a part only shows while Elements is open or while you are dragging — the normal preview stays clean.',
+      'The media always stays the back layer: the logo and ticker can never be covered by it, in the preview or in the export.',
     ],
   ),
   'ns.tehreer': ToolGuideEntry(
@@ -1179,10 +1187,12 @@ const Map<String, ToolGuideEntry> _nsGuides = {
     steps: [
       'Write the reporter\'s name and attach a photo.',
       'Choose the strap style — it will show in the preview.',
+      'Background Remove / Replace runs in the background with progress in the status line — the app stays responsive while it works.',
       'If speaking is difficult, open the Teleprompter: the script will run in front of you, read and record — the recording joins the clips by itself.',
     ],
     tips: [
       'The confirmation message after recording comes only when it has actually joined the clips.',
+      'The background model downloads once during the one-time Preparing your tools setup; if it is ever missing, the tool says so honestly instead of hanging.',
     ],
   ),
   'ns.audio': ToolGuideEntry(

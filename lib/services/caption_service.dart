@@ -899,6 +899,26 @@ class FileCaptionEngine {
   /// Downloads to a `.part` file first and renames on success, so an
   /// interrupted download never leaves a corrupt model behind.
   /// [onModelDownloadProgress] reports 0..1 while downloading.
+  /// v1.17.0 (G5, Point #37d): public face of [_ensureModel] for
+  /// the first-run tools preparation — the Whisper model is
+  /// fetched ONCE up front so the Captions tool never waits on
+  /// a download mid-use.
+  static Future<void> ensureWhisperModel({
+    void Function(double progress)? onProgress,
+  }) => _ensureModel(onModelDownloadProgress: onProgress);
+
+  /// True when the Whisper model file is already on disk.
+  static Future<bool> whisperModelReady() async {
+    try {
+      final controller = WhisperController();
+      final modelPath = await controller.getPath(whisperModel);
+      final modelFile = File(modelPath);
+      return await modelFile.exists() && await modelFile.length() > 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
   static Future<void> _ensureModel({
     void Function(double progress)? onModelDownloadProgress,
   }) async {

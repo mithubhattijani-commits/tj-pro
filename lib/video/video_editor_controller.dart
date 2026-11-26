@@ -435,6 +435,21 @@ abstract class VideoEditorController {
   void splitSelectedClip();
   int get stabLevel;
   set stabLevel(int value);
+
+  // v1.17.0 (G5, Point #37b/c): stabilization bakes AT APPLY
+  // TIME. [bakeStabilization] renders every unbaked clip now
+  // (progress via [stabBakeProgress], cancellable between
+  // clips); the export only substitutes the baked files.
+  bool get stabBaking;
+  double get stabBakeProgress;
+
+  /// Non-photo clips whose bake matches the current level.
+  int get stabBakedClipCount;
+
+  /// Non-photo clips still missing a bake at the current level.
+  int get stabPendingClipCount;
+  Future<void> bakeStabilization();
+  void cancelStabBake();
   Rect get stageFrameRect;
   set stageFrameRect(Rect value);
   String? get stageLayer;
@@ -459,6 +474,23 @@ abstract class VideoEditorController {
   Future<void> switchPipToMainTrack();
   String get text;
   set text(String value);
+
+  // v1.17.0 (G3, Point #34): the Text overlay's style state —
+  // before this build NO such state existed anywhere in the
+  // Video Editor (the panel was one bare TextField), which is
+  // why no font/size/colour options ever showed. [textFontId]
+  // is an UrduFonts id ('' = default), [textSizeScale] scales
+  // the historical base size (pinch on the stage writes here),
+  // [textColorArgb] is the drawtext colour, [textBgPill] the
+  // background box behind the text.
+  String get textFontId;
+  set textFontId(String value);
+  double get textSizeScale;
+  set textSizeScale(double value);
+  int get textColorArgb;
+  set textColorArgb(int value);
+  bool get textBgPill;
+  set textBgPill(bool value);
   double get tfOpacity;
   set tfOpacity(double value);
   double get tfRot;

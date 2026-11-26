@@ -391,6 +391,13 @@ class FfmpegService {
     // (the source rate flows through); a value appends `fps=<n>`
     // just before the final format conversion.
     int? fps,
+    // v1.17.0 (G3, Point #34): the Text tool's style state.
+    // Defaults reproduce the historical drawtext EXACTLY
+    // (scale 1, white, no box) — every pre-v1.17.0 caller and
+    // project is byte-identical.
+    double textSizeScale = 1,
+    String textColorHex = 'white',
+    bool textBox = false,
   }) {
     final parts = <String>[];
     if (speed != 1.0) parts.add('setpts=PTS/$speed');
@@ -405,11 +412,12 @@ class FfmpegService {
     if (af.isNotEmpty) parts.add(af);
     if (text != null && text.trim().isNotEmpty && fontFile != null) {
       final h = videoHeight ?? exportDims(aspect, exportQuality)?.$2 ?? 720;
-      final size = (h / 18).round().clamp(24, 72);
+      final size = (h / 18 * textSizeScale).round().clamp(12, 144);
       // Position: bottom-center with margin, classic CapCut caption spot.
       parts.add(
         "drawtext=fontfile=$fontFile:text='${escapeDrawText(text.trim())}'"
-        ":fontsize=$size:fontcolor=white:borderw=3:bordercolor=black"
+        ":fontsize=$size:fontcolor=$textColorHex:borderw=3:bordercolor=black"
+        "${textBox ? ':box=1:boxcolor=black@0.5:boxborderw=12' : ''}"
         ":x=(w-text_w)/2:y=${textAtTop ? '40' : 'h-text_h-60'}",
       );
     }
@@ -451,6 +459,10 @@ class FfmpegService {
     String fillColor = 'black',
     // Build 3: see [finalFilterGraph]'s fps.
     int? fps,
+    // v1.17.0 (G3): see [finalFilterGraph].
+    double textSizeScale = 1,
+    String textColorHex = 'white',
+    bool textBox = false,
   }) {
     final graph = finalFilterGraph(
       speed: speed,
@@ -467,6 +479,9 @@ class FfmpegService {
       canvasFill: canvasFill,
       fillColor: fillColor,
       fps: fps,
+      textSizeScale: textSizeScale,
+      textColorHex: textColorHex,
+      textBox: textBox,
     );
     final buf = StringBuffer();
     buf.write('-y -ss $trimStart -to $trimEnd -i ${q(input)} ');
@@ -759,6 +774,10 @@ class FfmpegService {
     String fillColor = 'black',
     // Build 3: see [finalFilterGraph]'s fps.
     int? fps,
+    // v1.17.0 (G3): see [finalFilterGraph].
+    double textSizeScale = 1,
+    String textColorHex = 'white',
+    bool textBox = false,
   }) {
     final graph = finalFilterGraph(
       speed: speed,
@@ -775,6 +794,9 @@ class FfmpegService {
       canvasFill: canvasFill,
       fillColor: fillColor,
       fps: fps,
+      textSizeScale: textSizeScale,
+      textColorHex: textColorHex,
+      textBox: textBox,
     );
     final buf = StringBuffer();
     buf.write('-y -i ${q(input)} ');

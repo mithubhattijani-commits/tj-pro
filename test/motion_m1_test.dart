@@ -525,7 +525,9 @@ void main() {
         'zzz-no-match',
       );
       await _frames(tester);
-      expect(find.textContaining('Koi design nahi mila'), findsOneWidget);
+      // v1.16.0 G1 (FULL ENGLISH): the empty state is English now —
+      // the old Roman Urdu string was swept with the UI.
+      expect(find.textContaining('No design found'), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
     });
 

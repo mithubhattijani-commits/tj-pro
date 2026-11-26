@@ -225,8 +225,6 @@ class _TemplateMediaPreviewState extends State<TemplateMediaPreview> {
       overrides: widget.elementOverrides,
     );
     final mediaOv = overrideFor(widget.elementOverrides, NewsElement.media);
-    final logoOv = overrideFor(widget.elementOverrides, NewsElement.logo);
-    final capOv = overrideFor(widget.elementOverrides, NewsElement.capsule);
     final scaleW = w / 1080;
     final scaleH = h / 1920;
     final ribbonH = (g.ribbonH * scaleH).clamp(22.0, 200.0);
@@ -271,14 +269,18 @@ class _TemplateMediaPreviewState extends State<TemplateMediaPreview> {
 
     // Logo notch: the block hangs into the main area above the
     // capsule, which sits on the middle ribbon.
-    final logoW = g.logoVisibleW * scaleW;
-    final logoH = isFinal3 ? logoW * 344 / 408 : logoW * 347 / 422;
-    final capsuleH =
-        (g.capsuleH * scaleH).clamp(isFinal3 ? 9.0 : 15.0, 200.0);
-    final capTop = urduTop + midH - capsuleH - g.f3BlockLift * scaleH +
-        capOv.dy * h;
-    final logoTop = capTop - logoH;
-    final logoLeft = w - g.logoMargin * scaleW - logoW + logoOv.dx * w;
+    //
+    // v1.17.0 (G4, Point #36b): the notch is now derived from
+    // [ParityGeometry.logoVisible] — the SAME override-adjusted
+    // rect the painter draws and the hit-test uses. The old
+    // replicated math rebuilt the position from the capsule and
+    // applied only the logo's dx: its dy and scale were ignored,
+    // so a moved or enlarged logo slid UNDER the media layer in
+    // the preview (the export was already correct — its graph
+    // overlays the logo last).
+    final notch = mediaLogoNotch(g: g, scaleW: scaleW, scaleH: scaleH);
+    final logoTop = notch.top;
+    final logoLeft = notch.left;
 
     final reporterOv =
         overrideFor(widget.elementOverrides, NewsElement.reporter);
@@ -463,18 +465,13 @@ class _MainAreaClipper extends CustomClipper<Path> {
   final double notchLeft;
 
   @override
-  Path getClip(Size size) {
-    final w = size.width;
-    final notchFrom = safeNotchFrom(top: top, bottom: bottom, notchTop: notchTop);
-    return Path()
-      ..moveTo(0, top)
-      ..lineTo(w, top)
-      ..lineTo(w, notchFrom)
-      ..lineTo(notchLeft, notchFrom)
-      ..lineTo(notchLeft, bottom)
-      ..lineTo(0, bottom)
-      ..close();
-  }
+  Path getClip(Size size) => mainAreaClipPath(
+        width: size.width,
+        top: top,
+        bottom: bottom,
+        notchTop: notchTop,
+        notchLeft: notchLeft,
+      );
 
   @override
   bool shouldReclip(_MainAreaClipper oldClipper) =>
@@ -529,4 +526,47 @@ Map<String, Rect> finalElementRects({
       w * 0.2,
     ),
   };
+}
+
+/// v1.17.0 (G4, Point #36b): the logo notch rect (preview
+/// pixels) for the media clip — [ParityGeometry.logoVisible]
+/// scaled into the preview. ONE source for the notch: the same
+/// override-adjusted rect the painter draws, so the media can
+/// never cover the logo in the preview, whatever move/scale
+/// overrides the user applied.
+Rect mediaLogoNotch({
+  required ParityGeometry g,
+  required double scaleW,
+  required double scaleH,
+}) {
+  final r = g.logoVisible;
+  return Rect.fromLTWH(
+    r.left * scaleW,
+    r.top * scaleH,
+    r.width * scaleW,
+    r.height * scaleH,
+  );
+}
+
+/// The main-area L-shaped clip path (see [_MainAreaClipper]):
+/// the full-width band [top]..[bottom] with the logo block's
+/// rectangle cut out at the right. Public so the layer-order
+/// parity is unit-testable.
+Path mainAreaClipPath({
+  required double width,
+  required double top,
+  required double bottom,
+  required double notchTop,
+  required double notchLeft,
+}) {
+  final notchFrom =
+      safeNotchFrom(top: top, bottom: bottom, notchTop: notchTop);
+  return Path()
+    ..moveTo(0, top)
+    ..lineTo(width, top)
+    ..lineTo(width, notchFrom)
+    ..lineTo(notchLeft, notchFrom)
+    ..lineTo(notchLeft, bottom)
+    ..lineTo(0, bottom)
+    ..close();
 }

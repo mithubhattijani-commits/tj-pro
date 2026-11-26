@@ -17,9 +17,10 @@ class LegacyEffectsPanel extends StatelessWidget {
 
   List<Widget> buildChildren(BuildContext context) {
         return [
-          SectionTitle('Effects'),
-          const SizedBox(height: 8),
-          const Divider(height: 32),
+          // v1.17.0 (G2): the old first 'Effects' section was
+          // EMPTY (a title + divider, no controls under it) —
+          // it only manufactured a phantom drill section. The
+          // shake controls below are the panel's real content.
           SectionTitle('Shake effect'),
           const SizedBox(height: 4),
           const Text('Shake intensity'),

@@ -14,6 +14,7 @@ import '../live/news_template.dart';
 import '../news/breaking_templates.dart';
 import '../news/project_handoff.dart';
 import '../services/asset_download_service.dart';
+import '../services/font_registry.dart';
 import '../services/export_death_watcher.dart';
 import '../services/logo_loop_service.dart';
 import '../live/parity_template.dart';
@@ -95,6 +96,35 @@ class VideoEditorExportController {
           }
         }
       }
+      // v1.17.0 (G5, Point #37b/c): stabilization was BAKED when
+      // the user picked the level in the Stabilizer tool — the
+      // export only substitutes the baked file per clip (BEFORE
+      // the volume pass below, whose hand-built copies would
+      // drop the bake pointers; the baked file itself flows
+      // through untouched either way). A clip without a usable
+      // bake exports UNstabilized with an honest note — the
+      // export NEVER runs a stabilization pass of its own.
+      if (host.proStabilize && host.stabLevel > 0) {
+        var unbaked = 0;
+        for (var i = 0; i < host.clips.length; i++) {
+          final c = host.clips[i];
+          if (c.isPhoto) continue;
+          if (c.stabBakeMatches(c.file.path, host.stabLevel) &&
+              File(c.stabBakedPath!).existsSync()) {
+            host.clips[i] = c.copyWithFile(File(c.stabBakedPath!));
+          } else {
+            unbaked++;
+          }
+        }
+        if (unbaked > 0) {
+          host.setStatus(
+            'Note: $unbaked clip(s) have no stabilization bake — '
+            'exporting without stabilization for them. Open the '
+            'Stabilizer tool and let the bake finish first if '
+            'you need it.',
+          );
+        }
+      }
       // v1.4.0: per-clip volume / mute materialisation — every clip
       // whose own gain is off 1.0 or that is muted is replaced by a
       // processed copy (video stream copied, audio gained/silenced)
@@ -164,6 +194,23 @@ class VideoEditorExportController {
       }
       host.checkExportCancelled();
       host.fontFile ??= FfmpegService.findFontFile();
+      // v1.17.0 (G3, Point #34): the Text overlay's style state
+      // reaches the drawtext. When the Kasheeda house font is
+      // chosen AND its TTF is cached, it becomes the text font
+      // file (exact export); other registry fonts have no
+      // stable file path, so the export keeps the system font
+      // (the panel says so — no fake parity).
+      var textFontFile = host.fontFile;
+      if (host.textFontId == UrduFonts.jameelKasheeda.id) {
+        final kasheeda = await AssetDownloadService().cachedFile(
+          AssetDownloadService.kasheedaFileName,
+        );
+        if (kasheeda != null) textFontFile = kasheeda.path;
+      }
+      final textColorHex =
+          (host.textColorArgb & 0xFFFFFF)
+              .toRadixString(16)
+              .padLeft(6, '0');
       final hasText = host.text.trim().isNotEmpty;
       if (hasText && host.fontFile == null) {
         host.setStatus(
@@ -492,7 +539,10 @@ class VideoEditorExportController {
           // a post-pass reframes it over its own blurred copy.
           aspect: host.canvasFill == 'blur' ? 'Original' : host.aspect,
           text: text,
-          fontFile: host.fontFile,
+          fontFile: textFontFile,
+          textSizeScale: host.textSizeScale,
+          textColorHex: textColorHex,
+          textBox: host.textBgPill,
           subtitlesPath: subsPath,
           captionFilter: capFilter,
           textAtTop: useCaptions,
@@ -527,7 +577,10 @@ class VideoEditorExportController {
             filterPreset: host.filter,
             aspect: host.canvasFill == 'blur' ? 'Original' : host.aspect,
             text: text,
-            fontFile: host.fontFile,
+            fontFile: textFontFile,
+            textSizeScale: host.textSizeScale,
+            textColorHex: textColorHex,
+            textBox: host.textBgPill,
             subtitlesPath: subsPath,
             captionFilter: capFilter,
             textAtTop: useCaptions,
@@ -647,7 +700,10 @@ class VideoEditorExportController {
           // Blur fill already framed the clips in normalize.
           aspect: host.canvasFill == 'blur' ? 'Original' : host.aspect,
           text: text,
-          fontFile: host.fontFile,
+          fontFile: textFontFile,
+          textSizeScale: host.textSizeScale,
+          textColorHex: textColorHex,
+          textBox: host.textBgPill,
           subtitlesPath: subsPath,
           captionFilter: capFilter,
           textAtTop: useCaptions,
@@ -677,7 +733,10 @@ class VideoEditorExportController {
             filterPreset: host.filter,
             aspect: host.canvasFill == 'blur' ? 'Original' : host.aspect,
             text: text,
-            fontFile: host.fontFile,
+            fontFile: textFontFile,
+            textSizeScale: host.textSizeScale,
+            textColorHex: textColorHex,
+            textBox: host.textBgPill,
             subtitlesPath: subsPath,
             captionFilter: capFilter,
             textAtTop: useCaptions,
@@ -811,45 +870,7 @@ class VideoEditorExportController {
       // template pass. Each is guarded: on failure the previous output
       // is kept, a status note is written, and the export continues —
       // a pro pass NEVER fails the whole export.
-      // (a) Stabilization.
-      host.checkExportCancelled();
-      if (host.proStabilize) {
-        try {
-          final stab = p.join(dir.path, 'pve_export_stab_$stamp.mp4');
-          var lastPct = -1;
-          final res = await runStabilized(
-            input: out,
-            output: stab,
-            workDir: dir,
-            // v1.5.0: the Stabilizer panel's level drives the
-            // vidstab strength (Standard = the old fixed values).
-            shakiness: host.stabLevel == 1 ? 3 : (host.stabLevel == 3 ? 8 : 5),
-            smoothing: host.stabLevel == 1 ? 15 : (host.stabLevel == 3 ? 60 : 30),
-            expectedMs: (exportDurSec * 1000).round(),
-            onProgress: (v) {
-              final pct = (v * 100).round();
-              if (pct != lastPct) {
-                lastPct = pct;
-                host.setStatus('Stabilizing… $pct% done, ${100 - pct}% remaining');
-              }
-            },
-            onStep: (s) => host.setStatus(s),
-          );
-          if (res.ok) {
-            await advanceTo(stab);
-            host.setStatus('Stabilized (${res.engine}).');
-          } else {
-            host.setStatus(
-              'Note: stabilization failed; saving without it.',
-            );
-          }
-        } catch (e) {
-          host.setStatus(
-            'Note: stabilization failed ($e); saving without it.',
-          );
-        }
-      }
-      // (a2) v1.3.0 (§6.7): main-clip transform (scale / position /
+      // (a) v1.3.0 (§6.7): main-clip transform (scale / position /
       // rotation / opacity over a blurred backdrop).
       host.checkExportCancelled();
       if (host.transformActive) {

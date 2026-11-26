@@ -26,6 +26,7 @@ import 'package:path_provider/path_provider.dart';
 import '../services/feature_gate.dart';
 import '../services/ffmpeg_service.dart';
 import '../video/video_editor_screen.dart';
+import 'motion_hit_test.dart';
 import 'motion_my_templates.dart';
 import 'motion_painter.dart';
 import 'motion_render.dart';
@@ -104,6 +105,10 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
   final Map<String, ui.Image> _images = {};
 
   String _selId = '';
+
+  /// v1.17.0 (G3): the selected layer's size at pinch start
+  /// (fontSize for text, scale for the rest).
+  double? _pinchBase;
   Ticker? _ticker;
   Duration _last = Duration.zero;
   double _t = 0;
@@ -403,13 +408,75 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
               borderRadius: BorderRadius.circular(14),
               child: AspectRatio(
                 aspectRatio: 16 / 9,
-                child: CustomPaint(
-                  key: const Key('motionEditorCanvas'),
-                  painter: MotionScenePainter(
-                    scene: _scene,
-                    t: _t,
-                    images: _images,
-                  ),
+                // v1.17.0 (G3, Point #34): the preview itself is
+                // tappable — a tap hit-tests the layers (topmost
+                // first), selects the hit layer AND brings it to
+                // the front; a pinch resizes the selected layer
+                // (text: font size; others: scale) — the same
+                // values the sliders below edit.
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final viewSize = constraints.biggest;
+                    return GestureDetector(
+                      key: const Key('motionEditorGesture'),
+                      behavior: HitTestBehavior.opaque,
+                      onTapUp: (details) {
+                        final hit = motionLayerAtPoint(
+                          scene: _scene,
+                          t: _t,
+                          point: details.localPosition,
+                          viewSize: viewSize,
+                        );
+                        if (hit == null) return;
+                        setState(() {
+                          _selId = hit.id;
+                          // Bring to front: painter order = list
+                          // order, so the hit layer moves last.
+                          _scene = _scene.copyWith(
+                            layers: [
+                              for (final l in _scene.layers)
+                                if (l.id != hit.id) l,
+                              hit,
+                            ],
+                          );
+                        });
+                      },
+                      onScaleStart: (details) {
+                        final sel = _layer;
+                        _pinchBase = sel == null
+                            ? null
+                            : (sel.type == MotionLayerType.text
+                                ? sel.fontSize
+                                : sel.scale);
+                      },
+                      onScaleUpdate: (details) {
+                        final base = _pinchBase;
+                        if (base == null || details.scale == 1.0) {
+                          return;
+                        }
+                        final sel = _layer;
+                        if (sel == null) return;
+                        if (sel.type == MotionLayerType.text) {
+                          final next = (base * details.scale)
+                              .clamp(12.0, 400.0);
+                          _updateLayer((l) => l.copyWith(fontSize: next));
+                        } else {
+                          final next = (base * details.scale)
+                              .clamp(0.2, 4.0);
+                          _updateLayer((l) => l.copyWith(scale: next));
+                        }
+                      },
+                      onScaleEnd: (_) => _pinchBase = null,
+                      child: CustomPaint(
+                        key: const Key('motionEditorCanvas'),
+                        painter: MotionScenePainter(
+                          scene: _scene,
+                          t: _t,
+                          images: _images,
+                        ),
+                      ),
+                    );
+                  },
                 ),
               ),
             ),

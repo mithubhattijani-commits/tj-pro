@@ -51,6 +51,28 @@ class VideoClip {
   // the music track (when none is picked) so it stays editable.
   String? detachedAudioPath;
 
+  // v1.17.0 (G5, Point #37b/c): stabilization is BAKED at apply
+  // time, never processed at export. [stabBakedPath] is the
+  // rendered stabilized copy of THIS clip's source file,
+  // [stabBakedFor] the source path it was baked from (a replaced
+  // or re-picked source invalidates the bake) and
+  // [stabBakedLevel] the Stabilizer level it was baked at.
+  // Trim/speed changes do NOT invalidate the bake: the bake is
+  // of the full source and both apply after it, exactly as the
+  // old export-time pass received them.
+  String? stabBakedPath;
+  String? stabBakedFor;
+  int stabBakedLevel = 0;
+
+  /// True when a bake exists that matches [sourcePath] at
+  /// [level] (file existence is the caller's check — it needs
+  /// dart:io at the use site, this stays pure).
+  bool stabBakeMatches(String sourcePath, int level) =>
+      stabBakedPath != null &&
+      stabBakedFor == sourcePath &&
+      stabBakedLevel == level &&
+      level > 0;
+
   /// A full copy of this clip (same file + every editable field) —
   /// the Duplicate op on the clip-selected row.
   VideoClip copy() {
@@ -65,6 +87,31 @@ class VideoClip {
     c.detachedAudioPath = detachedAudioPath;
     c.disabled = disabled;
     c.colorLabel = colorLabel;
+    c.stabBakedPath = stabBakedPath;
+    c.stabBakedFor = stabBakedFor;
+    c.stabBakedLevel = stabBakedLevel;
+    return c;
+  }
+
+  /// A full copy pointing at a different [newFile] — every
+  /// editable field carried over (the export's baked-source
+  /// substitution uses this so no per-clip state is silently
+  /// dropped).
+  VideoClip copyWithFile(File newFile) {
+    final c = VideoClip(newFile, duration, aspectRatio);
+    c.trimStart = trimStart;
+    c.trimEnd = trimEnd;
+    c.isPhoto = isPhoto;
+    c.kenBurns = kenBurns;
+    c.kbZoomIn = kbZoomIn;
+    c.volume = volume;
+    c.muted = muted;
+    c.detachedAudioPath = detachedAudioPath;
+    c.disabled = disabled;
+    c.colorLabel = colorLabel;
+    c.stabBakedPath = stabBakedPath;
+    c.stabBakedFor = stabBakedFor;
+    c.stabBakedLevel = stabBakedLevel;
     return c;
   }
 }

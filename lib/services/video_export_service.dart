@@ -40,8 +40,9 @@ library;
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
+
+import 'package:flutter/foundation.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_session.dart';
 import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart';
@@ -55,6 +56,7 @@ import 'export_chain.dart';
 import 'ffmpeg_service.dart';
 import 'model_pack_service.dart';
 import 'onnx_image_service.dart';
+import 'onnx_isolate.dart';
 import 'performance_engine.dart';
 
 /// Burn-in quality.
@@ -826,26 +828,25 @@ class VideoExportService {
     }
 
     onStep?.call('Matte (MODNet)…');
-    img.Image? lastMatte;
+    // v1.17.0 (G1, Point #37a): each frame's matte runs in a
+    // background isolate — the old loop decoded, inferred and
+    // PNG-encoded every frame on the UI isolate, freezing the
+    // export screen for the whole matte pass. The runner returns
+    // the matted frame as PNG bytes, written as-is.
+    Uint8List? lastMattePng;
     for (var i = 0; i < frameFiles.length; i++) {
       final bytes = await frameFiles[i].readAsBytes();
-      final decoded = img.decodeImage(bytes);
-      if (decoded == null) {
-        if (lastMatte == null) {
-          throw Exception('Pehla frame decode nahi hua.');
-        }
-      } else {
-        final matte =
-            await OnnxImageService.instance.alphaMatte('modnet', decoded);
-        if (matte != null) lastMatte = matte;
-        if (lastMatte == null) {
-          throw Exception('MODNet matte nahi bana (pack issue).');
-        }
+      final mattePng = await runOnnxOpOffThread(
+        op: kOnnxOpMatte,
+        packId: 'modnet',
+        inputBytes: bytes,
+      );
+      if (mattePng != null) lastMattePng = mattePng;
+      if (lastMattePng == null) {
+        throw Exception('MODNet matte nahi bana (pack issue).');
       }
-      final toWrite = lastMatte;
       final name = 'frame_${(i + 1).toString().padLeft(4, '0')}.png';
-      await File(p.join(rgbaDir.path, name))
-          .writeAsBytes(img.encodePng(toWrite));
+      await File(p.join(rgbaDir.path, name)).writeAsBytes(lastMattePng);
       onProgress?.call((i + 1) / frameFiles.length * 0.7);
     }
 
@@ -909,31 +910,6 @@ class VideoExportService {
   // ------------------------------------------------------------------
   // v1.4.0 — Smooth Slow-Mo (AI): RIFE v4.6 frame interpolation
   // ------------------------------------------------------------------
-
-  static bool _rifeEnvReady = false;
-
-  /// Flattens an OrtValue payload (typed list or nested lists) into
-  /// a fresh Float32List — same tolerance as OnnxImageService.
-  static Float32List _flattenFloats(Object? value) {
-    if (value is Float32List) return Float32List.fromList(value);
-    if (value is Float64List) return Float32List.fromList(value);
-    if (value is List) {
-      final buf = <double>[];
-      void walk(Object? e) {
-        if (e is List) {
-          for (final s in e) {
-            walk(s);
-          }
-        } else if (e is num) {
-          buf.add(e.toDouble());
-        }
-      }
-
-      walk(value);
-      return Float32List.fromList(buf);
-    }
-    return Float32List(0);
-  }
 
   /// AI smooth slow-motion for ONE clip file: consecutive frames
   /// are extracted at 24 fps (processing scale capped at
@@ -1023,88 +999,24 @@ class VideoExportService {
     if (frameFiles.length < 2) {
       throw Exception('Slow-mo ke liye kam az kam 2 frames chahiye.');
     }
-    final frames = <img.Image>[];
-    for (final f in frameFiles) {
-      final decoded = img.decodeImage(await f.readAsBytes());
-      if (decoded == null) {
-        throw Exception('Ek frame decode nahi hua.');
-      }
-      frames.add(decoded);
+    // v1.17.0 (G1, Point #37a): the interpolation loop —
+    // decode every frame, build a 7-plane tensor per pair,
+    // run the synchronous ONNX session, encode two PNGs per
+    // pair — used to run entirely on the calling (UI) isolate:
+    // minutes of UI block on a 10 s clip, the same ANR class
+    // as the BG-remove freeze. It now runs in ONE background
+    // isolate (file paths cross, frames never do). FFmpeg
+    // extraction/encode stay here — FFmpegKit is a platform
+    // channel and cannot run in a background isolate.
+    onProgress?.call(0.05);
+    final String? rifeError = await compute(
+      rifeInterpolateIsolateJob,
+      <dynamic>[framesDir.path, outDir.path, model.path, pw, ph, sw, sh],
+    );
+    if (rifeError != null) {
+      throw Exception(rifeError);
     }
-
-    if (!_rifeEnvReady) {
-      OrtEnv.instance.init();
-      _rifeEnvReady = true;
-    }
-    final session = OrtSession.fromFile(model, OrtSessionOptions());
-    try {
-      final inputName = session.inputNames.first;
-      var outIndex = 0;
-      Future<void> writeOut(img.Image image) async {
-        outIndex++;
-        final name = 'frame_${outIndex.toString().padLeft(4, '0')}.png';
-        await File(p.join(outDir.path, name))
-            .writeAsBytes(img.encodePng(image));
-      }
-
-      await writeOut(frames.first);
-      for (var i = 0; i < frames.length - 1; i++) {
-        final a = frames[i];
-        final b = frames[i + 1];
-        // Input [1,7,H,W]: A RGB, B RGB, timestep plane 0.5 —
-        // channels in 0..1 (run_rife.py).
-        final data = Float32List(7 * ph * pw);
-        for (var y = 0; y < ph; y++) {
-          final cy = y < sh ? y : sh - 1;
-          for (var x = 0; x < pw; x++) {
-            final cx = x < sw ? x : sw - 1;
-            final idx = y * pw + x;
-            final pa = a.getPixel(cx, cy);
-            final pb = b.getPixel(cx, cy);
-            data[idx] = pa.r.toDouble() / 255;
-            data[ph * pw + idx] = pa.g.toDouble() / 255;
-            data[2 * ph * pw + idx] = pa.b.toDouble() / 255;
-            data[3 * ph * pw + idx] = pb.r.toDouble() / 255;
-            data[4 * ph * pw + idx] = pb.g.toDouble() / 255;
-            data[5 * ph * pw + idx] = pb.b.toDouble() / 255;
-            data[6 * ph * pw + idx] = 0.5;
-          }
-        }
-        final tensor = OrtValueTensor.createTensorWithDataList(
-          data,
-          [1, 7, ph, pw],
-        );
-        final outputs = session.run(OrtRunOptions(), {inputName: tensor});
-        tensor.release();
-        if (outputs.isEmpty || outputs.first == null) {
-          for (final o in outputs) {
-            o?.release();
-          }
-          throw Exception('RIFE se koi output nahi aaya.');
-        }
-        final raw = _flattenFloats((outputs.first! as OrtValueTensor).value);
-        for (final o in outputs) {
-          o?.release();
-        }
-        if (raw.length < 3 * ph * pw) {
-          throw Exception('RIFE output adhoora hai.');
-        }
-        final mid = img.Image(width: sw, height: sh, numChannels: 3);
-        for (var y = 0; y < sh; y++) {
-          for (var x = 0; x < sw; x++) {
-            final idx = y * pw + x;
-            int ch(int plane) =>
-                (raw[plane * ph * pw + idx].clamp(0.0, 1.0) * 255).round();
-            mid.setPixelRgb(x, y, ch(0), ch(1), ch(2));
-          }
-        }
-        await writeOut(mid);
-        await writeOut(b);
-        onProgress?.call((i + 1) / (frames.length - 1) * 0.85);
-      }
-    } finally {
-      session.release();
-    }
+    onProgress?.call(0.85);
 
     var outW = size.width;
     var outH = size.height;
@@ -1200,4 +1112,138 @@ class VideoExportService {
     }
     return null;
   }
+}
+
+
+/// v1.17.0 (G1): the RIFE interpolation loop as a background
+/// isolate job. Args: [framesDirPath, outDirPath, modelPath,
+/// pw, ph, sw, sh] (padded + display sizes). Returns null on
+/// success or the user-facing error line on failure — the same
+/// messages the on-thread loop threw. Pure Dart + FFI + file
+/// I/O only; the caller ([VideoExportService.smoothSlowMoAi])
+/// owns the FFmpeg steps before and after.
+String? rifeInterpolateIsolateJob(List<dynamic> args) {
+  final framesDir = Directory(args[0] as String);
+  final outDir = Directory(args[1] as String);
+  final model = File(args[2] as String);
+  final pw = args[3] as int;
+  final ph = args[4] as int;
+  final sw = args[5] as int;
+  final sh = args[6] as int;
+  try {
+    final frameFiles = framesDir
+        .listSync()
+        .whereType<File>()
+        .where((f) => f.path.endsWith('.png'))
+        .toList()
+      ..sort((a, b) => a.path.compareTo(b.path));
+    if (frameFiles.length < 2) {
+      return 'Slow-mo ke liye kam az kam 2 frames chahiye.';
+    }
+    final frames = <img.Image>[];
+    for (final f in frameFiles) {
+      final decoded = img.decodeImage(f.readAsBytesSync());
+      if (decoded == null) {
+        return 'Ek frame decode nahi hua.';
+      }
+      frames.add(decoded);
+    }
+    OrtEnv.instance.init();
+    final session = OrtSession.fromFile(model, OrtSessionOptions());
+    try {
+      final inputName = session.inputNames.first;
+      var outIndex = 0;
+      void writeOut(img.Image image) {
+        outIndex++;
+        final name = 'frame_${outIndex.toString().padLeft(4, '0')}.png';
+        File(p.join(outDir.path, name)).writeAsBytesSync(img.encodePng(image));
+      }
+
+      writeOut(frames.first);
+      for (var i = 0; i < frames.length - 1; i++) {
+        final a = frames[i];
+        final b = frames[i + 1];
+        // Input [1,7,H,W]: A RGB, B RGB, timestep plane 0.5 —
+        // channels in 0..1 (run_rife.py).
+        final data = Float32List(7 * ph * pw);
+        for (var y = 0; y < ph; y++) {
+          final cy = y < sh ? y : sh - 1;
+          for (var x = 0; x < pw; x++) {
+            final cx = x < sw ? x : sw - 1;
+            final idx = y * pw + x;
+            final pa = a.getPixel(cx, cy);
+            final pb = b.getPixel(cx, cy);
+            data[idx] = pa.r.toDouble() / 255;
+            data[ph * pw + idx] = pa.g.toDouble() / 255;
+            data[2 * ph * pw + idx] = pa.b.toDouble() / 255;
+            data[3 * ph * pw + idx] = pb.r.toDouble() / 255;
+            data[4 * ph * pw + idx] = pb.g.toDouble() / 255;
+            data[5 * ph * pw + idx] = pb.b.toDouble() / 255;
+            data[6 * ph * pw + idx] = 0.5;
+          }
+        }
+        final tensor = OrtValueTensor.createTensorWithDataList(
+          data,
+          [1, 7, ph, pw],
+        );
+        final outputs = session.run(OrtRunOptions(), {inputName: tensor});
+        tensor.release();
+        if (outputs.isEmpty || outputs.first == null) {
+          for (final o in outputs) {
+            o?.release();
+          }
+          return 'RIFE se koi output nahi aaya.';
+        }
+        final raw = _rifeFlattenFloats(
+          (outputs.first! as OrtValueTensor).value,
+        );
+        for (final o in outputs) {
+          o?.release();
+        }
+        if (raw.length < 3 * ph * pw) {
+          return 'RIFE output adhoora hai.';
+        }
+        final mid = img.Image(width: sw, height: sh, numChannels: 3);
+        for (var y = 0; y < sh; y++) {
+          for (var x = 0; x < sw; x++) {
+            final idx = y * pw + x;
+            int ch(int plane) =>
+                (raw[plane * ph * pw + idx].clamp(0.0, 1.0) * 255).round();
+            mid.setPixelRgb(x, y, ch(0), ch(1), ch(2));
+          }
+        }
+        writeOut(mid);
+        writeOut(b);
+      }
+    } finally {
+      session.release();
+    }
+    return null;
+  } catch (e) {
+    return 'Smooth Slow-Mo fail ho gaya: $e';
+  }
+}
+
+/// Flattens an OrtValue payload (typed list or nested lists)
+/// into a fresh Float32List — the isolate job's own copy of
+/// the tolerance the on-thread loop had.
+Float32List _rifeFlattenFloats(Object? value) {
+  if (value is Float32List) return Float32List.fromList(value);
+  if (value is Float64List) return Float32List.fromList(value);
+  if (value is List) {
+    final buf = <double>[];
+    void walk(Object? e) {
+      if (e is List) {
+        for (final s in e) {
+          walk(s);
+        }
+      } else if (e is num) {
+        buf.add(e.toDouble());
+      }
+    }
+
+    walk(value);
+    return Float32List.fromList(buf);
+  }
+  return Float32List(0);
 }

@@ -20,9 +20,11 @@
 /// preview, export and hit-testing.
 library;
 
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
@@ -31,7 +33,8 @@ import 'package:path_provider/path_provider.dart';
 import '../../live/parity_template.dart';
 import '../../services/model_pack_service.dart';
 import '../../services/onnx_image_service.dart';
-import '../../services/photo_pipeline.dart';
+import '../../services/photo_pipeline.dart' show compositeMatteAlphaBytes;
+
 
 /// Gold of the template furniture (#F5C542) — the photo border
 /// and the plate's edge.
@@ -292,73 +295,54 @@ class ReporterBgException implements Exception {
   String toString() => message;
 }
 
-Future<img.Image> _reporterMatte(
-  String photoPath, {
-  void Function(double progress)? onProgress,
-}) async {
-  final ready = await ModelPackService.instance.ensurePack(
-    'birefnet_fp16',
-    onProgress: onProgress,
+/// v1.17.0 (G1, Point #37a): the matte + composite now runs in
+/// ONE background isolate. The old path decoded the photo, ran
+/// the synchronous ONNX inference, composited and PNG-encoded
+/// the full-res result ALL on the UI isolate — the app froze
+/// past Android's ANR threshold and the system killed it. Only
+/// the pack download (async I/O with progress) and the model
+/// file lookup stay on the calling isolate.
+
+/// Pure composite: the photo's RGB with the matted image's
+/// alpha — byte-for-byte the semantics photo_pipeline's
+/// applyAlphaMatte has always applied (alpha channel wins; if
+/// a matte ever arrives with alpha pinned at 255 everywhere,
+/// its red channel is the matte). Synchronous + top-level so
+/// the isolate job and the host tests run the same code.
+img.Image reporterCutoutFromMatte(img.Image photo, img.Image matted) {
+  final m = matted.width == photo.width && matted.height == photo.height
+      ? matted
+      : img.copyResize(
+          matted,
+          width: photo.width,
+          height: photo.height,
+          interpolation: img.Interpolation.linear,
+        );
+  final rgba = photo.convert(numChannels: 4);
+  final bytes = rgba.getBytes(order: img.ChannelOrder.rgba);
+  final mBytes = m.convert(numChannels: 4).getBytes(
+        order: img.ChannelOrder.rgba,
+      );
+  final out = compositeMatteAlphaBytes(bytes, mBytes);
+  return img.Image.fromBytes(
+    width: photo.width,
+    height: photo.height,
+    bytes: out.buffer,
+    numChannels: 4,
+    order: img.ChannelOrder.rgba,
   );
-  if (!ready) {
-    throw ReporterBgException(
-      ModelPackService.describeFailure(
-        ModelPackService.instance.lastFailure,
-      ),
-    );
-  }
-  final bytes = await File(photoPath).readAsBytes();
-  final decoded = img.decodeImage(bytes);
-  if (decoded == null) {
-    throw ReporterBgException('The photo could not be read.');
-  }
-  final matte = await OnnxImageService.instance.alphaMatte(
-    'birefnet_fp16',
-    decoded,
-  );
-  if (matte == null) {
-    throw ReporterBgException('No result from the AI model.');
-  }
-  return applyAlphaMatte(decoded, matte);
 }
 
-/// BG Remove: the photo with its background matted away, saved
-/// as a transparent PNG in [reporterDir]. Returns the new path.
-Future<String> reporterRemoveBackground(
-  String photoPath, {
-  void Function(double progress)? onProgress,
-}) async {
-  final cutout = await _reporterMatte(photoPath, onProgress: onProgress);
-  final dir = await reporterDir();
-  final dest = p.join(
-    dir.path,
-    'reporter_cutout_${DateTime.now().millisecondsSinceEpoch}.png',
-  );
-  await File(dest).writeAsBytes(img.encodePng(cutout));
-  return dest;
-}
-
-/// BG Replace: the matted subject composited over a solid
-/// [colorArgb] OR over the image at [bgImagePath] (cover-fitted).
-/// Saved as a JPG in [reporterDir]. Returns the new path.
-Future<String> reporterReplaceBackground(
-  String photoPath, {
+/// Pure replace composite: the cutout over a solid [colorArgb]
+/// canvas OR over [bg] cover-fitted into the photo's frame —
+/// the exact geometry the old on-thread path used.
+img.Image reporterReplaceComposite(
+  img.Image cutout, {
   int? colorArgb,
-  String? bgImagePath,
-  void Function(double progress)? onProgress,
-}) async {
-  if (colorArgb == null && bgImagePath == null) {
-    throw ReporterBgException('Choose a background colour or photo.');
-  }
-  final cutout = await _reporterMatte(photoPath, onProgress: onProgress);
+  img.Image? bg,
+}) {
   final img.Image canvas;
-  if (bgImagePath != null) {
-    final bgBytes = await File(bgImagePath).readAsBytes();
-    final bg = img.decodeImage(bgBytes);
-    if (bg == null) {
-      throw ReporterBgException('The background photo could not be read.');
-    }
-    // Cover-fit the background into the photo's frame.
+  if (bg != null) {
     final scale = (cutout.width / bg.width) > (cutout.height / bg.height)
         ? cutout.width / bg.width
         : cutout.height / bg.height;
@@ -387,12 +371,136 @@ Future<String> reporterReplaceBackground(
       ),
     );
   }
-  final out = img.compositeImage(canvas, cutout);
-  final dir = await reporterDir();
-  final dest = p.join(
-    dir.path,
-    'reporter_bg_${DateTime.now().millisecondsSinceEpoch}.jpg',
+  return img.compositeImage(canvas, cutout);
+}
+
+/// The isolate job: [photoBytes, modelPath, mode, colorArgb,
+/// bgBytesOrNull] → PNG bytes ('remove') or JPG bytes
+/// ('replace'), null on any failure. Pure Dart + FFI only.
+Uint8List? reporterBgIsolateJob(List<dynamic> args) {
+  try {
+    final photoBytes = args[0] as Uint8List;
+    final model = File(args[1] as String);
+    final mode = args[2] as String;
+    final colorArgb = args[3] as int;
+    final bgBytes = args.length > 4 ? args[4] as Uint8List? : null;
+    final photo = img.decodeImage(photoBytes);
+    if (photo == null) return null;
+    final matted = OnnxImageService.alphaMatteWithModelSync(
+      model,
+      isBiref: true,
+      input: photo,
+    );
+    if (matted == null) return null;
+    final cutout = reporterCutoutFromMatte(photo, matted);
+    if (mode == 'remove') {
+      return img.encodePng(cutout);
+    }
+    img.Image? bg;
+    if (bgBytes != null) {
+      bg = img.decodeImage(bgBytes);
+      if (bg == null) return null;
+    }
+    final out = reporterReplaceComposite(
+      cutout,
+      colorArgb: colorArgb < 0 ? null : colorArgb,
+      bg: bg,
+    );
+    return img.encodeJpg(out, quality: 92);
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Shared driver for the two public BG ops: ensure the pack
+/// (progress flows to the caller — the first-use download is
+/// VISIBLE now, never a silent stall), resolve the model file,
+/// run the isolate job with a hard timeout, write the result.
+/// Every failure is a [ReporterBgException] with the TRUE
+/// reason; nothing here can block the UI thread.
+Future<String> _reporterBgRun(
+  String photoPath, {
+  required String mode,
+  int? colorArgb,
+  String? bgImagePath,
+  void Function(double progress)? onProgress,
+}) async {
+  final ready = await ModelPackService.instance.ensurePack(
+    'birefnet_fp16',
+    onProgress: onProgress,
   );
-  await File(dest).writeAsBytes(img.encodeJpg(out, quality: 92));
+  if (!ready) {
+    throw ReporterBgException(
+      ModelPackService.describeFailure(
+        ModelPackService.instance.lastFailure,
+      ),
+    );
+  }
+  final model = await ModelPackService.instance.packFile(
+    'birefnet_fp16',
+    'model_fp16.onnx',
+  );
+  if (model == null) {
+    throw ReporterBgException('The AI model file is missing.');
+  }
+  final bytes = await File(photoPath).readAsBytes();
+  Uint8List? bgBytes;
+  if (bgImagePath != null) {
+    bgBytes = await File(bgImagePath).readAsBytes();
+  }
+  final Uint8List? out;
+  try {
+    out = await compute(
+      reporterBgIsolateJob,
+      <dynamic>[bytes, model.path, mode, colorArgb ?? -1, bgBytes],
+    ).timeout(const Duration(minutes: 5));
+  } on TimeoutException {
+    throw ReporterBgException(
+      'Background remove took too long and was stopped. '
+      'Try a smaller photo.',
+    );
+  }
+  if (out == null) {
+    throw ReporterBgException(
+      'No result from the AI model — the photo could not be processed.',
+    );
+  }
+  final dir = await reporterDir();
+  final stamp = DateTime.now().millisecondsSinceEpoch;
+  final dest = mode == 'remove'
+      ? p.join(dir.path, 'reporter_cutout_$stamp.png')
+      : p.join(dir.path, 'reporter_bg_$stamp.jpg');
+  await File(dest).writeAsBytes(out);
   return dest;
+}
+
+/// BG Remove: the photo with its background matted away, saved
+/// as a transparent PNG in [reporterDir]. Returns the new path.
+/// Runs off the UI thread (v1.17.0 G1) — see [_reporterBgRun].
+Future<String> reporterRemoveBackground(
+  String photoPath, {
+  void Function(double progress)? onProgress,
+}) {
+  return _reporterBgRun(photoPath, mode: 'remove', onProgress: onProgress);
+}
+
+/// BG Replace: the matted subject composited over a solid
+/// [colorArgb] OR over the image at [bgImagePath] (cover-fitted).
+/// Saved as a JPG in [reporterDir]. Returns the new path.
+Future<String> reporterReplaceBackground(
+  String photoPath, {
+  int? colorArgb,
+  String? bgImagePath,
+  void Function(double progress)? onProgress,
+}) {
+  if (colorArgb == null && bgImagePath == null) {
+    throw ReporterBgException('Choose a background colour or photo.');
+  }
+  return _reporterBgRun(
+    photoPath,
+    mode: 'replace',
+    colorArgb: colorArgb,
+    bgImagePath: bgImagePath,
+    onProgress: onProgress,
+  );
 }
