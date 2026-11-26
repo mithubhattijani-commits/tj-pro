@@ -1020,11 +1020,16 @@ const ToolGuideEntry _motionGuide = ToolGuideEntry(
   steps: [
     'Choose a design in the Gallery — a live glimpse runs on every card.',
     'Find your kind of design by category or search.',
+    'SMART MATCH: type what you want in the search — English, Roman Urdu or Urdu script — and the best-matching designs come first with a "Matched:" line showing why. This is template-based help, not generative AI; if nothing matches, the Gallery honestly suggests categories instead of inventing a result.',
+    'Tap the heart on any card to favourite it — Favourites and Recently Used get their own chips in the category rail.',
+    'CREATE YOUR OWN: tap the + button in the Gallery to start from a blank canvas — add Text, Shape, Logo/Image, Counter, Ticker and Chart layers, then SAVE it into My Templates.',
     'Tap a design — the big preview will open.',
     'The FREE one opens instantly; PRO/COINS ones unlock first (the price is written there).',
     'In the preview, tap "Edit" — the Editor will open: choose a layer, change text/font/colour, place, size, timing and animation style.',
     'In the Editor you can also tap a layer directly on the preview — it is selected and brought to the front — and pinch with two fingers to resize it.',
     'If you want to place your logo, choose the Logo/Image layer and pick a photo — it will be saved with the template.',
+    'KEYFRAMES: in the Editor, the KEYFRAMES section animates a layer between points — choose a property (Opacity, Scale, Position X/Y, Rotation), move the playhead, tap "Add keyframe at …", then set that point\'s value and easing. Add more points for multi-step motion; the preview shows exactly what will export.',
+    'UNDO / REDO / RESET: the Editor top bar undoes and redoes every change; Reset brings back the design exactly as you opened it.',
     'Tapping SAVE saves the design in "My Templates" — it reopens from the My Templates category of the Gallery.',
     'Tap "Place on Video" — the design becomes a video and is placed as a PIP overlay in the Video Editor; then place it on your video and export.',
     'In the Video Editor, the overlay is the PIP layer: set its place/size in the PIP panel, and its timing in "PIP timing" (Start/End) or by dragging its segment on the timeline PIP lane — it then shows only inside that window, in the preview and the export alike.',
@@ -1032,6 +1037,7 @@ const ToolGuideEntry _motionGuide = ToolGuideEntry(
   tips: [
     'When placing, a transparent (WebM) video is made first; if the phone cannot encode it, an MP4 is made and the screen clearly states which one was made.',
     'PRO designs are included for Pro users — no coins needed.',
+    'A design you create yourself is always free — keyframes included.',
     'There is one PIP layer: a new "Place on Video" replaces the previous inset, it does not stack a second one.',
   ],
 );

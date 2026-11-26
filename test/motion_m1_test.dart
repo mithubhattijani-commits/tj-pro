@@ -97,8 +97,9 @@ void main() {
   });
 
   group('Scene model — JSON round-trip', () {
-    test('all 8 seed templates survive toJson -> fromJson -> toJson', () {
-      expect(MotionTemplates.all.length, 8);
+    test('all 34 templates survive toJson -> fromJson -> toJson', () {
+      // v1.26.0 M4: the registry grew 8 → 34 (MOTION-PLAN §5).
+      expect(MotionTemplates.all.length, 34);
       for (final t in MotionTemplates.all) {
         final encoded = jsonEncode(t.scene.toJson());
         final decoded = MotionScene.fromJson(
@@ -113,19 +114,25 @@ void main() {
 
     test('ids are unique; categories resolve to labels', () {
       final ids = MotionTemplates.all.map((t) => t.id).toSet();
-      expect(ids.length, 8);
+      expect(ids.length, 34);
       for (final t in MotionTemplates.all) {
         expect(MotionCategories.labels[t.category], isNotNull,
             reason: t.id);
         expect(MotionTemplates.byId(t.id), same(t));
       }
+      // v1.26.0 M4: all 12 categories now have templates.
       expect(MotionTemplates.presentCategories, [
         'titles',
         'logo',
         'naam',
+        'intro',
         'points',
         'numbers',
+        'social',
+        'quotes',
         'subscribe',
+        'countdown',
+        'effects',
         'news',
       ]);
     });

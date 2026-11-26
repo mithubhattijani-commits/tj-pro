@@ -13,7 +13,19 @@
 /// flows + a full-screen preview. The Editor and "Video Par
 /// Lagao" arrive in M2 — nothing on this screen pretends
 /// otherwise.
+///
+/// M4 (v1.26.0): the search is the prompt matcher (CHECK #7) —
+/// type what you want in English, Roman Urdu or Urdu script
+/// and matching designs come first, score-ordered, with a
+/// "Matched: …" line saying WHY. No match → honest category
+/// suggestions, never a fake "AI result" (the screen labels
+/// the feature "Smart Match — template-based help, not
+/// generative AI", plan §4). Plus: a Create button into the
+/// blank-canvas Creator (M5), Favourites (heart on a card)
+/// and Recently Used rail chips.
 library;
+
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 
@@ -24,9 +36,12 @@ import '../services/remote_config_service.dart';
 import '../widgets/tool_guide.dart';
 import 'motion_access.dart';
 import 'motion_editor_screen.dart';
+import 'motion_gallery_meta.dart';
 import 'motion_my_templates.dart';
 import 'motion_preview.dart';
 import 'motion_preview_screen.dart';
+import 'motion_prompt_matcher.dart';
+import 'motion_template_keywords.dart';
 import 'motion_templates.dart';
 import 'motion_unlock.dart';
 
@@ -58,6 +73,10 @@ class _MotionGalleryScreenState extends State<MotionGalleryScreen> {
   /// v1.14.0 M2: the user's saved templates (Editor's Save).
   List<MotionMyTemplate> _mine = const [];
 
+  /// v1.26.0 M4: heart-marked template ids + recently used.
+  Set<String> _favourites = const {};
+  List<String> _recent = const [];
+
   @override
   void initState() {
     super.initState();
@@ -66,11 +85,23 @@ class _MotionGalleryScreenState extends State<MotionGalleryScreen> {
     RemoteConfigService.instance.notifier.addListener(_onConfigChanged);
     _reloadOwned();
     _reloadMine();
+    _reloadMeta();
   }
 
   Future<void> _reloadMine() async {
     final mine = await MotionMyTemplates.load();
     if (mounted) setState(() => _mine = mine);
+  }
+
+  Future<void> _reloadMeta() async {
+    final favs = await MotionFavourites.load();
+    final recent = await MotionRecents.load();
+    if (mounted) {
+      setState(() {
+        _favourites = favs;
+        _recent = recent;
+      });
+    }
   }
 
   @override
@@ -101,35 +132,124 @@ class _MotionGalleryScreenState extends State<MotionGalleryScreen> {
         prices: RemoteConfigService.instance.config.prices,
       );
 
+  /// v1.26.0 M4: the prompt matcher drives the search while
+  /// browsing "All" with a non-empty query. Inside a chosen
+  /// category the classic name/label filter stays (browsing a
+  /// shelf is not a prompt).
+  bool get _matcherActive =>
+      _category == 'all' && _query.trim().isNotEmpty;
+
+  List<MotionMatch> get _matches => _matcherActive
+      ? MotionPromptMatcher.match(
+          prompt: _query,
+          catalogue: motionCatalogue(mine: _mine),
+          limit: 12,
+        )
+      : const [];
+
+  /// The words that matched, across the current results, in
+  /// result order — the "Matched: …" honesty line (the user
+  /// can see WHY these designs came up).
+  List<String> get _matchedTerms {
+    final seen = <String>{};
+    final out = <String>[];
+    for (final m in _matches) {
+      for (final term in m.matchedTerms) {
+        if (seen.add(term)) out.add(term);
+      }
+    }
+    return out;
+  }
+
+  /// Category LABELS worth suggesting when nothing matched
+  /// (the matcher's honest fallback — never a fake result).
+  List<String> get _suggestedCategories => _matcherActive
+      ? MotionPromptMatcher.suggestCategories(
+          prompt: _query,
+          catalogue: motionCatalogue(mine: _mine),
+        )
+      : const [];
+
+  /// A saved template as a grid card (M2's wrapper: tier free
+  /// = always usable, no unlock flow; _onTap recognises the
+  /// 'mine:' id and opens the Editor).
+  MotionTemplate _savedWrapper(MotionMyTemplate r) => MotionTemplate(
+        id: 'mine:${r.id}',
+        name: r.name,
+        category: r.category,
+        tier: MotionTier.free,
+        scene: r.scene,
+      );
+
+  bool _classicMatch(MotionTemplate t, String q) {
+    if (q.isEmpty) return true;
+    final label =
+        (MotionCategories.labels[t.category] ?? '').toLowerCase();
+    return t.name.toLowerCase().contains(q) || label.contains(q);
+  }
+
   List<MotionTemplate> get _visible {
     final q = _query.trim().toLowerCase();
+    if (_matcherActive) {
+      // Score-ordered matcher results (built-ins + saved).
+      final byId = <String, MotionTemplate>{
+        for (final t in MotionTemplates.all) t.id: t,
+        for (final r in _mine) 'mine:${r.id}': _savedWrapper(r),
+      };
+      return [
+        for (final m in _matches)
+          if (byId[m.templateId] != null) byId[m.templateId]!,
+      ];
+    }
     if (_category == 'mine') {
-      // M2: saved templates ride the same card grid as free
-      // wrappers (tier free = always usable, no unlock flow);
-      // _onTap recognises the 'mine:' id and opens the Editor.
       return _mine
           .where((r) => q.isEmpty || r.name.toLowerCase().contains(q))
-          .map(
-            (r) => MotionTemplate(
-              id: 'mine:${r.id}',
-              name: r.name,
-              category: r.category,
-              tier: MotionTier.free,
-              scene: r.scene,
-            ),
-          )
+          .map(_savedWrapper)
+          .toList(growable: false);
+    }
+    if (_category == 'recent') {
+      return [
+        for (final id in _recent)
+          if (MotionTemplates.byId(id) != null &&
+              _classicMatch(MotionTemplates.byId(id)!, q))
+            MotionTemplates.byId(id)!,
+      ];
+    }
+    if (_category == 'favourites') {
+      return MotionTemplates.all
+          .where((t) => _favourites.contains(t.id) && _classicMatch(t, q))
           .toList(growable: false);
     }
     return MotionTemplates.all.where((t) {
       if (_category != 'all' && t.category != _category) return false;
-      if (q.isEmpty) return true;
-      final label =
-          (MotionCategories.labels[t.category] ?? '').toLowerCase();
-      return t.name.toLowerCase().contains(q) || label.contains(q);
+      return _classicMatch(t, q);
     }).toList(growable: false);
   }
 
+  Future<void> _toggleFavourite(MotionTemplate t) async {
+    await MotionFavourites.toggle(t.id);
+    await _reloadMeta();
+  }
+
+  Future<void> _openCreator() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const MotionEditorScreen.blank(),
+      ),
+    );
+    // A blank design may have been saved — refresh My Templates.
+    await _reloadMine();
+  }
+
   Future<void> _onTap(MotionTemplate t) async {
+    if (!t.id.startsWith('mine:')) {
+      // M4: Recently Used — recorded on open (fire-and-forget;
+      // the rail refreshes when it lands).
+      unawaited(
+        MotionRecents.record(t.id).then((_) => _reloadMeta()),
+      );
+    }
     if (t.id.startsWith('mine:')) {
       final id = t.id.substring(5);
       for (final r in _mine) {
@@ -221,10 +341,18 @@ class _MotionGalleryScreenState extends State<MotionGalleryScreen> {
             ),
           ],
         ),
-        // Point #21: Studio ki Guide.
-        actions: const [
-          ToolGuideButton(guideId: 'motion'),
-          SizedBox(width: 6),
+        actions: [
+          // v1.26.0 M5: blank-canvas Creator.
+          IconButton(
+            key: const Key('motionCreateButton'),
+            tooltip: 'Create your own',
+            onPressed: _openCreator,
+            icon: const Icon(Icons.add_circle_outline,
+                color: _kCyan, size: 22),
+          ),
+          // Point #21: Studio ki Guide.
+          const ToolGuideButton(guideId: 'motion'),
+          const SizedBox(width: 6),
         ],
       ),
       body: Container(
@@ -240,6 +368,8 @@ class _MotionGalleryScreenState extends State<MotionGalleryScreen> {
             : Column(
                 children: [
                   _searchBar(),
+                  if (_matcherActive && _matches.isNotEmpty)
+                    _matchHint(),
                   _categoryRail(),
                   Expanded(child: _grid()),
                 ],
@@ -256,7 +386,7 @@ class _MotionGalleryScreenState extends State<MotionGalleryScreen> {
         onChanged: (v) => setState(() => _query = v),
         style: const TextStyle(color: Colors.white, fontSize: 14),
         decoration: InputDecoration(
-          hintText: 'Design dhunden…',
+          hintText: 'Describe a design — English, Roman Urdu, Urdu…',
           hintStyle: const TextStyle(color: Colors.white38),
           prefixIcon: const Icon(Icons.search, color: _kCyan, size: 20),
           filled: true,
@@ -280,10 +410,47 @@ class _MotionGalleryScreenState extends State<MotionGalleryScreen> {
     );
   }
 
+  /// v1.26.0 M4: shown under the search bar when the prompt
+  /// matcher produced the grid — what matched, and the honest
+  /// label for the feature (plan §4: no fake "AI").
+  Widget _matchHint() {
+    final terms = _matchedTerms;
+    return Padding(
+      key: const Key('motionMatchHint'),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Smart Match — template-based help (not generative AI)',
+            style: TextStyle(
+              color: _kCyan,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.4,
+            ),
+          ),
+          if (terms.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              'Matched: ${terms.join(', ')}',
+              style:
+                  const TextStyle(color: Colors.white54, fontSize: 11.5),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _categoryRail() {
     final cats = [
       'all',
       if (_mine.isNotEmpty) 'mine',
+      if (_recent.isNotEmpty) 'recent',
+      if (_favourites.isNotEmpty) 'favourites',
       ...MotionTemplates.presentCategories,
     ];
     return SizedBox(
@@ -301,7 +468,11 @@ class _MotionGalleryScreenState extends State<MotionGalleryScreen> {
               ? 'All'
               : c == 'mine'
                   ? 'My Templates'
-                  : (MotionCategories.labels[c] ?? c);
+                  : c == 'recent'
+                      ? 'Recent'
+                      : c == 'favourites'
+                          ? 'Favourites'
+                          : (MotionCategories.labels[c] ?? c);
           return GestureDetector(
             key: Key('motionCat-$c'),
             onTap: () => setState(() => _category = c),
@@ -343,7 +514,82 @@ class _MotionGalleryScreenState extends State<MotionGalleryScreen> {
     );
   }
 
+  /// v1.26.0 M4: the no-match fallback panel (see _grid).
+  Widget _noMatchPanel() {
+    final suggestions = _suggestedCategories;
+    if (suggestions.isEmpty) {
+      return const Center(
+        child: Text(
+          'No design found — try changing the search or category.',
+          style: TextStyle(color: Colors.white54, fontSize: 13),
+          textAlign: TextAlign.center,
+        ),
+      );
+    }
+    // Suggestion chips carry category LABELS; map back to keys.
+    final keyByLabel = <String, String>{
+      for (final e in MotionCategories.labels.entries) e.value: e.key,
+    };
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'No design found for "${_query.trim()}" — '
+              'these categories may help:',
+              style:
+                  const TextStyle(color: Colors.white54, fontSize: 13),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              alignment: WrapAlignment.center,
+              children: [
+                for (final label in suggestions)
+                  if (keyByLabel[label] != null)
+                    GestureDetector(
+                      key: Key(
+                          'motionSuggestChip-${keyByLabel[label]}'),
+                      onTap: () => setState(
+                          () => _category = keyByLabel[label]!),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF101B38),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: _kCardBorder),
+                        ),
+                        child: Text(
+                          label,
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _grid() {
+    // M4: a prompt that matched nothing gets the honest
+    // fallback — suggested categories when the matcher has a
+    // weak signal, a plain no-result line when it has none.
+    // A template is NEVER dressed up as an "AI result".
+    if (_matcherActive && _matches.isEmpty) {
+      return _noMatchPanel();
+    }
     final items = _visible;
     if (items.isEmpty) {
       return const Center(
@@ -398,6 +644,32 @@ class _MotionGalleryScreenState extends State<MotionGalleryScreen> {
                   fit: StackFit.expand,
                   children: [
                     MotionSceneView(scene: t.scene),
+                    if (!t.id.startsWith('mine:'))
+                      Positioned(
+                        top: 2,
+                        left: 2,
+                        child: GestureDetector(
+                          key: Key('motionFav-${t.id}'),
+                          onTap: () => _toggleFavourite(t),
+                          child: Container(
+                            padding: const EdgeInsets.all(5),
+                            decoration: BoxDecoration(
+                              color:
+                                  Colors.black.withValues(alpha: 0.45),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Icon(
+                              _favourites.contains(t.id)
+                                  ? Icons.favorite
+                                  : Icons.favorite_border,
+                              size: 14,
+                              color: _favourites.contains(t.id)
+                                  ? const Color(0xFFFF5A76)
+                                  : Colors.white70,
+                            ),
+                          ),
+                        ),
+                      ),
                     if (!access.canUse)
                       Positioned(
                         top: 6,

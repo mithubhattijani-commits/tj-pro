@@ -12,12 +12,25 @@
 /// when the alpha encode fails it falls back to an MP4 on the
 /// scene's own background and SAYS so — no fake buttons, no
 /// silent format swap (the master prompt's honesty rule).
+///
+/// M5 (v1.26.0): the blank-canvas Creator (the Gallery's +
+/// button opens [MotionEditorScreen.blank] — add/delete
+/// layers of every kind), multi-point KEYFRAMES per layer
+/// property (the Gemini track model, edited through
+/// `motion_keyframe_convert.dart`; the preview still renders
+/// the converted SCENE through the shared evaluator, so
+/// Creator preview and export can never drift), and
+/// Undo/Redo/Reset over scene snapshots (CHECK #8 note §6:
+/// every edit pushes the pre-edit scene; playhead/selection
+/// are NOT history).
 library;
 
 import 'dart:io';
 import 'dart:ui' as ui;
 
-import 'package:flutter/material.dart';
+// UndoHistory is hidden from material: the name belongs to
+// the Motion track model (motion_keyframes.dart) here.
+import 'package:flutter/material.dart' hide UndoHistory;
 import 'package:flutter/scheduler.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
@@ -27,6 +40,8 @@ import '../services/feature_gate.dart';
 import '../services/ffmpeg_service.dart';
 import '../video/video_editor_screen.dart';
 import 'motion_hit_test.dart';
+import 'motion_keyframe_convert.dart';
+import 'motion_keyframes.dart';
 import 'motion_my_templates.dart';
 import 'motion_painter.dart';
 import 'motion_render.dart';
@@ -82,13 +97,24 @@ const List<(String?, String)> _kFonts = [
 
 class MotionEditorScreen extends StatefulWidget {
   const MotionEditorScreen({super.key, required this.template})
-      : saved = null;
+      : saved = null,
+        blank = false;
 
   const MotionEditorScreen.fromSaved({super.key, required this.saved})
-      : template = null;
+      : template = null,
+        blank = false;
+
+  /// v1.26.0 M5: the blank-canvas Creator — a fresh scene
+  /// with one starter text layer; Save lands it in My
+  /// Templates like any other design.
+  const MotionEditorScreen.blank({super.key})
+      : template = null,
+        saved = null,
+        blank = true;
 
   final MotionTemplate? template;
   final MotionMyTemplate? saved;
+  final bool blank;
 
   @override
   State<MotionEditorScreen> createState() => _MotionEditorScreenState();
@@ -116,6 +142,18 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
   bool _lagaoBusy = false;
   String _status = '';
 
+  /// v1.26.0 M5: scene-level undo/redo (CHECK #8 note §6) and
+  /// the scene as it was opened (Reset's target).
+  late MotionScene _initialScene;
+  final UndoHistory<MotionScene> _history =
+      UndoHistory<MotionScene>();
+
+  /// v1.26.0 M5: keyframe editor state — which property's
+  /// track is being edited, and the selected keyframe's time
+  /// on it (null = none selected).
+  MotionProperty _kfProperty = MotionProperty.opacity;
+  double? _kfTime;
+
   MotionLayer? get _layer {
     for (final l in _scene.layers) {
       if (l.id == _selId) return l;
@@ -127,7 +165,33 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
   void initState() {
     super.initState();
     final saved = widget.saved;
-    if (saved != null) {
+    if (widget.blank) {
+      // M5 Creator: a fresh canvas with one starter text
+      // layer — enough to see, select and animate something
+      // at once; everything else is added from "Add Layer".
+      _scene = const MotionScene(
+        width: 1280,
+        height: 720,
+        durationSec: 5,
+        bgColor: 0xFF050914,
+        bgColor2: 0xFF0B1B3F,
+        layers: [
+          MotionLayer(
+            id: 'text1',
+            type: MotionLayerType.text,
+            x: 640,
+            y: 360,
+            width: 1000,
+            text: 'Your Text',
+            fontSize: 84,
+            entrance: 'fadeIn',
+          ),
+        ],
+      );
+      _name = 'My Design';
+      _category = 'titles';
+      _baseId = null;
+    } else if (saved != null) {
       _scene = saved.scene;
       _name = saved.name;
       _category = saved.category;
@@ -141,6 +205,7 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
       _category = t.category;
       _baseId = t.id;
     }
+    _initialScene = _scene;
     _selId = _scene.layers.isEmpty ? '' : _scene.layers.first.id;
     _ticker = createTicker(_onTick)..start();
     for (final e in _imagePaths.entries) {
@@ -187,6 +252,9 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
   void _updateLayer(MotionLayer Function(MotionLayer) f) {
     final sel = _layer;
     if (sel == null) return;
+    // M5 (CHECK #8 note §6): EVERY edit pushes the pre-edit
+    // scene first — undo always lands on "before this change".
+    _history.push(_scene);
     setState(() {
       _scene = _scene.copyWith(
         layers: [
@@ -194,6 +262,38 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
         ],
       );
     });
+  }
+
+  /// Whether the scene differs from the one that was opened
+  /// (Reset's enable state; scenes are immutable values, so
+  /// the JSON form is the honest comparison).
+  bool get _sceneChanged =>
+      _scene.toJson().toString() != _initialScene.toJson().toString();
+
+  void _restoreScene(MotionScene scene) {
+    setState(() {
+      _scene = scene;
+      if (_scene.layers.every((l) => l.id != _selId)) {
+        _selId = _scene.layers.isEmpty ? '' : _scene.layers.first.id;
+      }
+      _kfTime = null;
+    });
+  }
+
+  void _undo() {
+    final prev = _history.undo(_scene);
+    if (prev != null) _restoreScene(prev);
+  }
+
+  void _redo() {
+    final next = _history.redo(_scene);
+    if (next != null) _restoreScene(next);
+  }
+
+  void _resetScene() {
+    if (!_sceneChanged) return;
+    _history.push(_scene);
+    _restoreScene(_initialScene);
   }
 
   // ── Save / Duplicate / Delete ─────────────────────────────
@@ -374,6 +474,24 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
         ),
         actions: [
           IconButton(
+            key: const Key('motionUndo'),
+            tooltip: 'Undo',
+            onPressed: _history.canUndo ? _undo : null,
+            icon: const Icon(Icons.undo, size: 20),
+          ),
+          IconButton(
+            key: const Key('motionRedo'),
+            tooltip: 'Redo',
+            onPressed: _history.canRedo ? _redo : null,
+            icon: const Icon(Icons.redo, size: 20),
+          ),
+          IconButton(
+            key: const Key('motionReset'),
+            tooltip: 'Reset to the opened design',
+            onPressed: _sceneChanged ? _resetScene : null,
+            icon: const Icon(Icons.restart_alt, size: 20),
+          ),
+          IconButton(
             key: const Key('motionEditorDuplicate'),
             tooltip: 'Duplicate',
             onPressed: _duplicate,
@@ -428,6 +546,7 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
                           viewSize: viewSize,
                         );
                         if (hit == null) return;
+                        _history.push(_scene);
                         setState(() {
                           _selId = hit.id;
                           // Bring to front: painter order = list
@@ -522,6 +641,23 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
             ),
           ),
           _layerChips(),
+          // v1.26.0: the status line lives OUTSIDE the scroll
+          // area — with the Add-Layer + Keyframes sections the
+          // panel grew long enough that save feedback at the
+          // top of the list could scroll out of view entirely.
+          if (_status.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  _status,
+                  key: const Key('motionEditorStatus'),
+                  style: const TextStyle(
+                      color: Colors.white70, fontSize: 12.5),
+                ),
+              ),
+            ),
           Expanded(
             child: ListView(
               padding: const EdgeInsets.fromLTRB(16, 6, 16, 24),
@@ -529,15 +665,7 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
                 _nameField(),
                 const SizedBox(height: 10),
                 _lagaoButton(),
-                if (_status.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    _status,
-                    key: const Key('motionEditorStatus'),
-                    style: const TextStyle(
-                        color: Colors.white70, fontSize: 12.5),
-                  ),
-                ],
+                ..._addLayerControls(),
                 if (layer != null) ..._layerControls(layer),
                 ..._sceneControls(),
               ],
@@ -770,6 +898,7 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
         (id) => _updateLayer(
             (l) => l.copyWith(exit: id == 'none' ? null : id)),
       ),
+      ..._keyframeControls(layer),
     ];
   }
 
@@ -1014,7 +1143,441 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
     await _decodeImage(key, path);
   }
 
+  // ── M5: add/delete layers + keyframes ─────────────────────
+
+  Widget _miniChip({
+    Key? key,
+    required IconData? icon,
+    required String label,
+    required bool selected,
+    required VoidCallback onTap,
+    Color accent = _kCyan,
+  }) {
+    return GestureDetector(
+      key: key,
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+        decoration: BoxDecoration(
+          gradient: selected
+              ? const LinearGradient(colors: [_kBlue, _kPurple])
+              : null,
+          color: selected ? null : _kCard,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: selected ? Colors.transparent : Colors.white12,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (icon != null) ...[
+              Icon(icon,
+                  size: 14,
+                  color: selected ? Colors.white : accent),
+              const SizedBox(width: 5),
+            ],
+            Text(
+              label,
+              style: TextStyle(
+                color: selected ? Colors.white : Colors.white70,
+                fontSize: 12,
+                fontWeight:
+                    selected ? FontWeight.w700 : FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _addLayerControls() {
+    return [
+      _sectionTitle('Add layer'),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          _miniChip(
+            key: const Key('motionAddText'),
+            icon: Icons.text_fields,
+            label: 'Text',
+            selected: false,
+            onTap: () => _addLayer(MotionLayerType.text),
+          ),
+          _miniChip(
+            key: const Key('motionAddShape'),
+            icon: Icons.square_outlined,
+            label: 'Shape',
+            selected: false,
+            onTap: () => _addLayer(MotionLayerType.shape),
+          ),
+          _miniChip(
+            key: const Key('motionAddImage'),
+            icon: Icons.image_outlined,
+            label: 'Logo/Image',
+            selected: false,
+            onTap: () => _addLayer(MotionLayerType.image),
+          ),
+          _miniChip(
+            key: const Key('motionAddCounter'),
+            icon: Icons.numbers,
+            label: 'Counter',
+            selected: false,
+            onTap: () => _addLayer(MotionLayerType.counter),
+          ),
+          _miniChip(
+            key: const Key('motionAddTicker'),
+            icon: Icons.short_text,
+            label: 'Ticker',
+            selected: false,
+            onTap: () => _addLayer(MotionLayerType.ticker),
+          ),
+          _miniChip(
+            key: const Key('motionAddChart'),
+            icon: Icons.bar_chart,
+            label: 'Chart',
+            selected: false,
+            onTap: () => _addLayer(MotionLayerType.chart),
+          ),
+        ],
+      ),
+      if (_layer != null) ...[
+        const SizedBox(height: 10),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: _miniChip(
+            key: const Key('motionDeleteLayer'),
+            icon: Icons.delete_outline,
+            label: 'Delete selected layer',
+            selected: false,
+            accent: const Color(0xFFFF5A76),
+            onTap: _deleteSelectedLayer,
+          ),
+        ),
+      ],
+    ];
+  }
+
+  void _addLayer(MotionLayerType type) {
+    final id =
+        'layer${DateTime.now().millisecondsSinceEpoch}';
+    final cx = _scene.width / 2;
+    final cy = _scene.height / 2;
+    final layer = switch (type) {
+      MotionLayerType.text => MotionLayer(
+          id: id,
+          type: type,
+          x: cx,
+          y: cy,
+          width: 900,
+          text: 'New Text',
+          fontSize: 72,
+          entrance: 'fadeIn',
+        ),
+      MotionLayerType.shape => MotionLayer(
+          id: id,
+          type: type,
+          x: cx,
+          y: cy,
+          width: 320,
+          height: 190,
+          shape: 'rounded',
+          fill: 0xFF2E7CF6,
+          entrance: 'scaleIn',
+        ),
+      MotionLayerType.image => MotionLayer(
+          id: id,
+          type: type,
+          x: cx,
+          y: cy,
+          width: 260,
+          height: 260,
+          // Its own image key: the picker fills THIS layer only.
+          imageKey: id,
+          placeholderText: 'TJ',
+          entrance: 'scaleIn',
+        ),
+      MotionLayerType.counter => MotionLayer(
+          id: id,
+          type: type,
+          x: cx,
+          y: cy,
+          width: 700,
+          from: 0,
+          to: 1000,
+          label: 'COUNT',
+          fontSize: 92,
+        ),
+      MotionLayerType.ticker => MotionLayer(
+          id: id,
+          type: type,
+          x: cx,
+          y: _scene.height - 60,
+          width: _scene.width,
+          height: 64,
+          text: 'Type ticker text • ',
+          bandColor: 0xFFB00020,
+          bandHeight: 64,
+          fontSize: 34,
+        ),
+      MotionLayerType.chart => MotionLayer(
+          id: id,
+          type: type,
+          x: cx,
+          y: cy,
+          width: 720,
+          height: 320,
+          values: const [0.4, 0.7, 0.55],
+          barColor: 0xFF22D3EE,
+        ),
+    };
+    _history.push(_scene);
+    setState(() {
+      _scene = _scene.copyWith(layers: [..._scene.layers, layer]);
+      _selId = id;
+      _kfTime = null;
+    });
+  }
+
+  void _deleteSelectedLayer() {
+    final sel = _layer;
+    if (sel == null) return;
+    _history.push(_scene);
+    setState(() {
+      final layers = [
+        for (final l in _scene.layers)
+          if (l.id != sel.id) l,
+      ];
+      _scene = _scene.copyWith(layers: layers);
+      _selId = layers.isEmpty ? '' : layers.first.id;
+      _kfTime = null;
+    });
+  }
+
+  static const _kfPropertyLabels = <MotionProperty, String>{
+    MotionProperty.opacity: 'Opacity',
+    MotionProperty.scale: 'Scale',
+    MotionProperty.positionX: 'Position X',
+    MotionProperty.positionY: 'Position Y',
+    MotionProperty.rotationDeg: 'Rotation',
+  };
+
+  static const _kfEasingLabels = <MotionEasing, String>{
+    MotionEasing.linear: 'Linear',
+    MotionEasing.easeIn: 'Ease In',
+    MotionEasing.easeOut: 'Ease Out',
+    MotionEasing.easeInOut: 'Ease In-Out',
+    MotionEasing.bounceOut: 'Bounce',
+  };
+
+  (double, double) _kfRange(MotionProperty p) => switch (p) {
+        MotionProperty.opacity => (0.0, 1.0),
+        MotionProperty.scale => (0.2, 3.0),
+        MotionProperty.positionX => (0.0, _scene.width),
+        MotionProperty.positionY => (0.0, _scene.height),
+        MotionProperty.rotationDeg => (-180.0, 180.0),
+      };
+
+  String _kfFormat(MotionProperty p, double v) => switch (p) {
+        MotionProperty.opacity => '${(v * 100).round()}%',
+        MotionProperty.scale => '${(v * 100).round()}%',
+        MotionProperty.positionX => '${v.round()} px',
+        MotionProperty.positionY => '${v.round()} px',
+        MotionProperty.rotationDeg => '${v.round()}°',
+      };
+
+  /// The KEYFRAMES section for [layer]. The track model is
+  /// DERIVED from the scene layer on every build
+  /// (keyframeSetFromLayer) and every edit writes the whole
+  /// set back through the converter — the scene stays the
+  /// single source of truth, so the preview (which paints the
+  /// scene via the shared evaluator) always shows exactly
+  /// what export will render.
+  List<Widget> _keyframeControls(MotionLayer layer) {
+    final set = keyframeSetFromLayer(layer);
+    final track = set.trackFor(_kfProperty);
+    MotionTrackKeyframe? selKf;
+    if (_kfTime != null) {
+      for (final kf in track.keyframes) {
+        if (kf.timeSec == _kfTime) {
+          selKf = kf;
+          break;
+        }
+      }
+    }
+    // Final alias: promotable to non-null inside the
+    // selected-keyframe controls (closures capture it).
+    final sk = selKf;
+    final range = _kfRange(_kfProperty);
+
+    void writeSet(MotionKeyframeSet next) =>
+        _updateLayer((l) => layerWithKeyframeSet(l, next));
+
+    return [
+      _sectionTitle('Keyframes'),
+      Wrap(
+        spacing: 7,
+        runSpacing: 7,
+        children: [
+          for (final p in MotionProperty.values)
+            _miniChip(
+              key: Key('motionKfProp-${p.name}'),
+              icon: null,
+              label: _kfPropertyLabels[p]!,
+              selected: _kfProperty == p,
+              onTap: () => setState(() {
+                _kfProperty = p;
+                _kfTime = null;
+              }),
+            ),
+        ],
+      ),
+      const SizedBox(height: 10),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: _miniChip(
+          key: const Key('motionKfAdd'),
+          icon: Icons.add,
+          label:
+              'Add keyframe at ${_t.toStringAsFixed(1)}s',
+          selected: false,
+          onTap: () {
+            final t = _t.clamp(0.0, _scene.durationSec).toDouble();
+            final value =
+                scenePropertyValueAt(layer, _kfProperty, t);
+            writeSet(
+                addKeyframeSeeded(set, layer, _kfProperty, t, value));
+            setState(() => _kfTime = t);
+          },
+        ),
+      ),
+      if (track.isEmpty)
+        const Padding(
+          padding: EdgeInsets.only(top: 8),
+          child: Text(
+            'No keyframes on this property yet — the layer '
+            'holds its base value.',
+            style: TextStyle(color: Colors.white38, fontSize: 12),
+          ),
+        )
+      else ...[
+        const SizedBox(height: 10),
+        for (final kf in track.keyframes)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: GestureDetector(
+              key: Key(
+                  'motionKfRow-${(kf.timeSec * 1000).round()}'),
+              onTap: () => setState(() {
+                _t = kf.timeSec;
+                _playing = false;
+                _kfTime = kf.timeSec;
+              }),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: _kCard,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: selKf?.timeSec == kf.timeSec
+                        ? _kCyan
+                        : Colors.white12,
+                    width: selKf?.timeSec == kf.timeSec ? 1.6 : 1,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.diamond,
+                        size: 12, color: _kCyan),
+                    const SizedBox(width: 8),
+                    Text(
+                      '${kf.timeSec.toStringAsFixed(1)}s',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        _kfFormat(_kfProperty, kf.value),
+                        style: const TextStyle(
+                            color: Colors.white70, fontSize: 12.5),
+                      ),
+                    ),
+                    Text(
+                      _kfEasingLabels[kf.easing]!,
+                      style: const TextStyle(
+                          color: Colors.white38, fontSize: 11.5),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+      ],
+      if (sk != null) ...[
+        _slider(
+          'Keyframe value',
+          sk.value.clamp(range.$1, range.$2).toDouble(),
+          range.$1,
+          range.$2,
+          (v) => writeSet(set.withTrack(
+              track.addOrReplace(sk.copyWith(value: v)))),
+          format: (v) => _kfFormat(_kfProperty, v),
+        ),
+        const Padding(
+          padding: EdgeInsets.only(top: 6, bottom: 6),
+          child: Text(
+            'Easing — how this point flows into the NEXT one',
+            style: TextStyle(color: Colors.white54, fontSize: 12),
+          ),
+        ),
+        Wrap(
+          spacing: 7,
+          runSpacing: 7,
+          children: [
+            for (final e in MotionEasing.values)
+              _miniChip(
+                key: Key('motionKfEase-${e.name}'),
+                icon: null,
+                label: _kfEasingLabels[e]!,
+                selected: sk.easing == e,
+                onTap: () => writeSet(set.withTrack(track
+                    .addOrReplace(sk.copyWith(easing: e)))),
+              ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: _miniChip(
+            key: const Key('motionKfDelete'),
+            icon: Icons.delete_outline,
+            label: 'Delete this keyframe',
+            selected: false,
+            accent: const Color(0xFFFF5A76),
+            onTap: () {
+              writeSet(set.withTrack(track.removeAt(sk.timeSec)));
+              setState(() => _kfTime = null);
+            },
+          ),
+        ),
+      ],
+    ];
+  }
+
   List<Widget> _sceneControls() {
+    // M5: scene-level edits join the same undo history.
+    void sceneEdit(MotionScene Function(MotionScene) f) {
+      _history.push(_scene);
+      setState(() => _scene = f(_scene));
+    }
+
     return [
       _sectionTitle('Scene'),
       _slider(
@@ -1022,18 +1585,18 @@ class _MotionEditorScreenState extends State<MotionEditorScreen>
         _scene.durationSec,
         2,
         12,
-        (v) => setState(() => _scene = _scene.copyWith(durationSec: v)),
+        (v) => sceneEdit((s) => s.copyWith(durationSec: v)),
         format: (v) => '${v.toStringAsFixed(1)}s',
       ),
       _swatches(
         'Background colour',
         _scene.bgColor,
-        (c) => setState(() => _scene = _scene.copyWith(bgColor: c)),
+        (c) => sceneEdit((s) => s.copyWith(bgColor: c)),
       ),
       _swatches(
         'Background gradient end',
         _scene.bgColor2,
-        (c) => setState(() => _scene = _scene.copyWith(bgColor2: c)),
+        (c) => sceneEdit((s) => s.copyWith(bgColor2: c)),
         allowNone: true,
       ),
     ];
