@@ -48,7 +48,7 @@ class EasePanel extends StatelessWidget {
         ),
       ),
       const Text(
-        'Ye easing Animation (keyframes) wale motion par lagti hai.',
+        'This easing applies to the Animation (keyframes) motion.',
         style: TextStyle(color: Colors.grey, fontSize: 12),
       ),
       const Divider(height: 32),

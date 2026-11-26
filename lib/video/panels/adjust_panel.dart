@@ -25,7 +25,7 @@ class AdjustPanel extends StatelessWidget {
   /// fake slider is worse than none (see _adjustExtraFilter).
   List<Widget> buildChildren(BuildContext context) {
     return [
-      const Text('Adjust — ek waqt mein ek slider',
+      const Text('Adjust — one slider at a time',
           style: TextStyle(fontWeight: FontWeight.bold)),
       const SizedBox(height: 8),
       const Text('LUT look'),
@@ -88,7 +88,7 @@ class AdjustPanel extends StatelessWidget {
           ),
           const Spacer(),
           const Text(
-            'Har item per selected clip ke export par lagta hai.',
+            'Each item applies to the selected clip\'s export.',
             style: TextStyle(color: Colors.grey, fontSize: 11),
           ),
         ],
@@ -127,7 +127,7 @@ class _MyLookNameDialogState extends State<_MyLookNameDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Look save karein'),
+      title: const Text('Save look'),
       content: TextField(
         key: const Key('myLookNameField'),
         controller: _controller,
@@ -198,14 +198,14 @@ class _MyLooksSectionState extends State<MyLooksSection> {
     if (!mounted) return;
     setState(() => _looks = next);
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Look save ho gaya: $trimmed')),
+      SnackBar(content: Text('Look saved: $trimmed')),
     );
   }
 
   void _apply(AdjustLook look) {
     widget.host.update(() => applyAdjustLook(widget.host, look));
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Look lag gaya: ${look.name}')),
+      SnackBar(content: Text('Look applied: ${look.name}')),
     );
   }
 
@@ -237,8 +237,8 @@ class _MyLooksSectionState extends State<MyLooksSection> {
         ),
         if (_loaded && _looks.isEmpty)
           const Text(
-            'Abhi koi saved look nahi — settings bana kar Save karein, '
-            'phir wo har video par aik tap se lage ga.',
+            'No saved look yet — set the settings and tap Save, '
+            'then it will apply to every video with one tap.',
             style: TextStyle(color: Colors.grey, fontSize: 11),
           ),
         for (final look in _looks)

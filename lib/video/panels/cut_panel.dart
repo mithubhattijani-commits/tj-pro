@@ -23,7 +23,7 @@ class CutPanel extends StatelessWidget {
     if (clip == null) {
       return const [
         Text(
-          'Pehle timeline se clip select karein.',
+          'Select a clip from the timeline first.',
           style: TextStyle(color: Colors.grey),
         ),
       ];
@@ -33,7 +33,7 @@ class CutPanel extends StatelessWidget {
     final cutStart = host.cutStart.clamp(start, end);
     final cutEnd = host.cutEnd.clamp(start, end);
     return [
-      SectionTitle('Cut — darmiyan ka hissa hatayein'),
+      SectionTitle('Cut — remove the middle portion'),
       Text(
         'Clip range: ${start.toStringAsFixed(1)}s – '
         '${end.toStringAsFixed(1)}s',
@@ -60,7 +60,7 @@ class CutPanel extends StatelessWidget {
         child: ElevatedButton.icon(
           onPressed: host.busy ? null : () => _applyCutRange(context),
           icon: const Icon(Icons.cut),
-          label: const Text('Cut hatao (2 clips ban jayenge)'),
+          label: const Text('Cut it out (2 clips will be created)'),
         ),
       ),
       const Divider(height: 32),
@@ -78,11 +78,11 @@ class CutPanel extends StatelessWidget {
     final cs = host.cutStart.clamp(start, end);
     final ce = host.cutEnd.clamp(start, end);
     if (ce - cs < 0.2) {
-      host.setStatus('Cut range bohat chhota hai — start/end badhayein.');
+      host.setStatus('The cut range is too small — increase start/end.');
       return;
     }
     if (cs <= start + 0.05 && ce >= end - 0.05) {
-      host.setStatus('Poori clip cut ho jayegi — Delete use karein.');
+      host.setStatus('The whole clip would be cut — use Delete.');
       return;
     }
     host.pushHistory();
@@ -97,7 +97,7 @@ class CutPanel extends StatelessWidget {
       host.clips.replaceRange(idx, idx + 1, parts);
       host.selected = idx;
     });
-    host.setStatus('Cut lag gaya — ${parts.length} clip(s) reh gaye.');
+    host.setStatus('Cut applied — ${parts.length} clip(s) remain.');
     unawaited(host.loadPreview());
   }
   @override

@@ -22,15 +22,15 @@ class EnhancePanel extends StatelessWidget {
     return [
       SectionTitle('Enhance — HD (on-device)'),
       const Text(
-        'Poori selected clip 2x upscale + sharpen hoti hai '
-        '(ffmpeg lanczos + unsharp). Ye ESRGAN AI nahi hai — wo '
-        'Photo Editor mein hai.',
+        'The whole selected clip is upscaled 2x + sharpened '
+        '(ffmpeg lanczos + unsharp). This is not ESRGAN AI — that is '
+        'is in the Photo Editor.',
         style: TextStyle(color: Colors.grey, fontSize: 12),
       ),
       const SizedBox(height: 8),
       Text(
         clip == null
-            ? 'Pehle clip select karein.'
+            ? 'Select a clip first.'
             : 'Target: Clip ${host.selected + 1} '
                 '(${clip.effectiveDuration.toStringAsFixed(1)}s — poori clip)',
         style: const TextStyle(color: Colors.grey, fontSize: 12),

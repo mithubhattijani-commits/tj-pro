@@ -49,10 +49,10 @@ class LegacyBeatsPanel extends StatelessWidget {
               ),
               if (host.beatAutoCut && host.clips.length > 1)
                 const Text(
-                  'Note: multi-clip me beat auto-cut nahi lagta — sirf '
-                  'markers dikhenge; cut sirf single clip par hota hai. '
-                  'Auto-cut OFF rakhein to single clip par bhi sirf '
-                  'markers rehte hain.',
+                  'Note: in multi-clip, beat auto-cut does not apply — only '
+                  'markers will show; the cut happens only on a single clip. '
+                  'If Auto-cut is OFF, even on a single clip only '
+                  'only markers remain.',
                   style: TextStyle(color: Colors.grey),
                 ),
               const Divider(height: 32),
@@ -60,8 +60,8 @@ class LegacyBeatsPanel extends StatelessWidget {
               SectionTitle('Timeline markers'),
               const SizedBox(height: 4),
               const Text(
-                'Beats aur markers timeline par dikhte hain — playhead, '
-                'Split aur trim un par snap hote hain.',
+                'Beats and markers show on the timeline — the playhead, '
+                'Split and trim snap to them.',
                 style: TextStyle(color: Colors.grey, fontSize: 12),
               ),
               const SizedBox(height: 8),
@@ -94,7 +94,7 @@ class LegacyBeatsPanel extends StatelessWidget {
                       ),
                       IconButton(
                         icon: const Icon(Icons.close, size: 16),
-                        tooltip: 'Marker hatayein',
+                        tooltip: 'Remove marker',
                         onPressed: () => host.removeMarker(m),
                       ),
                     ],

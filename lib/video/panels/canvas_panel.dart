@@ -46,7 +46,7 @@ class CanvasPanel extends StatelessWidget {
       SectionTitle('Canvas background'),
       ...body.sublist(fillIdx, end),
       const Text(
-        'Gradient fill abhi supported nahi — Blur ya Colour chunein.',
+        'Gradient fill is not supported yet — choose Blur or Colour.',
         style: TextStyle(color: Colors.grey, fontSize: 12),
       ),
       const Divider(height: 32),

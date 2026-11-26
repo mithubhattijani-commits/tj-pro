@@ -132,7 +132,7 @@ class LegacyAudioPanel extends StatelessWidget {
           SwitchListTile(
             title: const Text('Mute original audio'),
             subtitle: const Text(
-              'Clip ki apni awaz band karein (music laga ho to ignore).',
+              'Turn off the clip\'s own sound (ignored if music is applied).',
             ),
             value: host.muteOriginal,
             onChanged: (bool v) {

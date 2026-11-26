@@ -25,15 +25,15 @@ class AiCutPanel extends StatelessWidget {
   List<Widget> buildChildren(BuildContext context) {
     final clip = host.clips.isEmpty ? null : host.clips[host.selected];
     return [
-      SectionTitle('AI Cut — silence hatayein'),
+      SectionTitle('AI Cut — remove silence'),
       const Text(
-        'On-device scan: khamoshi wale hisse dhoondh kar kaat diye '
-        'jate hain (filler / pauses). Koi cloud ya sign-in nahi.',
+        'On-device scan: the silent parts are found and cut out '
+        'are removed (filler / pauses). No cloud or sign-in.',
         style: TextStyle(color: Colors.grey, fontSize: 12),
       ),
       if (clip == null)
         const Text(
-          'Pehle clip select karein.',
+          'Select a clip first.',
           style: TextStyle(color: Colors.grey),
         )
       else ...[
@@ -58,13 +58,13 @@ class AiCutPanel extends StatelessWidget {
           child: ElevatedButton.icon(
             onPressed: host.aicutBusy ? null : () => _scanSilence(context),
             icon: const Icon(Icons.search),
-            label: Text(host.aicutBusy ? 'Scan ho raha hai…' : 'Silence scan karein'),
+            label: Text(host.aicutBusy ? 'Scanning…' : 'Scan silence'),
           ),
         ),
         if (host.aicutRanges.isNotEmpty) ...[
           const SizedBox(height: 8),
           Text(
-            '${host.aicutRanges.length} silence range mile:',
+            '${host.aicutRanges.length} silence ranges found:',
             style: const TextStyle(fontWeight: FontWeight.bold),
           ),
           for (final r in host.aicutRanges)
@@ -78,7 +78,7 @@ class AiCutPanel extends StatelessWidget {
             child: ElevatedButton.icon(
               onPressed: host.aicutBusy ? null : () => _applyAiCut(context),
               icon: const Icon(Icons.content_cut),
-              label: const Text('Cut karke naya clip banao'),
+              label: const Text('Cut to create a new clip'),
             ),
           ),
         ],
@@ -123,8 +123,8 @@ class AiCutPanel extends StatelessWidget {
       host.update(() => host.aicutRanges = ranges);
       host.setStatus(
         ranges.isEmpty
-            ? 'Koi silence nahi mili — threshold kam karke dekhein.'
-            : '${ranges.length} silence range mile.',
+            ? 'No silence found — try lowering the threshold.'
+            : '${ranges.length} silence ranges found.',
       );
     } catch (e) {
       host.setStatus('Silence scan failed: $e');
@@ -151,11 +151,11 @@ class AiCutPanel extends StatelessWidget {
     }
     if (cursor < end - 0.05) keeps.add((cursor, end));
     if (keeps.isEmpty) {
-      host.setStatus('Poori clip silence hai — kuch nahi bachega.');
+      host.setStatus('The whole clip is silence — nothing will remain.');
       return;
     }
     if (keeps.length == 1 && keeps.first.$1 == start && keeps.first.$2 == end) {
-      host.setStatus('Trim range mein koi silence nahi — clip waisi ki waisi hai.');
+      host.setStatus('No silence in the trim range — the clip stays as it is.');
       return;
     }
     host.update(() => host.aicutBusy = true);
@@ -206,7 +206,7 @@ class AiCutPanel extends StatelessWidget {
         );
       }
       if (!res.ok) {
-        host.setStatus('AI Cut nahi hua. ${res.logs}');
+        host.setStatus('AI Cut failed. ${res.logs}');
         return;
       }
       // Phase 0 sweep: the setState below sat after two ffmpeg
@@ -227,7 +227,7 @@ class AiCutPanel extends StatelessWidget {
         host.clips[idx] = nc;
         host.aicutRanges = const [];
       });
-      host.setStatus('AI Cut tayyar — silence hat gayi.');
+      host.setStatus('AI Cut ready — silence removed.');
       await host.loadPreview();
     } catch (e) {
       host.setStatus('AI Cut failed: $e');

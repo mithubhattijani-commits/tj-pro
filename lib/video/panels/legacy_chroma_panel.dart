@@ -24,7 +24,7 @@ class LegacyChromaPanel extends StatelessWidget {
               SwitchListTile(
                 title: const Text('Chromakey'),
                 subtitle: const Text(
-                  'Green/blue background hatakar naya background lagayein.',
+                  'Remove the green/blue background and apply a new background.',
                 ),
                 value: host.proChroma,
                 onChanged: (v) => host.update(() => host.proChroma = v),
@@ -48,12 +48,12 @@ class LegacyChromaPanel extends StatelessWidget {
                 const SizedBox(height: 6),
                 const Text(
                   'Intensity = Similarity slider, Shadow = Blend '
-                  'slider (neeche) — rang select karte hi live '
-                  'preview update hota hai.',
+                  'slider (below) — as soon as a colour is selected, the live '
+                  'the preview updates.',
                   style: TextStyle(color: Colors.grey, fontSize: 12),
                 ),
                 const SizedBox(height: 8),
-                const Text('Key color — preset ya eyedropper se sample karein'),
+                const Text('Key color — sample from a preset or the eyedropper'),
                 Row(
                   children: [
                     Expanded(
@@ -81,7 +81,7 @@ class LegacyChromaPanel extends StatelessWidget {
                       ]),
                     ),
                     IconButton(
-                      tooltip: 'Eyedropper — frame par tap karke rang chunein',
+                      tooltip: 'Eyedropper — tap the frame to pick a colour',
                       onPressed: host.eyedropperPick,
                       icon: const Icon(Icons.colorize),
                     ),
@@ -115,7 +115,7 @@ class LegacyChromaPanel extends StatelessWidget {
                   },
                 ),
                 ProSlider(
-                  label: 'Spill (sabz kinara saaf)',
+                  label: 'Spill (clean the green edge)',
                   value: host.proChromaSpill,
                   min: 0,
                   max: 1,
@@ -190,7 +190,7 @@ class LegacyChromaPanel extends StatelessWidget {
                         host.update(() => host.proChromaBgColor = t.toUpperCase());
                         host.scheduleChromaPreview();
                       } else {
-                        host.setStatus('Rang #RRGGBB format mein likhein.');
+                        host.setStatus('Write the colour in #RRGGBB format.');
                       }
                     },
                   ),
@@ -203,7 +203,7 @@ class LegacyChromaPanel extends StatelessWidget {
                     icon: const Icon(Icons.image),
                     label: Text(
                       host.proChromaBgImage == null
-                          ? 'Background image chunein'
+                          ? 'Choose a background image'
                           : p.basename(host.proChromaBgImage!),
                     ),
                   ),
@@ -247,7 +247,7 @@ class LegacyChromaPanel extends StatelessWidget {
                   else
                     const Text(
                       'Slider badalte hi keyed frame yahan dikhega — '
-                      'ya Preview button dabayein.',
+                      'or tap the Preview button.',
                       style: TextStyle(color: Colors.grey, fontSize: 12),
                     ),
                   const SizedBox(height: 8),
@@ -256,16 +256,16 @@ class LegacyChromaPanel extends StatelessWidget {
                         host.chromaPreviewBusy ? null : host.refreshChromaPreview,
                     icon: const Icon(Icons.visibility),
                     label: Text(host.chromaPreviewBusy
-                        ? 'Preview ban raha…'
-                        : 'Preview dekhein'),
+                        ? 'Building preview…'
+                        : 'View preview'),
                   ),
                   if (host.proBgRemove)
                     const Padding(
                       padding: EdgeInsets.only(top: 8),
                       child: Text(
-                        'Note: ML background remover bhi ON hai — '
-                        'export mein wohi lagega, chromakey nahi '
-                        '(dono ek saath nahi chalte).',
+                        'Note: the ML background remover is also ON — '
+                        'that will apply in the export, not chromakey '
+                        '(both do not run together).',
                         style:
                             TextStyle(color: Colors.orange, fontSize: 12),
                       ),
@@ -276,9 +276,9 @@ class LegacyChromaPanel extends StatelessWidget {
               SwitchListTile(
                 title: const Text('Video background remover (ML)'),
                 subtitle: const Text(
-                  'Premium AI: 50 coins se unlock hoga (is session '
-                  'ke liye). Export mein pehle MODNet HQ matte lagta '
-                  'hai; live preview ML Kit segmentation se hai.',
+                  'Premium AI: unlocks for 50 coins (for this session '
+                  'for it). In the export, the MODNet HQ matte applies first '
+                  'is; the live preview uses ML Kit segmentation.',
                 ),
                 value: host.proBgRemove,
                 onChanged: host.onBgRemoverChanged,
@@ -327,15 +327,15 @@ class LegacyChromaPanel extends StatelessWidget {
                     icon: const Icon(Icons.image),
                     label: Text(
                       host.proBgImage == null
-                          ? 'Background image chunein'
+                          ? 'Choose a background image'
                           : p.basename(host.proBgImage!),
                     ),
                   ),
               ],
               const Text(
-                'Note: lambi clips par minutes lag sakte hain; width '
-                'capped hai; saaf subject wali video par behtareen '
-                'result milta hai. Progress export status me dikhega.',
+                'Note: long clips can take minutes; the width '
+                'is capped; on a video with a clear subject the best '
+                'result is achieved. Progress will show in the export status.',
                 style: TextStyle(color: Colors.grey),
               ),
               const Divider(height: 32),

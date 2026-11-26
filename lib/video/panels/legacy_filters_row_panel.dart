@@ -47,9 +47,9 @@ class LegacyFiltersRowPanel extends StatelessWidget {
             onChanged: (v) => host.update(() => host.filterIntensity = v),
           ),
           const Text(
-            'Note: LUT looks sirf export mein lagte hain (file-based '
-            'hain) — stage preview mein filter + Adjust ke values '
-            'live dikhte hain.',
+            'Note: LUT looks apply only in the export (they are file-based '
+            'have) — in the stage preview, the filter + Adjust values '
+            'show live.',
             style: TextStyle(color: Colors.grey, fontSize: 12),
           ),
           const Divider(height: 32),

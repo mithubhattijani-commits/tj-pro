@@ -57,7 +57,7 @@ SectionTitle('Auto Captions (CapCut-style)'),
               children: [
                 Expanded(
                   child: Text(
-                    'Video ki apni audio se captions ban rahe hain…',
+                    'Creating captions from the video\'s own audio…',
                   ),
                 ),
               ],
@@ -88,7 +88,7 @@ SectionTitle('Auto Captions (CapCut-style)'),
               children: [
                 Expanded(
                   child: Text(
-                    '${host.captions.length} caption segments ready — export me video par jal jayenge.',
+                    '${host.captions.length} caption segments ready — they will burn onto the video in the export.',
                   ),
                 ),
                 TextButton(
@@ -127,7 +127,7 @@ SectionTitle('Auto Captions (CapCut-style)'),
           ),
           const SizedBox(height: 8),
           const Text(
-            'Note: captions video ki apni audio se on-device banenge (whisper, Urdu/English) — mic, quiet room ya earphones ki koi pabandi nahi. Pehli dafa ~75 MB caption model download hoga (progress ke saath); us ke baad sab kuch phone par hi, offline hota hai.',
+            'Note: captions are created on-device from the video\'s own audio (Whisper, Urdu/English) — no mic, quiet room or earphones needed. The first time, a ~75 MB caption model will download (with progress); after that everything happens on the phone, offline.',
             style: TextStyle(color: Colors.grey),
           ),
           const SizedBox(height: 12),
@@ -147,7 +147,7 @@ SectionTitle('Auto Captions (CapCut-style)'),
             ListTile(
               leading: const Icon(Icons.closed_caption, color: Colors.white),
               title: const Text(
-                'SRT file share karein',
+                'Share SRT file',
                 style: TextStyle(color: Colors.white),
               ),
               onTap: () {
@@ -161,7 +161,7 @@ SectionTitle('Auto Captions (CapCut-style)'),
                 color: Colors.white,
               ),
               title: const Text(
-                'VTT file share karein',
+                'Share VTT file',
                 style: TextStyle(color: Colors.white),
               ),
               onTap: () {

@@ -94,9 +94,9 @@ class KeyframesPanel extends StatelessWidget {
         const Divider(height: 32),
         SectionTitle('PIP keyframes'),
         const Text(
-          'PIP keyframes ke liye pehle PIP add karein — phir inset '
+          'For PIP keyframes, add PIP first — then the inset '
           'ki position / opacity yahan start se end tak animate '
-          'hogi.',
+          'will be.',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
       ];
@@ -107,7 +107,7 @@ class KeyframesPanel extends StatelessWidget {
       SwitchListTile(
         title: const Text('PIP keyframes (position + opacity)'),
         subtitle: const Text(
-          'Inset start pose se end pose tak move / fade hoga — '
+          'The inset will move / fade from the start pose to the end pose — '
           'poori video ki lambai par.',
         ),
         value: host.pipKeyframes,
@@ -195,10 +195,10 @@ class KeyframesPanel extends StatelessWidget {
           ),
         ],
         const Text(
-          'Keyframes on hon to static PIP opacity ki jagah track '
-          'ki opacity lagti hai. Blend mode ke sath keyframes nahi '
+          'When keyframes are on, instead of the static PIP opacity, the track '
+          'opacity applies. With blend mode, keyframes do not '
           'chalte — static PIP lagega. Timeline ki Keyframes lane '
-          'mein ◆ points dikhte hain.',
+          '◆ points show.',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
       ],
