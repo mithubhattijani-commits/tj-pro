@@ -1,7 +1,7 @@
 name: tj_pro
 description: "Jaani Studio — free offline photo and video editor for Android."
 publish_to: 'none'
-version: 1.22.0+41
+version: 1.23.0+42
 
 environment:
   sdk: ^3.13.7

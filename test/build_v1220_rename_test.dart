@@ -63,10 +63,10 @@ void main() {
       expect(manifest, contains('android:pathPrefix="/apps/tj-pro"'));
     });
 
-    test('pubspec package name still tj_pro, version is 1.22.0+41', () {
+    test('pubspec package name still tj_pro, version is 1.23.0+42', () {
       final pubspec = File('pubspec.yaml').readAsStringSync();
       expect(pubspec, contains('name: tj_pro'));
-      expect(pubspec, contains('version: 1.22.0+41'));
+      expect(pubspec, contains('version: 1.23.0+42'));
       expect(pubspec, contains('description: "Jaani Studio — '));
     });
   });

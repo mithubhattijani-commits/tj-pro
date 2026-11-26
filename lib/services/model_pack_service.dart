@@ -54,10 +54,18 @@ class ModelPackFile {
 
 /// A named set of model files downloaded together.
 class ModelPack {
-  const ModelPack(this.id, this.files);
+  const ModelPack(this.id, this.files, {this.vaultVersion = 1});
 
   final String id;
   final List<ModelPackFile> files;
+
+  /// Engine Vault version of THIS pack (v1.23.0). Bump it ONLY
+  /// when this pack's files change on the server — the vault then
+  /// refreshes exactly this pack on each device, once. App version
+  /// bumps must never touch it: the vault planner has no
+  /// app-version input, so an app update alone can never trigger
+  /// a re-download (the user's Engine Vault rule).
+  final int vaultVersion;
 }
 
 /// WHY a pack download failed (v1.5.0, fix #27). v1.4.0 collapsed
@@ -160,7 +168,12 @@ class ModelPackService {
     // noise (AudioEnhanceService). cb.rnnn is the general-purpose
     // speech model from the official xiph model set.
     ModelPack('rnnoise_models', <ModelPackFile>[
-      ModelPackFile('cb.rnnn'),
+      // Size pinned v1.23.0 for the Engine Vault's exact-size
+      // check: measured from the served file itself (GregorR/
+      // rnnoise-models, conjoined-burgers cb.rnnn) — body length
+      // and the server's Content-Length both 299741 bytes, header
+      // "rnnoise-nu model file version 1" verified.
+      ModelPackFile('cb.rnnn', expectedBytes: 299741),
     ]),
   ];
 
@@ -172,11 +185,40 @@ class ModelPackService {
     return null;
   }
 
-  Future<Directory> _packDir(String packId) async {
+  /// The Engine Vault root: `<app support>/model_packs` — every
+  /// pack directory and the vault manifest live directly inside
+  /// it (v1.23.0). Created when missing. Never throws.
+  Future<Directory> packsRoot() async {
     final support = await getApplicationSupportDirectory();
-    final dir = Directory(p.join(support.path, 'model_packs', packId));
+    final dir = Directory(p.join(support.path, 'model_packs'));
     if (!await dir.exists()) await dir.create(recursive: true);
     return dir;
+  }
+
+  Future<Directory> _packDir(String packId) async {
+    final root = await packsRoot();
+    final dir = Directory(p.join(root.path, packId));
+    if (!await dir.exists()) await dir.create(recursive: true);
+    return dir;
+  }
+
+  /// Deletes the named files of [packId] from disk (fail-soft,
+  /// never throws). Engine Vault repair/refresh support: the
+  /// planner names the exact files that are missing/mismatched
+  /// (repair) or the whole pack (refresh); they are removed here
+  /// and [ensurePack] then re-downloads exactly those — every
+  /// other file of every other pack stays untouched.
+  Future<void> deletePackFiles(String packId, List<String> names) async {
+    try {
+      final dir = await _packDir(packId);
+      for (final name in names) {
+        final file = File(p.join(dir.path, name));
+        if (await file.exists()) await file.delete();
+      }
+    } catch (_) {
+      // Best-effort: ensurePack's own sanity checks decide what
+      // still needs downloading afterwards.
+    }
   }
 
   /// On-disk sanity for one pack file: exists, non-empty, and (when

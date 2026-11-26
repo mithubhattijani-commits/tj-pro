@@ -3,6 +3,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'asset_download_service.dart';
 import 'caption_service.dart';
 import 'caption_translator_service.dart';
+import 'engine_vault.dart';
+import 'engine_vault_service.dart';
 import 'model_pack_service.dart';
 
 /// v1.17.0 (G5, Point #37d): first-run tools preparation.
@@ -22,6 +24,15 @@ import 'model_pack_service.dart';
 /// and the preparation still completes (the owning tool keeps
 /// its own at-use retry + honest error); nothing here can hang
 /// a tool — worst case the tool downloads at use, as before.
+///
+/// v1.23.0 — Engine Vault: model packs are prepared through the
+/// vault planner ([EngineVaultService]). Packs already on disk
+/// verify by exact size and are kept/adopted with NO download —
+/// an app update alone therefore never re-downloads an engine;
+/// only a pack whose own `vaultVersion` changed refreshes, and
+/// only a damaged pack repairs (and then only its damaged
+/// files). The non-pack items (Whisper, Kasheeda, ML Kit) keep
+/// their existing checks below.
 class PrepItem {
   const PrepItem(this.id, this.label, this.weightBytes);
 
@@ -135,11 +146,76 @@ class FirstRunPrepService {
   }
 
   /// True only when EVERY item verifies on disk right now.
+  ///
+  /// Packs go through the Engine Vault plan: a pack counts
+  /// complete only when its planned action is keep/adopt AND the
+  /// registry disk check passes (the latter also covers any file
+  /// without a pinned size). When no plan can be computed the
+  /// disk check alone decides — exactly the pre-vault behaviour.
   static Future<bool> isComplete({required String kasheedaUrl}) async {
+    final planByPack = await EngineVaultService.planByPack();
     for (final item in items()) {
-      if (!await _itemReady(item, kasheedaUrl: kasheedaUrl)) return false;
+      if (item.id.startsWith('pack:')) {
+        final packId = item.id.substring(5);
+        final action = planByPack[packId];
+        if (action != null &&
+            action.type != VaultActionType.keep &&
+            action.type != VaultActionType.adopt) {
+          return false;
+        }
+        if (!await ModelPackService.instance.isReady(packId)) return false;
+      } else if (!await _itemReady(item, kasheedaUrl: kasheedaUrl)) {
+        return false;
+      }
     }
     return true;
+  }
+
+  /// Engine Vault pack flow (v1.23.0): the planner's action for
+  /// [packId] decides what happens — keep/adopt touch nothing,
+  /// download fetches the pack, repair deletes exactly the
+  /// planner-named files first so [ModelPackService.ensurePack]
+  /// re-downloads only those, and refresh clears the whole pack
+  /// first so no stale file of the old pack version can linger.
+  /// A null action (no plan could be computed) falls back to
+  /// plain ensurePack, whose own isReady short-circuit preserves
+  /// the pre-vault behaviour exactly.
+  static Future<bool> _ensurePackWithVault(
+    String packId,
+    VaultAction? action,
+    void Function(double progress) onProgress,
+  ) async {
+    final svc = ModelPackService.instance;
+    final a = action;
+    if (a == null || a.type == VaultActionType.download) {
+      return svc.ensurePack(packId, onProgress: onProgress);
+    }
+    switch (a.type) {
+      case VaultActionType.keep:
+      case VaultActionType.adopt:
+        // The exact catalogue files already verify on disk;
+        // isReady additionally covers any registry file without
+        // a pinned size (kept outside the exact-size catalogue).
+        if (await svc.isReady(packId)) {
+          onProgress(1);
+          return true;
+        }
+        return svc.ensurePack(packId, onProgress: onProgress);
+      case VaultActionType.repair:
+        await svc.deletePackFiles(packId, a.files);
+        return svc.ensurePack(packId, onProgress: onProgress);
+      case VaultActionType.refresh:
+        final pack = ModelPackService.packById(packId);
+        if (pack != null) {
+          await svc.deletePackFiles(
+            packId,
+            <String>[for (final f in pack.files) f.name],
+          );
+        }
+        return svc.ensurePack(packId, onProgress: onProgress);
+      case VaultActionType.download:
+        return svc.ensurePack(packId, onProgress: onProgress);
+    }
   }
 
   static Future<bool> _itemReady(
@@ -179,6 +255,11 @@ class FirstRunPrepService {
     _running = true;
     final failed = <String>[];
     try {
+      // Engine Vault (v1.23.0): ONE plan for all packs, computed
+      // from the persisted manifest + a fresh disk scan. An empty
+      // map (any failure) degrades every pack to plain ensurePack
+      // behaviour — preparation can never get worse than before.
+      final planByPack = await EngineVaultService.planByPack();
       final list = items();
       final weights = [for (final i in list) i.weightBytes];
       final fractions = List<double>.filled(list.length, 0);
@@ -197,17 +278,19 @@ class FirstRunPrepService {
         emit(i);
         var ok = false;
         try {
-          if (await _itemReady(item, kasheedaUrl: kasheedaUrl)) {
-            fractions[i] = 1;
-            ok = true;
-          } else if (item.id.startsWith('pack:')) {
-            ok = await ModelPackService.instance.ensurePack(
-              item.id.substring(5),
-              onProgress: (f) {
+          if (item.id.startsWith('pack:')) {
+            final packId = item.id.substring(5);
+            ok = await _ensurePackWithVault(
+              packId,
+              planByPack[packId],
+              (f) {
                 fractions[i] = f;
                 emit(i);
               },
             );
+          } else if (await _itemReady(item, kasheedaUrl: kasheedaUrl)) {
+            fractions[i] = 1;
+            ok = true;
           } else if (item.id == 'whisper') {
             await FileCaptionEngine.ensureWhisperModel(
               onProgress: (f) {
@@ -241,6 +324,12 @@ class FirstRunPrepService {
         }
         emit(i);
       }
+      // Record the vault manifest from disk truth: this ADOPTS
+      // the complete packs of existing users on the first vault
+      // launch (zero re-download) and records every pack that
+      // just finished downloading. Never throws; buildManifest
+      // only records packs that fully verify on disk.
+      await EngineVaultService.persistManifest();
       if (failed.isEmpty) {
         try {
           final prefs = await SharedPreferences.getInstance();
