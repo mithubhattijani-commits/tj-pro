@@ -108,7 +108,7 @@ class PipPanel extends StatelessWidget {
       ]),
       if (host.pipMask != 'none') ...[
         ProSlider(
-          label: 'Mask feather (kinara soft)',
+          label: 'Mask feather (soft edge)',
           value: host.pipMaskFeather,
           min: 0,
           max: 1,
@@ -129,9 +129,9 @@ class PipPanel extends StatelessWidget {
         ),
       ],
       const Text(
-        'Blend mode inset ke andar hi lagta hai — bahar ka frame '
-        'asal rehta hai. Mask, feather aur blend stage preview mein '
-        'live dikhte hain, export mein wohi result aata hai.',
+        'The blend mode applies inside the inset only — the frame outside '
+        'stays original. Mask, feather and blend show live in the stage preview, '
+        'show live, and the same result comes in the export.',
         style: TextStyle(color: Colors.grey, fontSize: 12),
       ),
       const Divider(height: 32),

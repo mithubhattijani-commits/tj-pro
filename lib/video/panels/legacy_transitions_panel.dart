@@ -72,8 +72,8 @@ if (AppConfig.crossfadeEnabled)
                 onChanged: (v) => host.update(() => host.proTransitionDur = v),
               ),
               const Text(
-                'Sirf tab lagega jab Crossfade between clips ON ho; '
-                'OFF par aaj ki tarah hard cuts rahenge.',
+                'It applies only when Crossfade between clips is ON; '
+                'with OFF, hard cuts remain as before.',
                 style: TextStyle(color: Colors.grey),
               ),
               const Divider(height: 32),

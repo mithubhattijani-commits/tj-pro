@@ -63,7 +63,7 @@ class LegacySpeedPanel extends StatelessWidget {
                   ),
               ]),
               const Text(
-                'Note: ramp on ho to fixed Speed dropdown ignore ho jata hai.',
+                'Note: when the ramp is on, the fixed Speed dropdown is ignored.',
                 style: TextStyle(color: Colors.grey),
               ),
               const Divider(height: 32),

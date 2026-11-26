@@ -19,9 +19,9 @@ class LegacyTrackingPanel extends StatelessWidget {
 // Motion tracking.
               SectionTitle('Motion tracking (ML)'),
               const Text(
-                'Preview video par object ko tap karein, phir Track '
-                'dabayein. (Tap point ab asal video frame par exact '
-                'map hota hai.)',
+                'Tap the object on the preview video, then Track '
+                'tap. (The tap point now maps exactly onto the actual video frame.)'
+                'is mapped.)',
                 style: TextStyle(color: Colors.grey),
               ),
               const SizedBox(height: 8),

@@ -20,7 +20,7 @@ class LegacyStabilizationPanel extends StatelessWidget {
               SwitchListTile(
                 title: const Text('Stabilization'),
                 subtitle: const Text(
-                  'Vidstab jab available ho, warna deshake engine use hoga.',
+                  'Vidstab when available, otherwise the deshake engine will be used.',
                 ),
                 value: host.proStabilize,
                 onChanged: (v) => host.update(() => host.proStabilize = v),

@@ -46,7 +46,7 @@ class MaskPanel extends StatelessWidget {
       ]),
       if (host.mainMask != 'none') ...[
         ProSlider(
-          label: 'Mask feather (kinara soft)',
+          label: 'Mask feather (soft edge)',
           value: host.mainMaskFeather,
           min: 0,
           max: 1,
@@ -67,9 +67,9 @@ class MaskPanel extends StatelessWidget {
           ],
         ),
         const Text(
-          'Mask main video par lagta hai — mask se bahar ka hissa '
-          'kala (stage ka rang) ho jata hai. Title aur PIP is ke '
-          'upar rehte hain. Preview mein live dikhta hai.',
+          'The mask applies to the main video — the part outside the mask '
+          'turns black (the stage colour). The title and PIP stay '
+          'stay on top. It shows live in the preview.',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
       ],
@@ -78,9 +78,9 @@ class MaskPanel extends StatelessWidget {
       if (!host.fxPip) ...[
         SectionTitle('Mask — PIP element'),
         const Text(
-          'Mask PIP element par bhi lagta hai. Pehle PIP add '
-          'karein — phir yahan us ki mask shape / feather / invert '
-          'milega.',
+          'The mask also applies to the PIP element. Add PIP first '
+          '— then here its mask shape / feather / invert '
+          'will be found.',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
         const SizedBox(height: 8),
@@ -89,7 +89,7 @@ class MaskPanel extends StatelessWidget {
           child: ElevatedButton.icon(
             onPressed: () => host.openToolTab('overlay', 'pip'),
             icon: const Icon(Icons.picture_in_picture_alt),
-            label: const Text('PIP add karein'),
+            label: const Text('Add PIP'),
           ),
         ),
         const Divider(height: 32),

@@ -30,8 +30,8 @@ class OpacityPanel extends StatelessWidget {
         onChanged: (v) => host.update(() => host.tfOpacity = v),
       ),
       const Text(
-        'Clip apne blurred backdrop par fade hota hai (Transform '
-        'pass) — export par apply hota hai.',
+        'The clip fades over its blurred backdrop (Transform '
+        'pass) — applies on export.',
         style: TextStyle(color: Colors.grey, fontSize: 12),
       ),
       const Divider(height: 32),

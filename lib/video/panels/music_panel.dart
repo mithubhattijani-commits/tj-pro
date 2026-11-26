@@ -24,8 +24,8 @@ class MusicPanel extends StatelessWidget {
       SwitchListTile(
         title: const Text('Auto ducking'),
         subtitle: const Text(
-          'Music clip ki awaz ke neeche khud dab jayega (sidechain) '
-          '— export mein alag pass mein lagta hai.',
+          'The music will duck under the clip\'s sound by itself (sidechain) '
+          '— applies in a separate pass in the export.',
         ),
         value: host.autoDuck,
         onChanged: (v) => host.update(() => host.autoDuck = v),
@@ -34,7 +34,7 @@ class MusicPanel extends StatelessWidget {
         SectionTitle('Volume keyframes'),
         if (host.volumePoints.isEmpty)
           const Text(
-            'Koi point nahi — music seedha Music volume par chalega.',
+            'No points — the music will play at the Music volume directly.',
             style: TextStyle(color: Colors.grey, fontSize: 12),
           ),
         for (var i = 0; i < host.volumePoints.length; i++)
@@ -63,7 +63,7 @@ class MusicPanel extends StatelessWidget {
           },
           icon: const Icon(Icons.add_location_alt_outlined),
           label: Text(
-            'Point add karein — playhead ${posSec.toStringAsFixed(1)}s, '
+            'Add point — playhead ${posSec.toStringAsFixed(1)}s, '
             'gain ${host.musicVolume.toStringAsFixed(2)}',
           ),
         ),

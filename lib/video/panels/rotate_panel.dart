@@ -44,8 +44,8 @@ class RotatePanel extends StatelessWidget {
       ),
       const SizedBox(height: 8),
       const Text(
-        'Dono selected clip ke trimmed range par bake hote hain '
-        '(processed copy ban jati hai).',
+        'Both are baked onto the selected clip\'s trimmed range '
+        '(a processed copy is created).',
         style: TextStyle(color: Colors.grey, fontSize: 12),
       ),
       const Divider(height: 32),

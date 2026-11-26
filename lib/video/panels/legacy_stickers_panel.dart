@@ -54,7 +54,7 @@ TextField(
               SwitchListTile(
                 title: const Text('Keyframes (motion title/sticker)'),
                 subtitle: const Text(
-                  'Start se end tak overlay move/scale/fade/rotate hoga.',
+                  'From start to end, the overlay will move/scale/fade/rotate.',
                 ),
                 value: host.proKeyframes,
                 onChanged: (v) => host.update(() => host.proKeyframes = v),
@@ -63,7 +63,7 @@ TextField(
                   host.proTitle.trim().isEmpty &&
                   host.proSticker.trim().isEmpty)
                 const Text(
-                  'Pehle motion title ya sticker likhein — keyframes usi '
+                  'Write a motion title or sticker first — the keyframes apply to that '
                   'overlay par lagenge.',
                   style: TextStyle(color: Colors.grey),
                 ),
