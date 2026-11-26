@@ -58,7 +58,7 @@ class AdjustPanel extends StatelessWidget {
             // the yellow/black stripe.
             const Expanded(
               child: Text(
-                'Ek control chunein — neeche ek hi shared slider hai.',
+                'Choose one control — there is one shared slider below.',
                 style: TextStyle(color: Colors.grey, fontSize: 12),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -121,7 +121,7 @@ class AdjustPanel extends StatelessWidget {
           ),
         if (file == null)
           const Text(
-            'Pehle photo chunein.',
+            'Choose a photo first.',
             style: TextStyle(color: Colors.grey, fontSize: 12),
           ),
       ],

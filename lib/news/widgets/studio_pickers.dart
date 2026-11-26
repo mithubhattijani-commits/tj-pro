@@ -230,7 +230,7 @@ Future<TemplatePick?> showTemplatesPicker(
         children: [
           const ListTile(
             title: Text(
-              'Template chunein',
+              'Choose a template',
               style: TextStyle(fontWeight: FontWeight.bold),
             ),
           ),
@@ -308,7 +308,7 @@ Widget ribbonPickPreview(RibbonPick pick) => switch (pick) {
 String ribbonPickLabel(RibbonPick pick) => switch (pick) {
       RibbonPick.finalDesign => 'Final design',
       RibbonPick.classicDesign => 'Classic design',
-      RibbonPick.studio => 'Apne rang',
+      RibbonPick.studio => 'Your colours',
       RibbonPick.store => 'Online Store',
     };
 
@@ -369,7 +369,7 @@ Future<RibbonPick?> showRibbonsPicker(
         children: [
           const ListTile(
             title: Text(
-              'Ribbons chunein',
+              'Choose ribbons',
               style: TextStyle(fontWeight: FontWeight.bold),
             ),
           ),

@@ -78,8 +78,8 @@ class BackgroundPanel extends StatelessWidget {
           const Padding(
             padding: EdgeInsets.only(top: 8),
             child: Text(
-              'Cutout ke baad "Flatten on colour" se transparent '
-              'photo kisi bhi rang par rakhi ja sakti hai.',
+              'After Cutout, with "Flatten on colour" the transparent '
+              'photo can be placed on any colour.',
               style: TextStyle(color: Colors.grey, fontSize: 12),
             ),
           ),

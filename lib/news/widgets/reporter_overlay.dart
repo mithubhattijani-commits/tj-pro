@@ -310,14 +310,14 @@ Future<img.Image> _reporterMatte(
   final bytes = await File(photoPath).readAsBytes();
   final decoded = img.decodeImage(bytes);
   if (decoded == null) {
-    throw ReporterBgException('Photo parhi nahi ja saki.');
+    throw ReporterBgException('The photo could not be read.');
   }
   final matte = await OnnxImageService.instance.alphaMatte(
     'birefnet_fp16',
     decoded,
   );
   if (matte == null) {
-    throw ReporterBgException('AI model se result nahi mila.');
+    throw ReporterBgException('No result from the AI model.');
   }
   return applyAlphaMatte(decoded, matte);
 }
@@ -348,7 +348,7 @@ Future<String> reporterReplaceBackground(
   void Function(double progress)? onProgress,
 }) async {
   if (colorArgb == null && bgImagePath == null) {
-    throw ReporterBgException('Background rang ya photo chunein.');
+    throw ReporterBgException('Choose a background colour or photo.');
   }
   final cutout = await _reporterMatte(photoPath, onProgress: onProgress);
   final img.Image canvas;
@@ -356,7 +356,7 @@ Future<String> reporterReplaceBackground(
     final bgBytes = await File(bgImagePath).readAsBytes();
     final bg = img.decodeImage(bgBytes);
     if (bg == null) {
-      throw ReporterBgException('Background photo parhi nahi ja saki.');
+      throw ReporterBgException('The background photo could not be read.');
     }
     // Cover-fit the background into the photo's frame.
     final scale = (cutout.width / bg.width) > (cutout.height / bg.height)

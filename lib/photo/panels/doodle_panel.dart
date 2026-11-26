@@ -23,8 +23,8 @@ class DoodlePanel extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
-          'Preview par ungli se draw karein — Apply par photo mein '
-          'bake ho jayega (Undo maujood hai).',
+          'Draw with your finger on the preview — on Apply it will be baked into the photo '
+          '(Undo is available).',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
         const SizedBox(height: 8),

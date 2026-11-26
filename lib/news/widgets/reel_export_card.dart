@@ -78,7 +78,7 @@ class _ReelExportCardState extends State<ReelExportCard> {
     if (_introBusy) return;
     setState(() {
       _introBusy = true;
-      _introMessage = 'Intro download ho raha hai…';
+      _introMessage = 'Intro is downloading…';
     });
     try {
       await const AssetDownloadService().getIntroVideo(
@@ -87,11 +87,11 @@ class _ReelExportCardState extends State<ReelExportCard> {
       if (!mounted) return;
       setState(() {
         _intro = IntroAvailability.ready;
-        _introMessage = 'Intro download ho gaya — export mein lagega.';
+        _introMessage = 'Intro downloaded — it will apply in the export.';
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _introMessage = 'Intro download nahi hua: $e');
+      setState(() => _introMessage = 'Intro did not download: $e');
     } finally {
       if (mounted) setState(() => _introBusy = false);
     }
@@ -207,12 +207,12 @@ class _ReelExportCardState extends State<ReelExportCard> {
                 Expanded(
                   child: Text(
                     intro == null
-                        ? 'Intro check ho raha hai…'
+                        ? 'Checking the intro…'
                         : intro == IntroAvailability.ready
-                            ? 'Intro (10s): tayyar hai — export mein lagega.'
+                            ? 'Intro (10s): ready — it will apply in the export.'
                             : intro == IntroAvailability.notDownloaded
-                                ? 'Intro (10s): abhi download nahi hua.'
-                                : 'Intro (10s): abhi host nahi hua — intro ke baghair export hoga.',
+                                ? 'Intro (10s): not downloaded yet.'
+                                : 'Intro (10s): not hosted yet — the export will happen without the intro.',
                     style:
                         const TextStyle(color: Colors.grey, fontSize: 12),
                   ),
@@ -222,7 +222,7 @@ class _ReelExportCardState extends State<ReelExportCard> {
                     key: const Key('downloadIntroButton'),
                     onPressed: _introBusy ? null : _downloadIntro,
                     child: Text(
-                      _introBusy ? 'Download…' : 'Download karein',
+                      _introBusy ? 'Download…' : 'Download',
                     ),
                   ),
               ],
@@ -259,8 +259,8 @@ class _ReelExportCardState extends State<ReelExportCard> {
             ),
             const SizedBox(height: 8),
             const Text(
-              'Export screen par quality, FPS, bitrate, audio aur size '
-              'estimate milte hain — wahi se export hota hai.',
+              'The export screen has quality, FPS, bitrate, audio and a size '
+              'estimate are available — the export happens from there.',
               style: TextStyle(color: Colors.grey, fontSize: 12),
             ),
           ],

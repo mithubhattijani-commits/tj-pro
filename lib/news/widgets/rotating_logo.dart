@@ -78,7 +78,7 @@ class LogoCubeView extends StatefulWidget {
   /// Build 13 (point #19): the cube VIEW tilt — the default
   /// here is the historic fixed tilt so non-News-Studio callers
   /// render exactly as before; the News Studio passes the
-  /// preset's user control (default 0 = 'Samne').
+  /// preset's user control (default 0 = 'Front').
   final double tiltX;
 
   /// Build 13 (point #19): seconds per full revolution.

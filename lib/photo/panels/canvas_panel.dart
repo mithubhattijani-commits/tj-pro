@@ -23,8 +23,8 @@ class CanvasPanel extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
-          'Ratio chunein — photo crop nahi hogi, canvas barh jayega '
-          '(blur fill). Zoom se photo canvas ke andar chhoti/bari.',
+          'Choose a ratio — the photo will not be cropped, the canvas will expand '
+          '(blur fill). With zoom, the photo gets smaller/bigger inside the canvas.',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
         const SizedBox(height: 8),

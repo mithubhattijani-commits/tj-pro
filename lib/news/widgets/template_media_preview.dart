@@ -375,7 +375,7 @@ class _TemplateMediaPreviewState extends State<TemplateMediaPreview> {
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Text(
-                  '${widget.mediaPaths.length} clips — pehli clip ka preview',
+                  '${widget.mediaPaths.length} clips — preview of the first clip',
                   style: const TextStyle(color: Colors.white, fontSize: 10),
                 ),
               ),

@@ -98,8 +98,8 @@ class CutoutPanel extends StatelessWidget {
         const SizedBox(height: 4),
         const Text(
           'Cutout = ML Kit (default). HQ Cutout = BiRefNet ONNX '
-          'pack — kinare zyada saaf. Transparency preview mein '
-          'checkerboard dikhta hai.',
+          'pack — cleaner edges. In the transparency preview '
+          'a checkerboard is shown.',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
       ],

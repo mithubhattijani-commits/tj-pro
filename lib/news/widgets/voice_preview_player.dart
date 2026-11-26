@@ -9,7 +9,7 @@
 /// tap, never at build time (so screens without a voiceover never
 /// touch a platform channel — widget tests included).
 ///
-/// "Dobara" re-generates: the caller deletes the cached file and
+/// "Regenerate" re-generates: the caller deletes the cached file and
 /// re-synthesises, which costs new proxy request(s) against the
 /// 5/day cap — the button label says so in the screens that use it.
 library;
@@ -43,7 +43,7 @@ class VoicePreviewPlayer extends StatefulWidget {
   /// Length in seconds (WAV header), or null when unknown.
   final double? durationSec;
 
-  /// "Dobara" tap — the caller re-generates (new proxy request(s)).
+  /// "Regenerate" tap — the caller re-generates (new proxy request(s)).
   final VoidCallback onRegenerate;
 
   /// True while a re-generation is running (button disabled).
@@ -92,7 +92,7 @@ class _VoicePreviewPlayerState extends State<VoicePreviewPlayer> {
         if (!mounted) return;
         setState(() {
           _initialising = false;
-          _playError = 'Voice play nahi hui: $e';
+          _playError = 'Voice could not play: $e';
         });
         return;
       }
@@ -143,8 +143,8 @@ class _VoicePreviewPlayerState extends State<VoicePreviewPlayer> {
                   // no-voice message (the screen's status line no
                   // longer repeats it); the generate action it names
                   // is the trio's "Text se Audio" pill.
-                  'Abhi voice nahi bani — upar "Text se Audio" se '
-                  'banayein, ya Record / Import karein.',
+                  'No voice created yet — create it above from "Text to Audio", '
+                  'create it, or Record / Import.',
                   style: TextStyle(color: Colors.grey),
                 ),
               ),
@@ -195,7 +195,7 @@ class _VoicePreviewPlayerState extends State<VoicePreviewPlayer> {
                         )
                       : const Icon(Icons.refresh, size: 16),
                   label: Text(
-                    widget.regenerating ? 'Ban rahi hai…' : 'Dobara',
+                    widget.regenerating ? 'Creating…' : 'Regenerate',
                   ),
                 ),
               ],

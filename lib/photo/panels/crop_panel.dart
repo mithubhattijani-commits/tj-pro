@@ -36,7 +36,7 @@ class CropPanel extends StatelessWidget {
         const SizedBox(height: 8),
         const Text(
           'Ratio presets — tap for an instant centre crop '
-          '(Undo se wapas ho sakta hai):',
+          '(Undo can bring it back):',
           style: TextStyle(color: Colors.grey, fontSize: 12),
         ),
         const SizedBox(height: 6),
