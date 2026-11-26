@@ -38,6 +38,7 @@ import 'dart:ui' as ui;
 
 import 'package:path/path.dart' as p;
 
+import '../logo/logo_lighting_pass.dart';
 import '../logo/logo_maker_section.dart';
 import '../news/channel_preset.dart';
 import 'logo_loop_service.dart';
@@ -120,11 +121,18 @@ String logoMakerExportCacheKey({
     }
   }
   final s = settings;
-  return 'maker_${base}_p${s.presetId}_m${s.materialId}'
+  final baseKey = 'maker_${base}_p${s.presetId}_m${s.materialId}'
       '_d${s.depth}_b${s.bevel}'
       '_sh${s.shadowOn ? 1 : 0}_sb${s.shadowBlur}_so${s.shadowOpacity}'
       '_sp${s.spinOn ? 1 : 0}_ss${s.spinSpeed}'
       '_g${s.glowOn ? 1 : 0}_gi${s.glowIntensity}';
+  // v1.25.0: the lighting/camera settings join the key ONLY
+  // when they are non-neutral — a neutral combination keeps
+  // the exact historic key, so existing cached frame dirs
+  // stay valid and the parity story is untouched.
+  final lc = s.lightingCamera;
+  if (lc.isNeutral) return baseKey;
+  return '${baseKey}_lc${lc.hashCode.toUnsigned(32).toRadixString(16)}';
 }
 
 class LogoMakerExportService {
@@ -244,13 +252,27 @@ class LogoMakerExportService {
     try {
       final made = <File>[];
       for (var i = 0; i < frames; i++) {
-        final frame = await renderFrameImage(
+        var frame = await renderFrameImage(
           image: image,
           settings: settings,
           angle: 2 * math.pi * i / frames,
           staticFront: front,
           staticBack: back,
         );
+        // v1.25.0 (G2): the lighting/camera post-pass — the
+        // FINAL pass of every frame (depth → spin → lighting,
+        // the integration note's order; never baked into the
+        // depth statics above). PARITY GATE: a neutral
+        // lighting setting skips the pass entirely, so the
+        // frame is the historic render bit for bit.
+        if (!settings.lightingCamera.isNeutral) {
+          final lit = await renderLogoLightingPass(
+            image: frame,
+            settings: settings.lightingCamera,
+          );
+          frame.dispose();
+          frame = lit;
+        }
         try {
           final bytes =
               await frame.toByteData(format: ui.ImageByteFormat.png);
@@ -283,11 +305,21 @@ class LogoMakerExportService {
     required LogoMakerSettings settings,
     required File outFile,
   }) async {
-    final frame = await renderFrameImage(
+    var frame = await renderFrameImage(
       image: image,
       settings: settings,
       angle: 0,
     );
+    // v1.25.0 (G2): the same gated lighting/camera post-pass
+    // as the spin frames (see generateFrames).
+    if (!settings.lightingCamera.isNeutral) {
+      final lit = await renderLogoLightingPass(
+        image: frame,
+        settings: settings.lightingCamera,
+      );
+      frame.dispose();
+      frame = lit;
+    }
     try {
       final bytes = await frame.toByteData(format: ui.ImageByteFormat.png);
       if (bytes == null) {

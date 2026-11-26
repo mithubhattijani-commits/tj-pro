@@ -97,6 +97,7 @@ import 'logo_key_service.dart';
 import '../news/logo_parts.dart';
 import 'logo_loop_service.dart';
 import 'logo_maker_export_service.dart';
+import 'logo_reveal_intro_service.dart';
 import 'logo_parts_service.dart';
 import 'user_font_service.dart';
 import 'pro_editor.dart';
@@ -1277,6 +1278,35 @@ class ReelExportService {
           );
         }
       }
+      // v1.25.0 (G1): the Logo Maker's reveal intro — when
+      // the channel's maker settings name a reveal style, the
+      // reveal + backdrop render ONCE as a segment that the
+      // assembly prepends. Any failure is a note and the
+      // export continues without it (never a failed export).
+      String? makerRevealIntroPath;
+      final makerSettings = logoMakerExportSettings(preset);
+      if (LogoRevealIntroService.revealIntroApplies(makerSettings)) {
+        step('Adding logo reveal intro…', 0.80);
+        final seg = await LogoRevealIntroService.buildSegment(
+          preset: preset,
+          settings: makerSettings!,
+          dir: dir,
+          stamp: stamp,
+          width: w,
+          height: h,
+          fps: effectiveSettings.fps,
+          videoBitrateKbps: effectiveSettings.videoBitrateKbps,
+          audioBitrateKbps: effectiveSettings.audioBitrateKbps,
+        );
+        if (seg != null) {
+          makerRevealIntroPath = seg.path;
+        } else {
+          notes.add(
+            'Logo reveal intro could not be made — exporting '
+            'without it.',
+          );
+        }
+      }
       final assembled = await _assembleIntroOutro(
         main: out,
         dir: dir,
@@ -1291,6 +1321,7 @@ class ReelExportService {
         reelMs: reelMs,
         onProgress: onProgress,
         videoIntroPath: videoIntroPath,
+        makerRevealIntroPath: makerRevealIntroPath,
       );
       if (assembled != null) await advanceTo(assembled);
       step('Intro/outro done.', 0.86);
@@ -2319,8 +2350,20 @@ class ReelExportService {
     int? reelMs,
     void Function(double progress)? onProgress,
     String? videoIntroPath,
+    String? makerRevealIntroPath,
   }) async {
     final segments = <String>[];
+
+    // v1.25.0 (G1): the Logo Maker reveal segment — FIRST of
+    // all: it is the channel logo's own sting, ahead of the
+    // generic intro templates below (their relative order is
+    // unchanged). It arrives already normalized (export dims
+    // + fps + codecs, silent stereo track) from
+    // LogoRevealIntroService, so it joins the concat directly
+    // like the still outro segment does.
+    if (makerRevealIntroPath != null) {
+      segments.add(makerRevealIntroPath);
+    }
 
     // Built-in video intro template segment (v1.2.0) — always FIRST
     // when the project has one applied. Normalized like the channel

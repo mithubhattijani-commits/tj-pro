@@ -11,6 +11,8 @@ import 'package:share_plus/share_plus.dart';
 import '../services/logo_clip_export_service.dart';
 import '../widgets/tool_guide.dart';
 import 'logo_clip.dart';
+import 'logo_lighting_camera.dart';
+import 'logo_lighting_pass.dart';
 import 'logo_reveal_backdrops.dart';
 import 'logo_text_shapes.dart';
 
@@ -45,6 +47,7 @@ class LogoMakerSettings {
     this.revealStyleId = 'fade_zoom',
     this.backdropId = 'midnight_studio',
     this.backdropGlow = 0.6,
+    this.lightingCamera = LogoLightingCameraSettings.defaults,
   });
 
   final String presetId;
@@ -60,9 +63,9 @@ class LogoMakerSettings {
   final double glowIntensity;
 
   /// Reveal animation for the Reveal tab (v1.21.0): one of
-  /// the `kLogoRevealStyles` ids, or '' for no reveal. The
-  /// reveal is a preview presentation of the styled logo —
-  /// it does not enter the export (see the Guide entry).
+  /// the `kLogoRevealStyles` ids, or '' for no reveal. Since
+  /// v1.25.0 the reveal + backdrop also open the NEWS video
+  /// export as a one-time intro segment (see the Guide entry).
   final String revealStyleId;
 
   /// Procedural backdrop scene behind the reveal preview:
@@ -71,6 +74,13 @@ class LogoMakerSettings {
 
   /// Glow strength of the backdrop scene, 0..1.
   final double backdropGlow;
+
+  /// Studio lighting + camera for the styled logo (v1.25.0,
+  /// the Light tab): a nested settings object with its own
+  /// fail-soft JSON. The defaults are NEUTRAL — preview and
+  /// export then run exactly the historic path (the lighting
+  /// pass never executes), which the parity tests pin.
+  final LogoLightingCameraSettings lightingCamera;
 
   LogoMakerSettings copyWith({
     String? presetId,
@@ -87,6 +97,7 @@ class LogoMakerSettings {
     String? revealStyleId,
     String? backdropId,
     double? backdropGlow,
+    LogoLightingCameraSettings? lightingCamera,
   }) {
     return LogoMakerSettings(
       presetId: presetId ?? this.presetId,
@@ -103,6 +114,7 @@ class LogoMakerSettings {
       revealStyleId: revealStyleId ?? this.revealStyleId,
       backdropId: backdropId ?? this.backdropId,
       backdropGlow: backdropGlow ?? this.backdropGlow,
+      lightingCamera: lightingCamera ?? this.lightingCamera,
     );
   }
 
@@ -122,6 +134,7 @@ class LogoMakerSettings {
       'revealStyleId': revealStyleId,
       'backdropId': backdropId,
       'backdropGlow': backdropGlow,
+      'lightingCamera': lightingCamera.toJson(),
     };
   }
 
@@ -165,6 +178,11 @@ class LogoMakerSettings {
       backdropId: safeBackdrop,
       backdropGlow: ((json['backdropGlow'] as num?)?.toDouble() ?? 0.6)
           .clamp(0.0, 1.0),
+      // v1.25.0 field — payloads saved before it existed carry
+      // no such key and load as the neutral defaults (the
+      // nested fromJson never throws, on any input).
+      lightingCamera:
+          LogoLightingCameraSettings.fromJson(json['lightingCamera']),
     );
   }
 
@@ -185,7 +203,8 @@ class LogoMakerSettings {
         other.glowIntensity == glowIntensity &&
         other.revealStyleId == revealStyleId &&
         other.backdropId == backdropId &&
-        other.backdropGlow == backdropGlow;
+        other.backdropGlow == backdropGlow &&
+        other.lightingCamera == lightingCamera;
   }
 
   @override
@@ -204,6 +223,7 @@ class LogoMakerSettings {
         revealStyleId,
         backdropId,
         backdropGlow,
+        lightingCamera,
       );
 }
 
@@ -808,6 +828,7 @@ enum _DockTool {
   logo('Logo', Icons.image_outlined),
   style('Style', Icons.auto_awesome_rounded),
   spin('Spin', Icons.threesixty_rounded),
+  light('Light', Icons.light_mode_outlined),
   reveal('Reveal', Icons.play_circle_outline_rounded),
   save('Save', Icons.check_circle_outline_rounded);
 
@@ -925,6 +946,27 @@ class _LogoMakerSectionState extends State<LogoMakerSection>
   final LogoDepthImageCache _depthCache = LogoDepthImageCache();
   bool _staticScheduled = false;
 
+  /// v1.25.0 (G2): the lighting/camera pass works on an image,
+  /// so while the lighting settings are non-neutral the main
+  /// preview renders its depth frame to one (the statics
+  /// pattern: post-frame, async, swapped in when ready). The
+  /// spin angle is bucketed to 2° steps in the key, so a
+  /// spinning preview re-renders a bounded number of frames
+  /// per revolution instead of one per tick; between buckets
+  /// the previous frame (≤2° stale) stays up.
+  ui.Image? _depthFrame;
+  String _depthFrameBaseKey = '';
+  String _depthFrameKey = '';
+  bool _depthFrameScheduled = false;
+
+  /// v1.25.0 (G2): the depth cache's front static run through
+  /// the alpha-preserving lighting pass — the Reveal tab's
+  /// styled image while lighting is non-neutral (the reveal
+  /// painter needs an image, and the pass keeps its alpha).
+  ui.Image? _litStatic;
+  String _litStaticKey = '';
+  bool _litStaticScheduled = false;
+
   /// v1.24.0 (G1): the Logo Clip view and its export state.
   /// The clip settings seed from the maker settings when the
   /// section opens (below) and then live their own life here —
@@ -965,6 +1007,10 @@ class _LogoMakerSectionState extends State<LogoMakerSection>
   @override
   void dispose() {
     _depthCache.clear();
+    _depthFrame?.dispose();
+    _depthFrame = null;
+    _litStatic?.dispose();
+    _litStatic = null;
     _clipLogoImage?.dispose();
     _clipLogoImage = null;
     if (_ownsCurrentImage) {
@@ -1065,6 +1111,107 @@ class _LogoMakerSectionState extends State<LogoMakerSection>
       _staticScheduled = false;
       if (ready && mounted) {
         setState(() {});
+      }
+    });
+  }
+
+  /// The non-angle part of the depth-frame key: image,
+  /// settings and preview size. A frame whose base key still
+  /// matches may stay on screen while its angle bucket is
+  /// re-rendered; a base-key change drops it at once.
+  String _depthFrameBaseKeyFor(Size size) {
+    return '${identityHashCode(_currentImage)}|${_settings.hashCode}'
+        '|${size.width.round()}x${size.height.round()}';
+  }
+
+  String _depthFrameKeyFor(Size size, double angle) {
+    final int bucket = (angle * 180.0 / math.pi / 2.0).round();
+    return '${_depthFrameBaseKeyFor(size)}|$bucket';
+  }
+
+  /// Schedules the depth frame render for the lighting pass
+  /// (no-op while it is current or already building — the
+  /// [_scheduleStatics] discipline).
+  void _scheduleDepthFrame(Size size, double angle) {
+    final String key = _depthFrameKeyFor(size, angle);
+    if (_depthFrameKey == key && _depthFrame != null) return;
+    if (_depthFrameScheduled) return;
+    _depthFrameScheduled = true;
+    final ui.Image image = _currentImage;
+    final LogoMakerSettings settings = _settings;
+    final bool staticsReady = _depthCache.isReadyFor(image, settings, size);
+    final ui.Image? front = staticsReady ? _depthCache.frontImage : null;
+    final ui.Image? back = staticsReady ? _depthCache.backImage : null;
+    final Size renderSize = Size(
+      size.width.roundToDouble(),
+      size.height.roundToDouble(),
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      ui.Image? rendered;
+      try {
+        final recorder = ui.PictureRecorder();
+        final canvas = Canvas(recorder);
+        LogoDepthPainter(
+          image: image,
+          settings: settings,
+          spinAngle: angle,
+          staticFront: front,
+          staticBack: back,
+        ).paint(canvas, renderSize);
+        final picture = recorder.endRecording();
+        rendered = await picture.toImage(
+          renderSize.width.round(),
+          renderSize.height.round(),
+        );
+        picture.dispose();
+      } catch (_) {
+        rendered = null;
+      }
+      _depthFrameScheduled = false;
+      if (rendered != null && mounted) {
+        final ui.Image? old = _depthFrame;
+        setState(() {
+          _depthFrame = rendered;
+          _depthFrameKey = key;
+          _depthFrameBaseKey = _depthFrameBaseKeyFor(size);
+        });
+        if (old != null && !identical(old, rendered)) {
+          old.dispose();
+        }
+      }
+    });
+  }
+
+  String _litStaticKeyFor(ui.Image source) {
+    return '${identityHashCode(source)}'
+        '|${_settings.lightingCamera.hashCode}';
+  }
+
+  /// Schedules the front static's lighting pass for the
+  /// Reveal preview (same no-op discipline as above).
+  void _scheduleLitStatic(ui.Image source) {
+    final String key = _litStaticKeyFor(source);
+    if (_litStaticKey == key && _litStatic != null) return;
+    if (_litStaticScheduled) return;
+    _litStaticScheduled = true;
+    final LogoLightingCameraSettings lc = _settings.lightingCamera;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      ui.Image? lit;
+      try {
+        lit = await renderLogoLightingPass(image: source, settings: lc);
+      } catch (_) {
+        lit = null;
+      }
+      _litStaticScheduled = false;
+      if (lit != null && mounted) {
+        final ui.Image? old = _litStatic;
+        setState(() {
+          _litStatic = lit;
+          _litStaticKey = key;
+        });
+        if (old != null && !identical(old, lit)) {
+          old.dispose();
+        }
       }
     });
   }
@@ -1269,6 +1416,11 @@ class _LogoMakerSectionState extends State<LogoMakerSection>
             _scheduleStatics(paintSize);
             final bool staticsReady =
                 _depthCache.isReadyFor(_currentImage, _settings, paintSize);
+            // v1.25.0 (G2): while the lighting/camera settings
+            // are neutral this whole block is inert and the
+            // preview paints exactly the historic painters.
+            final bool lightingActive =
+                !_settings.lightingCamera.isNeutral;
             if (_selectedTool == _DockTool.reveal) {
               // v1.21.0: the SAME preview box (its size never
               // changes — Point #27) shows the backdrop scene
@@ -1293,13 +1445,31 @@ class _LogoMakerSectionState extends State<LogoMakerSection>
                     builder: (BuildContext context, Widget? child) {
                       final bool hasStyle =
                           _settings.revealStyleId.isNotEmpty;
+                      // v1.25.0 (G2): the reveal animates the
+                      // LIT styled logo while lighting is
+                      // non-neutral — the front static run
+                      // through the lighting pass (its alpha
+                      // preserved), falling back to the plain
+                      // static until that render lands.
+                      ui.Image revealImage = staticsReady &&
+                              _depthCache.frontImage != null
+                          ? _depthCache.frontImage!
+                          : _currentImage;
+                      if (lightingActive &&
+                          staticsReady &&
+                          _depthCache.frontImage != null) {
+                        _scheduleLitStatic(_depthCache.frontImage!);
+                        if (_litStatic != null &&
+                            _litStaticKey ==
+                                _litStaticKeyFor(
+                                    _depthCache.frontImage!)) {
+                          revealImage = _litStatic!;
+                        }
+                      }
                       return CustomPaint(
                         size: Size.infinite,
                         painter: LogoRevealPainter(
-                          image: staticsReady &&
-                                  _depthCache.frontImage != null
-                              ? _depthCache.frontImage!
-                              : _currentImage,
+                          image: revealImage,
                           styleId: hasStyle
                               ? _settings.revealStyleId
                               : 'fade_zoom',
@@ -1318,6 +1488,30 @@ class _LogoMakerSectionState extends State<LogoMakerSection>
                 final double angle = _settings.spinOn
                     ? _spinController.value * 2.0 * math.pi
                     : 0.0;
+                // v1.25.0 (G2): the lighting/camera pass is
+                // the FINAL pass — depth + spin render to a
+                // frame image and the checked painter lights
+                // that frame (the note's order: camera is the
+                // viewer's viewpoint, the light stays fixed in
+                // frame space). While a fresh bucket renders,
+                // the previous frame of the SAME combination
+                // stays up; a different combination falls back
+                // to the plain depth paint below, never blank.
+                if (lightingActive) {
+                  _scheduleDepthFrame(paintSize, angle);
+                  if (_depthFrame != null &&
+                      _depthFrameBaseKey ==
+                          _depthFrameBaseKeyFor(paintSize)) {
+                    return CustomPaint(
+                      size: Size.infinite,
+                      painter: LogoLightingCameraPainter(
+                        logoImage: _depthFrame!,
+                        settings: _settings.lightingCamera,
+                        background: Colors.transparent,
+                      ),
+                    );
+                  }
+                }
                 return CustomPaint(
                   size: Size.infinite,
                   painter: LogoDepthPainter(
@@ -1345,6 +1539,8 @@ class _LogoMakerSectionState extends State<LogoMakerSection>
         return _buildStylePanel();
       case _DockTool.spin:
         return _buildSpinPanel();
+      case _DockTool.light:
+        return _buildLightPanel();
       case _DockTool.reveal:
         return _buildRevealPanel();
       case _DockTool.save:
@@ -1379,15 +1575,15 @@ class _LogoMakerSectionState extends State<LogoMakerSection>
                 fontWeight: FontWeight.w600,
               ),
             ),
-            const SizedBox(height: 6.0),
+            const SizedBox(height: 4.0),
             const Text(
-              'Keep these settings with the channel. The news '
-              'export then uses this styled logo — depth, '
-              'material and spin included — in the logo\u2019s '
-              'usual place.',
+              'Saved with the channel. News exports use this '
+              'styled logo — depth, material, spin, lighting, '
+              'camera — in its usual place, opening with the '
+              'reveal intro.',
               style: TextStyle(color: Colors.white54, fontSize: 12.0),
             ),
-            const SizedBox(height: 12.0),
+            const SizedBox(height: 8.0),
             GestureDetector(
               key: const Key('logoMakerPanelSaveButton'),
               onTap: () => widget.onSave(_settings),
@@ -1461,12 +1657,28 @@ class _LogoMakerSectionState extends State<LogoMakerSection>
       _clipStatus = null;
       _clipProgress = 0;
     });
-    final ui.Image styled = await renderLogoDepthStatic(
+    ui.Image styled = await renderLogoDepthStatic(
       image: _currentImage,
       settings: _settings,
       backFacing: false,
       size: const Size(1024, 1024),
     );
+    // v1.25.0 (G2): the clip carries the maker's lighting
+    // too — the same alpha-preserving pass, applied to the
+    // ONE styled image the clip preview and export share, so
+    // both show it. A failed pass leaves the unlit image.
+    if (!_settings.lightingCamera.isNeutral) {
+      try {
+        final ui.Image lit = await renderLogoLightingPass(
+          image: styled,
+          settings: _settings.lightingCamera,
+        );
+        styled.dispose();
+        styled = lit;
+      } catch (_) {
+        // The unlit styled image stands.
+      }
+    }
     if (!mounted) {
       styled.dispose();
       return;
@@ -1681,6 +1893,31 @@ class _LogoMakerSectionState extends State<LogoMakerSection>
   /// the section's own chrome, plus the backdrop glow slider
   /// the backdrop painter takes. The preview above shows the
   /// result; this panel never resizes it.
+  /// v1.25.0 (G2): the Light tab — the checked lighting +
+  /// camera panel, seated in the section's usual card and
+  /// scroll area (the panel is a long three-card column).
+  /// Every change rides the section's one settings path, so
+  /// it persists with the channel preset like every other
+  /// tab's settings.
+  Widget _buildLightPanel() {
+    return Container(
+      decoration: BoxDecoration(
+        color: _kCardFillColor,
+        borderRadius: BorderRadius.circular(_kCardRadius),
+        border: Border.all(color: _kCardBorderColor, width: 1.0),
+      ),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(14.0),
+        child: LogoLightingCameraPanel(
+          settings: _settings.lightingCamera,
+          onChanged: (LogoLightingCameraSettings v) => _updateSettings(
+            _settings.copyWith(lightingCamera: v),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildRevealPanel() {
     final bool hasStyle = _settings.revealStyleId.isNotEmpty;
     return Container(
@@ -1781,9 +2018,10 @@ class _LogoMakerSectionState extends State<LogoMakerSection>
               'The reveal plays over the backdrop in the preview '
               'above, animating the same styled logo (depth and '
               'material included). In the news video export the '
-              'logo keeps its styled look and spin; the reveal '
-              'and the backdrop reach a video through the Logo '
-              'Clip export in the Save tab.',
+              'reveal and backdrop now open the video as a '
+              'one-time intro, and the styled logo keeps its '
+              'place after it; the Logo Clip export in the Save '
+              'tab still makes a standalone clip of the logo.',
               style: TextStyle(color: Colors.white54, fontSize: 12.0),
             ),
           ],
@@ -2421,13 +2659,18 @@ class _LogoMakerSectionState extends State<LogoMakerSection>
             children: _DockTool.values.map((_DockTool tool) {
               final bool isSelected = _selectedTool == tool;
               return Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 3.0),
+                padding: const EdgeInsets.symmetric(horizontal: 2.0),
                 child: GestureDetector(
                   onTap: () => _handleDockTap(tool),
                   child: Container(
-                    constraints: const BoxConstraints(minWidth: 58.0),
+                    // v1.25.0: six tabs (Light added) — the tab
+                    // metrics are tightened a touch so ALL six
+                    // fit a 360 px phone without dock scrolling;
+                    // the scroll view stays as a safety net for
+                    // narrower surfaces / larger font scales.
+                    constraints: const BoxConstraints(minWidth: 50.0),
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 10.0,
+                      horizontal: 7.0,
                       vertical: 8.0,
                     ),
                     decoration: BoxDecoration(
