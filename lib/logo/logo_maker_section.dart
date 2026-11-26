@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 import '../widgets/tool_guide.dart';
+import 'logo_reveal_backdrops.dart';
 import 'logo_text_shapes.dart';
 
 const Color _kBackgroundColor = Color(0xFF050914);
@@ -34,6 +35,9 @@ class LogoMakerSettings {
     this.spinOn = true,
     this.glowOn = false,
     this.glowIntensity = 0.5,
+    this.revealStyleId = 'fade_zoom',
+    this.backdropId = 'midnight_studio',
+    this.backdropGlow = 0.6,
   });
 
   final String presetId;
@@ -48,6 +52,19 @@ class LogoMakerSettings {
   final bool glowOn;
   final double glowIntensity;
 
+  /// Reveal animation for the Reveal tab (v1.21.0): one of
+  /// the `kLogoRevealStyles` ids, or '' for no reveal. The
+  /// reveal is a preview presentation of the styled logo —
+  /// it does not enter the export (see the Guide entry).
+  final String revealStyleId;
+
+  /// Procedural backdrop scene behind the reveal preview:
+  /// one of the `kLogoBackdrops` ids.
+  final String backdropId;
+
+  /// Glow strength of the backdrop scene, 0..1.
+  final double backdropGlow;
+
   LogoMakerSettings copyWith({
     String? presetId,
     String? materialId,
@@ -60,6 +77,9 @@ class LogoMakerSettings {
     bool? spinOn,
     bool? glowOn,
     double? glowIntensity,
+    String? revealStyleId,
+    String? backdropId,
+    double? backdropGlow,
   }) {
     return LogoMakerSettings(
       presetId: presetId ?? this.presetId,
@@ -73,6 +93,9 @@ class LogoMakerSettings {
       spinOn: spinOn ?? this.spinOn,
       glowOn: glowOn ?? this.glowOn,
       glowIntensity: glowIntensity ?? this.glowIntensity,
+      revealStyleId: revealStyleId ?? this.revealStyleId,
+      backdropId: backdropId ?? this.backdropId,
+      backdropGlow: backdropGlow ?? this.backdropGlow,
     );
   }
 
@@ -89,6 +112,9 @@ class LogoMakerSettings {
       'spinOn': spinOn,
       'glowOn': glowOn,
       'glowIntensity': glowIntensity,
+      'revealStyleId': revealStyleId,
+      'backdropId': backdropId,
+      'backdropGlow': backdropGlow,
     };
   }
 
@@ -96,6 +122,21 @@ class LogoMakerSettings {
     final String rawMaterial = (json['materialId'] as String?) ?? 'gold';
     final String safeMaterial =
         kLogoMaterials.containsKey(rawMaterial) ? rawMaterial : 'gold';
+
+    // v1.21.0 fields — payloads saved before they existed
+    // carry none of these keys and must load as the defaults
+    // (fail-soft, exactly like every older field above).
+    final String rawReveal = (json['revealStyleId'] as String?) ?? 'fade_zoom';
+    final String safeReveal = (rawReveal.isEmpty ||
+            kLogoRevealStyles.any((s) => s.id == rawReveal))
+        ? rawReveal
+        : 'fade_zoom';
+    final String rawBackdrop =
+        (json['backdropId'] as String?) ?? 'midnight_studio';
+    final String safeBackdrop =
+        kLogoBackdrops.any((b) => b.id == rawBackdrop)
+            ? rawBackdrop
+            : 'midnight_studio';
 
     return LogoMakerSettings(
       presetId: (json['presetId'] as String?) ?? 'gold_spin',
@@ -112,6 +153,10 @@ class LogoMakerSettings {
       spinOn: (json['spinOn'] as bool?) ?? true,
       glowOn: (json['glowOn'] as bool?) ?? false,
       glowIntensity: ((json['glowIntensity'] as num?)?.toDouble() ?? 0.5)
+          .clamp(0.0, 1.0),
+      revealStyleId: safeReveal,
+      backdropId: safeBackdrop,
+      backdropGlow: ((json['backdropGlow'] as num?)?.toDouble() ?? 0.6)
           .clamp(0.0, 1.0),
     );
   }
@@ -130,7 +175,10 @@ class LogoMakerSettings {
         other.spinSpeed == spinSpeed &&
         other.spinOn == spinOn &&
         other.glowOn == glowOn &&
-        other.glowIntensity == glowIntensity;
+        other.glowIntensity == glowIntensity &&
+        other.revealStyleId == revealStyleId &&
+        other.backdropId == backdropId &&
+        other.backdropGlow == backdropGlow;
   }
 
   @override
@@ -146,6 +194,9 @@ class LogoMakerSettings {
         spinOn,
         glowOn,
         glowIntensity,
+        revealStyleId,
+        backdropId,
+        backdropGlow,
       );
 }
 
@@ -736,19 +787,21 @@ class LogoDepthPainter extends CustomPainter {
   }
 }
 
-/// The dock carries ONLY tools whose panels are real in this
-/// build (v1.19.0, G5): Logo (source: current / text / shapes),
-/// Style (presets + material + depth/bevel/shadow/glow) and
-/// Spin (on/off + speed), plus the Save action. The Cube and
-/// Parts engines keep their full controls in the News Studio
-/// Logo tool (nothing was removed there); their placeholder
-/// buttons were dropped here rather than shipping dead
-/// buttons — the app's hard rule. They return to this dock
-/// when their real panels land in this section.
+/// The dock carries ONLY tools whose panels are real: Logo
+/// (source: current / text / shapes), Style (presets +
+/// material + depth/bevel/shadow/glow), Spin (on/off + speed)
+/// and Reveal (v1.21.0: reveal styles + backdrop scenes over
+/// the section's big preview), plus the Save action. The Cube
+/// and Parts engines keep their full controls in the News
+/// Studio Logo tool (nothing was removed there); their
+/// placeholder buttons were dropped here rather than shipping
+/// dead buttons — the app's hard rule. They return to this
+/// dock when their real panels land in this section.
 enum _DockTool {
   logo('Logo', Icons.image_outlined),
   style('Style', Icons.auto_awesome_rounded),
   spin('Spin', Icons.threesixty_rounded),
+  reveal('Reveal', Icons.play_circle_outline_rounded),
   save('Save', Icons.check_circle_outline_rounded);
 
   const _DockTool(this.label, this.icon);
@@ -837,9 +890,15 @@ class LogoMakerSection extends StatefulWidget {
 }
 
 class _LogoMakerSectionState extends State<LogoMakerSection>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late LogoMakerSettings _settings;
   late AnimationController _spinController;
+
+  /// v1.21.0: drives the Reveal tab's one-shot animation.
+  /// Separate from the spin loop — the two transforms never
+  /// run on the same frame (the Reveal preview paints the
+  /// reveal, the other tabs paint the spin).
+  late AnimationController _revealController;
   _DockTool _selectedTool = _DockTool.logo;
 
   /// The logo the preview styles. Starts as the host's image;
@@ -871,6 +930,10 @@ class _LogoMakerSectionState extends State<LogoMakerSection>
     if (_settings.spinOn) {
       _spinController.repeat();
     }
+    _revealController = AnimationController(
+      vsync: this,
+      duration: Duration(milliseconds: _revealStyle.durationMs),
+    );
   }
 
   @override
@@ -879,8 +942,53 @@ class _LogoMakerSectionState extends State<LogoMakerSection>
     if (_ownsCurrentImage) {
       _currentImage.dispose();
     }
+    _revealController.dispose();
     _spinController.dispose();
     super.dispose();
+  }
+
+  /// The reveal style the settings name (the first style
+  /// when none is selected — its duration still sizes the
+  /// controller, and the preview then holds the settled
+  /// state instead of animating).
+  LogoRevealStyle get _revealStyle {
+    for (final style in kLogoRevealStyles) {
+      if (style.id == _settings.revealStyleId) return style;
+    }
+    return kLogoRevealStyles.first;
+  }
+
+  /// Plays the selected reveal from the start, at the
+  /// style's own duration. No style selected → nothing to
+  /// play (the panel offers the style chips instead).
+  void _playReveal() {
+    if (_settings.revealStyleId.isEmpty) return;
+    _revealController.duration =
+        Duration(milliseconds: _revealStyle.durationMs);
+    _revealController.forward(from: 0.0);
+  }
+
+  /// A style chip tap: persist the choice, then play it at
+  /// its own duration. '' (the None chip) stops the reveal —
+  /// the preview holds the settled logo over the backdrop.
+  void _selectRevealStyle(String styleId) {
+    _updateSettings(_settings.copyWith(revealStyleId: styleId));
+    if (styleId.isEmpty) {
+      _revealController.stop();
+    } else {
+      _playReveal();
+    }
+  }
+
+  /// Scrubbing parks the reveal exactly where the user puts
+  /// it — the Studio's proven pattern: stop first, then set
+  /// the value directly (assigning value halts the running
+  /// simulation, which is precisely what a scrub must do).
+  void _onRevealScrub(double value) {
+    if (_revealController.isAnimating) {
+      _revealController.stop();
+    }
+    _revealController.value = value.clamp(0.0, 1.0);
   }
 
   /// A logo created from text or a shape becomes the section's
@@ -974,6 +1082,11 @@ class _LogoMakerSectionState extends State<LogoMakerSection>
     setState(() {
       _selectedTool = tool;
     });
+    if (tool == _DockTool.reveal) {
+      // Opening the Reveal tab plays the reveal once, so the
+      // user sees it immediately instead of a frozen frame.
+      _playReveal();
+    }
   }
 
   @override
@@ -1114,6 +1227,49 @@ class _LogoMakerSectionState extends State<LogoMakerSection>
             _scheduleStatics(paintSize);
             final bool staticsReady =
                 _depthCache.isReadyFor(_currentImage, _settings, paintSize);
+            if (_selectedTool == _DockTool.reveal) {
+              // v1.21.0: the SAME preview box (its size never
+              // changes — Point #27) shows the backdrop scene
+              // with the reveal playing over it. The reveal
+              // animates the maker's STYLED logo — the depth
+              // cache's front static once it exists, the raw
+              // logo only until that first render lands. The
+              // spin transform is NOT applied here: one
+              // transform per frame.
+              return Stack(
+                fit: StackFit.expand,
+                children: <Widget>[
+                  CustomPaint(
+                    size: Size.infinite,
+                    painter: LogoBackdropPainter(
+                      backdropId: _settings.backdropId,
+                      glowIntensity: _settings.backdropGlow,
+                    ),
+                  ),
+                  AnimatedBuilder(
+                    animation: _revealController,
+                    builder: (BuildContext context, Widget? child) {
+                      final bool hasStyle =
+                          _settings.revealStyleId.isNotEmpty;
+                      return CustomPaint(
+                        size: Size.infinite,
+                        painter: LogoRevealPainter(
+                          image: staticsReady &&
+                                  _depthCache.frontImage != null
+                              ? _depthCache.frontImage!
+                              : _currentImage,
+                          styleId: hasStyle
+                              ? _settings.revealStyleId
+                              : 'fade_zoom',
+                          progress:
+                              hasStyle ? _revealController.value : 1.0,
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              );
+            }
             return AnimatedBuilder(
               animation: _spinController,
               builder: (BuildContext context, Widget? child) {
@@ -1147,10 +1303,207 @@ class _LogoMakerSectionState extends State<LogoMakerSection>
         return _buildStylePanel();
       case _DockTool.spin:
         return _buildSpinPanel();
+      case _DockTool.reveal:
+        return _buildRevealPanel();
       case _DockTool.save:
         // Save is an action, never a panel.
         return _buildLogoPanel();
     }
+  }
+
+  /// v1.21.0 — the Reveal panel: the checked Studio's parts
+  /// (style chips, backdrop chips, Play + scrub) rebuilt on
+  /// the section's own chrome, plus the backdrop glow slider
+  /// the backdrop painter takes. The preview above shows the
+  /// result; this panel never resizes it.
+  Widget _buildRevealPanel() {
+    final bool hasStyle = _settings.revealStyleId.isNotEmpty;
+    return Container(
+      decoration: BoxDecoration(
+        color: _kCardFillColor,
+        borderRadius: BorderRadius.circular(_kCardRadius),
+        border: Border.all(color: _kCardBorderColor, width: 1.0),
+      ),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(14.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            const Text(
+              'Reveal Style',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 13.0,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 10.0),
+            SizedBox(
+              height: 38.0,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: kLogoRevealStyles.length + 1,
+                separatorBuilder: (_, _) => const SizedBox(width: 8.0),
+                itemBuilder: (BuildContext context, int index) {
+                  if (index == 0) {
+                    return _buildSelectableChip(
+                      label: 'None',
+                      selected: !hasStyle,
+                      swatchColors: const <Color>[],
+                      onTap: () => _selectRevealStyle(''),
+                    );
+                  }
+                  final LogoRevealStyle style =
+                      kLogoRevealStyles[index - 1];
+                  return _buildSelectableChip(
+                    label: style.name,
+                    selected: _settings.revealStyleId == style.id,
+                    swatchColors: const <Color>[],
+                    onTap: () => _selectRevealStyle(style.id),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 14.0),
+            const Text(
+              'Backdrop Scene',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 13.0,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 10.0),
+            SizedBox(
+              height: 38.0,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: kLogoBackdrops.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 8.0),
+                itemBuilder: (BuildContext context, int index) {
+                  final LogoBackdropDef backdrop = kLogoBackdrops[index];
+                  return _buildSelectableChip(
+                    label: backdrop.name,
+                    selected: _settings.backdropId == backdrop.id,
+                    swatchColors: const <Color>[],
+                    onTap: () => _updateSettings(
+                      _settings.copyWith(backdropId: backdrop.id),
+                    ),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 10.0),
+            _buildSliderRow(
+              label: 'Backdrop Glow',
+              value: _settings.backdropGlow,
+              min: 0.0,
+              max: 1.0,
+              valueLabel: '${(_settings.backdropGlow * 100).round()}%',
+              onChanged: (double value) =>
+                  _updateSettings(_settings.copyWith(backdropGlow: value)),
+            ),
+            const SizedBox(height: 8.0),
+            if (hasStyle)
+              _buildRevealPlaybackRow()
+            else
+              const Text(
+                'Pick a reveal style above to play it here.',
+                style: TextStyle(color: Colors.white54, fontSize: 12.0),
+              ),
+            const SizedBox(height: 8.0),
+            const Text(
+              'The reveal plays over the backdrop in the preview '
+              'above, animating the same styled logo (depth and '
+              'material included). In the video export the logo '
+              'keeps its styled look and spin — the reveal and '
+              'the backdrop are preview-only for now.',
+              style: TextStyle(color: Colors.white54, fontSize: 12.0),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Play + scrub for the reveal, rebuilt on every tick so
+  /// the slider and the progress readout track the playing
+  /// animation (the Studio's playback card pattern).
+  Widget _buildRevealPlaybackRow() {
+    return AnimatedBuilder(
+      animation: _revealController,
+      builder: (BuildContext context, Widget? child) {
+        final int percent = (_revealController.value * 100).round();
+        return Row(
+          children: <Widget>[
+            GestureDetector(
+              key: const Key('logoMakerRevealPlay'),
+              onTap: _playReveal,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16.0,
+                  vertical: 10.0,
+                ),
+                decoration: BoxDecoration(
+                  gradient: _kAccentGradient,
+                  borderRadius: BorderRadius.circular(_kCardRadius),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Icon(
+                      Icons.play_arrow_rounded,
+                      color: Colors.white,
+                      size: 18.0,
+                    ),
+                    SizedBox(width: 4.0),
+                    Text(
+                      'Play',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 13.0,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: 12.0),
+            Expanded(
+              child: SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  activeTrackColor: _kAccentCyan,
+                  inactiveTrackColor: _kCardBorderColor,
+                  thumbColor: _kAccentCyan,
+                  overlayColor:
+                      const Color.fromRGBO(34, 211, 238, 0.2),
+                  trackHeight: 3.0,
+                  thumbShape:
+                      const RoundSliderThumbShape(enabledThumbRadius: 7.0),
+                ),
+                child: Slider(
+                  key: const Key('logoMakerRevealScrub'),
+                  value: _revealController.value.clamp(0.0, 1.0),
+                  min: 0.0,
+                  max: 1.0,
+                  onChanged: _onRevealScrub,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8.0),
+            Text(
+              '$percent% · ${_revealStyle.durationMs}ms',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 12.0,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Widget _buildLogoPanel() {
