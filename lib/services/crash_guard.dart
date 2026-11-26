@@ -411,8 +411,8 @@ class CrashGuard {
       messenger.showSnackBar(
         const SnackBar(
           content: Text(
-            'Kuch ghalat ho gaya — app chalti rahegi, dobara '
-            'koshish karke dekhein.',
+            'Something went wrong — the app will keep running, please '
+            'try again.',
           ),
           duration: Duration(seconds: 4),
         ),
@@ -437,7 +437,7 @@ class CrashGuard {
             const Icon(Icons.error_outline, color: Colors.amber, size: 36),
             const SizedBox(height: 12),
             const Text(
-              'Is hisse mein kuch ghalat ho gaya.',
+              'Something went wrong in this section.',
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.white, fontSize: 15),
             ),

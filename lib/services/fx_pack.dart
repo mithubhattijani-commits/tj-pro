@@ -195,6 +195,11 @@ String pipOverlayFilter({
   required double pipScale,
   required int margin,
   required String outLabel,
+  // v1.16.0 G2: optional PIP window gate — an ffmpeg enable
+  // expression (e.g. "between(t,2.000,5.500)") restricting the
+  // overlay to that timeline window. Null = always visible
+  // (the historical behaviour, byte-for-byte).
+  String? windowEnable,
 }) {
   final s = pipScale.clamp(0.15, 0.5);
   String xExpr;
@@ -212,8 +217,10 @@ String pipOverlayFilter({
     xExpr = 'W-w-$margin';
     yExpr = 'H-h-$margin';
   }
+  final enable =
+      windowEnable == null ? '' : ":enable='$windowEnable'";
   return '$pipLabel scale=iw*$s:ih*$s[pip];'
-      '[0:v][pip]overlay=x=\'$xExpr\':y=\'$yExpr\'$outLabel';
+      '[0:v][pip]overlay=x=\'$xExpr\':y=\'$yExpr\'$enable$outLabel';
 }
 
 const pipPositionLabels = [

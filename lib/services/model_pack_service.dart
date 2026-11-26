@@ -237,24 +237,24 @@ class ModelPackService {
   static String describeFailure(PackFailure? failure) {
     switch (failure) {
       case PackFailure.unknownPack:
-        return 'Ye AI pack is app version mein maujood nahi.';
+        return 'This AI pack is not present in this app version.';
       case PackFailure.notHosted:
-        return 'Ye AI pack abhi hosted nahi hai — ye feature is '
-            'waqt download nahi ho sakta.';
+        return 'This AI pack is not hosted yet — this feature cannot '
+            'be downloaded at this time.';
       case PackFailure.httpError:
-        return 'AI pack ke server se error aaya — thodi der baad '
-            'dobara try karein.';
+        return 'The AI pack server returned an error — try again '
+            'try again.';
       case PackFailure.incomplete:
-        return 'AI pack ki download adhoori ya ghalat file aayi — '
-            'dobara try karein.';
+        return 'The AI pack download was incomplete or the wrong file arrived — '
+            'try again.';
       case PackFailure.network:
-        return 'AI pack download nahi ho saka — internet check '
-            'karke dobara try karein.';
+        return 'The AI pack could not download — check the internet '
+            'and try again.';
       case PackFailure.storage:
-        return 'Phone ki storage mein masla hai — jagah check '
-            'karke dobara try karein.';
+        return 'There is a problem with the phone storage — check the space '
+            'and try again.';
       case null:
-        return 'AI pack download nahi ho saka — dobara try karein.';
+        return 'The AI pack could not download — try again.';
     }
   }
 

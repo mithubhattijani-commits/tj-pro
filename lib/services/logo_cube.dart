@@ -204,7 +204,7 @@ _Vec3 _rotate(_Vec3 p, double angleY, double tiltX) {
   // Rotate about Y first (the spin), then tilt about X — always
   // around the screen's horizontal axis. Build 13 (point #19):
   // the tilt is the USER's view control now (default 0 =
-  // 'Samne'); callers that pass nothing get the historic fixed
+  // 'Front'); callers that pass nothing get the historic fixed
   // broadcast tilt [kLogoCubeTiltX].
   final x1 = p.x * cy + p.z * sy;
   final z1 = -p.x * sy + p.z * cy;

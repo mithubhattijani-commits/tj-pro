@@ -47,7 +47,7 @@ class FeatureGate {
   /// The polite line a killed feature shows (Roman Urdu, the
   /// app's user-facing language).
   static const String killedMessage =
-      'Ye feature abhi band hai — jald wapas aaye ga.';
+      'This feature is off right now — it will be back soon.';
 
   /// True when [feature] is killed in [config] (defaults to the
   /// live shared config). Pure function of the config — the

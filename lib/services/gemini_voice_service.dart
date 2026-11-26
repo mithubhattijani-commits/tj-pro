@@ -469,10 +469,10 @@ class GeminiVoiceService {
   }) async {
     final clean = text.trim();
     if (clean.isEmpty) {
-      throw GeminiVoiceException('Tehreer khaali hai — pehle text likhein.');
+      throw GeminiVoiceException('The script is empty — write the text first.');
     }
     if (format != 'wav' && format != 'mp3') {
-      throw GeminiVoiceException('Format sirf wav ya mp3 ho sakta hai.');
+      throw GeminiVoiceException('The format can only be wav or mp3.');
     }
     final resolvedLang = lang ?? detectLang(clean);
     final dir = await _cacheDir();
@@ -539,7 +539,7 @@ class GeminiVoiceService {
       );
       if (result == null || !await result.exists()) {
         throw GeminiVoiceException(
-          'Voiceover nahi ban saka — proxy aur device voice dono fail.',
+          'Voiceover could not be created — both the proxy and device voice failed.',
         );
       }
       // Post-process: speed/pause, music, format — then cache.

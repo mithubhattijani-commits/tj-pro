@@ -22,7 +22,7 @@ class DownloadService {
   static Future<Directory> downloadsDir() async {
     final extDir = await getExternalStorageDirectory();
     if (extDir == null) {
-      throw Exception('Download folder nahi mila.');
+      throw Exception('Downloads folder not found.');
     }
     final dir = Directory(p.join(extDir.path, 'Download'));
     if (!await dir.exists()) await dir.create(recursive: true);

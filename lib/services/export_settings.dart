@@ -142,11 +142,11 @@ class ExportSettings {
     }
     if (videoBitrateKbps != null &&
         (videoBitrateKbps! < 500 || videoBitrateKbps! > 50000)) {
-      return 'Video bitrate 500–50000 kbps ke beech ho.';
+      return 'Video bitrate must be between 500–50000 kbps.';
     }
     if (audioBitrateKbps != null &&
         (audioBitrateKbps! < 32 || audioBitrateKbps! > 320)) {
-      return 'Audio bitrate 32–320 kbps ke beech ho.';
+      return 'Audio bitrate must be between 32–320 kbps.';
     }
     if (aspect != '9:16' && aspect != '16:9' && aspect != '1:1') {
       return 'Aspect 9:16, 16:9 ya 1:1 ho.';

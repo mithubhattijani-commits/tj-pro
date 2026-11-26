@@ -466,7 +466,7 @@ class PerformanceEngine with WidgetsBindingObserver {
     final p = profile;
     final base = p?.diagnosticsLine ?? 'Tier: ${tier.label}';
     if (underPressure) {
-      return '$base • Memory dabao — quality waqt tor par kam hai';
+      return '$base • Memory pressure — quality is temporarily reduced';
     }
     return base;
   }

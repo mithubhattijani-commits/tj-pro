@@ -508,6 +508,26 @@ class FfmpegService {
   /// `-b:a`. All three default to the Phase 7 behaviour (30 fps,
   /// CRF 23, AAC with no explicit bitrate) so existing callers and
   /// tests are untouched.
+  /// v1.16.0 G3 (A23): a black + silent clip of exactly
+  /// [durationSec] — the export stand-in for a DISABLED clip
+  /// (its timeline space is preserved, its picture and sound
+  /// are gone). Carries a silent stereo AAC track so concat
+  /// joins it with the normalized clips without a stream
+  /// mismatch.
+  static String blackClipCommand({
+    required double durationSec,
+    required int width,
+    required int height,
+    required int fps,
+    required String output,
+  }) {
+    final d = durationSec <= 0 ? 0.1 : durationSec;
+    return '-f lavfi -i color=c=black:s=${width}x$height:r=$fps '
+        '-f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 '
+        '-t ${d.toStringAsFixed(3)} -c:v libx264 -pix_fmt yuv420p '
+        '-c:a aac -y ${q(output)}';
+  }
+
   static String normalizeCommand({
     required String input,
     required double trimStart,

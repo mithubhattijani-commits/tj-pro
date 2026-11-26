@@ -968,10 +968,10 @@ class FileCaptionEngine {
           logs.contains('does not contain any stream') ||
           logs.contains('Stream map')) {
         throw Exception(
-          'Is video me audio track nahi hai — captions ke liye awaz wali video chahiye.',
+          'This video has no audio track — captions need a video with sound.',
         );
       }
-      throw Exception('Audio nikalne me masla: $logs');
+      throw Exception('Problem extracting the audio: $logs');
     }
     final file = File(outPath);
     if (!await file.exists() || await file.length() == 0) {

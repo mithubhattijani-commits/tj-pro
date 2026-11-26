@@ -212,7 +212,7 @@ class UrduFonts {
   /// User-uploaded fonts (fix #51), rebuilt at runtime by
   /// `UserFontService.syncIntoRegistry()` (lib/services/
   /// user_font_service.dart) from the fonts the user added under
-  /// "Apna Font". Empty until that sync runs. This list is the ONLY
+  /// "My Font". Empty until that sync runs. This list is the ONLY
   /// mutable part of the registry — the built-in [all] list above is
   /// never touched by user fonts.
   static final List<UrduFontOption> userFonts = <UrduFontOption>[];
